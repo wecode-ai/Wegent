@@ -148,6 +148,10 @@
       "name_placeholder": "Enter model name",
       "namespace": "Namespace",
       "namespace_placeholder": "default",
+      "model_group": "Primary Group",
+      "model_group_placeholder": "Enter primary group",
+      "model_sub_group": "Secondary Group",
+      "model_sub_group_placeholder": "Enter secondary group",
       "config": "Model Configuration",
       "config_placeholder": "Enter model configuration as JSON",
       "is_advanced": "Advanced Model"
@@ -318,12 +322,38 @@
     "tip_en_placeholder": "Enter English tip text",
     "delete_tip_title": "Delete Tip",
     "delete_tip_message": "Are you sure you want to delete this tip? This action cannot be undone.",
-    "quick_access_title": "Homepage Recommended Agents",
-    "quick_access_description": "Select the built-in agents shown in the homepage QuickCard. The right-side order is the display order.",
-    "quick_access_available": "Available Agents",
-    "quick_access_selected": "Homepage Agents",
-    "quick_access_name": "Name",
-    "quick_access_version": "Homepage Agents Version",
+    "quick_launch_functions_title": "System Functions",
+    "quick_launch_functions_description": "Configure QuickCard system functions, target agents, and input presets.",
+    "quick_launch_functions_version": "System Functions Version",
+    "quick_launch_function_add": "Add System Function",
+    "quick_launch_function_empty": "No system functions configured yet",
+    "quick_launch_function_untitled": "Untitled function",
+    "quick_launch_function_id": "Function ID",
+    "quick_launch_function_title": "Name",
+    "quick_launch_function_description": "Description",
+    "quick_launch_function_team": "Target Agent",
+    "quick_launch_function_team_placeholder": "Select agent",
+    "quick_launch_function_order": "Order",
+    "quick_launch_function_icon": "Icon",
+    "quick_launch_function_enabled": "Enabled",
+    "quick_launch_function_disabled": "Disabled",
+    "quick_launch_function_phrases": "Quick Phrases",
+    "quick_launch_function_add_phrase": "Add Phrase",
+    "quick_launch_function_phrase_placeholder": "Example: Help me create a product roadmap PPT",
+    "quick_launch_function_presets": "Input Presets",
+    "quick_launch_function_add_preset": "Add Preset",
+    "quick_launch_function_preset_title": "Preset Name",
+    "quick_launch_function_preset_title_placeholder": "Example: Review change",
+    "quick_launch_function_preset_prompt": "Input Text",
+    "quick_launch_function_preset_prompt_placeholder": "Example: Please review the current code change",
+    "quick_launch_function_preset_skills": "Preselected Skills",
+    "quick_launch_function_preset_skills_placeholder": "Separate skill names with commas",
+    "quick_launch_function_preset_deep_thinking": "Deep Thinking",
+    "quick_launch_function_preset_clarification": "Clarification",
+    "quick_launch_function_preset_force_override": "Force Model Override",
+    "quick_launch_function_preset_attachments": "Attachments",
+    "quick_launch_function_preset_upload_attachment": "Upload Attachment",
+    "quick_launch_function_preset_no_attachments": "No preset attachments",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
@@ -331,15 +361,19 @@
     "errors": {
       "load_failed": "Failed to load configuration",
       "save_failed": "Failed to save configuration",
+      "partial_save_failed": "Some configuration changes were saved, but others failed. Please retry.",
+      "quick_launch_functions_required": "System functions must include an ID, name, and target agent",
+      "quick_launch_attachment_upload_failed": "Failed to upload preset attachment",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"
     }
   },
   "api_keys": {
     "title": "API Key Management",
-    "description": "Manage service keys and personal API keys",
+    "description": "Manage service keys, personal API keys, and outbound token issuance",
     "service_keys": "Service Keys",
-    "personal_keys": "Personal Keys"
+    "personal_keys": "Personal Keys",
+    "outbound_tokens": "Outbound Issuance"
   },
   "service_keys": {
     "title": "Service Key Management",
@@ -397,6 +431,105 @@
       "load_failed": "Failed to load personal keys",
       "delete_failed": "Failed to delete personal key",
       "toggle_failed": "Failed to toggle personal key status"
+    }
+  },
+  "outbound_tokens": {
+    "title": "Outbound Token Issuance",
+    "description": "Manage signing keys and token issuers used when skills call external services.",
+    "summary": "Callers request issuance with issuer_id. The outbound token audience is determined by the issuer configuration.",
+    "empty_hint": "Create a TokenIssuer first. If you do not have a SigningKey yet, generate one inside the create flow.",
+    "common": {
+      "name": "Name",
+      "description": "Description",
+      "description_placeholder": "Enter a description (optional)",
+      "enabled": "Status",
+      "status_active": "Active",
+      "status_disabled": "Disabled",
+      "created_at": "Created At",
+      "delete_confirm_title": "Confirm Deletion"
+    },
+    "actions": {
+      "view_pem": "View PEM",
+      "copy_pem": "Copy PEM",
+      "edit": "Edit",
+      "enable": "Enable",
+      "disable": "Disable"
+    },
+    "issuers": {
+      "create": "Create TokenIssuer",
+      "create_dialog_title": "Create TokenIssuer",
+      "edit_dialog_title": "Edit TokenIssuer",
+      "dialog_description": "Outbound integrations are configured around TokenIssuer. issuer_id comes from the resource id and audience/signing key are applied internally during issuance.",
+      "no_issuers": "No TokenIssuer found",
+      "name_placeholder": "For example vip-sql-platform",
+      "audience": "Audience",
+      "audience_placeholder": "For example vip_sql_platform",
+      "jwt_issuer": "JWT Issuer",
+      "signing_key": "SigningKey",
+      "current_signing_key": "Current Signing Key",
+      "signing_key_hint": "This issuer always signs with this key",
+      "signing_key_placeholder": "Select an active SigningKey",
+      "no_signing_keys_title": "No available SigningKey",
+      "no_signing_keys_description": "Create a SigningKey first, then continue creating or editing this TokenIssuer.",
+      "default_ttl": "Default TTL",
+      "max_ttl": "Max TTL",
+      "create_success": "TokenIssuer created successfully",
+      "update_success": "TokenIssuer updated successfully",
+      "delete_success": "TokenIssuer deleted successfully",
+      "enabled_success": "TokenIssuer enabled",
+      "disabled_success": "TokenIssuer disabled",
+      "delete_confirm_message": "Are you sure you want to delete TokenIssuer \"{{name}}\"? This issuer_id will no longer be able to issue outbound tokens.",
+      "errors": {
+        "create_failed": "Failed to create TokenIssuer",
+        "update_failed": "Failed to update TokenIssuer",
+        "delete_failed": "Failed to delete TokenIssuer",
+        "toggle_failed": "Failed to toggle TokenIssuer status",
+        "requires_active_signing_key": "TokenIssuer can only bind to an active SigningKey. Enable the target SigningKey first."
+      }
+    },
+    "signing_keys": {
+      "section_title": "Low-Level SigningKey Management",
+      "section_description": "Use this section to maintain the underlying signing keys. For normal setup, prefer creating and binding keys from the TokenIssuer flow.",
+      "create": "Create SigningKey",
+      "inline_create": "Generate SigningKey",
+      "cancel_inline_create": "Collapse",
+      "inline_create_title": "Create SigningKey Inline",
+      "name_placeholder": "For example vip-signing-key",
+      "description_placeholder": "Enter the key usage description (optional)",
+      "loading": "Loading SigningKey...",
+      "kid": "KID",
+      "algorithm": "Algorithm",
+      "usage_count": "Issuer Usage",
+      "no_keys": "No SigningKey found",
+      "create_success": "SigningKey created successfully",
+      "delete_success": "SigningKey deleted successfully",
+      "enabled_success": "SigningKey enabled",
+      "disabled_success": "SigningKey disabled",
+      "delete_confirm_message": "Are you sure you want to delete SigningKey \"{{name}}\"? The deletion will fail if any TokenIssuer still references it.",
+      "errors": {
+        "load_failed": "Failed to load SigningKey",
+        "create_failed": "Failed to create SigningKey",
+        "delete_failed": "Failed to delete SigningKey",
+        "toggle_failed": "Failed to toggle SigningKey status",
+        "disable_blocked_by_active_issuers": "This SigningKey is still referenced by {{count}} active TokenIssuer entries: {{names}}. Disable those issuers before disabling the key.",
+        "delete_blocked_by_issuers": "This SigningKey is still referenced by {{count}} TokenIssuer entries: {{names}}. Remove those bindings before deleting the key.",
+        "disable_blocked_by_issuer": "This SigningKey is still referenced by an active TokenIssuer. Disable the related TokenIssuer first.",
+        "delete_blocked_by_issuer": "This SigningKey is still referenced by a TokenIssuer. Remove the related binding before deleting it."
+      }
+    },
+    "pem_dialog": {
+      "issuer_title": "TokenIssuer Public Key",
+      "key_title": "SigningKey Public Key",
+      "description": "This is the PEM public key for {{name}} with kid {{kid}}. Share this public key with the external service for local JWT verification."
+    },
+    "errors": {
+      "load_failed": "Failed to load outbound token configuration",
+      "copy_failed": "Failed to copy PEM",
+      "issuer_name_required": "TokenIssuer name is required",
+      "signing_key_required": "Please select a SigningKey",
+      "signing_key_name_required": "SigningKey name is required",
+      "audience_required": "Audience is required",
+      "invalid_ttl": "TTL configuration is invalid"
     }
   },
   "monitor": {
@@ -638,7 +771,7 @@
       "namespace_placeholder": "default",
       "config": "Shell Configuration",
       "config_placeholder": "Enter shell configuration as JSON",
-      "config_hint": "The configuration should include spec.shellType (ClaudeCode, Agno, Dify, Chat)"
+      "config_hint": "The configuration should include spec.shellType (ClaudeCode, Dify, Chat)"
     },
     "confirm": {
       "delete_title": "Delete Shell",
@@ -742,7 +875,7 @@
   },
   "im_channels": {
     "title": "IM Channel Management",
-    "description": "Manage IM platform integrations (DingTalk, Feishu)",
+    "description": "Manage IM platform integrations (DingTalk, Weibo, Telegram, Discord)",
     "create_description": "Create a new IM channel integration. Configure platform credentials and default agent.",
     "loading": "Loading channels...",
     "no_channels": "No IM channels configured",
@@ -754,8 +887,10 @@
     "restart_channel": "Restart Connection",
     "types": {
       "dingtalk": "DingTalk",
+      "weibo": "Weibo",
       "feishu": "Feishu",
       "telegram": "Telegram",
+      "discord": "Discord",
       "not_supported": "Not supported"
     },
     "status": {
@@ -779,16 +914,26 @@
       "card_template_id_placeholder": "Enter DingTalk AI Card Template ID (optional)",
       "card_template_id_help": "When configured, subscription notifications will be sent as AI Cards",
       "bot_token": "Bot Token",
-      "bot_token_placeholder": "Enter Telegram Bot Token",
+      "bot_token_placeholder": "Enter Bot Token",
       "bot_token_edit_placeholder": "Enter new Bot Token (leave empty to keep existing)",
+      "weibo_app_id": "Weibo App ID",
+      "weibo_app_id_placeholder": "DM Weibo Longxia Assistant to get the App ID",
+      "weibo_app_secret": "Weibo App Secret",
+      "weibo_app_secret_placeholder": "DM Weibo Longxia Assistant to get the App Secret",
+      "weibo_app_secret_edit_placeholder": "Enter new Weibo App Secret from Weibo Longxia Assistant (leave empty to keep existing)",
+      "weibo_ws_endpoint": "WebSocket Endpoint",
+      "weibo_ws_endpoint_placeholder": "Use the default Weibo Open IM WebSocket endpoint",
+      "weibo_token_endpoint": "Token Endpoint",
+      "weibo_token_endpoint_placeholder": "Use the default Weibo Open IM token endpoint",
+      "weibo_endpoint_help": "Usually left empty; override only for a proxy or test environment.",
       "leave_empty_to_keep": "Leave empty to keep existing",
       "default_team": "Default Agent",
       "default_team_placeholder": "Select default agent",
       "no_default_team": "No default agent",
       "default_model": "Default Model",
       "default_model_placeholder": "Select default model",
-      "no_default_model": "Use agent's default model",
-      "team_no_model_warning": "The selected agent has no model configured. You must select a default model.",
+      "no_default_model": "Use agent/runtime default model",
+      "team_no_model_warning": "The selected agent has no Wegent model configured. If no default model is selected, the agent or runtime default model will be used.",
       "is_enabled": "Enable Channel",
       "user_mapping_mode": "User Mapping Mode",
       "user_mapping_mode_description": "Choose how to map IM users to system users",
@@ -823,8 +968,9 @@
       "name_required": "Channel name is required",
       "config_required": "Client ID and Client Secret are required",
       "bot_token_required": "Bot Token is required",
+      "weibo_config_required": "Weibo App ID and App Secret are required",
       "team_required": "A default agent must be selected",
-      "model_required_for_team": "The selected agent has no model configured. You must select a default model.",
+      "model_required_for_team": "The selected agent has no Wegent model configured. Select a default model or use the runtime default model.",
       "target_user_required": "A target user must be selected when using Specific User mode"
     }
   },
@@ -886,17 +1032,29 @@
       "load_failed": "Failed to load device list",
       "load_stats_failed": "Failed to load statistics",
       "upgrade_failed": "Failed to send upgrade command",
+      "upgrade_all_local_failed": "Failed to upgrade local devices",
       "restart_failed": "Failed to send restart command",
+      "restart_all_cloud_failed": "Failed to restart cloud devices",
       "migrate_failed": "Failed to send migrate command"
     },
     "actions": {
       "upgrade": "Upgrade",
+      "upgrade_all_local": "Upgrade All Local Devices",
       "upgrade_unsupported": "Version below {{version}}, online upgrade not supported",
       "restart": "Restart",
+      "restart_all_cloud": "Restart All Cloud Devices",
       "migrate": "Migrate",
       "upgrade_sent": "Upgrade command sent",
       "restart_sent": "Restart command sent",
       "migrate_sent": "Migrate command sent"
+    },
+    "confirm": {
+      "upgrade_all_local_title": "Confirm Upgrade All Local Devices",
+      "upgrade_all_local_message": "This will send upgrade commands to all eligible local devices and may affect running tasks. Confirm before continuing.",
+      "upgrade_all_local_confirm": "Confirm Upgrade",
+      "restart_all_cloud_title": "Confirm Restart All Cloud Devices",
+      "restart_all_cloud_message": "This will send restart commands to all cloud devices and may interrupt running tasks. Confirm before continuing.",
+      "restart_all_cloud_confirm": "Confirm Restart"
     }
   },
   "templates": {

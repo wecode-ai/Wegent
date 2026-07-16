@@ -86,9 +86,18 @@ def test_index_document_task_skips_after_lock_retry_exhaustion(
     monkeypatch.setattr(index_document_task, "retry", retry_mock)
 
     with _task_request_context(retries=index_document_task.max_retries):
-        with patch(
-            "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
-            return_value=_lock_context(False),
+        with (
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(False),
+            ),
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            ),
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_failed",
+            ),
         ):
             result = index_document_task.run(**_task_kwargs())
 
@@ -228,7 +237,7 @@ def test_index_document_task_routes_indexing_through_gateway():
     mock_get_index_gateway.assert_called_once()
     mock_gateway.index_document.assert_awaited_once_with(
         mock_resolve.return_value,
-        db=indexing_db,
+        db=None,
     )
 
 

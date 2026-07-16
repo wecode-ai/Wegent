@@ -9,12 +9,12 @@ Provides internal API for chat_shell's RemoteStore to access chat history.
 These endpoints are intended for service-to-service communication, not user access.
 
 Authentication:
-- Uses Internal Service Token (X-Service-Name header)
-- In production, should be protected by network-level security
+- Uses Internal Service Token in the Authorization header
 """
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,15 +32,31 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.services.auth.internal_service_token import verify_internal_service_token
+from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
+from app.services.task_fork_history import task_fork_history_resolver
+from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["internal-chat"])
+router = APIRouter(
+    prefix="/chat",
+    tags=["internal-chat"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 # Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
 INJECTION_MODE_KB_HEAD = "kb_head"
+
+# Hard upper bound for a single attachment-text slice (characters). read_attachment
+# is a paginated reader; a page is token-clamped by the caller anyway, so there is
+# no legitimate reason to request a huge slice. This is HTTP-layer defense-in-depth:
+# the caller's real page window is page_token_limit * chars-per-token (~60K today),
+# so this sits just above it. Raise it if that page window grows.
+MAX_ATTACHMENT_TEXT_SLICE = 64_000
 
 
 def _is_restricted_kb_context(kb_ctx: SubtaskContext) -> bool:
@@ -154,6 +170,18 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str = "internal-chat-storage"
+
+
+class GuidanceConsumeResponse(BaseModel):
+    """Response for guidance consume endpoint."""
+
+    item: Optional[dict] = None
+
+
+class GuidanceExpireResponse(BaseModel):
+    """Response for guidance expire endpoint."""
+
+    expired_ids: list[str] = Field(default_factory=list)
 
 
 # ==================== Helper Functions ====================
@@ -742,6 +770,68 @@ async def health_check():
     return HealthResponse(status="ok")
 
 
+@router.post(
+    "/guidance/{task_id}/{subtask_id}/consume",
+    response_model=GuidanceConsumeResponse,
+)
+async def consume_guidance(task_id: int, subtask_id: int):
+    """Consume the next queued Chat Shell guidance item."""
+    logger.info(
+        "[guidance] consume request: task_id=%s subtask_id=%s", task_id, subtask_id
+    )
+    item = await guidance_queue.consume(task_id=task_id, subtask_id=subtask_id)
+    if item is None:
+        logger.info(
+            "[guidance] consume: no item in queue task_id=%s subtask_id=%s",
+            task_id,
+            subtask_id,
+        )
+        return GuidanceConsumeResponse(item=None)
+
+    item_data = item.to_dict()
+    applied_at = datetime.now().isoformat()
+    ws_emitter = get_webpage_ws_emitter()
+    logger.info(
+        "[guidance] consumed item: task_id=%s subtask_id=%s guidance_id=%s ws_emitter=%s",
+        task_id,
+        subtask_id,
+        item.guidance_id,
+        ws_emitter is not None,
+    )
+    if ws_emitter:
+        await ws_emitter.emit_guidance_applied(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            guidance_id=item.guidance_id,
+            applied_at=applied_at,
+        )
+    return GuidanceConsumeResponse(item=item_data)
+
+
+@router.post(
+    "/guidance/{task_id}/{subtask_id}/expire",
+    response_model=GuidanceExpireResponse,
+)
+async def expire_guidance(task_id: int, subtask_id: int):
+    """Expire all queued Chat Shell guidance items."""
+    expired_ids = await guidance_queue.expire(task_id=task_id, subtask_id=subtask_id)
+    logger.info(
+        "[guidance] expire: task_id=%s subtask_id=%s expired_ids=%s",
+        task_id,
+        subtask_id,
+        expired_ids,
+    )
+    if expired_ids:
+        ws_emitter = get_webpage_ws_emitter()
+        if ws_emitter:
+            await ws_emitter.emit_guidance_expired(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                guidance_ids=expired_ids,
+            )
+    return GuidanceExpireResponse(expired_ids=expired_ids)
+
+
 @router.get("/history/{session_id}", response_model=HistoryResponse)
 async def get_chat_history(
     session_id: str,
@@ -787,28 +877,21 @@ async def get_chat_history(
         [status.value for status in history_statuses],
     )
 
-    # Build query for subtasks - include terminal history messages.
-    # FAILED assistant turns are conditionally included in subtask_to_messages:
-    # only when result.value exists.
-    query = db.query(Subtask).filter(
-        Subtask.task_id == task_id,
-        Subtask.status.in_(history_statuses),
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    items = task_fork_history_resolver.resolve_for_task(
+        db,
+        task_id=task_id,
+        user_id=task.user_id,
+        before_message_id=before_message_id,
     )
-
-    if before_message_id:
-        # Filter by message_id, not subtask.id
-        # message_id represents the order within the conversation
-        query = query.filter(Subtask.message_id < before_message_id)
-
-    # When limit is specified, we need to get the most recent N messages
-    # First order by message_id desc to get the latest, then reverse
-    if limit:
-        subtasks = query.order_by(Subtask.message_id.desc()).limit(limit).all()
-        # Reverse to get chronological order (oldest first)
-        subtasks = list(reversed(subtasks))
-    else:
-        # No limit - get all messages in chronological order
-        subtasks = query.order_by(Subtask.message_id.asc()).all()
+    subtasks = [
+        item.subtask for item in items if item.subtask.status in history_statuses
+    ]
+    if limit is not None and limit > 0:
+        subtasks = subtasks[-limit:]
 
     # Convert to message format with full context loading
     messages = [
@@ -833,25 +916,117 @@ async def get_chat_history(
     return HistoryResponse(session_id=session_id, messages=messages)
 
 
-def _populate_subtask_content(subtask: Subtask, message: MessageCreate) -> None:
-    """Set prompt or result on a Subtask based on the message role."""
-    if subtask.role == SubtaskRole.USER:
-        subtask.prompt = (
-            message.content
-            if isinstance(message.content, str)
-            else json.dumps(message.content, ensure_ascii=False)
+class AttachmentTextResponse(BaseModel):
+    """A character slice of an attachment's extracted text."""
+
+    attachment_id: int
+    name: str
+    mime_type: str
+    total_chars: int
+    offset: int
+    text: str
+    has_more: bool
+    # Whether extracted_text itself was parse-truncated. When True, paging to
+    # has_more=False means "end of the extract", NOT "end of the original file".
+    source_truncated: bool
+
+
+@router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
+async def get_attachment_text(
+    attachment_id: int,
+    session_id: str = Query(..., description="Conversation session, e.g. task-123"),
+    offset: int = Query(0, ge=0, description="Start character offset (codepoint)"),
+    limit: int = Query(
+        ...,
+        gt=0,
+        le=MAX_ATTACHMENT_TEXT_SLICE,
+        description="Max characters to return (codepoint)",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Return a character slice of an attachment's extracted text.
+
+    Scoped to the conversation: the attachment must belong to a subtask of the
+    session's task, or be unlinked *and owned by the task's user*. This mirrors
+    the visibility of attachments already injected into the chat history, so
+    group-chat members can read each other's attachments while cross-task access
+    is denied. Unlinked attachments (subtask_id == 0, e.g. a just-uploaded or
+    quick-launch preset attachment not yet bound to a subtask) are restricted to
+    the same user, so the model cannot probe arbitrary ids across users.
+    Pagination/token budgeting is done by the caller (chat_shell); this endpoint
+    only slices.
+    """
+    session_type, task_id = parse_session_id(session_id)
+    if session_type != "task":
+        raise HTTPException(
+            status_code=400, detail="Only task-based sessions are supported"
         )
-    else:
-        result: dict = {
-            "value": (
+
+    task = task_store.get_by_id(db, task_id=task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    context = (
+        db.query(SubtaskContext)
+        .filter(
+            SubtaskContext.id == attachment_id,
+            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            SubtaskContext.status == ContextStatus.READY.value,
+        )
+        .first()
+    )
+    if context is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Task scoping: a linked attachment must belong to this task; an unlinked
+    # one (subtask_id == 0) must at least belong to this task's user, so the
+    # model cannot read arbitrary unlinked attachments across users.
+    task_subtask_ids = set(subtask_store.list_ids_by_task(db, task_id=task_id))
+    is_in_task = context.subtask_id in task_subtask_ids
+    is_unlinked_same_user = context.subtask_id == 0 and context.user_id == task.user_id
+    if not (is_in_task or is_unlinked_same_user):
+        # Return 404 (not 403) so callers cannot distinguish "exists but
+        # forbidden" from "missing" and probe valid ids across conversations.
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    full_text = context.extracted_text or ""
+    total_chars = len(full_text)
+    chunk = full_text[offset : offset + limit]
+    return AttachmentTextResponse(
+        attachment_id=attachment_id,
+        name=context.name or "",
+        mime_type=context.mime_type or "",
+        total_chars=total_chars,
+        offset=offset,
+        text=chunk,
+        has_more=offset + len(chunk) < total_chars,
+        source_truncated=context.is_truncated,
+    )
+
+
+def _build_subtask_content_fields(
+    role: SubtaskRole,
+    message: MessageCreate | MessageUpdate,
+) -> dict[str, Any]:
+    """Build Subtask content fields from a chat message payload."""
+    if role == SubtaskRole.USER:
+        return {
+            "prompt": (
                 message.content
                 if isinstance(message.content, str)
                 else json.dumps(message.content, ensure_ascii=False)
             )
         }
-        if message.model_info:
-            result["model_info"] = message.model_info
-        subtask.result = result
+    result: dict = {
+        "value": (
+            message.content
+            if isinstance(message.content, str)
+            else json.dumps(message.content, ensure_ascii=False)
+        )
+    }
+    if getattr(message, "model_info", None):
+        result["model_info"] = message.model_info
+    return {"result": result}
 
 
 @router.post("/history/{session_id}/messages", response_model=MessageIdResponse)
@@ -874,7 +1049,7 @@ async def append_message(
         )
 
     # Get task info to determine team_id
-    existing = db.query(Subtask).filter(Subtask.task_id == task_id).first()
+    existing = subtask_store.get_first_by_task(db, task_id=task_id)
     if not existing:
         raise HTTPException(
             status_code=404,
@@ -888,30 +1063,28 @@ async def append_message(
         role = SubtaskRole.ASSISTANT
 
     # Get next message_id
-    max_message_id = (
-        db.query(Subtask.message_id)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.message_id.desc())
-        .first()
-    )
-    next_message_id = (max_message_id[0] + 1) if max_message_id else 1
+    next_message_id = subtask_store.get_next_message_id(db, task_id=task_id)
 
     # Create subtask
-    subtask = Subtask(
+    content_fields = _build_subtask_content_fields(role, message)
+    subtask = subtask_store.create_subtask(
+        db,
+        user_id=existing.user_id,
         task_id=task_id,
         team_id=existing.team_id,
-        user_id=existing.user_id,
         title="",
         bot_ids=existing.bot_ids,
         role=role,
+        prompt=content_fields.get("prompt"),
+        result=content_fields.get("result"),
+        executor_namespace="",
+        executor_name="",
         message_id=next_message_id,
+        parent_id=None,
         status=SubtaskStatus.COMPLETED,
+        progress=100,
+        error_message="",
     )
-
-    # Set content based on role
-    _populate_subtask_content(subtask, message)
-
-    db.add(subtask)
     db.commit()
     db.refresh(subtask)
 
@@ -945,7 +1118,7 @@ async def append_messages_batch(
         )
 
     # Get task info
-    existing = db.query(Subtask).filter(Subtask.task_id == task_id).first()
+    existing = subtask_store.get_first_by_task(db, task_id=task_id)
     if not existing:
         raise HTTPException(
             status_code=404,
@@ -953,32 +1126,31 @@ async def append_messages_batch(
         )
 
     # Get next message_id
-    max_message_id = (
-        db.query(Subtask.message_id)
-        .filter(Subtask.task_id == task_id)
-        .order_by(Subtask.message_id.desc())
-        .first()
-    )
-    next_message_id = (max_message_id[0] + 1) if max_message_id else 1
+    next_message_id = subtask_store.get_next_message_id(db, task_id=task_id)
 
     message_ids = []
     for message in batch.messages:
         role = SubtaskRole.USER if message.role == "user" else SubtaskRole.ASSISTANT
 
-        subtask = Subtask(
+        content_fields = _build_subtask_content_fields(role, message)
+        subtask = subtask_store.create_subtask(
+            db,
+            user_id=existing.user_id,
             task_id=task_id,
             team_id=existing.team_id,
-            user_id=existing.user_id,
             title="",
             bot_ids=existing.bot_ids,
             role=role,
+            prompt=content_fields.get("prompt"),
+            result=content_fields.get("result"),
+            executor_namespace="",
+            executor_name="",
             message_id=next_message_id,
+            parent_id=None,
             status=SubtaskStatus.COMPLETED,
+            progress=100,
+            error_message="",
         )
-
-        _populate_subtask_content(subtask, message)
-
-        db.add(subtask)
         db.flush()  # Get ID without committing
         message_ids.append(str(subtask.id))
         next_message_id += 1
@@ -1011,25 +1183,15 @@ async def update_message(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid message_id")
 
-    subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
     if not subtask:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    # Update content based on role
-    if subtask.role == SubtaskRole.USER:
-        subtask.prompt = (
-            update.content
-            if isinstance(update.content, str)
-            else json.dumps(update.content, ensure_ascii=False)
-        )
-    else:
-        subtask.result = {
-            "value": (
-                update.content
-                if isinstance(update.content, str)
-                else json.dumps(update.content, ensure_ascii=False)
-            )
-        }
+    subtask_store.update_fields(
+        db,
+        subtask=subtask,
+        **_build_subtask_content_fields(subtask.role, update),
+    )
 
     db.commit()
 
@@ -1058,11 +1220,11 @@ async def delete_message(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid message_id")
 
-    subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+    subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
     if not subtask:
         raise HTTPException(status_code=404, detail="Message not found")
 
-    subtask.status = SubtaskStatus.DELETE
+    subtask_store.update_status(db, subtask=subtask, status=SubtaskStatus.DELETE)
     db.commit()
 
     logger.debug(
@@ -1091,8 +1253,10 @@ async def clear_history(
         )
 
     # Soft delete all subtasks for this task
-    db.query(Subtask).filter(Subtask.task_id == task_id).update(
-        {"status": SubtaskStatus.DELETE}
+    subtask_store.mark_task_messages_status(
+        db,
+        task_id=task_id,
+        status=SubtaskStatus.DELETE,
     )
     db.commit()
 
@@ -1103,8 +1267,10 @@ async def clear_history(
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
-    limit: int = Query(100, description="Max number of sessions to return"),
-    offset: int = Query(0, description="Offset for pagination"),
+    limit: int = Query(
+        100, ge=1, le=1000, description="Max number of sessions to return"
+    ),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: Session = Depends(get_db),
 ):
     """
@@ -1113,20 +1279,8 @@ async def list_sessions(
     Note: This is primarily for CLI/testing. In production, sessions are
     typically managed by task_id which comes from the frontend.
     """
-    # Get unique task_ids with subtasks, ordered by most recent activity
-    from sqlalchemy import func
-
-    task_ids = (
-        db.query(Subtask.task_id)
-        .filter(Subtask.status != SubtaskStatus.DELETE)
-        .group_by(Subtask.task_id)
-        .order_by(func.max(Subtask.id).desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    sessions = [f"task-{task_id[0]}" for task_id in task_ids]
+    task_ids = subtask_store.list_session_task_ids(db, skip=offset, limit=limit)
+    sessions = [f"task-{task_id}" for task_id in task_ids]
 
     return SessionListResponse(sessions=sessions)
 

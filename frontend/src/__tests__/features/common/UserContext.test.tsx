@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { render, act, waitFor } from '@testing-library/react'
+import { render, act, waitFor, fireEvent } from '@testing-library/react'
+import { ApiError } from '@/apis/client'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { userApis } from '@/apis/user'
 import { useRouter } from 'next/navigation'
@@ -17,15 +18,20 @@ jest.mock('@/apis/user', () => ({
   userApis: {
     isAuthenticated: jest.fn(),
     getCurrentUser: jest.fn(),
+    getCurrentUserWithoutAuthRedirect: jest.fn(),
     login: jest.fn(),
     logout: jest.fn(),
+    setupAdminPassword: jest.fn(),
+    updateUser: jest.fn(),
   },
 }))
+
+const mockToast = jest.fn()
 
 // Mock useToast
 jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
-    toast: jest.fn(),
+    toast: mockToast,
   }),
 }))
 
@@ -45,11 +51,48 @@ jest.mock('@/config/paths', () => ({
 
 // Test component to access context
 function TestComponent({ onUserChange }: { onUserChange?: (user: unknown) => void }) {
-  const { user, isLoading } = useUser()
+  const { user, isLoading, adminPasswordSetupRequired } = useUser()
   if (onUserChange) {
     onUserChange(user)
   }
-  return <div>{isLoading ? 'Loading...' : user ? `User: ${user.user_name}` : 'No user'}</div>
+  return (
+    <div>
+      {isLoading
+        ? 'Loading...'
+        : adminPasswordSetupRequired
+          ? 'Admin setup required'
+          : user
+            ? `User: ${user.user_name}`
+            : 'No user'}
+    </div>
+  )
+}
+
+function PreferenceUpdateComponent() {
+  const { user, updatePreferences } = useUser()
+
+  return (
+    <button
+      disabled={!user}
+      onClick={() => updatePreferences({ default_execution_target: 'cloud' })}
+    >
+      Update preferences
+    </button>
+  )
+}
+
+function LoginActionComponent() {
+  const { login } = useUser()
+
+  return (
+    <button
+      onClick={() => {
+        void login({ user_name: 'admin', password: 'unused-password' }).catch(() => undefined)
+      }}
+    >
+      Login
+    </button>
+  )
 }
 
 describe('UserContext', () => {
@@ -138,6 +181,7 @@ describe('UserContext', () => {
       expect(userApis.isAuthenticated).toHaveBeenCalled()
       // getCurrentUser is NOT called when isAuthenticated returns false initially
       expect(userApis.getCurrentUser).not.toHaveBeenCalled()
+      expect(userApis.getCurrentUserWithoutAuthRedirect).not.toHaveBeenCalled()
     })
 
     it('should call isAuthenticated periodically every 10 seconds', async () => {
@@ -205,6 +249,105 @@ describe('UserContext', () => {
       // Assert
       await waitFor(() => {
         expect(getByText('No user')).toBeInTheDocument()
+      })
+    })
+
+    it('should expose admin setup requirement from login page user handshake', async () => {
+      Object.defineProperty(window, 'location', {
+        value: {
+          pathname: '/login',
+          href: 'http://localhost/login',
+        },
+        writable: true,
+      })
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+      ;(userApis.getCurrentUserWithoutAuthRedirect as jest.Mock).mockRejectedValue(
+        new ApiError('ADMIN_PASSWORD_SETUP_REQUIRED', 400, 'ADMIN_PASSWORD_SETUP_REQUIRED')
+      )
+
+      const { getByText } = render(
+        <UserProvider>
+          <TestComponent />
+        </UserProvider>
+      )
+
+      await waitFor(() => {
+        expect(getByText('Admin setup required')).toBeInTheDocument()
+      })
+      expect(userApis.getCurrentUserWithoutAuthRedirect).toHaveBeenCalledTimes(1)
+      expect(mockRouter.replace).not.toHaveBeenCalled()
+      expect(mockToast).not.toHaveBeenCalled()
+    })
+
+    it('should not show a login failure toast for admin password setup transition', async () => {
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+      ;(userApis.login as jest.Mock).mockRejectedValue(
+        new ApiError('ADMIN_PASSWORD_SETUP_REQUIRED', 400, 'ADMIN_PASSWORD_SETUP_REQUIRED')
+      )
+
+      const { getByText } = render(
+        <UserProvider>
+          <LoginActionComponent />
+        </UserProvider>
+      )
+
+      await waitFor(() => {
+        expect(userApis.isAuthenticated).toHaveBeenCalled()
+      })
+
+      fireEvent.click(getByText('Login'))
+
+      await waitFor(() => {
+        expect(userApis.login).toHaveBeenCalledWith({
+          user_name: 'admin',
+          password: 'unused-password',
+        })
+      })
+      expect(mockToast).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Preference updates', () => {
+    it('should not submit null quick access when updating unrelated preferences', async () => {
+      const mockUser = {
+        id: 1,
+        user_name: 'testuser',
+        email: 'test@test.com',
+        preferences: {
+          send_key: 'enter',
+          quick_access: null,
+        },
+      }
+      ;(userApis.getCurrentUser as jest.Mock).mockResolvedValue(mockUser)
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(true)
+      ;(userApis.updateUser as jest.Mock).mockResolvedValue({
+        ...mockUser,
+        preferences: {
+          send_key: 'enter',
+          default_execution_target: 'cloud',
+        },
+      })
+
+      const { getByText } = render(
+        <UserProvider>
+          <PreferenceUpdateComponent />
+        </UserProvider>
+      )
+
+      await waitFor(() => {
+        expect(getByText('Update preferences')).not.toBeDisabled()
+      })
+
+      fireEvent.click(getByText('Update preferences'))
+
+      await waitFor(() => {
+        expect(userApis.updateUser).toHaveBeenCalled()
+      })
+      expect(userApis.updateUser).toHaveBeenCalledWith({
+        preferences: {
+          send_key: 'enter',
+          default_execution_target: 'cloud',
+        },
       })
     })
   })

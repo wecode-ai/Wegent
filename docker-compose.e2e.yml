@@ -58,6 +58,7 @@ services:
     environment:
       # Runtime variables (can be changed without rebuilding)
       RUNTIME_INTERNAL_API_URL: http://backend-test:8000
+      RUNTIME_PUBLIC_API_URL: http://backend-test:8000
       RUNTIME_SOCKET_DIRECT_URL: http://backend-test:8000
       # Legacy: NEXT_PUBLIC_API_URL is deprecated
       # NEXT_PUBLIC_API_URL: http://backend-test:8000

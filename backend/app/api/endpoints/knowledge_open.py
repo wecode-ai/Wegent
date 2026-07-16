@@ -11,31 +11,67 @@ wegent-username header.  Business logic is fully delegated to
 KnowledgeOrchestrator so that REST API and MCP tools share the same path.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.knowledge_document_side_effects import (
+    schedule_kb_summary_updates_after_deletion,
+)
 from app.core.security import AuthContext, get_auth_context
 from app.schemas.knowledge import (
+    BatchDocumentIds,
+    BatchDocumentMoveRequest,
+    BatchOperationResult,
     DocumentContentReadResponse,
     DocumentContentUpdate,
     DocumentContentUpdateResponse,
+    DocumentMoveRequest,
     KnowledgeBaseListResponse,
     KnowledgeDocumentCreateV1,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
+    KnowledgeDocumentSortField,
     KnowledgeDocumentUpdate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderCreateOpen,
+    KnowledgeFolderResponse,
+    KnowledgeFolderUpdate,
+    KnowledgeFolderUpdateOpen,
     KnowledgeSearchRequest,
+    SortOrder,
 )
 from app.schemas.rag import RetrieveResponse
-from app.services.knowledge import KnowledgeService
+from app.services.knowledge import KnowledgeFolderService, KnowledgeService
 from app.services.knowledge.orchestrator import (
+    DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
+    MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
 from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 router = APIRouter()
+
+
+def _raise_open_knowledge_http_error(exc: ValueError) -> None:
+    """Map knowledge service errors to open API HTTP responses."""
+    error_msg = str(exc)
+    lower = error_msg.lower()
+    if "not found" in lower:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_msg,
+        )
+    if "access denied" in lower or "permission" in lower:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_msg,
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=error_msg,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +88,17 @@ def list_knowledge_bases_open(
     scope: str = Query(
         default="all",
         description="Scope of knowledge bases to return: 'personal' or 'all'",
+    ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of knowledge bases to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated knowledge base listing",
     ),
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
@@ -85,6 +132,8 @@ def list_knowledge_bases_open(
         db=db,
         user=current_user,
         scope=normalized_scope,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -102,6 +151,38 @@ def list_documents_open(
     knowledge_base_id: int = Query(
         ...,
         description="Knowledge base ID to list documents from",
+    ),
+    folder_id: int | None = Query(
+        default=None,
+        ge=0,
+        description="Filter documents by folder (None = all, 0 = root)",
+    ),
+    include_subfolders: bool = Query(
+        default=False,
+        description="Whether folder_id includes descendant folders",
+    ),
+    keyword: str | None = Query(
+        default=None,
+        description="Search keyword for document names",
+    ),
+    sort_by: KnowledgeDocumentSortField = Query(
+        default=KnowledgeDocumentSortField.CREATED_AT,
+        description="Document sort field",
+    ),
+    sort_order: SortOrder = Query(
+        default=SortOrder.DESC,
+        description="Document sort order",
+    ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of documents to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated document listing",
     ),
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
@@ -122,23 +203,121 @@ def list_documents_open(
             db=db,
             user=current_user,
             knowledge_base_id=knowledge_base_id,
+            folder_id=folder_id,
+            limit=limit,
+            offset=offset,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by.value,
+            sort_order=sort_order.value,
         )
     except ValueError as exc:
-        error_msg = str(exc).lower()
-        if "not found" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(exc),
-            )
-        if "access denied" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=str(exc),
-            )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+        _raise_open_knowledge_http_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# GET /knowledge/folders  — read folder tree
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/folders",
+    response_model=list[KnowledgeFolderResponse],
+)
+@trace_sync("get_folder_tree_open", "knowledge.api")
+def get_folder_tree_open(
+    knowledge_base_id: int = Query(
+        ...,
+        ge=1,
+        description="Knowledge base ID to read folder tree from",
+    ),
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> list[KnowledgeFolderResponse]:
+    """Get the full folder tree for a knowledge base."""
+    current_user = auth_context.user
+    try:
+        return KnowledgeFolderService.get_folder_tree(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
         )
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
+
+
+@router.post(
+    "/folders",
+    response_model=KnowledgeFolderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_sync("create_folder_open", "knowledge.api")
+def create_folder_open(
+    data: KnowledgeFolderCreateOpen,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> KnowledgeFolderResponse:
+    """Create a new folder in a knowledge base."""
+    current_user = auth_context.user
+    try:
+        return KnowledgeFolderService.create_folder(
+            db=db,
+            knowledge_base_id=data.knowledge_base_id,
+            user_id=current_user.id,
+            data=KnowledgeFolderCreate(name=data.name, parent_id=data.parent_id),
+        )
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
+
+
+@router.put(
+    "/folders/{folder_id}",
+    response_model=KnowledgeFolderResponse,
+)
+@trace_sync("update_folder_open", "knowledge.api")
+def update_folder_open(
+    folder_id: int,
+    data: KnowledgeFolderUpdateOpen,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> KnowledgeFolderResponse:
+    """Update a folder name and/or parent in a knowledge base."""
+    current_user = auth_context.user
+    try:
+        return KnowledgeFolderService.update_folder(
+            db=db,
+            folder_id=folder_id,
+            user_id=current_user.id,
+            data=KnowledgeFolderUpdate(name=data.name, parent_id=data.parent_id),
+            knowledge_base_id=data.knowledge_base_id,
+        )
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
+
+
+@router.delete("/folders/{folder_id}")
+@trace_sync("delete_folder_open", "knowledge.api")
+def delete_folder_open(
+    folder_id: int,
+    knowledge_base_id: int = Query(
+        ...,
+        ge=1,
+        description="Knowledge base ID used for folder ownership validation",
+    ),
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Delete a folder subtree and move its documents to root."""
+    current_user = auth_context.user
+    try:
+        return KnowledgeFolderService.delete_folder(
+            db=db,
+            folder_id=folder_id,
+            user_id=current_user.id,
+            knowledge_base_id=knowledge_base_id,
+        )
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -187,21 +366,7 @@ def get_document_content_open(
             limit=limit,
         )
     except ValueError as exc:
-        error_msg = str(exc).lower()
-        if "not found" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(exc),
-            )
-        if "access denied" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=str(exc),
-            )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        _raise_open_knowledge_http_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -269,23 +434,10 @@ async def create_document_open(
                 url=data.url,
                 knowledge_base_id=data.knowledge_base_id,
                 name=data.name,
+                folder_id=data.folder_id,
             )
         except ValueError as exc:
-            error_msg = str(exc).lower()
-            if "not found" in error_msg:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=str(exc),
-                )
-            if "access denied" in error_msg:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=str(exc),
-                )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(exc),
-            )
+            _raise_open_knowledge_http_error(exc)
 
         if not result.get("success"):
             error_code = result.get("error_code", "SCRAPE_FAILED")
@@ -337,6 +489,7 @@ async def create_document_open(
         "knowledge_base_id": data.knowledge_base_id,
         "name": data.name,
         "source_type": source_type,
+        "folder_id": data.folder_id,
         "trigger_indexing": True,
         "trigger_summary": True,
         "splitter_config": splitter_config_dict,
@@ -361,21 +514,7 @@ async def create_document_open(
             **create_doc_params
         )
     except ValueError as exc:
-        error_msg = str(exc).lower()
-        if "not found" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(exc),
-            )
-        if "access denied" in error_msg:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=str(exc),
-            )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        _raise_open_knowledge_http_error(exc)
 
     add_span_event(
         "knowledge.document.created",
@@ -425,12 +564,29 @@ async def search_documents_open(
 
     current_user = auth_context.user
     try:
+        scope_specified = data.folder_ids is not None or data.document_ids is not None
+        resolved_document_ids = None
+        if scope_specified:
+            resolved_document_ids = (
+                KnowledgeFolderService.resolve_document_ids_for_scope(
+                    db=db,
+                    knowledge_base_id=data.knowledge_base_id,
+                    user_id=current_user.id,
+                    folder_ids=data.folder_ids,
+                    document_ids=data.document_ids,
+                    include_subfolders=data.include_subfolders,
+                )
+            )
+            if not resolved_document_ids:
+                return {"records": []}
+
         result = await knowledge_orchestrator.retrieve_knowledge(
             db=db,
             user=current_user,
             knowledge_base_id=data.knowledge_base_id,
             query=data.query,
             max_results=data.top_k,
+            document_ids=resolved_document_ids if scope_specified else None,
             route_mode=data.route_mode,
             context_window=data.context_window,
             used_context_tokens=data.used_context_tokens,
@@ -445,17 +601,121 @@ async def search_documents_open(
             detail=str(exc),
         )
     except ValueError as exc:
-        error_msg = str(exc).lower()
-        if "not found" in error_msg:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-        if "access denied" in error_msg:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        _raise_open_knowledge_http_error(exc)
 
 
 # ---------------------------------------------------------------------------
 # PUT /knowledge/documents/{document_id}  — update document metadata
 # ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/documents/batch/delete",
+    response_model=BatchOperationResult,
+)
+@trace_sync("batch_delete_documents_open", "knowledge.api")
+def batch_delete_documents_open(
+    data: BatchDocumentIds,
+    background_tasks: BackgroundTasks,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> BatchOperationResult:
+    """Batch delete multiple documents from accessible knowledge bases."""
+    current_user = auth_context.user
+    batch_result = KnowledgeService.batch_delete_documents(
+        db=db,
+        document_ids=data.document_ids,
+        user_id=current_user.id,
+    )
+    result = batch_result.result
+    kb_ids = batch_result.kb_ids
+
+    add_span_event(
+        "knowledge.documents.batch_deleted.open",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "kb_ids": str(list(kb_ids)) if kb_ids else "[]",
+            "user_id": str(current_user.id),
+        },
+    )
+
+    if result.success_count == 0 and result.failed_count > 0:
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        if (
+            "permission" in error_msg
+            or "access denied" in error_msg
+            or "owner or maintainer" in error_msg
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message,
+        )
+
+    schedule_kb_summary_updates_after_deletion(
+        background_tasks,
+        kb_ids=kb_ids,
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+    )
+    return result
+
+
+@router.post(
+    "/documents/batch/move",
+    response_model=BatchOperationResult,
+)
+@trace_sync("batch_move_documents_open", "knowledge.api")
+def batch_move_documents_open(
+    data: BatchDocumentMoveRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> BatchOperationResult:
+    """Batch move multiple documents to a folder. Use folder_id=0 for root."""
+    current_user = auth_context.user
+    result = KnowledgeFolderService.batch_move_documents(
+        db=db,
+        document_ids=data.document_ids,
+        folder_id=data.folder_id,
+        user_id=current_user.id,
+    )
+
+    add_span_event(
+        "knowledge.documents.batch_moved.open",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    if result.success_count == 0 and result.failed_count > 0:
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        if "permission" in error_msg or "access denied" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message,
+        )
+
+    return result
 
 
 @router.put("/documents/{document_id}", response_model=KnowledgeDocumentResponse)
@@ -485,13 +745,7 @@ def update_document_open(
             data=data,
         )
     except ValueError as exc:
-        error_msg = str(exc).lower()
-        if "not found" in error_msg:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-        if "access denied" in error_msg or "permission denied" in error_msg:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-        # Validation errors (e.g. invalid field value) should surface as 400
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        _raise_open_knowledge_http_error(exc)
 
     if document is None:
         raise HTTPException(
@@ -499,6 +753,122 @@ def update_document_open(
             detail="Document not found",
         )
     return KnowledgeDocumentResponse.model_validate(document)
+
+
+# ---------------------------------------------------------------------------
+# DELETE /knowledge/documents/{document_id}  — delete document
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@trace_sync("delete_document_open", "knowledge.api")
+def delete_document_open(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete a document, its RAG index, and associated attachment."""
+    current_user = auth_context.user
+    try:
+        result = KnowledgeService.delete_document(
+            db=db,
+            document_id=document_id,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    if not result.success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or access denied",
+        )
+
+    add_span_event(
+        "knowledge.document.deleted.open",
+        {
+            "document_id": str(document_id),
+            "kb_id": str(result.kb_id) if result.kb_id else "unknown",
+            "user_id": str(current_user.id),
+        },
+    )
+    schedule_kb_summary_updates_after_deletion(
+        background_tasks,
+        kb_ids=[result.kb_id] if result.kb_id is not None else [],
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+    )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# POST /knowledge/documents/{document_id}/reindex  — re-index document
+# ---------------------------------------------------------------------------
+
+
+@router.post("/documents/{document_id}/reindex")
+@trace_async("reindex_document_open", "knowledge.api")
+async def reindex_document_open(
+    document_id: int,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Trigger re-indexing for a document via the configured RAG runtime."""
+    current_user = auth_context.user
+    try:
+        result = knowledge_orchestrator.reindex_document(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+            trigger_summary=False,
+        )
+        add_span_event(
+            "knowledge.document.reindex.scheduled.open",
+            {
+                "document_id": str(document_id),
+                "user_id": str(current_user.id),
+            },
+        )
+        return result
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# PUT /knowledge/documents/{document_id}/move  — move document to folder
+# ---------------------------------------------------------------------------
+
+
+@router.put(
+    "/documents/{document_id}/move",
+    response_model=KnowledgeDocumentResponse,
+)
+@trace_sync("move_document_open", "knowledge.api")
+def move_document_open(
+    document_id: int,
+    data: DocumentMoveRequest,
+    auth_context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Move a document to a different folder in its knowledge base."""
+    current_user = auth_context.user
+    try:
+        document = KnowledgeFolderService.move_document(
+            db=db,
+            document_id=document_id,
+            folder_id=data.folder_id,
+            user_id=current_user.id,
+        )
+        return KnowledgeDocumentResponse.model_validate(document)
+    except ValueError as exc:
+        _raise_open_knowledge_http_error(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -540,12 +910,7 @@ def update_document_content_open(
             trigger_reindex=True,
         )
     except ValueError as exc:
-        error_msg = str(exc).lower()
-        if "not found" in error_msg:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-        if "access denied" in error_msg or "permission denied" in error_msg:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        _raise_open_knowledge_http_error(exc)
 
     add_span_event(
         "knowledge.document.content_updated.open",

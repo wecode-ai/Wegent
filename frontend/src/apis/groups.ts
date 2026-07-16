@@ -18,8 +18,16 @@ import type {
   GroupMemberCreate,
   GroupMemberUpdate,
   GroupMemberListResponse,
+  GroupEntityMember,
   AddMemberResult,
 } from '@/types/group'
+
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => [k, String(v)] as [string, string])
+  return `?${new URLSearchParams(entries).toString()}`
+}
 
 /**
  * List user's groups (created + joined)
@@ -28,10 +36,20 @@ export const listGroups = async (params?: {
   page?: number
   limit?: number
 }): Promise<GroupListResponse> => {
-  const queryString = params
-    ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
-    : ''
+  const queryString = params ? buildQueryString(params) : ''
   return await apiClient.get<GroupListResponse>(`/groups${queryString}`)
+}
+
+/**
+ * Search groups by name or display_name (level=group only)
+ */
+export const searchGroups = async (params: {
+  q: string
+  page?: number
+  limit?: number
+}): Promise<GroupListResponse> => {
+  const queryString = buildQueryString(params)
+  return await apiClient.get<GroupListResponse>(`/groups/search${queryString}`)
 }
 
 /**
@@ -152,4 +170,41 @@ export const transferOwnership = async (
   await apiClient.post(`/groups/${encodeURIComponent(groupName)}/transfer-ownership`, {
     new_owner_user_id: newOwnerUserId,
   })
+}
+
+/**
+ * List entity-type members in a group
+ */
+export const listGroupEntityMembers = async (groupName: string): Promise<GroupEntityMember[]> => {
+  return await apiClient.get<GroupEntityMember[]>(
+    `/groups/${encodeURIComponent(groupName)}/entity-members`
+  )
+}
+
+/**
+ * Remove an entity-type member from a group
+ */
+export const removeGroupEntityMember = async (
+  groupName: string,
+  entityType: string,
+  entityId: string
+): Promise<void> => {
+  await apiClient.delete(
+    `/groups/${encodeURIComponent(groupName)}/entity-members/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`
+  )
+}
+
+/**
+ * Update the role of an entity-type member
+ */
+export const updateGroupEntityMemberRole = async (
+  groupName: string,
+  entityType: string,
+  entityId: string,
+  role: string
+): Promise<GroupEntityMember> => {
+  return await apiClient.put<GroupEntityMember>(
+    `/groups/${encodeURIComponent(groupName)}/entity-members/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+    { role }
+  )
 }

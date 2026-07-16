@@ -4,6 +4,7 @@
 
 """Configuration settings for Chat Shell Service."""
 
+from pathlib import Path
 from typing import Tuple, Type
 
 from pydantic import Field
@@ -62,6 +63,11 @@ class Settings(BaseSettings):
     # Internal service authentication
     INTERNAL_SERVICE_TOKEN: str = ""
 
+    @property
+    def backend_internal_token(self) -> str:
+        """Return the token used for authenticated Backend internal API calls."""
+        return self.REMOTE_STORAGE_TOKEN or self.INTERNAL_SERVICE_TOKEN
+
     # ========== LLM API Keys ==========
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
@@ -91,15 +97,12 @@ class Settings(BaseSettings):
     MESSAGE_COMPRESSION_LAST_MESSAGES: int = 10
     MESSAGE_COMPRESSION_ATTACHMENT_LENGTH: int = 50000
 
-    # Maximum length (in characters) for a single tool result stored in
-    # messages_chain.  Results exceeding this limit are truncated at
-    # serialization time (beginning + end kept, middle removed).
-    # Set to 0 to disable.
-    MAX_TOOL_RESULT_LENGTH: int = 50000
-
-    # MCP configuration for Chat Shell
-    CHAT_MCP_ENABLED: bool = False
-    CHAT_MCP_SERVERS: str = "{}"
+    # Phase 2 unified context guard
+    DISABLE_TOOL_OUTPUT_GUARD: bool = False
+    DISABLE_SUMMARY_COMPACT: bool = False
+    TOOL_OUTPUT_TOKEN_LIMIT: int = 15000
+    EMERGENCY_TOOL_OUTPUT_RATIO: float = 0.3
+    AUTO_COMPACT_TOKEN_LIMIT: int | None = None
 
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False
@@ -113,6 +116,11 @@ class Settings(BaseSettings):
 
     # Attachment/Context configuration
     MAX_EXTRACTED_TEXT_LENGTH: int = 100000
+    # Shared token budget for the inline attachment preview (all attachments in
+    # a message share one <attachment> block). The full content stays available
+    # via the sandbox file / read_attachment. The budget is split across
+    # per-attachment segments (head/tail each), every header is preserved.
+    ATTACHMENT_PREVIEW_TOKEN_LIMIT: int = 15000
 
     # Backend RAG service configuration (for knowledge base HTTP fallback)
     BACKEND_RAG_URL: str = "http://localhost:8000/api/knowledge/v1/retrieve"
@@ -164,7 +172,7 @@ class Settings(BaseSettings):
         )
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
         env_prefix="CHAT_SHELL_",
         extra="ignore",

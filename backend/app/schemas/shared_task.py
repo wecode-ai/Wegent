@@ -5,7 +5,7 @@
 from datetime import datetime
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class TaskShareInfo(BaseModel):
@@ -47,6 +47,13 @@ class JoinSharedTaskRequest(BaseModel):
     git_repo: Optional[str] = None  # Repository full name (e.g., "owner/repo")
     git_domain: Optional[str] = None  # Git domain (e.g., "github.com")
     branch_name: Optional[str] = None  # Git branch name
+
+    @model_validator(mode="after")
+    def default_model_selection_to_override(self) -> "JoinSharedTaskRequest":
+        """Treat an explicit model_id as an override selection."""
+        if self.model_id:
+            self.force_override_bot_model = True
+        return self
 
 
 class JoinSharedTaskResponse(BaseModel):
@@ -99,6 +106,26 @@ class PublicContextData(BaseModel):
 
     # Knowledge base-specific fields (optional)
     document_count: Optional[int] = None
+
+    # External knowledge-specific fields (optional)
+    external_provider: Optional[str] = None
+    external_mode: Optional[str] = None
+    external_id: Optional[str] = None
+    external_scope: Optional[str] = None
+    external_target_type: Optional[str] = None
+    external_node_id: Optional[str] = None
+    external_document_id: Optional[str] = None
+    external_parent_id: Optional[str] = None
+
+    # Table-specific fields (optional)
+    document_id: Optional[int] = None
+    source_config: Optional[dict[str, Any]] = None
+
+    # External web content-specific fields (optional)
+    video_count: Optional[int] = None
+    site: Optional[str] = None
+    source_url: Optional[str] = None
+    cover_url: Optional[str] = None
 
     class Config:
         from_attributes = True

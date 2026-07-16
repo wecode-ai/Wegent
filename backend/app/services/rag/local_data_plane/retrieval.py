@@ -25,7 +25,9 @@ def _extract_query_local_attributes(
         "rag.kb_count": len(spec.knowledge_base_ids),
         "rag.route_mode": spec.route_mode,
         "rag.max_results": spec.max_results,
-        "rag.document_filter_count": len(spec.document_ids or []),
+        "rag.document_filter_count": len(
+            spec.scope.document_ids if spec.scope and spec.scope.document_ids else []
+        ),
         "rag.restricted_mode": spec.restricted_mode,
         "rag.user_id": spec.user_id or 0,
     }
@@ -45,10 +47,11 @@ async def query_local(
     budget = spec.direct_injection_budget or DEFAULT_DIRECT_INJECTION_BUDGET
     return await service.retrieve_with_routing(
         query=spec.query,
+        search_hints=spec.search_hints,
         knowledge_base_ids=spec.knowledge_base_ids,
         db=db,
         max_results=spec.max_results,
-        document_ids=spec.document_ids,
+        scope=spec.scope,
         metadata_condition=spec.metadata_condition,
         knowledge_base_configs=spec.knowledge_base_configs,
         user_name=spec.user_name,

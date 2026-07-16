@@ -13,6 +13,7 @@ This module defines the data structures for blocks used in:
 Block Types:
 - ToolBlock: Represents a tool call (e.g., Bash, Read, Write)
 - TextBlock: Represents text content between tool calls
+- GuidanceBlock: Represents user guidance applied to a Chat Shell turn
 
 The blocks maintain the order of tool-text-tool-text for proper
 mixed content rendering.
@@ -28,6 +29,7 @@ class BlockType(str, Enum):
 
     TOOL = "tool"
     TEXT = "text"
+    GUIDANCE = "guidance"
 
 
 class BlockStatus(str, Enum):
@@ -55,6 +57,7 @@ class ToolBlock:
         timestamp: Unix timestamp in milliseconds
         display_name: Optional human-readable display name
         tool_output: Optional output from tool execution
+        render_payload: Optional UI-only payload for frontend renderers
     """
 
     id: str
@@ -67,6 +70,7 @@ class ToolBlock:
     timestamp: int = 0
     display_name: Optional[str] = None
     tool_output: Optional[str] = None
+    render_payload: Optional[Dict[str, Any]] = None
     type: Literal["tool"] = "tool"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -88,6 +92,8 @@ class ToolBlock:
             result["display_name"] = self.display_name
         if self.tool_output:
             result["tool_output"] = self.tool_output
+        if self.render_payload:
+            result["render_payload"] = self.render_payload
         return result
 
     @classmethod
@@ -104,6 +110,7 @@ class ToolBlock:
             timestamp=data.get("timestamp", 0),
             display_name=data.get("display_name"),
             tool_output=data.get("tool_output"),
+            render_payload=data.get("render_payload"),
         )
 
 
@@ -146,8 +153,51 @@ class TextBlock:
         )
 
 
+@dataclass
+class GuidanceBlock:
+    """Guidance block representing user guidance applied to a Chat Shell turn."""
+
+    id: str
+    guidance_id: str
+    content: str
+    status: str = BlockStatus.DONE.value
+    timestamp: int = 0
+    loop_index: Optional[int] = None
+    applied_at: Optional[str] = None
+    type: Literal["guidance"] = "guidance"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result = {
+            "id": self.id,
+            "type": self.type,
+            "guidance_id": self.guidance_id,
+            "content": self.content,
+            "status": self.status,
+            "timestamp": self.timestamp,
+        }
+        if self.loop_index is not None:
+            result["loop_index"] = self.loop_index
+        if self.applied_at is not None:
+            result["applied_at"] = self.applied_at
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GuidanceBlock":
+        """Create from dictionary."""
+        return cls(
+            id=data.get("id", ""),
+            guidance_id=data.get("guidance_id", ""),
+            content=data.get("content", ""),
+            status=data.get("status", BlockStatus.DONE.value),
+            timestamp=data.get("timestamp", 0),
+            loop_index=data.get("loop_index"),
+            applied_at=data.get("applied_at"),
+        )
+
+
 # Type alias for any block type
-MessageBlock = Union[ToolBlock, TextBlock]
+MessageBlock = Union[ToolBlock, TextBlock, GuidanceBlock]
 
 
 def block_from_dict(data: Dict[str, Any]) -> MessageBlock:
@@ -164,6 +214,8 @@ def block_from_dict(data: Dict[str, Any]) -> MessageBlock:
         return ToolBlock.from_dict(data)
     elif block_type == BlockType.TEXT.value:
         return TextBlock.from_dict(data)
+    elif block_type == BlockType.GUIDANCE.value:
+        return GuidanceBlock.from_dict(data)
     else:
         # Default to text block for unknown types
         return TextBlock.from_dict(data)
@@ -272,3 +324,27 @@ def create_text_block(
         "status": BlockStatus.STREAMING.value,
         "timestamp": ts,
     }
+
+
+def create_guidance_block(
+    guidance_id: str,
+    content: str,
+    block_id: Optional[str] = None,
+    timestamp: Optional[int] = None,
+    loop_index: Optional[int] = None,
+    applied_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a guidance block dictionary."""
+    import time
+
+    ts = timestamp if timestamp is not None else int(time.time() * 1000)
+    bid = block_id or f"guidance-{guidance_id}"
+    block = GuidanceBlock(
+        id=bid,
+        guidance_id=guidance_id,
+        content=content,
+        timestamp=ts,
+        loop_index=loop_index,
+        applied_at=applied_at,
+    )
+    return block.to_dict()

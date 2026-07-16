@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Build standalone Docker image for Wegent
-# This script builds a single image containing Backend, Frontend, Chat Shell, and Executor
+# This script builds a single image containing Backend, Frontend, Wework, Chat Shell, and Executor
 
 set -e
 
@@ -104,11 +104,20 @@ echo "  Run with:"
 echo ""
 echo "    docker run -d --name wegent-standalone \\"
 echo "      --restart unless-stopped \\"
-echo "      -p 3000:3000 -p 8000:8000 \\"
+echo "      -p 3000:3000 \\"
 echo "      -v wegent-data:/app/data \\"
+echo "      -v wegent-workspace:/workspace \\"
+echo "      -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 \\"
+echo "      -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \\"
+echo "      -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \\"
+echo "      -e WEWORK_PUBLIC_APP_BASE_PATH=/wework \\"
+echo "      -e WEWORK_PUBLIC_API_URL=/wework/api \\"
+echo "      -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \\"
 echo "      ${IMAGE_NAME}:${IMAGE_TAG}"
 echo ""
 echo "  For remote access, add:"
-echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:8000"
+echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://YOUR_SERVER_IP:3000"
+echo "    -e RUNTIME_PUBLIC_API_URL=http://YOUR_SERVER_IP:3000/api"
+echo "    -e RUNTIME_WEWORK_CODE_URL=http://YOUR_SERVER_IP:3000/wework"
 echo ""
 echo "=========================================="

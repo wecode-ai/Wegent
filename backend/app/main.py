@@ -14,12 +14,13 @@ if _get_otel_config_early("wegent-backend").enabled:
         pass
 
 import asyncio
+import json
 import logging
 import signal
 import sys
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import redis
 import socketio
@@ -41,6 +42,9 @@ from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
+from app.services.auth.internal_service_token import (
+    require_internal_service_token_configured,
+)
 from app.services.jobs import start_background_jobs, stop_background_jobs
 from shared.telemetry.context.large_data import log_json_body
 
@@ -48,11 +52,90 @@ from shared.telemetry.context.large_data import log_json_body
 # Only used to prevent concurrent initialization, not to skip initialization
 STARTUP_LOCK_KEY = "wegent:startup_lock"
 STARTUP_LOCK_TIMEOUT = 120  # 120 seconds timeout for migrations + YAML init
-
+FORWARDED_LOG_HEADER_NAMES = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-prefix",
+    "x-real-ip",
+    "forwarded",
+)
+MAX_LOGGED_HEADER_VALUE_LENGTH = 512
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
 _logger = logging.getLogger(__name__)
+
+
+def _truncate_logged_header_value(value: str) -> str:
+    if len(value) <= MAX_LOGGED_HEADER_VALUE_LENGTH:
+        return value
+    return f"{value[:MAX_LOGGED_HEADER_VALUE_LENGTH]}... [truncated]"
+
+
+def _format_forwarded_headers_for_log(headers) -> str:
+    forwarded_headers = []
+    for header_name in FORWARDED_LOG_HEADER_NAMES:
+        header_value = headers.get(header_name)
+        if header_value:
+            forwarded_headers.append(
+                f"{header_name}={_truncate_logged_header_value(header_value)}"
+            )
+
+    if not forwarded_headers:
+        return ""
+
+    return f" headers={{{', '.join(forwarded_headers)}}}"
+
+
+def _get_mcp_lifespan_servers():
+    from app.mcp_server.server import (
+        interactive_form_question_mcp_server,
+        knowledge_mcp_server,
+        prompt_optimization_mcp_server,
+        subscription_mcp_server,
+        system_mcp_server,
+    )
+
+    servers = [
+        ("System", system_mcp_server),
+        ("Knowledge", knowledge_mcp_server),
+        ("interactive_form_question", interactive_form_question_mcp_server),
+        ("Prompt optimization", prompt_optimization_mcp_server),
+        ("Subscription", subscription_mcp_server),
+    ]
+    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
+        from app.mcp_server.server import external_knowledge_mcp_server
+
+        servers.append(("External knowledge", external_knowledge_mcp_server))
+    return tuple(servers)
+
+
+def _load_system_initialization_state(logger: logging.Logger) -> None:
+    from app.services.admin_password_bootstrap import (
+        load_admin_password_setup_state,
+        set_admin_password_setup_required_cache,
+    )
+
+    if not settings.CHECK_SYSTEM_INITIALIZATION_STATUS:
+        set_admin_password_setup_required_cache(False)
+        logger.info(
+            "System initialization state check disabled "
+            "(CHECK_SYSTEM_INITIALIZATION_STATUS=false)"
+        )
+        return
+
+    logger.info("Loading system initialization state...")
+    db = SessionLocal()
+    try:
+        setup_required = load_admin_password_setup_state(db)
+        logger.info(
+            "✓ System initialization state loaded (admin password setup required: %s)",
+            setup_required,
+        )
+    finally:
+        db.close()
 
 
 @asynccontextmanager
@@ -67,18 +150,9 @@ async def lifespan(app: FastAPI):
 
     logger = _logger
 
-    # ==================== MCP SERVER LIFESPAN ====================
-    # MCP servers need their session_manager.run() to be called within the lifespan
-    # This is required for the streamable HTTP transport to work properly
-    from app.mcp_server.server import (
-        interactive_form_question_mcp_server,
-        knowledge_mcp_server,
-        prompt_optimization_mcp_server,
-        subscription_mcp_server,
-        system_mcp_server,
-    )
-
     # ==================== STARTUP ====================
+    require_internal_service_token_configured()
+
     # Try to get Redis client for distributed locking
     redis_client = None
     try:
@@ -208,6 +282,9 @@ async def lifespan(app: FastAPI):
             redis_client.delete(STARTUP_LOCK_KEY)
             logger.info("Released startup initialization lock")
 
+    # Load system initialization state once per process after startup data exists.
+    _load_system_initialization_state(logger)
+
     # Start background jobs
     logger.info("Starting background jobs...")
     start_background_jobs(app)
@@ -313,108 +390,97 @@ async def lifespan(app: FastAPI):
     # ==================== YIELD (app is running) ====================
     # MCP servers need their session_manager.run() to be active during the app lifecycle
     # This is required for the streamable HTTP transport to work properly
-    # We use nested async context managers to ensure proper initialization and cleanup
-    async with system_mcp_server.session_manager.run():
-        logger.info("✓ System MCP server session manager started")
-        async with knowledge_mcp_server.session_manager.run():
-            logger.info("✓ Knowledge MCP server session manager started")
-            async with interactive_form_question_mcp_server.session_manager.run():
-                logger.info(
-                    "✓ interactive_form_question MCP server session manager started"
-                )
-                async with prompt_optimization_mcp_server.session_manager.run():
-                    logger.info(
-                        "✓ Prompt optimization MCP server session manager started"
-                    )
-                    async with subscription_mcp_server.session_manager.run():
-                        logger.info("✓ Subscription MCP server session manager started")
-                        yield
+    async with AsyncExitStack() as stack:
+        for server_name, mcp_server in _get_mcp_lifespan_servers():
+            await stack.enter_async_context(mcp_server.session_manager.run())
+            logger.info("✓ %s MCP server session manager started", server_name)
+        yield
 
-    # ==================== SHUTDOWN ====================
-    logger.info("=" * 60)
-    logger.info("Graceful shutdown initiated...")
-    logger.info("=" * 60)
+        # ==================== SHUTDOWN ====================
+        logger.info("=" * 60)
+        logger.info("Graceful shutdown initiated...")
+        logger.info("=" * 60)
 
-    # Step 1: Initiate graceful shutdown (mark as shutting down)
-    await shutdown_manager.initiate_shutdown()
-    logger.info(
-        "✓ Shutdown state set. Active streams: %d",
-        shutdown_manager.get_active_stream_count(),
-    )
-
-    # Step 2: Wait for active streaming requests to complete
-    shutdown_timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
-    if shutdown_manager.get_active_stream_count() > 0:
+        # Step 1: Initiate graceful shutdown (mark as shutting down)
+        await shutdown_manager.initiate_shutdown()
         logger.info(
-            "Waiting for %d active streams to complete (timeout: %ds)...",
+            "✓ Shutdown state set. Active streams: %d",
             shutdown_manager.get_active_stream_count(),
-            shutdown_timeout,
-        )
-        streams_completed = await shutdown_manager.wait_for_streams(
-            timeout=shutdown_timeout
         )
 
-        if not streams_completed:
-            # Timeout reached, cancel remaining streams
-            remaining = shutdown_manager.get_active_stream_count()
-            logger.warning(
-                "Timeout reached. Cancelling %d remaining streams...", remaining
+        # Step 2: Wait for active streaming requests to complete
+        shutdown_timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
+        if shutdown_manager.get_active_stream_count() > 0:
+            logger.info(
+                "Waiting for %d active streams to complete (timeout: %ds)...",
+                shutdown_manager.get_active_stream_count(),
+                shutdown_timeout,
             )
-            cancelled = await shutdown_manager.cancel_all_streams()
-            logger.info("Cancelled %d streams", cancelled)
+            streams_completed = await shutdown_manager.wait_for_streams(
+                timeout=shutdown_timeout
+            )
 
-            # Give a short grace period for cancellation to propagate
-            await asyncio.sleep(1)
-    else:
-        logger.info("No active streams, proceeding with shutdown")
+            if not streams_completed:
+                # Timeout reached, cancel remaining streams
+                remaining = shutdown_manager.get_active_stream_count()
+                logger.warning(
+                    "Timeout reached. Cancelling %d remaining streams...", remaining
+                )
+                cancelled = await shutdown_manager.cancel_all_streams()
+                logger.info("Cancelled %d streams", cancelled)
 
-    # Step 3: Stop IM Channel Manager
-    from app.services.channels import get_channel_manager
+                # Give a short grace period for cancellation to propagate
+                await asyncio.sleep(1)
+        else:
+            logger.info("No active streams, proceeding with shutdown")
 
-    channel_manager = get_channel_manager()
-    stopped_count = await channel_manager.stop_all()
-    logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
+        # Step 3: Stop IM Channel Manager
+        from app.services.channels import get_channel_manager
 
-    # Step 4: Stop background jobs
-    stop_background_jobs(app)
-    logger.info("✓ Background jobs stopped")
+        channel_manager = get_channel_manager()
+        stopped_count = await channel_manager.stop_all()
+        logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
 
-    # Step 5: Stop scheduler backend
-    from app.core.scheduler import get_active_scheduler, stop_scheduler
+        # Step 4: Stop background jobs
+        stop_background_jobs(app)
+        logger.info("✓ Background jobs stopped")
 
-    scheduler = get_active_scheduler()
-    if scheduler:
-        stop_scheduler()
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
+        # Step 5: Stop scheduler backend
+        from app.core.scheduler import get_active_scheduler, stop_scheduler
 
-    # Step 6: Shutdown PendingRequestRegistry
-    from chat_shell.tools import (
-        shutdown_pending_request_registry,
-    )
+        scheduler = get_active_scheduler()
+        if scheduler:
+            stop_scheduler()
+            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
 
-    await shutdown_pending_request_registry()
-    logger.info("✓ PendingRequestRegistry shutdown completed")
+        # Step 6: Shutdown PendingRequestRegistry
+        from chat_shell.tools import (
+            shutdown_pending_request_registry,
+        )
 
-    # Step 7: Stop device heartbeat monitor
-    from app.services.device_monitor import stop_device_monitor_async
+        await shutdown_pending_request_registry()
+        logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    await stop_device_monitor_async()
-    logger.info("✓ Device heartbeat monitor stopped")
+        # Step 7: Stop device heartbeat monitor
+        from app.services.device_monitor import stop_device_monitor_async
 
-    # Step 7: Shutdown OpenTelemetry
-    from shared.telemetry.config import get_otel_config
-    from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
+        await stop_device_monitor_async()
+        logger.info("✓ Device heartbeat monitor stopped")
 
-    if get_otel_config().enabled and is_telemetry_enabled():
-        shutdown_telemetry()
-        logger.info("✓ OpenTelemetry shutdown completed")
+        # Step 7: Shutdown OpenTelemetry
+        from shared.telemetry.config import get_otel_config
+        from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
-    logger.info("=" * 60)
-    logger.info(
-        "Application shutdown completed. Duration: %.2fs",
-        shutdown_manager.shutdown_duration,
-    )
-    logger.info("=" * 60)
+        if get_otel_config().enabled and is_telemetry_enabled():
+            shutdown_telemetry()
+            logger.info("✓ OpenTelemetry shutdown completed")
+
+        logger.info("=" * 60)
+        logger.info(
+            "Application shutdown completed. Duration: %.2fs",
+            shutdown_manager.shutdown_duration,
+        )
+        logger.info("=" * 60)
 
 
 def create_app():
@@ -495,6 +561,7 @@ def create_app():
         username = get_username_from_request(request)
 
         client_ip = request.client.host if request.client else "Unknown"
+        forwarded_headers_log = _format_forwarded_headers_for_log(request.headers)
 
         # Always set request context for logging (works even without OTEL)
         from shared.telemetry.context import (
@@ -561,9 +628,11 @@ def create_app():
                         log_json_body("http.request.body", request_body)
 
         # Pre-request logging with request ID
-        logger.info(
-            f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}]"
+        request_log_message = (
+            f"request : {request.method} {request.url.path} {request.query_params} "
+            f"{request_id} {client_ip} [{username}]{forwarded_headers_log}"
         )
+        logger.info(request_log_message)
 
         # Process request
         response = await call_next(request)
@@ -634,9 +703,12 @@ def create_app():
                                 logger.debug(f"Failed to capture response body: {e}")
 
         # Post-request logging with request ID
-        logger.info(
-            f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms"
+        response_log_message = (
+            f"response: {request.method} {request.url.path} {request.query_params} "
+            f"{request_id} {client_ip} [{username}]{forwarded_headers_log} "
+            f"{response.status_code} {process_time:.2f}ms"
         )
+        logger.info(response_log_message)
 
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id
@@ -703,6 +775,8 @@ def create_socketio_asgi_app():
     """
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
+    from app.api.ws.terminal_namespace import register_terminal_namespace
+    from app.api.ws.wework_runtime_namespace import register_wework_runtime_namespace
     from app.core.socketio import create_socketio_app, get_sio
 
     sio = get_sio()
@@ -715,6 +789,14 @@ def create_socketio_asgi_app():
     # Register device namespace for local device connections
     register_device_namespace(sio)
     _logger.info("Device namespace registered during ASGI app creation")
+
+    # Register terminal namespace for browser terminal clients
+    register_terminal_namespace(sio)
+    _logger.info("Terminal namespace registered during ASGI app creation")
+
+    # Register Wework runtime relay namespace for app IPC over WebSocket
+    register_wework_runtime_namespace(sio)
+    _logger.info("Wework runtime namespace registered during ASGI app creation")
 
     socketio_app = create_socketio_app(sio)
 

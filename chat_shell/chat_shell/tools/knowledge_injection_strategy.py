@@ -16,6 +16,7 @@ from ..compression.token_counter import TokenCounter
 from .knowledge_content_cleaner import KnowledgeContentCleaner, get_content_cleaner
 
 logger = logging.getLogger(__name__)
+DIRECT_INJECTION_BUDGET_RATIO = 0.3
 
 
 class InjectionMode:
@@ -293,9 +294,9 @@ class InjectionStrategy:
         can_fit_all = estimated_tokens <= available_space
         # Additional checks for direct injection
         chunks_not_too_many = len(chunks) <= self.max_direct_chunks
-        reasonable_token_count = (
-            estimated_tokens <= self.context_window * 0.3
-        )  # Max 30% of context
+        reasonable_token_count = estimated_tokens <= int(
+            available_space * DIRECT_INJECTION_BUDGET_RATIO
+        )
 
         decision_details = {
             "available_space": available_space,
@@ -373,7 +374,7 @@ class InjectionStrategy:
         can_inject_all = (
             estimated_tokens <= available_space
             and len(all_chunks) <= self.max_direct_chunks
-            and estimated_tokens <= self.context_window * 0.3
+            and estimated_tokens <= int(available_space * DIRECT_INJECTION_BUDGET_RATIO)
         )
 
         logger.info(

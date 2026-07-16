@@ -32,7 +32,7 @@ IM Channel Integration connects Wegent agents to instant messaging platforms, al
 | Benefit | Description |
 |---------|-------------|
 | **Familiar Environment** | Use AI agents in the chat tools you already use daily |
-| **Real-time Responses** | Get streaming AI responses with AI Card technology |
+| **Real-time Responses** | Get streaming AI responses through platform cards or message updates |
 | **Multi-turn Conversations** | Maintain context across multiple messages |
 | **Team Collaboration** | Share AI capabilities with your entire organization |
 
@@ -41,6 +41,9 @@ IM Channel Integration connects Wegent agents to instant messaging platforms, al
 | Platform | Status | Features |
 |----------|--------|----------|
 | **DingTalk** | ✅ Available | Stream mode, AI Card streaming, multi-turn conversations |
+| **Telegram** | ✅ Available | Private chat, command flow, Chat/Task modes, streaming message updates |
+| **Discord** | ✅ Available | Private chat, command flow, Chat/Task modes |
+| **Weibo DM** | ✅ Available | Private chat, WebSocket connection, streaming message accumulation, Wework local task continuation |
 | **Feishu/Lark** | 🔜 Planned | Coming soon |
 | **WeChat Work** | 🔜 Planned | Coming soon |
 
@@ -95,7 +98,8 @@ graph TB
 
     subgraph "External"
         DT[DingTalk API]
-        FS[Feishu API]
+        TG[Telegram Bot API]
+        DC[Discord API]
     end
 
     CM --> CP
@@ -107,7 +111,8 @@ graph TB
     TS --> AS
 
     CP <--> DT
-    CP <--> FS
+    CP <--> TG
+    CP <--> DC
 
     style CM fill:#14B8A6,color:#fff
     style CP fill:#14B8A6,color:#fff
@@ -116,7 +121,7 @@ graph TB
 | Component | Purpose |
 |-----------|---------|
 | **Channel Manager** | Manages lifecycle of all IM channel connections |
-| **Channel Provider** | Platform-specific connection handler (DingTalk, Feishu, etc.) |
+| **Channel Provider** | Platform-specific connection handler (DingTalk, Telegram, Discord, etc.) |
 | **Message Handler** | Processes incoming messages and routes to agents |
 | **Response Emitter** | Sends AI responses back to IM platform (sync or streaming) |
 
@@ -154,13 +159,33 @@ User: /new
 Bot: Started a new conversation. How can I help you?
 ```
 
-### AI Card Streaming
+### Streaming Responses
 
-When AI Card streaming is enabled, you'll see responses appear in real-time:
+When platform streaming is enabled, you'll see responses appear in real time:
 
 1. Bot shows "Thinking..." indicator
 2. Response text streams in progressively
 3. Final response is displayed with formatting
+
+DingTalk uses AI Card updates for streaming content. Telegram uses message updates to show streaming content and reasoning summaries.
+
+Weibo DM uses one stable message for streaming accumulation: the backend creates a stable Weibo `messageId`, then later content chunks and completion events update the same DM message. Runtime status events, such as "analyzing the issue", provide progress context, so the Weibo channel does not add an extra "thinking" placeholder.
+
+### Private Chat Task Mode
+
+In IM channels that support private chats, use commands to choose chat or task mode:
+
+| Command | Description |
+|---------|-------------|
+| `/new` | Create a Chat, create a Task, or continue a recent Task |
+| `/chat` | Switch to Chat mode |
+| `/task` | Switch to Task mode and select a recent task |
+| `/switch` | Select a different current task |
+| `/bind` | Bind the current private chat to a task |
+| `/status` | View current private chat status |
+| `/cancel` | Cancel the current selection flow |
+
+Weibo DM Task mode only supports local runtime tasks bound from Wework. First click **Continue in private chat** from the Wework local task, choose the Weibo private chat, and then continue sending messages in Weibo. If you use `/task` or `/switch` directly in Weibo without a bound local task, Wegent prompts you to return to Wework and choose a target private chat.
 
 ---
 
@@ -192,6 +217,18 @@ When editing a channel:
 - **Sensitive fields** (Client Secret) are masked with `***`
 - Leave sensitive fields **empty** to keep existing values
 - Enter new values to update credentials
+
+### Weibo DM Configuration
+
+When creating a Weibo DM channel:
+
+1. In **Admin Panel** → **IM Channels**, choose **Weibo**.
+2. DM Weibo Longxia Assistant to get the App ID and App Secret.
+3. Enter the App ID and App Secret in Wegent.
+4. Usually leave the WebSocket endpoint and token endpoint empty so Wegent uses the default Weibo Open IM endpoints; override them only for a proxy or test environment.
+5. Select the default Agent and enable the channel.
+
+When editing, leave App Secret empty to keep the existing value.
 
 ### Monitoring Metrics
 
@@ -265,12 +302,12 @@ The following platforms have detailed integration configuration guides:
 #### Messages not being received
 
 **Possible causes:**
-1. Stream mode not enabled in IM platform
+1. Required message receiving or streaming capability is not enabled in the IM platform
 2. Robot permissions not configured
 3. Channel not enabled in Wegent
 
 **Solutions:**
-1. Verify Stream Mode is enabled in IM app settings
+1. Verify message receiving or streaming is enabled in IM app settings
 2. Check all required permissions are granted
 3. Ensure channel is enabled (toggle is on)
 
@@ -291,12 +328,12 @@ The following platforms have detailed integration configuration guides:
 #### Slow or incomplete responses
 
 **Possible causes:**
-1. AI Card streaming issues
+1. Platform streaming or message update issues
 2. Network latency
 3. Large response content
 
 **Solutions:**
-1. Try disabling AI Card streaming temporarily
+1. Try disabling platform streaming temporarily
 2. Check network connectivity
 3. The system will fall back to sync mode if streaming fails
 

@@ -22,6 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+  type SpecialModelOption,
+} from '@/components/model-select/ModelCascadeSelect'
 import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
@@ -47,13 +52,14 @@ import {
   AllowedModelRef,
 } from '@/features/settings/services/bots'
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models'
-import { shellApis, UnifiedShell } from '@/apis/shells'
+import { filterSelectableShells, shellApis, UnifiedShell } from '@/apis/shells'
 import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
+import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -193,6 +199,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
 
+  const resetAgentDependentConfig = useCallback(() => {
+    setIsCustomModel(false)
+    setSelectedModel('')
+    setSelectedModelType(undefined)
+    setSelectedModelNamespace(undefined)
+    setAgentConfig('')
+    setAgentConfigError(false)
+    setModels([])
+    setSelectedProtocol('')
+  }, [])
+
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
 
@@ -201,6 +218,67 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const mcpAgentType = useMemo(
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
+  )
+  const selectedModelObject = useMemo(
+    () =>
+      models.find(
+        model =>
+          model.name === selectedModel &&
+          model.type === selectedModelType &&
+          (model.namespace || 'default') === (selectedModelNamespace || 'default')
+      ) ?? null,
+    [models, selectedModel, selectedModelNamespace, selectedModelType]
+  )
+  const selectableAllowedModels = useMemo(
+    () => models.filter(model => !allowedModels.some(allowed => allowed.name === model.name)),
+    [allowedModels, models]
+  )
+  const modelCascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:bot.no_available_models'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+  const noModelOption: SpecialModelOption[] = useMemo(
+    () => [
+      {
+        key: '__none__',
+        label: t('common:bot.no_model_binding'),
+      },
+    ],
+    [t]
+  )
+
+  const updateAgentName = useCallback(
+    (value: string) => {
+      if (value !== agentName) {
+        resetAgentDependentConfig()
+
+        // Adapt MCP config when switching agent type.
+        if (mcpConfig.trim()) {
+          try {
+            const currentMcpConfig = JSON.parse(mcpConfig)
+            if (isValidAgentType(value)) {
+              const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value)
+              setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
+            } else {
+              console.warn(`Unknown agent type "${value}", skipping MCP config adaptation`)
+            }
+          } catch (error) {
+            console.warn('Failed to adapt MCP config on agent change:', error)
+          }
+        }
+      }
+      setAgentName(value)
+    },
+    [agentName, mcpConfig, resetAgentDependentConfig]
   )
 
   // Documentation handlers
@@ -238,7 +316,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         }
 
         // Filter shells based on allowedAgents prop (using shellType as agent type)
-        let filteredShells = shellData
+        let filteredShells = filterSelectableShells(shellData)
         if (allowedAgents && allowedAgents.length > 0) {
           filteredShells = filteredShells.filter(shell =>
             allowedAgents.includes(shell.shellType as AgentType)
@@ -259,6 +337,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     fetchShells()
   }, [toast, t, allowedAgents, scope, groupName])
 
+  useEffect(() => {
+    if (!allowedAgents || allowedAgents.length === 0 || shells.length === 0) return
+
+    const selectedShell = shells.find(shell => shell.name === agentName)
+    if (selectedShell) return
+
+    updateAgentName(shells[0].name)
+  }, [allowedAgents, agentName, shells, updateAgentName])
+
   // Check if current agent supports skills (ClaudeCode and Chat shell types)
   const supportsSkills = useMemo(() => {
     // Get shell type from the selected shell
@@ -268,12 +355,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'ClaudeCode' || shellType === 'Chat'
   }, [agentName, shells])
 
-  // Check if current agent supports preload skills (Chat only)
+  // Check if current agent supports preload skills
   const supportsPreloadSkills = useMemo(() => {
     const selectedShell = shells.find(s => s.name === agentName)
-    const shellType = selectedShell?.shellType || agentName
-    // Preload skills are only supported for Chat shell type
-    return shellType === 'Chat'
+    return shellSupportsPreloadSkills(selectedShell || { name: agentName })
   }, [agentName, shells])
 
   // Filter skills based on current shell type
@@ -516,6 +601,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       return { isValid: false, error: t('common:bot.errors.required') }
     }
 
+    if (allowedAgents && allowedAgents.length > 0) {
+      const selectedShell = shells.find(shell => shell.name === agentName)
+      const shellType = selectedShell?.shellType || agentName
+      if (!allowedAgents.includes(shellType as AgentType)) {
+        return { isValid: false, error: t('common:bot.errors.required') }
+      }
+    }
+
     // For Dify agent, validate config
     if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim()
@@ -585,6 +678,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     restrictModels,
     allowedModels,
     selectedModel,
+    allowedAgents,
+    shells,
   ])
 
   // Get bot form data for external use
@@ -695,6 +790,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           skills: botData.skills,
+          skill_refs: botData.skill_refs,
+          preload_skills: botData.preload_skills,
+          preload_skill_refs: botData.preload_skill_refs,
           namespace: 'default',
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
         }
@@ -848,6 +946,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: isDifyAgent ? '' : prompt.trim() || '',
           mcp_servers: parsedMcpConfig ?? {},
           skills: selectedSkills.length > 0 ? selectedSkills : [],
+          skill_refs: buildSkillRefsFromSelection(
+            selectedSkills,
+            selectedSkillRefs,
+            allSkills,
+            scope,
+            groupName
+          ),
+          preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
+          preload_skill_refs: buildSkillRefsFromSelection(
+            preloadSkills,
+            selectedSkillRefs,
+            allSkills,
+            scope,
+            groupName
+          ),
           namespace: 'default',
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
         }
@@ -1014,34 +1127,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 value={agentName}
                 onValueChange={value => {
                   if (readOnly) return
-                  if (value !== agentName) {
-                    setIsCustomModel(false)
-                    setSelectedModel('')
-                    setAgentConfig('')
-                    setAgentConfigError(false)
-                    setModels([])
-                    // Clear protocol when switching agent type since protocols are filtered by agent
-                    setSelectedProtocol('')
-
-                    // Adapt MCP config when switching agent type
-                    if (mcpConfig.trim()) {
-                      try {
-                        const currentMcpConfig = JSON.parse(mcpConfig)
-                        if (isValidAgentType(value)) {
-                          const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value)
-                          setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
-                        } else {
-                          console.warn(
-                            `Unknown agent type "${value}", skipping MCP config adaptation`
-                          )
-                        }
-                      } catch (error) {
-                        // If parsing fails, keep the original config
-                        console.warn('Failed to adapt MCP config on agent change:', error)
-                      }
-                    }
-                  }
-                  setAgentName(value)
+                  updateAgentName(value)
                 }}
                 disabled={loadingShells || readOnly}
               >
@@ -1109,62 +1195,40 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 {/* Model selector + Restrict Models switch on same row */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
-                    <Select
-                      value={
-                        selectedModel
-                          ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
-                          : '__none__'
-                      }
-                      onValueChange={value => {
-                        if (value === '__none__') {
-                          setSelectedModel('')
-                          setSelectedModelType(undefined)
-                          setSelectedModelNamespace(undefined)
-                          return
-                        }
-                        const [modelName, modelType, modelNamespace] = value.split(':')
-                        setSelectedModel(modelName)
-                        setSelectedModelType((modelType as ModelTypeEnum) || undefined)
-                        setSelectedModelNamespace(modelNamespace || 'default')
+                    <GroupedModelSelect
+                      models={models}
+                      selectedModel={selectedModelObject}
+                      selectedSpecialKey={selectedModelObject ? null : '__none__'}
+                      specialOptions={noModelOption}
+                      labels={modelCascadeLabels}
+                      onSelectModel={model => {
+                        setSelectedModel(model.name)
+                        setSelectedModelType(model.type)
+                        setSelectedModelNamespace(model.namespace || 'default')
                       }}
+                      onSelectSpecialOption={() => {
+                        setSelectedModel('')
+                        setSelectedModelType(undefined)
+                        setSelectedModelNamespace(undefined)
+                      }}
+                      placeholder={
+                        !agentName
+                          ? t('common:bot.select_executor_first')
+                          : t('common:bot.model_select')
+                      }
                       disabled={loadingModels || !agentName || readOnly}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue
-                          placeholder={
-                            !agentName
-                              ? t('common:bot.select_executor_first')
-                              : t('common:bot.model_select')
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">
-                          <span className="text-text-muted">
-                            {t('common:bot.no_model_binding')}
+                      dataTestId="bot-default-model-select"
+                      getModelKey={model =>
+                        `${model.name}:${model.type}:${model.namespace || 'default'}`
+                      }
+                      renderModelBadges={model =>
+                        model.type === 'public' ? (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                            {t('common:bot.public_model', '公共')}
                           </span>
-                        </SelectItem>
-                        {models.length === 0 ? (
-                          <div className="py-2 px-3 text-sm text-text-muted text-center">
-                            {t('common:bot.no_available_models')}
-                          </div>
-                        ) : (
-                          models.map(model => (
-                            <SelectItem
-                              key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                              value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                            >
-                              {model.displayName || model.name}
-                              {model.type === 'public' && (
-                                <span className="ml-1 text-xs text-text-muted">
-                                  [{t('common:bot.public_model', '公共')}]
-                                </span>
-                              )}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                        ) : null
+                      }
+                    />
                   </div>
                   {/* Restrict Models Switch */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1201,49 +1265,34 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <p className="text-xs text-text-muted mb-2">
                       {t('settings:bot.allowed_models.description')}
                     </p>
-                    <Select
-                      value=""
-                      onValueChange={value => {
-                        if (!value || value === '__none__') return
-                        const [modelName, modelType, modelNamespace] = value.split(':')
-                        const alreadyAdded = allowedModels.some(m => m.name === modelName)
-                        if (!alreadyAdded) {
-                          setAllowedModels([
-                            ...allowedModels,
-                            {
-                              name: modelName,
-                              type: (modelType as AllowedModelRef['type']) || 'public',
-                              namespace: modelNamespace || 'default',
-                            },
-                          ])
-                        }
+                    <GroupedModelSelect
+                      models={selectableAllowedModels}
+                      selectedModel={null}
+                      labels={modelCascadeLabels}
+                      onSelectModel={model => {
+                        setAllowedModels([
+                          ...allowedModels,
+                          {
+                            name: model.name,
+                            type: (model.type as AllowedModelRef['type']) || 'public',
+                            namespace: model.namespace || 'default',
+                          },
+                        ])
                       }}
                       disabled={readOnly || loadingModels || !agentName}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('settings:bot.allowed_models.placeholder')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {models.map(model => {
-                          const isAdded = allowedModels.some(m => m.name === model.name)
-                          return (
-                            <SelectItem
-                              key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                              value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                              disabled={isAdded}
-                            >
-                              {model.displayName || model.name}
-                              {model.type === 'public' && (
-                                <span className="ml-1 text-xs text-text-muted">
-                                  [{t('common:bot.public_model', '公共')}]
-                                </span>
-                              )}
-                              {isAdded && <span className="ml-1 text-xs text-text-muted">✓</span>}
-                            </SelectItem>
-                          )
-                        })}
-                      </SelectContent>
-                    </Select>
+                      placeholder={t('settings:bot.allowed_models.placeholder')}
+                      dataTestId="bot-allowed-model-select"
+                      getModelKey={model =>
+                        `${model.name}:${model.type}:${model.namespace || 'default'}`
+                      }
+                      renderModelBadges={model =>
+                        model.type === 'public' ? (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                            {t('common:bot.public_model', '公共')}
+                          </span>
+                        ) : null
+                      }
+                    />
                     {allowedModels.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {allowedModels.map(m => {

@@ -29,6 +29,7 @@ from app.services.rag.runtime_specs import (
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
+from shared.models import RetrievalScope, SearchHints
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
 
@@ -94,6 +95,7 @@ class RagRuntimeResolver:
         query: str,
         max_results: int,
         route_mode: Literal["auto", "direct_injection", "rag_retrieval"],
+        scope: RetrievalScope | None = None,
         document_ids: list[int] | None = None,
         metadata_condition: dict | None = None,
         restricted_mode: bool = False,
@@ -106,6 +108,7 @@ class RagRuntimeResolver:
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
+        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
         if context_window is not None:
@@ -117,9 +120,15 @@ class RagRuntimeResolver:
                 max_direct_chunks=max_direct_chunks,
             )
 
-        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = []
-        if db is not None and route_mode == "rag_retrieval":
-            knowledge_base_configs = self.build_query_knowledge_base_configs(
+        resolved_knowledge_base_configs = (
+            [] if knowledge_base_configs is None else knowledge_base_configs
+        )
+        if (
+            db is not None
+            and route_mode == "rag_retrieval"
+            and knowledge_base_configs is None
+        ):
+            resolved_knowledge_base_configs = self.build_query_knowledge_base_configs(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 current_user_id=user_id,
@@ -131,12 +140,13 @@ class RagRuntimeResolver:
             query=query,
             max_results=max_results,
             route_mode=route_mode,
-            document_ids=document_ids,
+            scope=scope
+            or (RetrievalScope(document_ids=document_ids) if document_ids else None),
             metadata_condition=metadata_condition,
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=knowledge_base_configs,
+            knowledge_base_configs=resolved_knowledge_base_configs,
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
             direct_injection_budget=direct_injection_budget,
@@ -160,6 +170,7 @@ class RagRuntimeResolver:
         vector_weight: float | None = None,
         keyword_weight: float | None = None,
         metadata_condition: dict | None = None,
+        search_hints: SearchHints | None = None,
     ) -> QueryRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -182,11 +193,24 @@ class RagRuntimeResolver:
         return QueryRuntimeSpec(
             knowledge_base_ids=[knowledge_base_id],
             query=query,
+            search_hints=search_hints,
             max_results=max_results,
             route_mode="rag_retrieval",
             metadata_condition=metadata_condition,
             user_id=user_id,
             user_name=user_name,
+            knowledge_base_retrieval_overrides=[
+                {
+                    "knowledge_base_id": knowledge_base_id,
+                    "retrieval_config": RuntimeRetrievalConfig(
+                        top_k=max_results,
+                        score_threshold=score_threshold,
+                        retrieval_mode=retrieval_mode,
+                        vector_weight=vector_weight,
+                        keyword_weight=keyword_weight,
+                    ),
+                }
+            ],
             knowledge_base_configs=[
                 QueryKnowledgeBaseRuntimeConfig(
                     knowledge_base_id=knowledge_base_id,
@@ -404,13 +428,33 @@ class RagRuntimeResolver:
         current_user_id: int | None = None,
         user_name: str | None,
     ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        configs: list[QueryKnowledgeBaseRuntimeConfig] = []
+        knowledge_base_records = []
         for knowledge_base_id in knowledge_base_ids:
             kb = self._get_knowledge_base_record(
                 db=db, knowledge_base_id=knowledge_base_id
             )
             if kb is None:
                 raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+            knowledge_base_records.append(kb)
+
+        return self.build_query_knowledge_base_configs_from_records(
+            db=db,
+            knowledge_base_records=knowledge_base_records,
+            current_user_id=current_user_id,
+            user_name=user_name,
+        )
+
+    def build_query_knowledge_base_configs_from_records(
+        self,
+        *,
+        db: Session,
+        knowledge_base_records: list[Kind],
+        current_user_id: int | None = None,
+        user_name: str | None = None,
+    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
+        configs: list[QueryKnowledgeBaseRuntimeConfig] = []
+        for kb in knowledge_base_records:
+            knowledge_base_id = kb.id
 
             retrieval_config = (kb.json or {}).get("spec", {}).get(
                 "retrievalConfig"
@@ -463,7 +507,7 @@ class RagRuntimeResolver:
                     ),
                     retrieval_config=RuntimeRetrievalConfig(
                         top_k=retrieval_config.get("top_k", 20),
-                        score_threshold=retrieval_config.get("score_threshold", 0.7),
+                        score_threshold=retrieval_config.get("score_threshold", 0.5),
                         retrieval_mode=retrieval_mode,
                         vector_weight=(
                             hybrid_weights.get("vector_weight")

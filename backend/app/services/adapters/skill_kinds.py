@@ -18,9 +18,12 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.kind import ObjectMeta, Skill, SkillList, SkillSpec, SkillStatus
+from app.services.skill_binding_service import skill_binding_service
 from app.services.skill_service import SkillValidator
 
 logger = logging.getLogger(__name__)
+
+SKILL_BINARY_TYPE = ""
 
 
 class SkillKindsService:
@@ -216,6 +219,7 @@ class SkillKindsService:
         file_name: str,
         user_id: int,
         source: Optional[Dict[str, Any]] = None,
+        add_to_user_default: bool = True,
     ) -> Skill:
         """
         Create a new Skill with ZIP package.
@@ -231,6 +235,7 @@ class SkillKindsService:
             file_name: Original file name
             user_id: User ID
             source: Optional source information (for git-imported skills)
+            add_to_user_default: Whether to add this Skill to the user's defaults
 
         Returns:
             Created Skill CRD
@@ -333,16 +338,28 @@ class SkillKindsService:
                 skill_binary.binary_data = file_content
                 skill_binary.file_size = metadata["file_size"]
                 skill_binary.file_hash = metadata["file_hash"]
+                skill_binary.file_name = file_name
+                skill_binary.type = SKILL_BINARY_TYPE
             else:
                 skill_binary = SkillBinary(
                     kind_id=existing.id,
                     binary_data=file_content,
                     file_size=metadata["file_size"],
                     file_hash=metadata["file_hash"],
+                    type=SKILL_BINARY_TYPE,
+                    file_name=file_name,
                 )
                 db.add(skill_binary)
 
             result = self._kind_to_skill(existing)
+            if add_to_user_default and user_id != 0:
+                skill_binding_service.add_user_default_skill(
+                    db,
+                    user_id=user_id,
+                    skill_id=existing.id,
+                    created_by=user_id,
+                    commit=False,
+                )
             db.commit()
             return result
 
@@ -364,11 +381,21 @@ class SkillKindsService:
             binary_data=file_content,
             file_size=metadata["file_size"],
             file_hash=metadata["file_hash"],
+            type=SKILL_BINARY_TYPE,
+            file_name=file_name,
         )
         db.add(skill_binary)
 
         # Build result before commit to avoid lazy loading issues
         result = self._kind_to_skill(skill_kind)
+        if add_to_user_default and user_id != 0:
+            skill_binding_service.add_user_default_skill(
+                db,
+                user_id=user_id,
+                skill_id=skill_kind.id,
+                created_by=user_id,
+                commit=False,
+            )
         db.commit()
 
         return result
@@ -447,6 +474,8 @@ class SkillKindsService:
                 binary_data=source_binary.binary_data,
                 file_size=source_binary.file_size,
                 file_hash=source_binary.file_hash,
+                type=source_binary.type or SKILL_BINARY_TYPE,
+                file_name=source_binary.file_name or "",
             )
             db.add(new_binary)
 
@@ -714,12 +743,16 @@ class SkillKindsService:
             skill_binary.binary_data = file_content
             skill_binary.file_size = metadata["file_size"]
             skill_binary.file_hash = metadata["file_hash"]
+            skill_binary.file_name = file_name
+            skill_binary.type = SKILL_BINARY_TYPE
         else:
             skill_binary = SkillBinary(
                 kind_id=skill_id,
                 binary_data=file_content,
                 file_size=metadata["file_size"],
                 file_hash=metadata["file_hash"],
+                type=SKILL_BINARY_TYPE,
+                file_name=file_name,
             )
             db.add(skill_binary)
 

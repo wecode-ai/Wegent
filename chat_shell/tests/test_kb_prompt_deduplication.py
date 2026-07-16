@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from shared.models.knowledge import KnowledgeBaseScope
+
 
 class TestKBPromptMarkerDetection:
     """Test KB prompt marker detection logic."""
@@ -266,6 +268,101 @@ class TestKnowledgeFactoryDynamicContext:
             assert len(result.extra_tools) == 1
             assert "Knowledge Base Restricted Analysis" in result.enhanced_system_prompt
             assert result.kb_tool_access_mode == "restricted_search_only"
+
+    @pytest.mark.asyncio
+    async def test_scoped_tools_do_not_receive_legacy_document_filters(self):
+        """Scoped access should pass allowed docs only through knowledge_base_scopes."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        scope = KnowledgeBaseScope(
+            knowledge_base_id=1,
+            scope_restricted=True,
+            document_ids=[101],
+        )
+
+        with (
+            patch(
+                "chat_shell.tools.builtin.ScopedKnowledgeBaseTool"
+            ) as mock_scoped_tool_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=True,
+            ),
+        ):
+            mock_scoped_tool_class.return_value = MagicMock()
+
+            await prepare_knowledge_base_tools(
+                knowledge_base_ids=[1],
+                user_id=1,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=True,
+                document_ids=[101],
+                knowledge_base_scopes=[scope],
+                kb_tool_access_mode="restricted_search_only",
+            )
+
+        mock_scoped_tool_class.assert_called_once()
+        call_kwargs = mock_scoped_tool_class.call_args.kwargs
+        assert call_kwargs["document_ids"] == []
+        assert call_kwargs["knowledge_base_scopes"] == [scope]
+
+    @pytest.mark.asyncio
+    async def test_mixed_internal_external_sources_add_unified_listing_tool(self):
+        """Mixed mounted sources should expose one listing tool for both source types."""
+        from chat_shell.tools.knowledge_factory import prepare_knowledge_base_tools
+
+        with (
+            patch("chat_shell.tools.builtin.KnowledgeBaseTool") as mock_kb_tool_class,
+            patch(
+                "chat_shell.tools.knowledge_factory._check_any_kb_has_rag_enabled",
+                return_value=True,
+            ),
+        ):
+            mock_kb_tool = MagicMock()
+            mock_kb_tool.name = "knowledge_base_search"
+            mock_kb_tool._get_kb_limits.return_value = (10, 0)
+            mock_kb_tool_class.return_value = mock_kb_tool
+
+            result = await prepare_knowledge_base_tools(
+                knowledge_base_ids=[107],
+                external_knowledge_refs=[
+                    {
+                        "provider": "demo",
+                        "id": "demo-kb-1",
+                        "name": "External Demo",
+                        "scope": "organization",
+                        "mode": "explicit",
+                    }
+                ],
+                user_id=2,
+                db=MagicMock(),
+                base_system_prompt="Base",
+                model_id="claude-3-5-sonnet",
+                skip_prompt_enhancement=False,
+                is_user_selected=True,
+                auth_token="user-token",
+            )
+
+        assert [tool.name for tool in result.extra_tools] == [
+            "knowledge_base_search",
+            "kb_ls",
+            "kb_head",
+            "knowledge_list_documents",
+        ]
+        unified_tool = result.extra_tools[-1]
+        assert unified_tool.knowledge_base_ids == [107]
+        assert unified_tool.external_knowledge_refs == [
+            {
+                "provider": "demo",
+                "id": "demo-kb-1",
+                "name": "External Demo",
+                "scope": "organization",
+                "mode": "explicit",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_skip_prompt_enhancement_returns_base_prompt(self):

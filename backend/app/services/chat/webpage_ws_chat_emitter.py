@@ -109,6 +109,7 @@ class WebPageSocketEmitter:
         result: Optional[Dict[str, Any]] = None,
         block_id: Optional[str] = None,
         block_offset: Optional[int] = None,
+        message_id: Optional[int] = None,
     ) -> None:
         """
         Emit chat:chunk event to task room.
@@ -121,6 +122,7 @@ class WebPageSocketEmitter:
             result: Optional full result data (for executor tasks with thinking/workbench)
             block_id: Optional block ID for text block streaming (append content to specific block)
             block_offset: Optional character offset within the current text block
+            message_id: Message ID for deterministic stream identity
         """
         payload = {
             "subtask_id": subtask_id,
@@ -128,6 +130,8 @@ class WebPageSocketEmitter:
             "offset": offset,
             "task_id": task_id,  # Add task_id for page refresh recovery
         }
+        if message_id is not None:
+            payload["message_id"] = message_id
         # Include block_id if provided (for text block streaming)
         if block_id is not None:
             payload["block_id"] = block_id
@@ -242,6 +246,36 @@ class WebPageSocketEmitter:
         )
         logger.info(f"[WS] emit chat:cancelled task={task_id} subtask={subtask_id}")
 
+    async def emit_chat_status_updated(
+        self,
+        task_id: int,
+        subtask_id: int,
+        phase: str,
+        context_metrics: Dict[str, Any],
+        context_compaction: Dict[str, Any] | None = None,
+    ) -> None:
+        """Emit chat:status_updated event to task room."""
+        payload: Dict[str, Any] = {
+            "task_id": task_id,
+            "subtask_id": subtask_id,
+            "phase": phase,
+            "context_metrics": context_metrics,
+        }
+        if context_compaction is not None:
+            payload["context_compaction"] = context_compaction
+        await self.sio.emit(
+            ServerEvents.CHAT_STATUS_UPDATED,
+            payload,
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(
+            "[WS] emit chat:status_updated task=%s subtask=%s phase=%s",
+            task_id,
+            subtask_id,
+            phase,
+        )
+
     # ============================================================
     # Block Events for Mixed Content Rendering (to task room)
     # ============================================================
@@ -285,6 +319,7 @@ class WebPageSocketEmitter:
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
         tool_input: Optional[Dict[str, Any]] = None,
+        render_payload: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
     ) -> None:
         """
@@ -298,7 +333,8 @@ class WebPageSocketEmitter:
             block_id: Block ID to update
             content: Optional text content update
             tool_output: Optional tool output data
-            tool_input: Optional tool input/arguments update (for interactive_form_question form rendering)
+            tool_input: Optional tool input/arguments update
+            render_payload: Optional UI-only renderer payload update
             status: Optional status update (pending, streaming, running, done, error)
         """
         payload: Dict[str, Any] = {
@@ -312,6 +348,8 @@ class WebPageSocketEmitter:
             payload["tool_output"] = tool_output
         if tool_input is not None:
             payload["tool_input"] = tool_input
+        if render_payload is not None:
+            payload["render_payload"] = render_payload
         if status is not None:
             payload["status"] = status
 
@@ -434,6 +472,44 @@ class WebPageSocketEmitter:
             namespace=self.namespace,
         )
         logger.debug(f"[WS] emit chat:system task={task_id} type={msg_type}")
+
+    async def emit_guidance_applied(
+        self,
+        task_id: int,
+        subtask_id: int,
+        guidance_id: str,
+        applied_at: str,
+    ) -> None:
+        """Emit chat:guidance_applied event to task room."""
+        await self.sio.emit(
+            ServerEvents.CHAT_GUIDANCE_APPLIED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "guidance_id": guidance_id,
+                "applied_at": applied_at,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+
+    async def emit_guidance_expired(
+        self,
+        task_id: int,
+        subtask_id: int,
+        guidance_ids: list[str],
+    ) -> None:
+        """Emit chat:guidance_expired event to task room."""
+        await self.sio.emit(
+            ServerEvents.CHAT_GUIDANCE_EXPIRED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "guidance_ids": guidance_ids,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
 
     # ============================================================
     # Task List Events (to user room)

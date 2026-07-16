@@ -29,6 +29,11 @@ Block types for mixed content rendering:
 """
 
 from . import db
+from .attachment_sync import (
+    AttachmentSyncItem,
+    AttachmentSyncRequest,
+    AttachmentSyncResponse,
+)
 
 # Block types for mixed content rendering
 from .blocks import (
@@ -46,6 +51,7 @@ from .blocks import (
 
 # Unified execution protocol
 from .execution import EventType, ExecutionEvent, ExecutionRequest
+from .knowledge import KnowledgeBaseScope
 from .knowledge_runtime_protocol import (
     BackendAttachmentStreamContentRef,
     ContentRef,
@@ -55,6 +61,7 @@ from .knowledge_runtime_protocol import (
     RemoteDropKnowledgeIndexRequest,
     RemoteIndexRequest,
     RemoteKnowledgeBaseQueryConfig,
+    RemoteKnowledgeBaseRetrievalOverride,
     RemoteListChunkRecord,
     RemoteListChunksRequest,
     RemoteListChunksResponse,
@@ -63,6 +70,7 @@ from .knowledge_runtime_protocol import (
     RemoteQueryRequest,
     RemoteQueryResponse,
     RemoteRagError,
+    RetrievalScope,
 )
 
 # OpenAI Request Converter
@@ -102,6 +110,16 @@ from .runtime_config import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from .search_hints import (
+    MAX_SEARCH_HINT_KEYWORDS,
+    MAX_SEARCH_HINT_PHRASES,
+    MAX_SEARCH_HINT_TERM_LENGTH,
+    MAX_SEARCH_QUERY_LENGTH,
+    SearchHints,
+    coerce_search_hints,
+    normalize_search_terms,
+    normalize_search_text,
+)
 from .splitter_config import (
     FlatChunkConfig,
     HierarchicalChunkConfig,
@@ -125,6 +143,10 @@ __all__ = [
     "EventType",
     "ExecutionEvent",
     "ExecutionRequest",
+    "AttachmentSyncItem",
+    "AttachmentSyncRequest",
+    "AttachmentSyncResponse",
+    "KnowledgeBaseScope",
     "BackendAttachmentStreamContentRef",
     "ContentRef",
     "PresignedUrlContentRef",
@@ -133,7 +155,17 @@ __all__ = [
     "RuntimeRetrieverConfig",
     "RuntimeEmbeddingModelConfig",
     "RuntimeRetrievalConfig",
+    "SearchHints",
+    "MAX_SEARCH_QUERY_LENGTH",
+    "MAX_SEARCH_HINT_TERM_LENGTH",
+    "MAX_SEARCH_HINT_KEYWORDS",
+    "MAX_SEARCH_HINT_PHRASES",
+    "normalize_search_text",
+    "normalize_search_terms",
+    "coerce_search_hints",
     "RemoteKnowledgeBaseQueryConfig",
+    "RemoteKnowledgeBaseRetrievalOverride",
+    "RetrievalScope",
     "RemoteIndexRequest",
     "RemoteDeleteDocumentIndexRequest",
     "RemotePurgeKnowledgeIndexRequest",

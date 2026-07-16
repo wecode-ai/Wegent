@@ -9,7 +9,7 @@
  * Uses the optimized all-grouped API to solve N+1 query problem.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { getKnowledgeBase } from '@/apis/knowledge'
@@ -18,7 +18,7 @@ import type {
   KnowledgeBase,
   AllGroupedKnowledgeResponse,
   KnowledgeBaseWithGroupInfo,
-  KnowledgeGroupType,
+  KbGroupInfo,
 } from '@/types/knowledge'
 import type { KbDataItem } from '../components/KnowledgeGroupListPage'
 import type { Group } from '@/types/group'
@@ -31,7 +31,7 @@ const MAX_RECENT_ITEMS = 5
 export type GroupType = 'personal' | 'group' | 'organization' | 'dingtalk'
 
 /** View mode for the knowledge page */
-export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'dingtalk'
+export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'dingtalk' | 'source'
 
 export interface KnowledgeGroup {
   id: string
@@ -50,12 +50,8 @@ export interface RecentAccessItem {
   accessedAt: number
 }
 
-/** Group info for a knowledge base */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: KnowledgeGroupType
-}
+// Re-export KbGroupInfo from types for convenience
+export type { KbGroupInfo } from '@/types/knowledge'
 
 export interface UseKnowledgeSidebarReturn {
   // Favorites
@@ -77,10 +73,14 @@ export interface UseKnowledgeSidebarReturn {
   // Selection
   selectedKbId: number | null
   selectedGroupId: string | null
+  selectedSourceViewId: string | null
   selectedKb: KnowledgeBase | null
   selectKb: (kb: KnowledgeBase) => void
+  syncKnowledgeBase: (kb: KnowledgeBase) => void
+  syncConvertedKnowledgeBase: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
   selectGroups: () => void
+  selectSourceView: (sourceViewId: string) => void
   clearSelection: () => void
 
   // View mode
@@ -106,8 +106,18 @@ export interface UseKnowledgeSidebarReturn {
 
   // DingTalk docs
   dingtalkDocCount: number
+  wikispaceDocCount: number
   isDingtalkConfigured: boolean
   isDingtalkLoading: boolean
+  isWikispaceConfigured: boolean
+
+  // Summary counts from backend
+  summary?: {
+    total_count: number
+    personal_count: number
+    group_count: number
+    organization_count: number
+  }
 
   // Refresh
   refreshAll: () => Promise<void>
@@ -157,6 +167,23 @@ function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
   }
 }
 
+function mergeKnowledgeBase(
+  existing: KnowledgeBaseWithGroupInfo,
+  updated: KnowledgeBase
+): KnowledgeBaseWithGroupInfo {
+  return {
+    ...existing,
+    name: updated.name,
+    description: updated.description,
+    namespace: updated.namespace,
+    document_count: updated.document_count,
+    kb_type: updated.kb_type || existing.kb_type,
+    user_id: updated.user_id,
+    updated_at: updated.updated_at,
+    created_at: updated.created_at,
+  }
+}
+
 export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const { user } = useUser()
 
@@ -176,6 +203,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // Selection state
   const [selectedKbId, setSelectedKbId] = useState<number | null>(null)
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [selectedSourceViewId, setSelectedSourceViewId] = useState<string | null>(null)
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
 
   // View mode state
@@ -184,8 +212,10 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
   // DingTalk docs state
   const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
+  const [wikispaceDocCount, setWikispaceDocCount] = useState(0)
   const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
   const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
+  const [isWikispaceConfigured, setIsWikispaceConfigured] = useState(false)
 
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
@@ -206,20 +236,27 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     }
   }, [user, loadInitialData])
 
-  // Load DingTalk docs sync status
   const loadDingtalkStatus = useCallback(async () => {
     setIsDingtalkLoading(true)
-    try {
-      const status = await dingtalkDocApi.getSyncStatus()
-      setDingtalkDocCount(status.total_nodes)
-      setIsDingtalkConfigured(status.is_configured)
-    } catch {
-      // Not critical - DingTalk may not be configured
+    const [docsResult, wsResult] = await Promise.allSettled([
+      dingtalkDocApi.getSyncStatus(),
+      dingtalkDocApi.getWikispaceSyncStatus(),
+    ])
+    if (docsResult.status === 'fulfilled') {
+      setDingtalkDocCount(docsResult.value.total_nodes)
+      setIsDingtalkConfigured(docsResult.value.is_configured)
+    } else {
       setIsDingtalkConfigured(false)
       setDingtalkDocCount(0)
-    } finally {
-      setIsDingtalkLoading(false)
     }
+    if (wsResult.status === 'fulfilled') {
+      setIsWikispaceConfigured(wsResult.value.is_configured)
+      setWikispaceDocCount(wsResult.value.total_nodes)
+    } else {
+      setIsWikispaceConfigured(false)
+      setWikispaceDocCount(0)
+    }
+    setIsDingtalkLoading(false)
   }, [])
 
   useEffect(() => {
@@ -239,18 +276,34 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       ...allGroupedData.organization.knowledge_bases,
     ]
 
-    // Remove duplicates by ID
-    const seen = new Set<number>()
-    return all.filter(kb => {
-      if (seen.has(kb.id)) return false
-      seen.add(kb.id)
+    // Remove duplicates by (id, group_id) so the same KB can appear in different groups
+    const seen = new Set<string>()
+    const deduped = all.filter(kb => {
+      const key = `${kb.id}-${kb.group_id}`
+      if (seen.has(key)) return false
+      seen.add(key)
       return true
+    })
+
+    // Sort by updated_at DESC globally (most recent first)
+    return deduped.sort((a, b) => {
+      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0
+      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0
+      return bTime - aTime
     })
   }, [allGroupedData])
 
   // Build all knowledge bases list for search (without group info)
   const allKnowledgeBases = useMemo((): KnowledgeBase[] => {
-    return allKnowledgeBasesWithGroupInfo.map(toKnowledgeBase)
+    // Dedupe by id for search/recent items
+    const seen = new Set<number>()
+    return allKnowledgeBasesWithGroupInfo
+      .filter(kb => {
+        if (seen.has(kb.id)) return false
+        seen.add(kb.id)
+        return true
+      })
+      .map(toKnowledgeBase)
   }, [allKnowledgeBasesWithGroupInfo])
 
   // Build a map from KB ID to group info for quick lookup
@@ -269,6 +322,15 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   const getKbGroupInfo = useCallback(
     (kb: KbDataItem): KbGroupInfo => {
+      // If kb has source_group (entity-authorized shared KB), show the source group
+      if ('source_group' in kb && kb.source_group) {
+        return {
+          groupId: 'shared',
+          groupName: kb.source_group,
+          groupType: 'personal-shared',
+        }
+      }
+
       // If kb already has group info (KnowledgeBaseWithGroupInfo), use it directly
       if ('group_id' in kb && 'group_name' in kb && 'group_type' in kb) {
         return {
@@ -307,6 +369,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Personal group
     const personalKbCount =
+      allGroupedData.summary?.personal_count ??
       allGroupedData.personal.created_by_me.length + allGroupedData.personal.shared_with_me.length
     result.push({
       id: 'personal',
@@ -333,7 +396,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       type: 'organization',
       name: allGroupedData.organization.namespace || 'organization',
       displayName: allGroupedData.organization.display_name || '公司',
-      kbCount: allGroupedData.organization.kb_count,
+      kbCount: allGroupedData.summary?.organization_count ?? allGroupedData.organization.kb_count,
     })
 
     return result
@@ -412,33 +475,98 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     saveRecentAccess([])
   }, [])
 
+  // Ref to track the latest intended KB selection, used to discard stale async responses
+  const latestSelectedKbIdRef = useRef<number | null>(null)
+
   // Selection management
   const selectKb = useCallback(
     (kb: KnowledgeBase) => {
+      // Record the intended selection before starting any async work
+      latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
-      setSelectedKb(kb)
       setSelectedGroupId(null)
+      setSelectedSourceViewId(null)
       setViewMode('kb')
       addRecentAccess(kb)
 
-      // For notebook type, fetch full KB data to get guided_questions
-      if (kb.kb_type === 'notebook') {
-        getKnowledgeBase(kb.id)
-          .then(fullKb => {
-            // Only update if still selected (avoid race condition)
-            setSelectedKb(prev => (prev?.id === kb.id ? fullKb : prev))
+      // Set selectedKb immediately with available data to avoid flashing the empty state,
+      // then fetch full KB data for fields omitted from grouped lists.
+      setSelectedKb(kb)
+      getKnowledgeBase(kb.id)
+        .then(fullKb => {
+          setSelectedKb(prev => {
+            if (latestSelectedKbIdRef.current !== kb.id) return prev
+            return fullKb
           })
-          .catch(error => {
-            console.error('Failed to fetch full knowledge base data:', error)
-          })
-      }
+        })
+        .catch(error => {
+          console.error('Failed to fetch full knowledge base data:', error)
+        })
     },
     [addRecentAccess]
+  )
+
+  const syncConvertedKnowledgeBase = useCallback((updatedKb: KnowledgeBase) => {
+    setAllGroupedData(prev => {
+      if (!prev) return prev
+
+      const updateList = (items: KnowledgeBaseWithGroupInfo[]) =>
+        items.map(item => (item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item))
+
+      return {
+        ...prev,
+        personal: {
+          created_by_me: updateList(prev.personal.created_by_me),
+          shared_with_me: updateList(prev.personal.shared_with_me),
+        },
+        groups: prev.groups.map(group => ({
+          ...group,
+          knowledge_bases: updateList(group.knowledge_bases),
+        })),
+        organization: {
+          ...prev.organization,
+          knowledge_bases: updateList(prev.organization.knowledge_bases),
+        },
+      }
+    })
+
+    setSelectedKb(prev => {
+      if (!prev || prev.id !== updatedKb.id) return prev
+      return {
+        ...prev,
+        ...updatedKb,
+      }
+    })
+
+    setFavorites(prev => prev.map(kb => (kb.id === updatedKb.id ? { ...kb, ...updatedKb } : kb)))
+
+    setRecentAccessItems(prev => {
+      const next = prev.map(item =>
+        item.kbId === updatedKb.id
+          ? {
+              ...item,
+              kbName: updatedKb.name,
+              kbType: updatedKb.kb_type || 'notebook',
+              namespace: updatedKb.namespace,
+            }
+          : item
+      )
+      saveRecentAccess(next)
+      return next
+    })
+  }, [])
+
+  const syncKnowledgeBase = useCallback(
+    (updatedKb: KnowledgeBase) => {
+      syncConvertedKnowledgeBase(updatedKb)
+    },
+    [syncConvertedKnowledgeBase]
   )
 
   const selectGroup = useCallback((groupId: string) => {
     setSelectedGroupId(groupId)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('group')
     setFilterGroupId(groupId)
@@ -447,6 +575,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectAll = useCallback(() => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('all')
     setFilterGroupId(null)
@@ -455,6 +584,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectGroups = useCallback(() => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('groups')
     setFilterGroupId(null)
@@ -463,8 +593,18 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const selectDingtalk = useCallback(() => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
+    setSelectedSourceViewId(null)
     setSelectedKb(null)
     setViewMode('dingtalk')
+    setFilterGroupId(null)
+  }, [])
+
+  const selectSourceView = useCallback((sourceViewId: string) => {
+    setSelectedGroupId(null)
+    setSelectedKbId(null)
+    setSelectedSourceViewId(sourceViewId)
+    setSelectedKb(null)
+    setViewMode('source')
     setFilterGroupId(null)
   }, [])
 
@@ -472,6 +612,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     setSelectedKbId(null)
     setSelectedKb(null)
     setSelectedGroupId(null)
+    setSelectedSourceViewId(null)
     setViewMode('all')
     setFilterGroupId(null)
   }, [])
@@ -510,10 +651,14 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // Selection
     selectedKbId,
     selectedGroupId,
+    selectedSourceViewId,
     selectedKb,
     selectKb,
+    syncKnowledgeBase,
+    syncConvertedKnowledgeBase,
     selectGroup,
     selectGroups,
+    selectSourceView,
     clearSelection,
 
     // View mode
@@ -539,8 +684,13 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // DingTalk docs
     dingtalkDocCount,
+    wikispaceDocCount,
     isDingtalkConfigured,
     isDingtalkLoading,
+    isWikispaceConfigured,
+
+    // Summary from backend
+    summary: allGroupedData?.summary,
 
     // Refresh
     refreshAll,

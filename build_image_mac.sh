@@ -91,3 +91,9 @@ docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-executor-ma
 
 # Build chat shell image
 docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-chat-shell:${VERSION} -f docker/chat_shell/Dockerfile .
+
+# Build knowledge runtime image
+docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-knowledge-runtime:${VERSION} -f docker/knowledge_runtime/Dockerfile .
+
+# Build knowledge document converter image
+docker build --network=host ${PUSH_FLAG} -t ghcr.io/wecode-ai/wegent-knowledge-doc-converter:${VERSION} -f docker/knowledge_doc_converter/Dockerfile .

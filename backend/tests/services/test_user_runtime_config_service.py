@@ -1,0 +1,364 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+import json
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.models.kind import Kind
+from app.models.user import User
+from app.services import user_runtime_config as runtime_config_module
+from app.services.user_runtime_config import (
+    USER_PROXY_CONFIG_KIND,
+    USER_PROXY_CONFIG_NAME,
+    USER_RUNTIME_CONFIG_KIND,
+    USER_RUNTIME_CONFIG_NAMESPACE,
+    UserRuntimeConfigError,
+    UserRuntimeConfigSyncError,
+    user_runtime_config_service,
+)
+from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
+
+
+def _get_codex_kind(test_db: Session, user_id: int) -> Kind:
+    return (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == USER_RUNTIME_CONFIG_KIND,
+            Kind.namespace == USER_RUNTIME_CONFIG_NAMESPACE,
+            Kind.name == "codex",
+        )
+        .one()
+    )
+
+
+def _get_proxy_kind(test_db: Session, user_id: int) -> Kind:
+    return (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == USER_PROXY_CONFIG_KIND,
+            Kind.namespace == USER_RUNTIME_CONFIG_NAMESPACE,
+            Kind.name == USER_PROXY_CONFIG_NAME,
+        )
+        .one()
+    )
+
+
+def _create_user(test_db: Session, user_id: int, preferences=None) -> User:
+    user = User(
+        id=user_id,
+        user_name=f"user-{user_id}",
+        password_hash="hash",
+        preferences=preferences,
+    )
+    test_db.add(user)
+    test_db.commit()
+    return user
+
+
+def test_save_auth_json_encrypts_runtime_config(test_db: Session) -> None:
+    response = user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=101,
+        runtime="codex",
+        auth_json='{"token":"secret","account":{"id":"user-1"}}',
+    )
+
+    assert response["runtime"] == "codex"
+    assert response["configured"] is True
+    assert response["target_path"] == "~/.codex/auth.json"
+
+    kind = _get_codex_kind(test_db, 101)
+    encrypted_value = kind.json["spec"]["auth"]["encryptedValue"]
+
+    assert encrypted_value != '{"token":"secret","account":{"id":"user-1"}}'
+    assert "secret" not in encrypted_value
+    assert is_data_encrypted(encrypted_value)
+    assert json.loads(decrypt_sensitive_data(encrypted_value)) == {
+        "account": {"id": "user-1"},
+        "token": "secret",
+    }
+
+
+def test_set_use_user_config_stores_preference(test_db: Session) -> None:
+    user = User(
+        id=1201,
+        user_name="runtime-pref-user",
+        password_hash="hash",
+        preferences='{"send_key":"cmd_enter"}',
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    response = user_runtime_config_service.set_use_user_config(
+        test_db,
+        user=user,
+        runtime="codex",
+        use_user_config=True,
+    )
+
+    test_db.refresh(user)
+    assert response["use_user_config"] is True
+    assert json.loads(user.preferences) == {
+        "send_key": "cmd_enter",
+        "runtime_configs": {"codex": {"use_user_config": True}},
+    }
+
+
+def test_set_use_proxy_stores_runtime_preference(test_db: Session) -> None:
+    user = _create_user(
+        test_db,
+        1202,
+        preferences='{"runtime_configs":{"codex":{"use_user_config":true}}}',
+    )
+    user_runtime_config_service.save_proxy_url(
+        test_db,
+        user=user,
+        proxy_url="http://127.0.0.1:7890",
+    )
+
+    response = user_runtime_config_service.set_use_user_config(
+        test_db,
+        user=user,
+        runtime="codex",
+        use_user_config=True,
+        use_proxy=True,
+    )
+
+    test_db.refresh(user)
+    assert response["use_proxy"] is True
+    assert json.loads(user.preferences) == {
+        "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}},
+    }
+
+
+def test_set_use_proxy_requires_configured_proxy(test_db: Session) -> None:
+    user = _create_user(test_db, 1203)
+
+    with pytest.raises(UserRuntimeConfigError, match="proxy is not configured"):
+        user_runtime_config_service.set_use_user_config(
+            test_db,
+            user=user,
+            runtime="codex",
+            use_user_config=False,
+            use_proxy=True,
+        )
+
+
+def test_save_proxy_url_encrypts_and_masks_proxy_config(test_db: Session) -> None:
+    user = _create_user(test_db, 105)
+
+    response = user_runtime_config_service.save_proxy_url(
+        test_db,
+        user=user,
+        proxy_url="http://user:secret@127.0.0.1:7890",
+    )
+
+    assert response["configured"] is True
+    assert response["proxy_url_masked"] == "http://***:***@127.0.0.1:7890"
+
+    kind = _get_proxy_kind(test_db, 105)
+    encrypted_url = kind.json["spec"]["proxy"]["encryptedUrl"]
+
+    assert "secret" not in encrypted_url
+    assert is_data_encrypted(encrypted_url)
+    assert decrypt_sensitive_data(encrypted_url) == "http://user:secret@127.0.0.1:7890"
+
+
+def test_clearing_proxy_disables_runtime_proxy_preferences(test_db: Session) -> None:
+    user = _create_user(
+        test_db,
+        108,
+        preferences='{"runtime_configs":{"codex":{"use_user_config":true,"use_proxy":true}}}',
+    )
+    user_runtime_config_service.save_proxy_url(
+        test_db,
+        user=user,
+        proxy_url="http://127.0.0.1:7890",
+    )
+
+    response = user_runtime_config_service.save_proxy_url(
+        test_db,
+        user=user,
+        proxy_url="",
+    )
+
+    test_db.refresh(user)
+    assert response["configured"] is False
+    assert json.loads(user.preferences) == {
+        "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": False}},
+    }
+
+
+def test_get_execution_config_includes_proxy_url_when_enabled(
+    test_db: Session,
+) -> None:
+    user = _create_user(test_db, 106)
+    user_runtime_config_service.save_proxy_url(
+        test_db,
+        user=user,
+        proxy_url="socks5://127.0.0.1:7890",
+    )
+
+    response = user_runtime_config_service.get_execution_config(
+        test_db,
+        user_id=106,
+        runtime="codex",
+        preferences={
+            "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}}
+        },
+    )
+
+    assert response["use_proxy"] is True
+    assert response["proxy_configured"] is True
+    assert response["proxy_url"] == "socks5://127.0.0.1:7890"
+
+
+def test_save_auth_json_rejects_invalid_json(test_db: Session) -> None:
+    with pytest.raises(UserRuntimeConfigError, match="valid JSON"):
+        user_runtime_config_service.save_auth_json(
+            test_db,
+            user_id=101,
+            runtime="codex",
+            auth_json="{invalid",
+        )
+
+
+def test_save_proxy_url_rejects_invalid_url(test_db: Session) -> None:
+    user = _create_user(test_db, 107)
+
+    with pytest.raises(UserRuntimeConfigError, match="scheme"):
+        user_runtime_config_service.save_proxy_url(
+            test_db,
+            user=user,
+            proxy_url="ftp://127.0.0.1:7890",
+        )
+
+
+@pytest.mark.asyncio
+async def test_sync_auth_to_devices_preserves_skipped_existing_status(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_runtime_config_service.save_auth_json(
+        test_db,
+        user_id=102,
+        runtime="codex",
+        auth_json='{"token":"secret"}',
+    )
+    calls = []
+
+    async def fake_get_online_devices(db, user_id):
+        return [{"device_id": "device-1", "status": "online"}]
+
+    async def fake_execute_configured_device_command(**kwargs):
+        calls.append(kwargs)
+        return {
+            "success": True,
+            "stdout": {
+                "status": "skipped_existing",
+                "runtime": "codex",
+                "path": "~/.codex/auth.json",
+            },
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module.device_service,
+        "get_online_devices",
+        fake_get_online_devices,
+    )
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    result = await user_runtime_config_service.sync_auth_to_devices(
+        test_db,
+        user_id=102,
+        runtime="codex",
+        preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["status"] == "skipped_existing"
+    assert calls[0]["command_key"] == "sync_runtime_auth_file"
+    assert calls[0]["env"]["WEGENT_RUNTIME_CONFIG_TARGET_PATH"] == "~/.codex/auth.json"
+    assert json.loads(calls[0]["env"]["WEGENT_RUNTIME_CONFIG_CONTENT"]) == {
+        "token": "secret"
+    }
+
+
+@pytest.mark.asyncio
+async def test_import_auth_json_from_device_encrypts_device_file(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_configured_device_command(**kwargs):
+        assert kwargs["command_key"] == "read_runtime_auth_file"
+        assert (
+            kwargs["env"]["WEGENT_RUNTIME_CONFIG_TARGET_PATH"] == "~/.codex/auth.json"
+        )
+        return {
+            "success": True,
+            "stdout": {
+                "status": "read",
+                "runtime": "codex",
+                "path": "~/.codex/auth.json",
+                "content": '{"token":"from-device"}',
+            },
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    response = await user_runtime_config_service.import_auth_json_from_device(
+        test_db,
+        user_id=103,
+        runtime="codex",
+        device_id="device-1",
+    )
+
+    assert response["configured"] is True
+    kind = _get_codex_kind(test_db, 103)
+    encrypted_value = kind.json["spec"]["auth"]["encryptedValue"]
+    assert "from-device" not in encrypted_value
+    assert json.loads(decrypt_sensitive_data(encrypted_value)) == {
+        "token": "from-device"
+    }
+
+
+@pytest.mark.asyncio
+async def test_import_auth_json_from_device_uses_script_error_detail(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_configured_device_command(**kwargs):
+        return {
+            "success": False,
+            "stdout": '{"status":"failed","error":"runtime auth file does not exist"}',
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(
+        runtime_config_module,
+        "execute_configured_device_command",
+        fake_execute_configured_device_command,
+    )
+
+    with pytest.raises(UserRuntimeConfigSyncError, match="does not exist"):
+        await user_runtime_config_service.import_auth_json_from_device(
+            test_db,
+            user_id=104,
+            runtime="codex",
+            device_id="device-1",
+        )

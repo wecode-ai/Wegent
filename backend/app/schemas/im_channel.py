@@ -14,14 +14,15 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 # Channel type literals
-ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram"]
+ChannelType = Literal["dingtalk", "feishu", "wechat", "telegram", "discord", "weibo"]
 
 
 class MessagerSpec(BaseModel):
     """Spec for Messager CRD."""
 
     channelType: ChannelType = Field(
-        ..., description="Channel type: dingtalk, feishu, wechat, telegram"
+        ...,
+        description="Channel type: dingtalk, feishu, wechat, telegram, discord, weibo",
     )
     isEnabled: bool = Field(default=True, description="Whether channel is enabled")
     config: Dict[str, Any] = Field(
@@ -41,7 +42,8 @@ class IMChannelCreate(BaseModel):
     )
     namespace: str = Field(default="default", description="Namespace")
     channel_type: ChannelType = Field(
-        ..., description="Channel type: dingtalk, feishu, wechat, telegram"
+        ...,
+        description="Channel type: dingtalk, feishu, wechat, telegram, discord, weibo",
     )
     config: Dict[str, Any] = Field(
         ..., description="Channel configuration (varies by type)"
@@ -198,4 +200,41 @@ class TelegramChannelConfig(BaseModel):
     use_inline_keyboard: bool = Field(
         default=True,
         description="Use inline keyboard buttons for interactive commands",
+    )
+
+
+class DiscordChannelConfig(BaseModel):
+    """Configuration schema for Discord channel."""
+
+    bot_token: str = Field(..., description="Discord Bot Token")
+    user_mapping_mode: UserMappingMode = Field(
+        default="select_user",
+        description="User mapping mode: select_user, staff_id (Discord user ID), or email",
+    )
+    user_mapping_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="User mapping configuration. For select_user mode: {target_user_id: int}",
+    )
+
+
+class WeiboChannelConfig(BaseModel):
+    """Configuration schema for Weibo Open IM channel."""
+
+    app_id: str = Field(..., description="Weibo Open IM App ID")
+    app_secret: str = Field(..., description="Weibo Open IM App secret")
+    ws_endpoint: Optional[str] = Field(
+        default=None,
+        description="Weibo Open IM WebSocket endpoint",
+    )
+    token_endpoint: Optional[str] = Field(
+        default=None,
+        description="Weibo Open IM token endpoint",
+    )
+    user_mapping_mode: UserMappingMode = Field(
+        default="select_user",
+        description="User mapping mode: select_user, staff_id (Weibo user ID), or email",
+    )
+    user_mapping_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="User mapping configuration. For select_user mode: {target_user_id: int}",
     )

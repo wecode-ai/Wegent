@@ -1,0 +1,129 @@
+import { X } from 'lucide-react'
+import { useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useTranslation } from '@/hooks/useTranslation'
+
+interface TextInputDialogProps {
+  open: boolean
+  title: string
+  label: string
+  description?: string
+  initialValue: string
+  confirmLabel: string
+  cancelLabel: string
+  inputTestId: string
+  confirmTestId: string
+  onClose: () => void
+  onSubmit: (value: string) => Promise<void> | void
+}
+
+export function TextInputDialog({ open, ...props }: TextInputDialogProps) {
+  if (!open) return null
+
+  return <TextInputDialogContent key={props.initialValue} {...props} />
+}
+
+function TextInputDialogContent({
+  title,
+  label,
+  description,
+  initialValue,
+  confirmLabel,
+  cancelLabel,
+  inputTestId,
+  confirmTestId,
+  onClose,
+  onSubmit,
+}: Omit<TextInputDialogProps, 'open'>) {
+  const { t } = useTranslation('common')
+  const [value, setValue] = useState(initialValue)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const trimmedValue = value.trim()
+
+  useEscapeKey(onClose)
+
+  return createPortal(
+    <div
+      data-testid={`${inputTestId}-overlay`}
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${inputTestId}-title`}
+        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 text-text-primary shadow-2xl"
+      >
+        <div className="flex items-center justify-between gap-4">
+          <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-text-primary">
+            {title}
+          </h2>
+          <button
+            type="button"
+            data-testid={`${inputTestId}-close-button`}
+            onClick={onClose}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
+            aria-label={cancelLabel}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {description && (
+          <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">{description}</p>
+        )}
+        <label className="mt-5 block text-[13px] font-medium leading-[18px] text-text-secondary">
+          {label}
+        </label>
+        <input
+          data-testid={inputTestId}
+          value={value}
+          autoFocus
+          onFocus={event => event.currentTarget.select()}
+          onChange={event => {
+            setValue(event.target.value)
+            setError(null)
+          }}
+          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+        />
+        {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid={`${inputTestId}-cancel-button`}
+            onClick={onClose}
+            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            data-testid={confirmTestId}
+            disabled={!trimmedValue || submitting}
+            onClick={async () => {
+              setSubmitting(true)
+              setError(null)
+              try {
+                await onSubmit(trimmedValue)
+                onClose()
+              } catch (submitError) {
+                setError(
+                  submitError instanceof Error
+                    ? submitError.message
+                    : t('workbench.save_failed', '保存失败')
+                )
+              } finally {
+                setSubmitting(false)
+              }
+            }}
+            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:opacity-50"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}

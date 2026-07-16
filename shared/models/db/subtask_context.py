@@ -16,6 +16,7 @@ from sqlalchemy.sql import func
 
 from .base import Base
 from .enums import ContextStatus
+from .types import big_integer_id_type
 
 # Type adapters for cross-database compatibility (MySQL/SQLite)
 # Uses LONGBLOB for MySQL, LargeBinary for others (e.g., SQLite in tests)
@@ -39,7 +40,7 @@ class SubtaskContext(Base):
 
     # Reference to subtasks table (no foreign key constraint for flexibility)
     # 0 means unlinked, > 0 means linked to a subtask
-    subtask_id = Column(Integer, nullable=False, default=0, index=True)
+    subtask_id = Column(big_integer_id_type(), nullable=False, default=0, index=True)
 
     # User who created this context
     user_id = Column(Integer, nullable=False, index=True)
@@ -164,6 +165,18 @@ class SubtaskContext(Base):
         if self.type_data and isinstance(self.type_data, dict):
             return self.type_data.get("encryption_version", 0)
         return 0
+
+    @property
+    def is_truncated(self) -> bool:
+        """Whether extracted_text was truncated during parsing (attachment type).
+
+        Recorded from the parser's truncation result at parse time, so it is
+        accurate regardless of the final text length (smart truncation rarely
+        fills the cap exactly, so a length-vs-cap comparison under-reports).
+        """
+        if self.type_data and isinstance(self.type_data, dict):
+            return self.type_data.get("is_truncated", False)
+        return False
 
     # === Helper properties for knowledge_base type ===
 

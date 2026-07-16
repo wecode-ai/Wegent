@@ -9,19 +9,25 @@ REST API endpoints delegate business logic to KnowledgeOrchestrator,
 which provides a unified interface for both REST API and MCP tools.
 """
 
-import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Union
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints._knowledge_multimodal import (
+    multimodal_create_kwargs,
+    multimodal_update_kwargs,
+)
+from app.api.knowledge_document_side_effects import (
+    schedule_kb_summary_updates_after_deletion,
+)
 from app.core import security
 from app.core.config import settings
-from app.core.security import AuthContext, get_auth_context
+from app.core.exceptions import CustomHTTPException
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -31,34 +37,42 @@ from app.schemas.knowledge import (
     BatchOperationResult,
     DocumentContentUpdate,
     DocumentDetailResponse,
+    DocumentMoveRequest,
+    InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
-    KnowledgeBaseMigrateRequest,
-    KnowledgeBaseMigrateResponse,
     KnowledgeBaseResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
+    KnowledgeDocumentSortField,
     KnowledgeDocumentUpdate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderResponse,
+    KnowledgeFolderUpdate,
     PersonalKnowledgeBaseGroup,
     ResourceScope,
+    SortOrder,
 )
+from app.schemas.knowledge_multimodal import DocumentReindexRequest
 from app.schemas.knowledge_qa_history import QAHistoryResponse
+from app.schemas.summary import KnowledgeBaseSummaryUpdateRequest
 from app.services.knowledge import (
+    KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
 )
 from app.services.knowledge.orchestrator import (
+    DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
+    MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
 from shared.telemetry.decorators import (
     add_span_event,
-    capture_trace_context,
     trace_async,
-    trace_background,
     trace_sync,
 )
 
@@ -87,15 +101,31 @@ def _serialize_standalone_document_detail(
     return response
 
 
+def _dump_retrieval_config_for_api(retrieval_config) -> dict | None:
+    if retrieval_config is None:
+        return None
+    return retrieval_config.model_dump(exclude_unset=True)
+
+
 def _raise_document_detail_http_error(error: ValueError) -> None:
-    """Map orchestrator detail errors to stable HTTP responses."""
+    """Map orchestrator/service errors to stable HTTP responses.
+
+    Mapping rules:
+    - "not found"  -> 404
+    - "access denied" or "permission" -> 403
+    - anything else -> 400
+    """
+    if isinstance(error, CustomHTTPException):
+        raise error
+
     error_msg = str(error)
-    if "not found" in error_msg.lower():
+    lower = error_msg.lower()
+    if "not found" in lower:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_msg,
         )
-    if "access denied" in error_msg.lower():
+    if "access denied" in lower or "permission" in lower:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_msg,
@@ -145,6 +175,17 @@ def list_knowledge_bases(
         default=None,
         description="Group name (required when scope is group)",
     ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of knowledge bases to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated knowledge base listing",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -176,6 +217,8 @@ def list_knowledge_bases(
         user=current_user,
         scope=scope,
         group_name=group_name,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -286,6 +329,83 @@ def get_organization_namespace(
     }
 
 
+@router.get("/multimodal-default-prompts")
+@trace_sync("get_multimodal_default_prompts", "knowledge.api")
+def get_multimodal_default_prompts(
+    current_user: User = Depends(security.get_current_user),
+):
+    """Return the system default multimodal analysis prompts.
+
+    Used by the frontend to prefill the prompt editors in the KB create/edit,
+    upload advanced settings, and "modify prompt & re-analyze" dialogs. The
+    values are the single source of truth from ``shared.models.multimodal_prompts``
+    (the same constants the converter falls back to at runtime).
+
+    ``enabled`` mirrors the global ``KNOWLEDGE_MULTIMODAL_ENABLED`` switch so the
+    frontend can hide the entire multimodal UI when the pipeline is disabled.
+    """
+    from shared.models.multimodal_prompts import (
+        DEFAULT_IMAGE_PROMPT,
+        DEFAULT_VIDEO_PROMPT,
+    )
+
+    return {
+        "enabled": settings.KNOWLEDGE_MULTIMODAL_ENABLED,
+        "video_prompt": DEFAULT_VIDEO_PROMPT,
+        "image_prompt": DEFAULT_IMAGE_PROMPT,
+    }
+
+
+def _add_initial_kb_members(
+    db: Session,
+    kb_id: int,
+    current_user: User,
+    members: list[InitialMemberCreate],
+) -> None:
+    """Add initial members to a knowledge base after creation."""
+    from app.services.share import knowledge_share_service
+
+    members_data: list[tuple[int, BaseRole, str | None, str | None, str | None]] = []
+    for member in members:
+        target_user_id = 0
+        entity_type = member.entity_type if member.entity_type else "user"
+        entity_id = member.entity_id
+        if entity_type == "user":
+            try:
+                target_user_id = int(entity_id)
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid user ID: {entity_id}",
+                )
+            entity_id = None
+        members_data.append(
+            (
+                target_user_id,
+                member.role,
+                entity_type,
+                entity_id,
+                member.entity_display_name,
+            )
+        )
+
+    result = knowledge_share_service.batch_add_members(
+        db=db,
+        resource_id=kb_id,
+        current_user_id=current_user.id,
+        members_data=members_data,
+    )
+
+    if result.failed:
+        details = ", ".join(
+            f"{f.entity_id or f.user_id}: {f.error}" for f in result.failed
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to add some members: {details}",
+        )
+
+
 @router.post(
     "",
     response_model=KnowledgeBaseResponse,
@@ -302,6 +422,7 @@ def create_knowledge_base(
 
     - **namespace=default**: Personal knowledge base
     - **namespace=<group_name>**: Team knowledge base (requires Maintainer+ permission)
+    - **members**: Optional initial members to add after creation
     """
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
@@ -313,11 +434,16 @@ def create_knowledge_base(
             namespace=data.namespace or "default",
             kb_type=data.kb_type or "notebook",
             summary_enabled=data.summary_enabled,
-            retrieval_config=(
-                data.retrieval_config.model_dump() if data.retrieval_config else None
-            ),
+            rag_config_mode=data.rag_config_mode,
+            retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_model_ref=data.summary_model_ref,
+            **multimodal_create_kwargs(data),
         )
+
+        # Add initial members if provided
+        if data.members:
+            _add_initial_kb_members(db, result.id, current_user, data.members)
+
         add_span_event(
             "knowledge.base.created",
             {
@@ -392,14 +518,13 @@ def update_knowledge_base(
             knowledge_base_id=knowledge_base_id,
             name=data.name,
             description=data.description,
-            retrieval_config=(
-                data.retrieval_config.model_dump() if data.retrieval_config else None
-            ),
+            retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
             guided_questions=data.guided_questions,
             max_calls_per_conversation=data.max_calls_per_conversation,
             exempt_calls_before_check=data.exempt_calls_before_check,
+            multimodal_update_fields=multimodal_update_kwargs(data),
         )
         add_span_event(
             "knowledge.base.updated",
@@ -461,10 +586,10 @@ def update_knowledge_base_type(
     db: Session = Depends(get_db),
 ):
     """
-    Update the knowledge base type (notebook <-> classic conversion).
+    Update the default opening view for the knowledge base.
 
-    - Converting to 'notebook': Requires document count <= 50
-    - Converting to 'classic': No restrictions
+    - 'notebook': Open Notebook view by default when the URL does not specify a view
+    - 'classic': Open document view by default when the URL does not specify a view
     """
     try:
         knowledge_base = KnowledgeService.update_knowledge_base_type(
@@ -491,60 +616,6 @@ def update_knowledge_base_type(
         )
 
 
-@router.post(
-    "/{knowledge_base_id}/migrate",
-    response_model=KnowledgeBaseMigrateResponse,
-)
-@trace_sync("migrate_knowledge_base_to_group", "knowledge.api")
-def migrate_knowledge_base_to_group(
-    knowledge_base_id: int,
-    data: KnowledgeBaseMigrateRequest,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Migrate a personal knowledge base to a group.
-
-    - Only personal knowledge bases (namespace='default') can be migrated
-    - Only the creator of the knowledge base can migrate it
-    - User must have Maintainer or Owner permission in the target group
-    - Target group name must be a valid group namespace
-    """
-    try:
-        result = KnowledgeService.migrate_knowledge_base_to_group(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=current_user.id,
-            target_group_name=data.target_group_name,
-        )
-        add_span_event(
-            "knowledge.base.migrated",
-            {
-                "kb_id": str(knowledge_base_id),
-                "user_id": str(current_user.id),
-                "target_group": data.target_group_name,
-            },
-        )
-        return result
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A knowledge base with this name already exists in the target group",
-        ) from e
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Database error during migration: {str(e)}",
-        ) from e
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-
-
 # ============== Knowledge Document Endpoints ==============
 
 
@@ -555,16 +626,53 @@ def migrate_knowledge_base_to_group(
 @trace_sync("list_documents", "knowledge.api")
 def list_documents(
     knowledge_base_id: int,
+    folder_id: Optional[int] = Query(
+        default=None, ge=0, description="Filter documents by folder (None = all)"
+    ),
+    include_subfolders: bool = Query(
+        default=False,
+        description="Whether folder_id includes descendant folders",
+    ),
+    keyword: Optional[str] = Query(
+        default=None,
+        description="Search keyword for document names",
+    ),
+    sort_by: KnowledgeDocumentSortField = Query(
+        default=KnowledgeDocumentSortField.CREATED_AT,
+        description="Document sort field",
+    ),
+    sort_order: SortOrder = Query(
+        default=SortOrder.DESC,
+        description="Document sort order",
+    ),
+    limit: int = Query(
+        default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        ge=1,
+        le=MAX_KNOWLEDGE_LIST_LIMIT,
+        description="Maximum number of documents to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Start offset for paginated document listing",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List documents in a knowledge base."""
+    """List documents in a knowledge base. Optionally filter by folder_id."""
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
         return knowledge_orchestrator.list_documents(
             db=db,
             user=current_user,
             knowledge_base_id=knowledge_base_id,
+            folder_id=folder_id,
+            limit=limit,
+            offset=offset,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by.value,
+            sort_order=sort_order.value,
         )
     except ValueError as e:
         raise HTTPException(
@@ -662,6 +770,7 @@ def update_document(
 @trace_async("reindex_document", "knowledge.api")
 async def reindex_document(
     document_id: int,
+    payload: Optional[DocumentReindexRequest] = None,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -672,16 +781,28 @@ async def reindex_document(
     and embedding model. Only works for documents in knowledge bases with
     RAG configured.
 
+    An optional body may carry ``multimodal_analysis_prompt``: when present it
+    is written into the document's ``source_config`` (overriding the KB default)
+    before re-dispatch, enabling the "modify prompt & re-analyze" flow to reuse
+    this endpoint. A blank value clears the document override (revert to the
+    KB default). Absent body / field = leave the stored prompt unchanged.
+
     Returns:
         Success message indicating reindex has started
     """
     try:
-        # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
+        # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic).
+        # The optional multimodal prompt override is forwarded to the orchestrator, which persists
+        # it into the document's source_config AFTER the access check — so an unauthorized caller
+        # cannot poison the stored prompt. None = leave unchanged; "" = clear (revert to KB default).
         result = knowledge_orchestrator.reindex_document(
             db=db,
             user=current_user,
             document_id=document_id,
             trigger_summary=False,  # Don't re-generate summary on reindex
+            multimodal_prompt_override=(
+                payload.multimodal_analysis_prompt if payload else None
+            ),
         )
         add_span_event(
             "knowledge.document.reindex.scheduled",
@@ -747,14 +868,11 @@ def delete_document(
                 f"[KnowledgeAPI] Scheduling KB summary update after deletion: "
                 f"kb_id={result.kb_id}, document_id={document_id}"
             )
-            # Capture trace context for propagation to background task
-            trace_ctx = capture_trace_context()
-            background_tasks.add_task(
-                _update_kb_summary_after_deletion,
-                kb_id=result.kb_id,
+            schedule_kb_summary_updates_after_deletion(
+                background_tasks,
+                kb_ids=[result.kb_id],
                 user_id=current_user.id,
                 user_name=current_user.user_name,
-                trace_context=trace_ctx,
             )
 
         return None
@@ -900,18 +1018,136 @@ def batch_delete_documents(
             f"[KnowledgeAPI] Scheduling KB summary updates after batch deletion: "
             f"kb_ids={kb_ids}, deleted_count={result.success_count}"
         )
-        # Capture trace context for propagation to background tasks
-        trace_ctx = capture_trace_context()
-        for kb_id in kb_ids:
-            background_tasks.add_task(
-                _update_kb_summary_after_deletion,
-                kb_id=kb_id,
-                user_id=current_user.id,
-                user_name=current_user.user_name,
-                trace_context=trace_ctx,
-            )
+        schedule_kb_summary_updates_after_deletion(
+            background_tasks,
+            kb_ids=kb_ids,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
+        )
 
     return result
+
+
+# ============== Knowledge Folder Endpoints ==============
+
+
+@router.post(
+    "/{knowledge_base_id}/folders",
+    response_model=KnowledgeFolderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_sync("create_folder", "knowledge.api")
+def create_folder(
+    knowledge_base_id: int,
+    data: KnowledgeFolderCreate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeFolderResponse:
+    """Create a new folder in a knowledge base."""
+    try:
+        return KnowledgeFolderService.create_folder(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+            data=data,
+        )
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+@router.get(
+    "/{knowledge_base_id}/folders",
+    response_model=list[KnowledgeFolderResponse],
+)
+@trace_sync("get_folder_tree", "knowledge.api")
+def get_folder_tree(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> List[KnowledgeFolderResponse]:
+    """Get the full folder tree for a knowledge base."""
+    try:
+        return KnowledgeFolderService.get_folder_tree(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+@router.put(
+    "/{knowledge_base_id}/folders/{folder_id}",
+    response_model=KnowledgeFolderResponse,
+)
+def update_folder(
+    knowledge_base_id: int,
+    folder_id: int,
+    data: KnowledgeFolderUpdate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeFolderResponse:
+    """Update a folder (rename and/or move)."""
+    try:
+        return KnowledgeFolderService.update_folder(
+            db=db,
+            folder_id=folder_id,
+            user_id=current_user.id,
+            data=data,
+            knowledge_base_id=knowledge_base_id,
+        )
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+@router.delete(
+    "/{knowledge_base_id}/folders/{folder_id}",
+)
+@trace_sync("delete_folder", "knowledge.api")
+def delete_folder(
+    knowledge_base_id: int,
+    folder_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """Delete a folder and move its documents to root level."""
+    try:
+        result = KnowledgeFolderService.delete_folder(
+            db=db,
+            folder_id=folder_id,
+            user_id=current_user.id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        return result
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+# ============== Document Move Endpoint ==============
+
+
+@document_router.put(
+    "/{document_id}/move",
+    response_model=KnowledgeDocumentResponse,
+)
+@trace_sync("move_document", "knowledge.api")
+def move_document(
+    document_id: int,
+    data: DocumentMoveRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Move a document to a different folder (0 = root level)."""
+    try:
+        doc = KnowledgeFolderService.move_document(
+            db=db,
+            document_id=document_id,
+            folder_id=data.folder_id,
+            user_id=current_user.id,
+        )
+        return KnowledgeDocumentResponse.model_validate(doc)
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
 
 
 @document_router.post("/batch/enable", response_model=BatchOperationResult)
@@ -1105,6 +1341,78 @@ async def get_kb_summary(
     return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
 
 
+@summary_router.put("/{kb_id}/summary")
+@trace_async("update_kb_summary", "knowledge.api")
+async def update_kb_summary(
+    kb_id: int,
+    data: KnowledgeBaseSummaryUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually update knowledge base summary."""
+    from app.schemas.summary import KnowledgeBaseSummaryResponse
+    from app.services.knowledge import get_summary_service
+
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
+        )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to update knowledge base summary",
+        )
+
+    summary_service = get_summary_service(db)
+    summary = await summary_service.update_kb_manual_summary(
+        kb_id=kb_id,
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+        content=data.long_summary,
+    )
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
+@summary_router.post("/{kb_id}/summary/reset")
+@trace_async("reset_kb_summary", "knowledge.api")
+async def reset_kb_summary(
+    kb_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reset manual knowledge base summary and fall back to AI summary."""
+    from app.schemas.summary import KnowledgeBaseSummaryResponse
+    from app.services.knowledge import get_summary_service
+
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
+        )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to reset knowledge base summary",
+        )
+
+    summary_service = get_summary_service(db)
+    summary = await summary_service.reset_kb_manual_summary(kb_id)
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
 @summary_router.post("/{kb_id}/summary/refresh")
 @trace_async("refresh_kb_summary", "knowledge.api")
 async def refresh_kb_summary(
@@ -1134,6 +1442,13 @@ async def refresh_kb_summary(
             detail="Access denied to this knowledge base",
         )
 
+    kb_spec = (kb.json or {}).get("spec", {})
+    if not kb_spec.get("summaryEnabled"):
+        return SummaryRefreshResponse(
+            message="Summary generation is disabled",
+            status="skipped",
+        )
+
     # Run in background, return immediately
     background_tasks.add_task(
         _run_kb_summary_refresh, kb_id, current_user.id, current_user.user_name
@@ -1158,6 +1473,15 @@ async def get_document_detail(
     include_summary: bool = Query(
         default=True, description="Include document summary in response"
     ),
+    offset: int = Query(
+        default=0, ge=0, description="Content read offset (for pagination)"
+    ),
+    limit: int = Query(
+        default=MAX_DOCUMENT_READ_LIMIT,
+        ge=1,
+        le=MAX_DOCUMENT_READ_LIMIT,
+        description=f"Content read limit (max: {MAX_DOCUMENT_READ_LIMIT})",
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1167,12 +1491,14 @@ async def get_document_detail(
     Query parameters:
     - include_content: Whether to include extracted text content (default: true)
     - include_summary: Whether to include AI-generated summary (default: true)
+    - offset: Content read offset for pagination (default: 0)
+    - limit: Maximum characters to return (default: 100000, max: 100000)
 
     Returns:
     - document_id: Document ID
     - content: Extracted text content (if include_content=true)
-    - content_length: Length of content in characters (if include_content=true)
-    - truncated: Whether content was truncated (if include_content=true)
+    - content_length: Total length of content in characters (if include_content=true)
+    - truncated: Whether more content is available (if include_content=true)
     - summary: Document summary object (if include_summary=true)
     """
     from app.models.knowledge import KnowledgeDocument
@@ -1204,8 +1530,8 @@ async def get_document_detail(
             document_id=doc_id,
             include_content=include_content,
             include_summary=include_summary,
-            offset=0,
-            limit=MAX_DOCUMENT_READ_LIMIT,
+            offset=offset,
+            limit=limit,
         )
     except ValueError as error:
         _raise_document_detail_http_error(error)
@@ -1399,74 +1725,6 @@ async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: st
         new_db.close()
 
 
-@trace_background("kb_summary_after_deletion_background", "knowledge.worker")
-def _update_kb_summary_after_deletion(
-    kb_id: int,
-    user_id: int,
-    user_name: str,
-    trace_context: Optional[dict] = None,
-):
-    """
-    Background task to update KB summary after document deletion.
-
-    - If no active documents remain, clear the summary
-    - If active documents remain, regenerate the summary
-    - Errors are logged but don't affect the deletion operation
-    - Respects debounce pattern (skip if summary is currently generating)
-
-    This is a synchronous function that creates its own event loop to run
-    the async summary service methods. This is necessary because FastAPI's
-    BackgroundTasks runs tasks in a thread pool without an event loop.
-
-    Args:
-        kb_id: Knowledge base ID
-        user_id: User who triggered the deletion
-        user_name: Username for placeholder resolution
-        trace_context: Trace context for distributed tracing
-    """
-    from app.services.knowledge import get_summary_service
-
-    logger.info(
-        f"[KnowledgeAPI] Starting KB summary update after deletion: kb_id={kb_id}"
-    )
-
-    # Create a new database session for the background task
-    db = SessionLocal()
-    try:
-        summary_service = get_summary_service(db)
-
-        # Trigger KB summary with clear_if_empty=True
-        # This will:
-        # - Clear summary if no active documents remain
-        # - Regenerate summary if active documents exist with completed summaries
-        # - Skip if currently generating (debounce)
-        # Use a dedicated event loop and ensure proper cleanup
-        # to avoid "no running event loop" errors during garbage collection
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                summary_service.trigger_kb_summary(
-                    kb_id, user_id, user_name, force=False, clear_if_empty=True
-                )
-            )
-        finally:
-            # Properly shutdown async generators and close the loop
-            loop.run_until_complete(loop.shutdown_asyncgens())
-            loop.close()
-
-    except Exception as e:
-        # Log error but don't re-raise - deletion should succeed regardless
-        logger.error(
-            f"[KnowledgeAPI] Failed to update KB summary after deletion: "
-            f"kb_id={kb_id}, error={str(e)}",
-            exc_info=True,
-        )
-    finally:
-        db.close()
-        logger.info(f"[KnowledgeAPI] KB summary update task completed: kb_id={kb_id}")
-
-
 # ============== Chunk Management Endpoints ==============
 
 
@@ -1542,6 +1800,7 @@ def list_document_chunks(
         items=[ChunkItem(**item) for item in paginated_items],
         splitter_type=chunks_data.get("splitter_type"),
         splitter_subtype=chunks_data.get("splitter_subtype"),
+        qa_pair_count=chunks_data.get("qa_pair_count", 0),
     )
 
 

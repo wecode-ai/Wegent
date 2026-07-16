@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -19,7 +20,52 @@ from app.schemas.subscription import (
     SubscriptionVisibility,
 )
 from app.services.subscription.service import SubscriptionService
-from app.tasks.subscription_tasks import check_due_subscriptions_sync
+from app.tasks.subscription_tasks import (
+    SUBSCRIPTION_BATCH_SIZE,
+    _disable_expired_subscription_if_needed,
+    _dispatch_due_subscription,
+    check_due_subscriptions,
+    check_due_subscriptions_sync,
+)
+
+
+@pytest.fixture(autouse=True)
+def enable_subscription_scheduler(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "SUBSCRIPTION_SCHEDULER_ENABLED", True)
+
+
+def test_check_due_subscriptions_skips_before_lock_when_scheduler_disabled(
+    monkeypatch,
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "SUBSCRIPTION_SCHEDULER_ENABLED", False, raising=False
+    )
+
+    with patch("app.core.distributed_lock.distributed_lock.acquire_context") as acquire:
+        result = check_due_subscriptions.run()
+
+    assert result == {"status": "skipped", "reason": "scheduler_disabled"}
+    acquire.assert_not_called()
+
+
+def test_check_due_subscriptions_sync_skips_before_db_when_scheduler_disabled(
+    monkeypatch,
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings, "SUBSCRIPTION_SCHEDULER_ENABLED", False, raising=False
+    )
+
+    with patch("app.db.session.get_db_session") as mock_session:
+        result = check_due_subscriptions_sync()
+
+    assert result == {"status": "skipped", "reason": "scheduler_disabled"}
+    mock_session.assert_not_called()
 
 
 def _create_team(db: Session, owner_user_id: int, name: str) -> Kind:
@@ -35,6 +81,265 @@ def _create_team(db: Session, owner_user_id: int, name: str) -> Kind:
     db.commit()
     db.refresh(team)
     return team
+
+
+class _RecordingSubscriptionQuery:
+    def __init__(self):
+        self.limit_values = []
+        self.offset_values = []
+        self.order_by_calls = 0
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        self.order_by_calls += 1
+        return self
+
+    def limit(self, value):
+        self.limit_values.append(value)
+        return self
+
+    def offset(self, value):
+        self.offset_values.append(value)
+        return self
+
+    def all(self):
+        return []
+
+
+class _RecordingKeysetSubscriptionQuery:
+    def __init__(self):
+        self.limit_values = []
+        self.offset_called = False
+        self.order_by_calls = 0
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        self.order_by_calls += 1
+        return self
+
+    def limit(self, value):
+        self.limit_values.append(value)
+        return self
+
+    def offset(self, value):
+        self.offset_called = True
+        return self
+
+    def all(self):
+        return []
+
+
+def test_check_due_subscriptions_sync_queries_active_subscriptions_in_pages():
+    query = _RecordingKeysetSubscriptionQuery()
+    db = MagicMock()
+    db.query.return_value = query
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks._recover_stale_pending_executions",
+            return_value=0,
+        ),
+        patch(
+            "app.tasks.subscription_tasks._cleanup_stale_running_executions",
+            return_value=0,
+        ),
+        patch("app.db.session.get_db_session") as mock_session,
+    ):
+        mock_session.return_value.__enter__ = MagicMock(return_value=db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = check_due_subscriptions_sync()
+
+    assert result["due_subscriptions"] == 0
+    assert query.order_by_calls == 1
+    assert query.limit_values == [SUBSCRIPTION_BATCH_SIZE]
+    assert query.offset_called is False
+
+
+def test_check_due_subscriptions_queries_active_subscriptions_in_pages():
+    query = _RecordingKeysetSubscriptionQuery()
+    db = MagicMock()
+    db.query.return_value = query
+    lock_context = MagicMock()
+    lock_context.__enter__.return_value = True
+    lock_context.__exit__.return_value = False
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks._recover_stale_pending_executions",
+            return_value=0,
+        ),
+        patch(
+            "app.tasks.subscription_tasks._cleanup_stale_running_executions",
+            return_value=0,
+        ),
+        patch("app.core.distributed_lock.distributed_lock.acquire_context") as acquire,
+        patch("app.db.session.get_db_session") as mock_session,
+    ):
+        acquire.return_value = lock_context
+        mock_session.return_value.__enter__ = MagicMock(return_value=db)
+        mock_session.return_value.__exit__ = MagicMock(return_value=False)
+
+        result = check_due_subscriptions.run()
+
+    assert result["due_subscriptions"] == 0
+    assert query.order_by_calls == 1
+    assert query.limit_values == [SUBSCRIPTION_BATCH_SIZE]
+    assert query.offset_called is False
+
+
+def test_disable_expired_subscription_commit_error_rolls_back_and_skips_item():
+    db = MagicMock()
+    db.commit.side_effect = RuntimeError("deadlock")
+    subscription = MagicMock()
+    subscription.id = 123
+    subscription.json = {"_internal": {"enabled": True}}
+    internal = {
+        "enabled": True,
+        "expires_at": datetime(2020, 1, 1, tzinfo=timezone.utc).isoformat(),
+    }
+
+    should_skip = _disable_expired_subscription_if_needed(
+        db=db,
+        subscription=subscription,
+        internal=internal,
+        now_utc=datetime(2026, 1, 1),
+        sync_label="",
+    )
+
+    assert should_skip is True
+    db.rollback.assert_called_once()
+
+
+def test_dispatch_due_subscription_updates_schedule_before_dispatch():
+    db = MagicMock()
+    subscription = MagicMock()
+    subscription.id = 10
+    subscription.name = "sub"
+    subscription.user_id = 20
+    subscription.json = {"_internal": {"trigger_type": "interval"}}
+    execution = MagicMock()
+    execution.id = 30
+    subscription_crd = MagicMock()
+    calls = []
+
+    def update_schedule(*args, **kwargs):
+        calls.append("update")
+
+    service = MagicMock()
+    service.create_execution.return_value = execution
+    service.dispatch_background_execution.side_effect = (
+        lambda *args, **kwargs: calls.append("dispatch")
+    )
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.validate_subscription_for_read",
+            return_value=subscription_crd,
+        ),
+        patch(
+            "app.tasks.subscription_tasks._get_trigger_reason", return_value="reason"
+        ),
+        patch(
+            "app.tasks.subscription_tasks._update_next_execution_time",
+            side_effect=update_schedule,
+        ),
+    ):
+        dispatched = _dispatch_due_subscription(
+            db=db,
+            subscription=subscription,
+            trigger_type="interval",
+            subscription_service=service,
+            use_sync=False,
+        )
+
+    assert dispatched is True
+    assert calls == ["update", "dispatch"]
+
+
+def test_dispatch_due_subscription_marks_execution_failed_when_schedule_update_fails():
+    db = MagicMock()
+    subscription = MagicMock()
+    subscription.id = 10
+    subscription.name = "sub"
+    subscription.user_id = 20
+    subscription.json = {"_internal": {"trigger_type": "interval"}}
+    execution = MagicMock()
+    execution.id = 30
+    subscription_crd = MagicMock()
+    service = MagicMock()
+    service.create_execution.return_value = execution
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.validate_subscription_for_read",
+            return_value=subscription_crd,
+        ),
+        patch(
+            "app.tasks.subscription_tasks._get_trigger_reason", return_value="reason"
+        ),
+        patch(
+            "app.tasks.subscription_tasks._update_next_execution_time",
+            side_effect=RuntimeError("schedule failed"),
+        ),
+    ):
+        dispatched = _dispatch_due_subscription(
+            db=db,
+            subscription=subscription,
+            trigger_type="interval",
+            subscription_service=service,
+            use_sync=False,
+        )
+
+    assert dispatched is False
+    service.dispatch_background_execution.assert_not_called()
+    service.update_execution_status.assert_called_once()
+
+
+def test_dispatch_due_subscription_marks_execution_failed_when_dispatch_fails():
+    db = MagicMock()
+    subscription = MagicMock()
+    subscription.id = 10
+    subscription.name = "sub"
+    subscription.user_id = 20
+    subscription.json = {"_internal": {"trigger_type": "interval"}}
+    execution = MagicMock()
+    execution.id = 30
+    subscription_crd = MagicMock()
+    service = MagicMock()
+    service.create_execution.return_value = execution
+    service.dispatch_background_execution.side_effect = RuntimeError(
+        "broker unavailable"
+    )
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.validate_subscription_for_read",
+            return_value=subscription_crd,
+        ),
+        patch(
+            "app.tasks.subscription_tasks._get_trigger_reason", return_value="reason"
+        ),
+        patch("app.tasks.subscription_tasks._update_next_execution_time"),
+    ):
+        dispatched = _dispatch_due_subscription(
+            db=db,
+            subscription=subscription,
+            trigger_type="interval",
+            subscription_service=service,
+            use_sync=False,
+        )
+
+    assert dispatched is False
+    service.update_execution_status.assert_called_once()
+    assert (
+        "dispatch failed"
+        in service.update_execution_status.call_args.kwargs["error_message"]
+    )
 
 
 def test_check_due_subscriptions_handles_legacy_invalid_interval(

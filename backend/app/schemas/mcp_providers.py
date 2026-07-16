@@ -24,6 +24,9 @@ class MCPServer(BaseModel):
     provider_url: Optional[str] = None
     logo_url: Optional[str] = None
     tags: Optional[List[str]] = None
+    installState: str = "not_installed"
+    installedMcpId: Optional[int] = None
+    enabled: bool = False
 
 
 class MCPProviderInfo(BaseModel):
@@ -74,3 +77,25 @@ class MCPProviderKeysResponse(BaseModel):
 
     success: bool
     message: str
+
+
+class MCPToolInfo(BaseModel):
+    """Information about a single MCP tool"""
+
+    name: str
+    description: str
+
+
+class MCPTestRequest(BaseModel):
+    """Request to test an MCP server connection"""
+
+    server_name: str
+    server_config: Dict[str, Any]  # Raw server config: type/url/headers/command/args
+
+
+class MCPTestResponse(BaseModel):
+    """Response for MCP server connection test"""
+
+    success: bool
+    error: Optional[str] = None
+    tools: List[MCPToolInfo] = []

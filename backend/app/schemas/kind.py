@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.external_knowledge import ExternalKnowledgeRef
+from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
 
 
@@ -107,6 +109,26 @@ class RerankConfig(BaseModel):
     )
 
 
+class ModelCapabilities(BaseModel):
+    """Declared multimodal capabilities for LLM-style models.
+
+    Consumed by both the chat attachment pipeline (media understanding) and the
+    knowledge-base multimodal analysis selector. The knowledge multimodal
+    capability gate treats a ``supportsVideo=true`` Gemini model as also
+    covering image analysis (no separate ``supportsImage`` toggle on such
+    models).
+    """
+
+    supportsImage: Optional[bool] = Field(
+        None,
+        description="Whether the model supports image understanding in chat attachments.",
+    )
+    supportsVideo: Optional[bool] = Field(
+        None,
+        description="Whether the model supports video understanding in chat attachments.",
+    )
+
+
 # Import generation configs from separate module
 from .generation import ImageGenerationConfig, VideoGenerationConfig
 
@@ -140,6 +162,10 @@ class SkillRefMeta(BaseModel):
     skill_id: int = Field(..., description="Unique skill ID (Kind.id)")
     namespace: str = Field("default", description="Skill namespace")
     is_public: bool = Field(False, description="Whether this is a public skill")
+    content_hash: Optional[str] = Field(
+        None,
+        description="SHA256 content hash of the skill ZIP package, prefixed with sha256:",
+    )
 
 
 class KnowledgeBaseDefaultRef(BaseModel):
@@ -238,6 +264,14 @@ class ModelSpec(BaseModel):
         ModelCategoryType.LLM,
         description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
     )
+    modelGroup: Optional[str] = Field(
+        None,
+        description="Primary user-defined group used when displaying model selectors.",
+    )
+    modelSubGroup: Optional[str] = Field(
+        None,
+        description="Secondary user-defined group used within the primary model group.",
+    )
     ttsConfig: Optional[TTSConfig] = Field(
         None, description="TTS-specific configuration (when modelType='tts')"
     )
@@ -260,6 +294,12 @@ class ModelSpec(BaseModel):
     isAdvanced: Optional[bool] = Field(
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
+    )
+    modelCapabilities: Optional[ModelCapabilities] = Field(
+        None,
+        description="Declared multimodal capabilities (supportsImage / supportsVideo). "
+        "Used by the chat attachment media-understanding path and the knowledge-base "
+        "multimodal analysis selector/capability gate.",
     )
 
 
@@ -406,9 +446,16 @@ class TeamMember(BaseModel):
     requireConfirmation: Optional[bool] = (
         False  # Whether this stage requires user confirmation before proceeding to next stage (Pipeline mode only)
     )
+    contextPassing: Optional[str] = Field(
+        default="none",
+        description=(
+            "Pipeline mode only. Controls which message from this stage is passed "
+            "to the next stage: none, original_user, previous_bot, original_and_previous."
+        ),
+    )
 
 
-class TeamSpec(BaseModel):
+class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]
@@ -530,6 +577,52 @@ class KnowledgeBaseTaskRef(BaseModel):
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 
 
+class KnowledgeBaseTaskScopeRef(BaseModel):
+    """Task-level knowledge base scope for API follow-up inheritance."""
+
+    id: Optional[int] = None
+    namespace: str = "default"
+    name: str
+    scopeRestricted: bool = False
+    folderIds: Optional[List[int]] = None
+    explicitDocumentIds: Optional[List[int]] = None
+    includeSubfolders: bool = True
+    boundBy: Optional[str] = None
+    boundAt: Optional[str] = None
+
+
+class TaskExecutionWorkspace(BaseModel):
+    """Task-specific execution workspace override."""
+
+    source: str = Field(..., description="Workspace source, such as git_worktree")
+    path: Optional[str] = Field(
+        None, min_length=1, description="Execution workspace path"
+    )
+
+
+class TaskExecutionSpec(BaseModel):
+    """Task execution runtime metadata."""
+
+    workspace: Optional[TaskExecutionWorkspace] = None
+
+
+class TaskForkSpec(BaseModel):
+    """Task-level fork metadata.
+
+    Forks inherit parent history up to afterMessageId without copying subtasks.
+    """
+
+    sourceTaskId: int = Field(..., ge=1, description="Direct source task ID")
+    afterMessageId: int = Field(
+        ..., ge=0, description="Maximum parent message_id inherited by this fork"
+    )
+    rootTaskId: int = Field(..., ge=1, description="Root task ID for the fork chain")
+    runtime: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Runtime migration metadata for workspace and executor sessions",
+    )
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
@@ -541,7 +634,13 @@ class TaskSpec(BaseModel):
     knowledgeBaseRefs: Optional[List[KnowledgeBaseTaskRef]] = (
         None  # Bound knowledge bases for group chat
     )
+    knowledgeBaseScopes: Optional[List[KnowledgeBaseTaskScopeRef]] = (
+        None  # Per-KB scope refs for OpenAPI follow-up inheritance
+    )
+    externalKnowledgeRefs: List[ExternalKnowledgeRef] = Field(default_factory=list)
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    execution: Optional[TaskExecutionSpec] = None
+    fork: Optional[TaskForkSpec] = None
     # Pipeline mode: current stage index (0-based)
     # Updated when user confirms to proceed to next stage
     # Used to determine which bot to use for follow-up questions
@@ -785,6 +884,13 @@ class EmbeddingModelRef(BaseModel):
     model_namespace: str = Field("default", description="Embedding model namespace")
 
 
+class CompleteEmbeddingModelRef(BaseModel):
+    """Complete reference to an Embedding Model."""
+
+    model_name: str = Field(..., min_length=1, description="Embedding model name")
+    model_namespace: str = Field("default", description="Embedding model namespace")
+
+
 class RetrieverRef(BaseModel):
     """Reference to a Retriever"""
 
@@ -810,23 +916,19 @@ class HybridWeights(BaseModel):
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval configuration for knowledge base
+    """Complete retrieval configuration for a RAG-enabled knowledge base."""
 
-    Note: retriever_name and embedding_config are optional to support knowledge bases
-    that don't use RAG (using kb_ls/kb_head tools instead for document exploration).
-    """
-
-    retriever_name: Optional[str] = Field(None, description="Retriever name")
+    retriever_name: str = Field(..., min_length=1, description="Retriever name")
     retriever_namespace: str = Field("default", description="Retriever namespace")
-    embedding_config: Optional[EmbeddingModelRef] = Field(
-        None, description="Embedding model configuration"
+    embedding_config: CompleteEmbeddingModelRef = Field(
+        ..., description="Embedding model configuration"
     )
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
-        0.7, ge=0.0, le=1.0, description="Minimum score threshold"
+        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
     )
     hybrid_weights: Optional[HybridWeights] = Field(
         None, description="Hybrid search weights"
@@ -851,7 +953,7 @@ class KnowledgeBaseSpec(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     kbType: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"

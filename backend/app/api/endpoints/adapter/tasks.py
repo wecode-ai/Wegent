@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -17,6 +17,10 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
+from app.core.constants import (
+    CLIENT_ORIGIN_FRONTEND,
+    SUPPORTED_CLIENT_ORIGINS,
+)
 from app.db.session import get_async_db
 from app.models.user import User
 from app.schemas.remote_workspace import (
@@ -36,25 +40,44 @@ from app.schemas.shared_task import (
     TaskShareResponse,
 )
 from app.schemas.task import (
+    ArchivedTaskListResponse,
     PipelineStageInfo,
     PromptDraftGenerateRequest,
     PromptDraftGenerateResponse,
+    TaskArchiveBatchResponse,
+    TaskArchiveResponse,
     TaskCreate,
     TaskDetail,
     TaskInDB,
     TaskListResponse,
+    TaskLiteGroupedListResponse,
     TaskLiteListResponse,
+    TaskRuntimeActiveStream,
+    TaskRuntimeCheck,
     TaskSkillsResponse,
     TaskUpdate,
 )
+from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from app.services.task_fork import task_fork_service
+from app.stores.tasks import task_store
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+ClientOriginQuery = Annotated[
+    str,
+    Query(
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
+        description="Client surface to scope task lists and chat operations",
+    ),
+]
 
 
 @router.post("", response_model=dict)
@@ -92,6 +115,31 @@ def create_task_with_optional_id(
     return result
 
 
+@router.post("/archive", response_model=TaskArchiveBatchResponse)
+def archive_all_user_chats(
+    scope: Literal["all", "standalone"] = Query(
+        "all",
+        description=(
+            "Archive scope. 'standalone' archives chats with no project; "
+            "'all' preserves the legacy behavior."
+        ),
+    ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive all active personal chat/code tasks owned by the current user."""
+    if scope == "standalone":
+        count = task_kinds_service.archive_standalone_chats(
+            db=db, user_id=current_user.id, client_origin=client_origin
+        )
+    else:
+        count = task_kinds_service.archive_all_user_chats(
+            db=db, user_id=current_user.id, client_origin=client_origin
+        )
+    return {"message": "Chats archived successfully", "count": count}
+
+
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task_with_id(
     task_create: TaskCreate,
@@ -103,6 +151,31 @@ def create_task_with_id(
     return task_kinds_service.create_task_or_append(
         db=db, obj_in=task_create, user=current_user, task_id=task_id
     )
+
+
+@router.post("/{task_id}/fork", response_model=TaskForkResponse)
+def fork_task(
+    task_id: int,
+    request: TaskForkRequest,
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a snapshot fork of a task with a new execution target."""
+    forked_task = task_fork_service.fork_task(
+        db=db,
+        source_task_id=task_id,
+        user_id=current_user.id,
+        request=request,
+        client_origin=client_origin,
+    )
+    task_detail = task_kinds_service.get_task_detail(
+        db=db,
+        task_id=forked_task.id,
+        user_id=current_user.id,
+        client_origin=client_origin,
+    )
+    return {"task_id": forked_task.id, "task": task_detail}
 
 
 @router.get("", response_model=TaskListResponse)
@@ -160,6 +233,7 @@ def get_personal_tasks_lite(
         "online,offline",
         description="Comma-separated task types to include: online (chat), offline (code), flow",
     ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -174,7 +248,43 @@ def get_personal_tasks_lite(
     skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     items, total = task_kinds_service.get_user_personal_tasks_lite(
-        db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        types=type_list,
+        client_origin=client_origin,
+    )
+    return {"total": total, "items": items}
+
+
+@router.get("/lite/personal/grouped", response_model=TaskLiteGroupedListResponse)
+@trace_sync("get_personal_task_groups_lite", "tasks.api")
+def get_personal_task_groups_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    types: str = Query(
+        "online,offline",
+        description="Comma-separated task types to include: online (chat), offline (code), flow",
+    ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's personal task page grouped by device or agent.
+
+    This endpoint groups only the current flat page (default 50 items) to keep
+    query costs equivalent to the existing personal history pagination.
+    """
+    skip = (page - 1) * limit
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    items, total = task_kinds_service.get_user_personal_task_groups_lite(
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        types=type_list,
+        client_origin=client_origin,
     )
     return {"total": total, "items": items}
 
@@ -195,16 +305,121 @@ def search_tasks_by_title(
     return {"total": total, "items": items}
 
 
+@router.get("/archived", response_model=ArchivedTaskListResponse)
+def get_archived_tasks(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(100, ge=1, le=200, description="Items per page"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get archived chats owned by the current user."""
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.list_archived_tasks(
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        client_origin=client_origin,
+    )
+    return {"total": total, "items": items}
+
+
+@router.delete("/archived", response_model=TaskArchiveBatchResponse)
+def delete_archived_tasks(
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Soft delete all archived chats owned by the current user."""
+    count = task_kinds_service.delete_all_archived_tasks(
+        db=db, user_id=current_user.id, client_origin=client_origin
+    )
+    return {"message": "Archived chats deleted successfully", "count": count}
+
+
+@router.get("/{task_id}/runtime-check", response_model=TaskRuntimeCheck)
+async def get_task_runtime_check(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return lightweight task/runtime consistency checkpoint.
+
+    This endpoint must not return message content. Messages are recovered via
+    WebSocket join/resume only.
+    """
+    task = task_kinds_service.get_task_by_id(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+
+    active_stream = None
+    streaming_status = await session_manager.get_task_streaming_status(task_id)
+    if streaming_status:
+        raw_subtask_id = streaming_status.get("subtask_id")
+        subtask_id = int(raw_subtask_id) if raw_subtask_id is not None else None
+        if subtask_id is not None:
+            cached_content = await session_manager.get_streaming_content(subtask_id)
+            active_stream = TaskRuntimeActiveStream(
+                subtask_id=subtask_id,
+                cursor=len(cached_content or ""),
+                last_activity_at=(
+                    datetime.fromisoformat(streaming_status["last_activity_at"])
+                    if streaming_status.get("last_activity_at")
+                    else None
+                ),
+            )
+
+    return TaskRuntimeCheck(
+        task_id=task_id,
+        task_status=task["status"],
+        status_updated_at=task.get("updated_at"),
+        active_stream=active_stream,
+    )
+
+
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Get specified task details with related entities"""
     return task_kinds_service.get_task_detail(
-        db=db, task_id=task_id, user_id=current_user.id
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        client_origin=client_origin,
     )
+
+
+@router.post("/{task_id}/archive", response_model=TaskArchiveResponse)
+def archive_task(
+    task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive one chat owned by the current user."""
+    task_kinds_service.archive_task(
+        db=db, task_id=task_id, user_id=current_user.id, client_origin=client_origin
+    )
+    return {"message": "Chat archived successfully", "task_id": task_id}
+
+
+@router.post("/{task_id}/unarchive", response_model=TaskArchiveResponse)
+def unarchive_task(
+    task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restore one archived chat owned by the current user."""
+    task_kinds_service.unarchive_task(
+        db=db, task_id=task_id, user_id=current_user.id, client_origin=client_origin
+    )
+    return {"message": "Chat unarchived successfully", "task_id": task_id}
 
 
 @router.get(
@@ -385,23 +600,31 @@ async def generate_task_prompt_draft_stream(
 def update_task(
     task_update: TaskUpdate,
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Update task information"""
     return task_kinds_service.update_task(
-        db=db, task_id=task_id, obj_in=task_update, user_id=current_user.id
+        db=db,
+        task_id=task_id,
+        obj_in=task_update,
+        user_id=current_user.id,
+        client_origin=client_origin,
     )
 
 
 @router.delete("/{task_id}")
 def delete_task(
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Delete task"""
-    task_kinds_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
+    task_kinds_service.delete_task(
+        db=db, task_id=task_id, user_id=current_user.id, client_origin=client_origin
+    )
     return {"message": "Task deleted successfully"}
 
 
@@ -549,7 +772,8 @@ def join_shared_task(
         user_id=current_user.id,
         team_id=user_team.id,
         model_id=request.model_id,
-        force_override_bot_model=request.force_override_bot_model or False,
+        force_override_bot_model=bool(request.model_id)
+        or bool(request.force_override_bot_model),
         force_override_bot_model_type=request.force_override_bot_model_type,
         git_repo_id=request.git_repo_id,
         git_url=request.git_url,
@@ -589,7 +813,6 @@ async def export_task_docx(
     - Formatted markdown content
     - Embedded images and attachment info
     """
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task (owner or group chat member)
@@ -597,14 +820,12 @@ async def export_task_docx(
         raise HTTPException(status_code=404, detail="Task not found")
 
     # Query task without user_id filter since we already validated access
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -665,21 +886,18 @@ def get_task_services(
     Returns the app field from the task JSON containing service information
     like name, host, previewUrl, mysql, etc.
     """
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task
     if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -704,23 +922,18 @@ def update_task_services(
     Merges the provided fields with existing app data.
     Only provided non-None fields will be updated.
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task
     if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -739,9 +952,7 @@ def update_task_services(
     # Update task JSON with new app data under status.app
     status_data["app"] = app_data
     task_json["status"] = status_data
-    task.json = task_json
-    task.updated_at = datetime.now()
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_json)
 
     db.commit()
     db.refresh(task)
@@ -761,23 +972,18 @@ def delete_task_services(
 
     Removes the specified field names from the app object.
     """
-    from sqlalchemy.orm.attributes import flag_modified
-
-    from app.models.task import TaskResource
     from app.services.task_member_service import task_member_service
 
     # Check if user has access to the task
     if not task_member_service.is_member(db, task_id, current_user.id):
         raise HTTPException(status_code=404, detail="Task not found")
 
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active.in_(TaskResource.is_active_query()),
-        )
-        .first()
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
     )
 
     if not task:
@@ -796,9 +1002,7 @@ def delete_task_services(
     # Update task JSON under status.app
     status_data["app"] = app_data
     task_json["status"] = status_data
-    task.json = task_json
-    task.updated_at = datetime.now()
-    flag_modified(task, "json")
+    task_store.update_json(db, task=task, payload=task_json)
 
     db.commit()
     db.refresh(task)

@@ -24,6 +24,8 @@ from shared.models import ResponsesAPIEmitter
 
 logger = logging.getLogger(__name__)
 
+RetrievalSourceKey = tuple[str, str]
+
 # Constants for reasoning markers
 REASONING_START = "__REASONING__"
 REASONING_END = "__END_REASONING__"
@@ -76,6 +78,19 @@ def should_display_tool_details(tool_name: str) -> bool:
     return any(keyword in tool_name for keyword in whitelisted_keywords if keyword)
 
 
+def _retrieval_source_key(value: Any) -> RetrievalSourceKey | None:
+    """Normalize retrieval source identity to a provider/source pair."""
+    if isinstance(value, dict):
+        source_id = value.get("source_id") or value.get("id")
+        provider = value.get("provider") or ""
+    else:
+        source_id = value
+        provider = ""
+    if source_id is None:
+        return None
+    return str(provider), str(source_id)
+
+
 class StorageHandlerProtocol(Protocol):
     """Protocol for storage handler operations."""
 
@@ -104,6 +119,15 @@ class StreamingState:
     full_response: str = ""
     offset: int = 0
     sources: list = field(default_factory=list)
+    retrieval_searched_source_ids: dict[RetrievalSourceKey, None] = field(
+        default_factory=dict
+    )
+    retrieval_ignored_source_ids: dict[RetrievalSourceKey, None] = field(
+        default_factory=dict
+    )
+    retrieval_source_statuses: dict[RetrievalSourceKey, dict[str, Any]] = field(
+        default_factory=dict
+    )
     reasoning_content: str = ""
 
     # TTFT tracking
@@ -113,6 +137,8 @@ class StreamingState:
     # Silent exit state
     is_silent_exit: bool = False
     silent_exit_reason: str = ""
+    is_deferred_user_input: bool = False
+    deferred_user_input_tool_use_id: Optional[str] = None
 
     # Truncation state (when model output reaches max_token limit)
     is_truncated: bool = False
@@ -123,6 +149,11 @@ class StreamingState:
 
     # Complete messages chain from LangGraph agent execution (tool calls + results)
     messages_chain: list = field(default_factory=list)
+
+    # Latest context metrics snapshot for observability and refresh recovery
+    context_metrics: Optional[dict[str, Any]] = None
+    context_compactions: list[dict[str, Any]] = field(default_factory=list)
+    termination_reason: Optional[str] = None
 
     def append_content(self, token: str) -> None:
         """Append token to accumulated response."""
@@ -135,16 +166,123 @@ class StreamingState:
 
     def add_sources(self, sources: list) -> None:
         """Add knowledge base sources for citation."""
-        existing_keys = {(s.get("kb_id"), s.get("title")) for s in self.sources}
+        existing_keys = {
+            (s.get("source_id") or s.get("kb_id"), s.get("title")) for s in self.sources
+        }
         for source in sources:
-            kb_id = source.get("kb_id")
+            source_identity = source.get("source_id") or source.get("kb_id")
             title = source.get("title")
-            if kb_id is None or title is None:
+            if source_identity is None or title is None:
                 continue
-            key = (kb_id, title)
+            key = (source_identity, title)
             if key not in existing_keys:
                 self.sources.append(source)
                 existing_keys.add(key)
+
+    def add_retrieval_summary(self, summary: dict[str, Any] | None) -> None:
+        """Merge retrieval coverage summary for the current response."""
+        if not isinstance(summary, dict):
+            return
+
+        source_statuses = summary.get("source_statuses")
+        if isinstance(source_statuses, list):
+            for status in source_statuses:
+                if not isinstance(status, dict):
+                    continue
+                source_key = _retrieval_source_key(status)
+                if source_key is None:
+                    continue
+                normalized_status = status.get("status") or "no_hit"
+                if normalized_status not in {"hit", "no_hit", "ignored", "failed"}:
+                    normalized_status = "no_hit"
+                existing = self.retrieval_source_statuses.get(source_key)
+                merged = {
+                    "provider": str(status.get("provider") or source_key[0]),
+                    "source_id": str(status.get("source_id") or source_key[1]),
+                    "source_name": status.get("source_name"),
+                    "status": normalized_status,
+                    "record_count": max(0, int(status.get("record_count") or 0)),
+                    "citation_count": 0,
+                    "mode": status.get("mode"),
+                }
+                if existing is not None:
+                    merged["source_name"] = (
+                        existing.get("source_name") or merged["source_name"]
+                    )
+                    merged["record_count"] = int(
+                        existing.get("record_count") or 0
+                    ) + int(merged["record_count"] or 0)
+                    if existing.get("status") == "hit":
+                        merged["status"] = "hit"
+                    elif merged["status"] != "hit":
+                        merged["status"] = existing.get("status") or merged["status"]
+                    merged["mode"] = existing.get("mode") or merged["mode"]
+                self.retrieval_source_statuses[source_key] = merged
+
+        searched_sources = summary.get("searched_sources")
+        ignored_sources = summary.get("ignored_sources")
+        if not isinstance(searched_sources, list):
+            searched_sources = summary.get("searched_source_ids") or []
+        if not isinstance(ignored_sources, list):
+            ignored_sources = summary.get("ignored_source_ids") or []
+        if not isinstance(searched_sources, list):
+            searched_sources = []
+        if not isinstance(ignored_sources, list):
+            ignored_sources = []
+
+        for source in searched_sources:
+            source_key = _retrieval_source_key(source)
+            if source_key is None:
+                continue
+            self.retrieval_searched_source_ids.setdefault(source_key, None)
+            self.retrieval_ignored_source_ids.pop(source_key, None)
+
+        for source in ignored_sources:
+            source_key = _retrieval_source_key(source)
+            if source_key is None:
+                continue
+            if source_key not in self.retrieval_searched_source_ids:
+                self.retrieval_ignored_source_ids.setdefault(source_key, None)
+
+    def get_retrieval_summary(self) -> dict[str, Any] | None:
+        """Return the aggregated retrieval coverage summary, if any."""
+        citation_counts: dict[RetrievalSourceKey, int] = {}
+        for source in self.sources:
+            if not isinstance(source, dict):
+                continue
+            if source.get("source_id"):
+                source_key = (
+                    str(source.get("source_type") or ""),
+                    str(source.get("source_id")),
+                )
+            elif source.get("kb_id") is not None:
+                source_key = ("internal", str(source.get("kb_id")))
+            else:
+                continue
+            citation_counts[source_key] = citation_counts.get(source_key, 0) + 1
+
+        searched_source_ids = [
+            source_id for _, source_id in self.retrieval_searched_source_ids.keys()
+        ]
+        ignored_source_ids = [
+            source_id for _, source_id in self.retrieval_ignored_source_ids.keys()
+        ]
+        source_statuses: list[dict[str, Any]] = []
+        for source_key, status in self.retrieval_source_statuses.items():
+            next_status = dict(status)
+            citation_count = citation_counts.get(source_key, 0)
+            next_status["citation_count"] = citation_count
+            if citation_count > 0:
+                next_status["status"] = "hit"
+            source_statuses.append(next_status)
+
+        if not searched_source_ids and not ignored_source_ids and not source_statuses:
+            return None
+        return {
+            "searched_source_ids": searched_source_ids,
+            "ignored_source_ids": ignored_source_ids,
+            "source_statuses": source_statuses,
+        }
 
     def add_loaded_skill(self, skill_name: str) -> None:
         """Add a loaded skill name for persistence across conversation turns.
@@ -190,6 +328,9 @@ class StreamingState:
         # Sources should be included for knowledge base citations
         if include_sources and self.sources:
             result["sources"] = self.sources
+        retrieval_summary = self.get_retrieval_summary()
+        if retrieval_summary:
+            result["retrieval_summary"] = retrieval_summary
         if self.reasoning_content:
             result["reasoning_content"] = self.reasoning_content
         # Include silent exit flag if set
@@ -197,6 +338,12 @@ class StreamingState:
             result["silent_exit"] = True
             if self.silent_exit_reason:
                 result["silent_exit_reason"] = self.silent_exit_reason
+        if self.is_deferred_user_input:
+            result["deferred_user_input"] = True
+            if self.deferred_user_input_tool_use_id:
+                result["deferred_user_input_tool_use_id"] = (
+                    self.deferred_user_input_tool_use_id
+                )
         # Include truncation flag if set
         if self.is_truncated:
             result["truncated"] = True
@@ -209,6 +356,12 @@ class StreamingState:
         # Include messages chain for multi-turn tool call history
         if include_value and self.messages_chain:
             result["messages_chain"] = self.messages_chain
+        if self.context_metrics:
+            result["context_metrics"] = self.context_metrics
+        if include_value and self.context_compactions:
+            result["context_compactions"] = self.context_compactions
+        if self.termination_reason:
+            result["termination_reason"] = self.termination_reason
         return result
 
 
@@ -405,17 +558,30 @@ class StreamingCore:
             self.state.is_truncated,
         )
 
+        stop_reason = (
+            "tool_deferred" if self.state.is_deferred_user_input else "end_turn"
+        )
+
         # Emit done event via ResponsesAPIEmitter
         # Pass all result fields through extra_fields so they are included
         # in the response.completed event and persisted to the DB.
         await self.emitter.done(
             content=result.get("value", ""),
+            stop_reason=stop_reason,
             sources=result.get("sources"),
             silent_exit=result.get("silent_exit"),
             silent_exit_reason=result.get("silent_exit_reason"),
+            deferred_user_input=result.get("deferred_user_input"),
+            deferred_user_input_tool_use_id=result.get(
+                "deferred_user_input_tool_use_id"
+            ),
             loaded_skills=result.get("loaded_skills"),
             messages_chain=result.get("messages_chain"),
             reasoning_content=result.get("reasoning_content"),
+            context_metrics=result.get("context_metrics"),
+            context_compactions=result.get("context_compactions"),
+            termination_reason=result.get("termination_reason"),
+            retrieval_summary=result.get("retrieval_summary"),
         )
 
         return result

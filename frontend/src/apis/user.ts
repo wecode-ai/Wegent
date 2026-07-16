@@ -9,11 +9,14 @@
 
 import type {
   GitInfo,
+  QuickLaunchPreparePresetRequest,
+  QuickLaunchPreparePresetResponse,
+  QuickAccessResponse,
+  QuickLaunchResponse,
   User,
   UserPreferences,
-  QuickAccessResponse,
-  WelcomeConfigResponse,
   DefaultTeamsResponse,
+  WelcomeConfigResponse,
 } from '@/types/api'
 import type { NotificationChannelInfo } from '@/types/subscription'
 
@@ -26,6 +29,10 @@ export interface LoginRequest {
 export interface LoginResponse {
   access_token: string
   token_type: string
+}
+
+export interface WeworkAuthSessionActionResponse {
+  status: string
 }
 
 export interface UpdateUserRequest {
@@ -148,11 +155,19 @@ function isAuthenticated(): boolean {
 import { apiClient } from './client'
 import { paths } from '@/config/paths'
 
+let quickAccessRequest: Promise<QuickAccessResponse> | null = null
+
 export const userApis = {
   async login(data: LoginRequest): Promise<User> {
     const res: LoginResponse = await apiClient.post('/auth/login', data)
     setToken(res.access_token)
     // Get user information after login
+    return await apiClient.get('/users/me')
+  },
+
+  async setupAdminPassword(password: string): Promise<User> {
+    const res: LoginResponse = await apiClient.post('/auth/admin-password/setup', { password })
+    setToken(res.access_token)
     return await apiClient.get('/users/me')
   },
 
@@ -167,6 +182,18 @@ export const userApis = {
     return apiClient.get('/users/me')
   },
 
+  async getCurrentUserWithoutAuthRedirect(): Promise<User> {
+    return apiClient.get('/users/me', { redirectOnUnauthorized: false })
+  },
+
+  async approveWeworkAuthSession(sessionId: string): Promise<WeworkAuthSessionActionResponse> {
+    return apiClient.post(`/auth/wework/sessions/${encodeURIComponent(sessionId)}/approve`)
+  },
+
+  async declineWeworkAuthSession(sessionId: string): Promise<WeworkAuthSessionActionResponse> {
+    return apiClient.post(`/auth/wework/sessions/${encodeURIComponent(sessionId)}/decline`)
+  },
+
   async updateUser(data: UpdateUserRequest): Promise<User> {
     return apiClient.put('/users/me', data)
   },
@@ -177,7 +204,28 @@ export const userApis = {
   },
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
-    return apiClient.get('/users/quick-access')
+    if (quickAccessRequest) {
+      return quickAccessRequest
+    }
+
+    const request = apiClient.get<QuickAccessResponse>('/users/quick-access').finally(() => {
+      if (quickAccessRequest === request) {
+        quickAccessRequest = null
+      }
+    })
+    quickAccessRequest = request
+
+    return request
+  },
+
+  async getQuickLaunch(): Promise<QuickLaunchResponse> {
+    return apiClient.get('/users/quick-launch')
+  },
+
+  async prepareQuickLaunchPreset(
+    data: QuickLaunchPreparePresetRequest
+  ): Promise<QuickLaunchPreparePresetResponse> {
+    return apiClient.post('/users/quick-launch/prepare-preset', data)
   },
 
   async getWelcomeConfig(): Promise<WelcomeConfigResponse> {

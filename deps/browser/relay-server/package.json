@@ -1,13 +1,14 @@
 {
   "name": "@wegent/cdp-relay-server",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Chrome DevTools Protocol relay server and browser automation tool",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "cdp-relay-server": "dist/cli.js",
-    "browser-tool": "dist/tool-cli.js"
+    "browser-tool": "dist/tool-cli.js",
+    "browser-mcp-server": "dist/mcp-server.js"
   },
   "exports": {
     ".": {
@@ -32,6 +33,7 @@
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "tool": "node dist/tool-cli.js",
+    "test:mcp": "npm run build && node --test test/mcp-server.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

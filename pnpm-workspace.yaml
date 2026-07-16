@@ -1,0 +1,42 @@
+packages:
+  - frontend
+  - wework
+  - packages/*
+confirmModulesPurge: false
+allowBuilds:
+  core-js: true
+  esbuild: true
+  msw: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@file-viewer/core@2.1.26'
+  - '@file-viewer/doc@2.1.26'
+  - '@file-viewer/docx@0.3.19'
+  - '@file-viewer/pptx@2.1.26'
+  - '@file-viewer/preset-lite@2.1.26'
+  - '@file-viewer/preset-office@2.1.26'
+  - '@file-viewer/react@2.1.26'
+  - '@file-viewer/renderer-image@2.1.26'
+  - '@file-viewer/renderer-media@2.1.26'
+  - '@file-viewer/renderer-ofd@2.1.26'
+  - '@file-viewer/renderer-pdf@2.1.26'
+  - '@file-viewer/renderer-presentation@2.1.26'
+  - '@file-viewer/renderer-spreadsheet@2.1.26'
+  - '@file-viewer/renderer-text@2.1.26'
+  - '@file-viewer/renderer-word@2.1.26'
+  - '@file-viewer/vite-plugin@2.1.26'
+  - '@file-viewer/eda-layout@2.1.26'
+  - '@file-viewer/eda-orcad@2.1.26'
+  - '@file-viewer/geometry-engine@2.1.26'
+  - '@file-viewer/preset-engineering@2.1.26'
+  - '@file-viewer/renderer-3d@2.1.26'
+  - '@file-viewer/renderer-archive@2.1.26'
+  - '@file-viewer/renderer-cad@2.1.26'
+  - '@file-viewer/renderer-data@2.1.26'
+  - '@file-viewer/renderer-drawing@2.1.26'
+  - '@file-viewer/renderer-eda@2.1.26'
+  - '@file-viewer/renderer-geo@2.1.26'
+  - '@file-viewer/renderer-mindmap@2.1.26'
+  - '@file-viewer/renderer-typst@2.1.26'

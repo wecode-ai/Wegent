@@ -4,7 +4,14 @@
 
 import { apiClient } from './client'
 import { getToken } from './user'
-import { Task, PaginationParams, TaskStatus, SuccessMessage, TaskDetail } from '../types/api'
+import {
+  Task,
+  PaginationParams,
+  TaskStatus,
+  SuccessMessage,
+  TaskDetail,
+  TaskRuntimeCheck,
+} from '../types/api'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 
 // Task Request/Response Types
@@ -124,7 +131,7 @@ export interface JoinSharedTaskResponse {
 
 export interface PublicContextData {
   id: number
-  context_type: 'attachment' | 'knowledge_base'
+  context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
   name: string
   status: string
   // Attachment fields
@@ -133,6 +140,25 @@ export interface PublicContextData {
   mime_type?: string
   // Knowledge base fields
   document_count?: number
+  // External knowledge fields
+  external_provider?: string | null
+  external_mode?: string | null
+  external_id?: string | null
+  external_scope?: string | null
+  external_target_type?: 'knowledge_base' | 'folder' | 'document' | null
+  external_node_id?: string | null
+  external_document_id?: string | null
+  external_parent_id?: string | null
+  // Table fields
+  document_id?: number
+  source_config?: {
+    url?: string
+  }
+  // External web content fields
+  video_count?: number
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 export interface PublicSubtaskData {
@@ -158,47 +184,6 @@ export interface PublicSharedTaskResponse {
   sharer_id: number
   subtasks: PublicSubtaskData[]
   created_at: string
-}
-
-// Pipeline stage confirmation types
-export interface ConfirmStageRequest {
-  confirmed_prompt: string // The edited/confirmed prompt to pass to next stage
-  action: 'continue' | 'retry' // "continue" to proceed to next stage, "retry" to stay at current stage
-}
-
-export interface ConfirmStageResponse {
-  message: string
-  task_id: number
-  current_stage: number // 0-indexed current pipeline stage
-  total_stages: number // Total number of pipeline stages
-  next_stage_name: string | null // Name of the next stage (bot name)
-}
-
-export interface PipelineStageInfo {
-  current_stage: number // 0-indexed current pipeline stage
-  total_stages: number // Total number of pipeline stages
-  current_stage_name: string // Name of current stage (bot name)
-  is_pending_confirmation: boolean // Whether waiting for user confirmation
-  stages: Array<{
-    index: number
-    name: string
-    require_confirmation: boolean
-    status: 'pending' | 'running' | 'completed' | 'failed' | 'pending_confirmation'
-  }>
-}
-
-// Pipeline stage confirmation types
-export interface ConfirmStageRequest {
-  confirmed_prompt: string // The edited/confirmed prompt to pass to next stage
-  action: 'continue' | 'retry' // "continue" to proceed to next stage, "retry" to stay at current stage
-}
-
-export interface ConfirmStageResponse {
-  message: string
-  task_id: number
-  current_stage: number // 0-indexed current pipeline stage
-  total_stages: number // Total number of pipeline stages
-  next_stage_name: string | null // Name of the next stage (bot name)
 }
 
 export interface PipelineStageInfo {
@@ -313,6 +298,10 @@ export const taskApis = {
 
   getTaskDetail: async (id: number): Promise<TaskDetail> => {
     return apiClient.get(`/tasks/${id}`)
+  },
+
+  getTaskRuntimeCheck: async (id: number): Promise<TaskRuntimeCheck> => {
+    return apiClient.get(`/tasks/${id}/runtime-check`)
   },
 
   // Send a message. If task_id not provided, create task first, then send.
@@ -440,18 +429,6 @@ export const taskApis = {
     }
 
     return response.blob()
-  },
-
-  /**
-   * Confirm a pipeline stage and proceed to the next stage
-   * @param taskId - Task ID
-   * @param request - Confirmation request with confirmed prompt and action
-   */
-  confirmPipelineStage: async (
-    taskId: number,
-    request: ConfirmStageRequest
-  ): Promise<ConfirmStageResponse> => {
-    return apiClient.post(`/tasks/${taskId}/confirm-stage`, request)
   },
 
   /**

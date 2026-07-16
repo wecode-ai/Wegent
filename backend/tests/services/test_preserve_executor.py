@@ -168,7 +168,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
     @pytest.fixture
     def mock_db(self):
         """Create a mock database session"""
-        return Mock(spec=Session)
+        return AsyncMock(spec=AsyncSession)
 
     async def test_skips_task_with_preserve_executor_true(self, job_service, mock_db):
         """Test that tasks with preserveExecutor=true are skipped during cleanup"""
@@ -269,8 +269,15 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
             "executor-1", "default"
         )
 
-    async def test_cleanup_continues_when_archive_fails(self, job_service, mock_db):
-        """Test executor cleanup continues even when workspace archive fails."""
+    async def test_cleanup_skips_deletion_when_archive_fails(
+        self, job_service, mock_db
+    ):
+        """Test executor deletion is skipped when workspace archive fails.
+
+        Deleting the pod after a failed archive would make the workspace
+        unrecoverable, so cleanup must leave the executor in place for a
+        later retry.
+        """
         mock_subtask = self._create_mock_subtask(1, 100)
         mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
         mock_task.json["metadata"]["labels"]["taskType"] = "code"
@@ -282,7 +289,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                 job_service,
                 "_archive_workspace",
                 new_callable=AsyncMock,
-                side_effect=RuntimeError("archive failed"),
+                return_value=False,
             ),
             patch(
                 "app.services.adapters.executor_job.executor_kinds_service"
@@ -297,9 +304,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
             await job_service.cleanup_stale_executors(mock_db)
 
-        mock_executor_service.delete_executor_task_async.assert_called_once_with(
-            "executor-1", "default"
-        )
+        mock_executor_service.delete_executor_task_async.assert_not_called()
 
     async def test_cleanup_marks_deleted_using_subtask_ids(self, job_service, mock_db):
         """Test cleanup passes subtask ids to the short-lived delete marker."""
@@ -416,21 +421,32 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
         mark_deleted_mock.assert_not_called()
 
-    async def test_executor_deleted_flag_uses_async_session(self, job_service, mock_db):
-        """Test executor_deleted_at is updated in a separate short-lived async session."""
-        mock_async_session = AsyncMock()
-        mock_async_session.__aenter__ = AsyncMock(return_value=mock_async_session)
-        mock_async_session.__aexit__ = AsyncMock(return_value=False)
+    async def test_executor_deleted_flag_uses_store_boundary(
+        self, job_service, mock_db
+    ):
+        """Test executor_deleted_at is updated through a short-lived Store boundary."""
+        mock_sync_session = MagicMock()
+        mock_subtask_store = MagicMock()
+        mock_subtask_store.mark_executor_deleted_by_ids.return_value = 2
 
-        with patch(
-            "app.services.adapters.executor_job.AsyncSessionLocal"
-        ) as mock_session_local:
-            mock_session_local.return_value = mock_async_session
-
+        with (
+            patch(
+                "app.services.adapters.executor_job.SessionLocal",
+                return_value=mock_sync_session,
+            ),
+            patch(
+                "app.services.adapters.executor_job.task_stores.subtask_store",
+                mock_subtask_store,
+            ),
+        ):
             await job_service._mark_executor_deleted([1, 2])
 
-        mock_async_session.execute.assert_called_once()
-        mock_async_session.commit.assert_called_once()
+        mock_subtask_store.mark_executor_deleted_by_ids.assert_called_once_with(
+            mock_sync_session,
+            subtask_ids=[1, 2],
+        )
+        mock_sync_session.commit.assert_called_once()
+        mock_sync_session.close.assert_called_once()
 
     async def test_code_task_is_not_cleaned_up_before_code_threshold(
         self, job_service, mock_db
@@ -513,6 +529,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         )
         async_test_db.add(subtask)
         await async_test_db.commit()
+        subtask_id = subtask.id
 
         with (
             patch.object(
@@ -534,7 +551,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-subscription-1", "default"
         )
-        mark_deleted.assert_called_once_with([subtask.id])
+        mark_deleted.assert_called_once_with([subtask_id])
 
     async def test_cleanup_stale_executors_includes_pending_subtasks(
         self, job_service, async_test_db
@@ -590,6 +607,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         )
         async_test_db.add(subtask)
         await async_test_db.commit()
+        subtask_id = subtask.id
 
         with (
             patch.object(
@@ -612,7 +630,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-pending-1", "default"
         )
-        mark_deleted.assert_called_once_with([subtask.id])
+        mark_deleted.assert_called_once_with([subtask_id])
 
     async def test_cleanup_skips_invalid_task_json_and_continues(
         self, job_service, mock_db
@@ -660,6 +678,13 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            cleanup_entries.return_value = {
+                "task_id": 200,
+                "deleted": False,
+                "skipped": True,
+                "reason": "executor_not_found",
+                "executors": [],
+            }
 
             await job_service.cleanup_stale_executors(mock_db)
 
@@ -708,6 +733,13 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
         ):
             mock_settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS = 24
             mock_settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS = 48
+            cleanup_entries.return_value = {
+                "task_id": 100,
+                "deleted": False,
+                "skipped": True,
+                "reason": "executor_not_found",
+                "executors": [],
+            }
 
             await job_service.cleanup_stale_executors(mock_db)
 
@@ -988,6 +1020,111 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
         )
         mark_deleted.assert_called_once_with([1])
 
+    async def test_cleanup_task_executor_reports_archive_failure(
+        self, job_service, mock_db
+    ):
+        """Test manual cleanup reports skip (not success) when archive fails.
+
+        Retaining the pod after a failed archive must not be reported as a
+        deletion, otherwise callers believe the executor is gone while it was
+        intentionally kept for a later retry.
+        """
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_task.json["metadata"]["labels"]["taskType"] = "code"
+        mock_subtask = self._create_mock_subtask(1, 100)
+
+        with (
+            patch("app.services.task_member_service.task_member_service") as members,
+            patch.object(
+                job_service,
+                "_get_active_task_resource",
+                new_callable=AsyncMock,
+                return_value=mock_task,
+            ),
+            patch.object(
+                job_service,
+                "_get_cleanup_subtasks_for_task",
+                new_callable=AsyncMock,
+                return_value=[mock_subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                job_service, "_mark_executor_deleted", new_callable=AsyncMock
+            ) as mark_deleted,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            members.is_member.return_value = True
+            mock_db.run_sync = AsyncMock(return_value=True)
+            executor_service.delete_executor_task_async = AsyncMock()
+
+            result = await job_service.cleanup_task_executor(
+                mock_db, task_id=100, user_id=1
+            )
+
+        assert result == {
+            "task_id": 100,
+            "deleted": False,
+            "skipped": True,
+            "reason": "archive_failed",
+            "executors": [
+                {
+                    "executor_name": "executor-1",
+                    "executor_namespace": "default",
+                }
+            ],
+        }
+        executor_service.delete_executor_task_async.assert_not_called()
+        mark_deleted.assert_not_called()
+
+    async def test_cleanup_stale_task_executor_skips_recent_task_executor(
+        self, job_service, mock_db
+    ):
+        """Test task-scoped stale cleanup keeps executors under inactive threshold."""
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_subtask = self._create_mock_subtask(1, 100)
+        mock_task.updated_at = datetime.now() - timedelta(hours=1)
+        mock_subtask.updated_at = datetime.now() - timedelta(hours=1)
+
+        with (
+            patch.object(
+                job_service,
+                "_get_task_resource_any_state",
+                new_callable=AsyncMock,
+                return_value=mock_task,
+            ),
+            patch.object(
+                job_service,
+                "_get_cleanup_subtasks_for_task",
+                new_callable=AsyncMock,
+                return_value=[mock_subtask],
+            ),
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            executor_service.delete_executor_task_async = AsyncMock()
+
+            result = await job_service.cleanup_stale_task_executor(
+                mock_db,
+                task_id=100,
+                inactive_hours=24,
+                dry_run=False,
+            )
+
+        assert result["task_id"] == 100
+        assert result["deleted"] is False
+        assert result["skipped"] is True
+        assert result["reason"] == "not_stale"
+        assert "eligible_after" in result
+        executor_service.delete_executor_task_async.assert_not_called()
+
     async def test_cleanup_task_executor_skips_preserved_task(
         self, job_service, mock_db
     ):
@@ -1150,6 +1287,7 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
         # We need to mock the async path instead
         mock_async_db = AsyncMock()
         mock_async_db.run_sync = AsyncMock(return_value=True)
+        mock_async_db.sync_session = Mock()
 
         with (
             patch("app.services.task_member_service.task_member_service") as members,
@@ -1255,7 +1393,7 @@ class TestSetPreserveExecutorAPI:
             mock_member_service.is_member.return_value = True
 
             with patch(
-                "app.services.adapters.task_kinds.operations.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag_modified:
                 result = task_service.set_preserve_executor(
                     mock_db, task_id=123, user_id=1, preserve=True
@@ -1286,7 +1424,7 @@ class TestSetPreserveExecutorAPI:
             mock_member_service.is_member.return_value = True
 
             with patch(
-                "app.services.adapters.task_kinds.operations.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag_modified:
                 result = task_service.set_preserve_executor(
                     mock_db, task_id=123, user_id=1, preserve=False
@@ -1361,7 +1499,7 @@ class TestSetPreserveExecutorAPI:
             mock_member_service.is_member.return_value = True
 
             with patch(
-                "app.services.adapters.task_kinds.operations.flag_modified"
+                "app.stores.tasks.sqlalchemy_task_store.flag_modified"
             ) as mock_flag_modified:
                 result = task_service.set_preserve_executor(
                     mock_db, task_id=123, user_id=2, preserve=True

@@ -74,6 +74,8 @@ class DeviceService:
         name: str,
         status: str = "online",
         executor_version: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Set device online status in Redis.
 
@@ -84,6 +86,8 @@ class DeviceService:
             name: Device name
             status: Device status (online, busy)
             executor_version: Executor version (e.g., '1.0.0')
+            client_ip: Device-reported or websocket-observed IP address
+            runtime_transfer_host: Host peers should use for direct transfers
 
         Returns:
             True if set successfully
@@ -96,6 +100,8 @@ class DeviceService:
             name=name,
             status=status,
             executor_version=executor_version,
+            client_ip=client_ip,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
     @staticmethod
@@ -104,6 +110,7 @@ class DeviceService:
         device_id: str,
         running_task_ids: list[int] = None,
         executor_version: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis (extend TTL) and update running task IDs.
 
@@ -122,6 +129,7 @@ class DeviceService:
             device_id=device_id,
             running_task_ids=running_task_ids,
             executor_version=executor_version,
+            runtime_transfer_host=runtime_transfer_host,
         )
 
     @staticmethod
@@ -174,6 +182,22 @@ class DeviceService:
         """
         provider = DeviceService._get_provider(DeviceType.LOCAL)
         return await provider._get_online_info(user_id, device_id)
+
+    @staticmethod
+    async def store_device_capabilities_state(
+        user_id: int, device_id: str, capabilities: Dict[str, Any]
+    ) -> bool:
+        """Store sanitized local global capability heartbeat state."""
+        provider = DeviceService._get_provider(DeviceType.LOCAL)
+        return await provider.store_capabilities_state(user_id, device_id, capabilities)
+
+    @staticmethod
+    async def get_device_capabilities_state(
+        user_id: int, device_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get latest sanitized local global capability heartbeat state."""
+        provider = DeviceService._get_provider(DeviceType.LOCAL)
+        return await provider.get_capabilities_state(user_id, device_id)
 
     @staticmethod
     async def get_device_online_info_by_type(
@@ -291,6 +315,9 @@ class DeviceService:
         client_ip: Optional[str] = None,
         device_type: Optional[str] = None,
         bind_shell: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        app_device_id: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
 
@@ -303,11 +330,14 @@ class DeviceService:
             device_id: Device unique identifier (stored in Kind.name)
             name: Device display name (stored in spec.displayName)
             client_ip: Device's client IP address (stored in spec.clientIp)
-            device_type: Device type ('local' or 'cloud'). If None, defaults
+            device_type: Device type ('local', 'app', 'cloud', or 'remote'). If None, defaults
                          to 'local' for new devices or preserves existing value.
             bind_shell: Shell runtime binding ('claudecode' or 'openclaw').
                         If None, defaults to 'claudecode' for new devices or
                         preserves existing value.
+            runtime_transfer_host: Host peers should use for direct transfers
+            runtime_instance_id: Stable runtime installation ID shared by all routes
+            app_device_id: Desktop app IPC device ID for app registrations
 
         Returns:
             Kind model instance for the device
@@ -342,6 +372,12 @@ class DeviceService:
             # Update client IP if provided
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            if runtime_transfer_host is not None:
+                device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
+            if runtime_instance_id is not None:
+                device_json["spec"]["runtimeInstanceId"] = runtime_instance_id
+            if app_device_id is not None:
+                device_json["spec"]["appDeviceId"] = app_device_id
             # Update bind_shell if provided, otherwise preserve existing value
             if bind_shell is not None:
                 device_json["spec"]["bindShell"] = bind_shell
@@ -354,6 +390,11 @@ class DeviceService:
             db.add(device_kind)
             logger.info(f"Updated device CRD: user_id={user_id}, device_id={device_id}")
         else:
+            # Resolve device type: use provided value, or default to 'local'
+            resolved_device_type = device_type or DeviceType.LOCAL.value
+            # Resolve bind_shell: use provided value, or default to 'claudecode'
+            resolved_bind_shell = bind_shell or "claudecode"
+
             # Check if this is the first device for the user
             existing_devices = (
                 db.query(Kind)
@@ -373,12 +414,10 @@ class DeviceService:
                 if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
                 == DeviceType.LOCAL.value
             )
-            is_first_device = existing_device_count == 0
-
-            # Resolve device type: use provided value, or default to 'local'
-            resolved_device_type = device_type or DeviceType.LOCAL.value
-            # Resolve bind_shell: use provided value, or default to 'claudecode'
-            resolved_bind_shell = bind_shell or "claudecode"
+            is_first_device = (
+                resolved_device_type == DeviceType.LOCAL.value
+                and existing_device_count == 0
+            )
 
             # Create new device CRD
             device_json = {
@@ -396,6 +435,9 @@ class DeviceService:
                     "isDefault": is_first_device,
                     "capabilities": None,
                     "clientIp": client_ip,
+                    "runtimeTransferHost": runtime_transfer_host,
+                    "runtimeInstanceId": runtime_instance_id,
+                    "appDeviceId": app_device_id,
                 },
                 "status": {
                     "state": "Available",

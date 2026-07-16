@@ -52,6 +52,7 @@ class BaseDeviceProvider(ABC):
         executor_version: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a device.
 
@@ -67,6 +68,7 @@ class BaseDeviceProvider(ABC):
             executor_version: Executor version string
             capabilities: List of capability tags
             client_ip: Device's client IP address
+            runtime_transfer_host: Host peers should use for direct transfers
 
         Returns:
             Dict containing device info including 'id' and 'is_default'

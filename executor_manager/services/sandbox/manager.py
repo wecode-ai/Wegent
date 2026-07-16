@@ -14,12 +14,15 @@ This service handles:
 import asyncio
 import os
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+import httpx
 
 from executor_manager.common.config import get_config
 from executor_manager.common.distributed_lock import get_distributed_lock
 from executor_manager.common.singleton import SingletonMeta
-from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE, TASK_API_DOMAIN
 from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.models.sandbox import (
     Execution,
@@ -67,6 +70,7 @@ class SandboxManager(metaclass=SingletonMeta):
         self._execution_runner = get_execution_runner()
         self._scheduler: Optional["SandboxScheduler"] = None
         self._shutting_down = False
+        self._create_locks: Dict[str, asyncio.Lock] = {}
 
     # =========================================================================
     # Sandbox Lifecycle
@@ -106,6 +110,44 @@ class SandboxManager(metaclass=SingletonMeta):
 
         # Check if sandbox already exists for this task
         sandbox_metadata = metadata or {}
+        task_id = sandbox_metadata.get("task_id")
+
+        if task_id is not None:
+            task_key = str(task_id)
+            task_lock = self._create_locks.setdefault(task_key, asyncio.Lock())
+            async with task_lock:
+                return await self._create_sandbox_locked(
+                    shell_type=shell_type,
+                    user_id=user_id,
+                    user_name=user_name,
+                    timeout=timeout,
+                    workspace_ref=workspace_ref,
+                    bot_config=bot_config,
+                    metadata=sandbox_metadata,
+                )
+
+        return await self._create_sandbox_locked(
+            shell_type=shell_type,
+            user_id=user_id,
+            user_name=user_name,
+            timeout=timeout,
+            workspace_ref=workspace_ref,
+            bot_config=bot_config,
+            metadata=sandbox_metadata,
+        )
+
+    async def _create_sandbox_locked(
+        self,
+        shell_type: str,
+        user_id: int,
+        user_name: str,
+        timeout: int,
+        workspace_ref: Optional[str],
+        bot_config: Optional[Dict[str, Any]],
+        metadata: Dict[str, Any],
+    ) -> Tuple[Sandbox, Optional[str]]:
+        """Create a sandbox while holding the task-specific create lock."""
+        sandbox_metadata = metadata
         task_id = sandbox_metadata.get("task_id")
 
         if task_id is not None:
@@ -164,6 +206,8 @@ class SandboxManager(metaclass=SingletonMeta):
             sandbox.set_failed(error_msg)
             self._repository.save_sandbox(sandbox)
             return sandbox, error_msg
+
+        await self._restore_sandbox_after_create(sandbox)
 
         logger.info(
             f"[SandboxManager] Sandbox created: sandbox_id={sandbox.sandbox_id}, "
@@ -385,8 +429,15 @@ class SandboxManager(metaclass=SingletonMeta):
         if check_health and sandbox.base_url:
             is_healthy = self._health_checker.check_health_sync(sandbox.base_url)
             if not is_healthy:
-                sandbox.status = SandboxStatus.FAILED
-                sandbox.base_url = None
+                logger.info(
+                    "[SandboxManager] Sandbox health check failed; cleaning stale "
+                    "metadata: sandbox_id=%s container=%s base_url=%s",
+                    sandbox.sandbox_id,
+                    sandbox.container_name,
+                    sandbox.base_url,
+                )
+                await self._cleanup_dead_sandbox(sandbox)
+                return None
 
         return sandbox
 
@@ -468,6 +519,260 @@ class SandboxManager(metaclass=SingletonMeta):
 
         logger.info(f"[SandboxManager] Sandbox terminated: {sandbox_id}")
         return True, f"Sandbox {sandbox_id} terminated successfully"
+
+    async def cleanup_stale_sandboxes(
+        self,
+        *,
+        inactive_hours: float = 24,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Clean up sandboxes inactive longer than inactive_hours."""
+        now = time.time()
+        max_age_seconds = inactive_hours * 3600
+        result: Dict[str, Any] = {
+            "target": "sandboxes",
+            "inactive_hours": inactive_hours,
+            "dry_run": dry_run,
+            "deleted": [],
+            "skipped": [],
+            "failed": [],
+        }
+
+        for raw_sandbox_id in self._repository.get_active_sandbox_ids():
+            sandbox_id = self._normalize_sandbox_id(raw_sandbox_id)
+            sandbox = self._repository.load_sandbox(sandbox_id)
+            if sandbox is None:
+                result["failed"].append(
+                    {"sandbox_id": sandbox_id, "reason": "sandbox_not_found"}
+                )
+                continue
+
+            inactive_seconds = now - sandbox.last_activity_at
+            if inactive_seconds < max_age_seconds:
+                eligible_at = sandbox.last_activity_at + max_age_seconds
+                result["skipped"].append(
+                    {
+                        "sandbox_id": sandbox.sandbox_id,
+                        "reason": "not_stale",
+                        "last_activity_at": self._format_timestamp(
+                            sandbox.last_activity_at
+                        ),
+                        "eligible_after": self._format_timestamp(eligible_at),
+                    }
+                )
+                continue
+
+            if dry_run:
+                result["skipped"].append(
+                    {"sandbox_id": sandbox.sandbox_id, "reason": "dry_run"}
+                )
+                continue
+
+            await self._archive_sandbox_before_cleanup(sandbox)
+            success, message = await self.terminate_sandbox(sandbox.sandbox_id)
+            if success:
+                result["deleted"].append(
+                    {
+                        "sandbox_id": sandbox.sandbox_id,
+                        "container_name": sandbox.container_name,
+                    }
+                )
+            else:
+                result["failed"].append(
+                    {
+                        "sandbox_id": sandbox.sandbox_id,
+                        "reason": "delete_failed",
+                        "error": message,
+                    }
+                )
+
+        return result
+
+    async def cleanup_sandbox_by_task_id(
+        self,
+        *,
+        task_id: int,
+        dry_run: bool = False,
+        archive_before_delete: bool = True,
+    ) -> Dict[str, Any]:
+        """Clean up one sandbox runtime by task ID without an age threshold."""
+        sandbox_id = str(task_id)
+        sandbox = self._repository.load_sandbox(sandbox_id)
+        result: Dict[str, Any] = {
+            "target": "sandbox",
+            "task_id": task_id,
+            "sandbox_id": sandbox_id,
+            "dry_run": dry_run,
+            "archive_before_delete": archive_before_delete,
+            "sandbox_found": sandbox is not None,
+            "deleted": False,
+            "redis_cleared": False,
+            "archived": False,
+            "delete_attempts": [],
+        }
+
+        if sandbox is not None:
+            result["container_name"] = sandbox.container_name
+            result["status"] = sandbox.status.value
+
+        if dry_run:
+            return {**result, "skipped": True, "reason": "dry_run"}
+
+        if sandbox is not None and archive_before_delete:
+            result["archived"] = await self._archive_sandbox_before_cleanup(sandbox)
+
+        try:
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            direct_delete_status = None
+            if sandbox is not None and sandbox.container_name:
+                direct_delete_status = executor.delete_executor(sandbox.container_name)
+                result["delete_attempts"].append(
+                    {
+                        "mode": "container_name",
+                        "container_name": sandbox.container_name,
+                        "result": direct_delete_status,
+                    }
+                )
+
+            if (
+                not direct_delete_status
+                or direct_delete_status.get("status") != "success"
+            ):
+                fallback_delete_status = executor.delete_executor_by_task_id(sandbox_id)
+                result["delete_attempts"].append(
+                    {
+                        "mode": "task_id",
+                        "task_id": sandbox_id,
+                        "result": fallback_delete_status,
+                    }
+                )
+                delete_status = fallback_delete_status
+            else:
+                delete_status = direct_delete_status
+
+            result["delete_result"] = delete_status
+            result["deleted"] = delete_status.get("status") == "success"
+        except Exception as e:
+            result["delete_result"] = {"status": "failed", "error_msg": str(e)}
+
+        result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
+        if result["deleted"]:
+            result["skipped"] = False
+            result["reason"] = "sandbox_deleted"
+        elif result["redis_cleared"]:
+            result["skipped"] = False
+            result["reason"] = "sandbox_metadata_cleared"
+        else:
+            result["skipped"] = True
+            result["reason"] = "delete_failed"
+
+        return result
+
+    async def _archive_sandbox_before_cleanup(self, sandbox: Sandbox) -> bool:
+        """Request backend to archive a sandbox runtime before deletion."""
+        task_id = sandbox.metadata.get("task_id")
+        if task_id is None:
+            logger.info(
+                "[SandboxManager] Skipping sandbox archive without task_id: %s",
+                sandbox.sandbox_id,
+            )
+            return False
+
+        url = (
+            f"{TASK_API_DOMAIN.rstrip('/')}/api/internal/workspace-archives/"
+            f"{task_id}/archive-sandbox"
+        )
+        payload = self._build_sandbox_archive_payload(sandbox)
+        return await self._post_workspace_archive_callback(
+            url=url,
+            payload=payload,
+            action="archive",
+            sandbox=sandbox,
+        )
+
+    async def _restore_sandbox_after_create(self, sandbox: Sandbox) -> bool:
+        """Request backend to restore a sandbox runtime after creation."""
+        task_id = sandbox.metadata.get("task_id")
+        if task_id is None:
+            return False
+
+        url = (
+            f"{TASK_API_DOMAIN.rstrip('/')}/api/internal/workspace-archives/"
+            f"{task_id}/restore-sandbox"
+        )
+        payload = self._build_sandbox_archive_payload(sandbox)
+        return await self._post_workspace_archive_callback(
+            url=url,
+            payload=payload,
+            action="restore",
+            sandbox=sandbox,
+        )
+
+    def _build_sandbox_archive_payload(self, sandbox: Sandbox) -> Dict[str, str]:
+        """Build backend archive/restore callback payload for a sandbox."""
+        return {
+            "executor_name": sandbox.container_name,
+            "executor_namespace": sandbox.executor_namespace
+            or sandbox.metadata.get("executor_namespace")
+            or "",
+        }
+
+    async def _post_workspace_archive_callback(
+        self,
+        *,
+        url: str,
+        payload: Dict[str, str],
+        action: str,
+        sandbox: Sandbox,
+    ) -> bool:
+        """Post a sandbox archive/restore request to backend without raising."""
+        try:
+            async with httpx.AsyncClient(timeout=130.0) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                data = response.json()
+                success = bool(data.get("success", True))
+                if not success:
+                    logger.warning(
+                        "[SandboxManager] Sandbox %s callback returned success=false "
+                        "sandbox_id=%s response=%s",
+                        action,
+                        sandbox.sandbox_id,
+                        data,
+                    )
+                return success
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "[SandboxManager] Sandbox %s callback failed sandbox_id=%s "
+                "status=%s body=%s",
+                action,
+                sandbox.sandbox_id,
+                exc.response.status_code,
+                exc.response.text[:500],
+            )
+            return False
+        except Exception as exc:
+            logger.warning(
+                "[SandboxManager] Sandbox %s callback error sandbox_id=%s error=%s",
+                action,
+                sandbox.sandbox_id,
+                exc,
+            )
+            return False
+
+    def _normalize_sandbox_id(self, sandbox_id: Any) -> str:
+        """Normalize Redis sandbox IDs to strings."""
+        if isinstance(sandbox_id, bytes):
+            return sandbox_id.decode("utf-8")
+        return str(sandbox_id)
+
+    def _format_timestamp(self, timestamp: float) -> str:
+        """Format a Unix timestamp as an ISO string."""
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
     async def keep_alive(
         self, sandbox_id: str, additional_timeout: Optional[int] = None

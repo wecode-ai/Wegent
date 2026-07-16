@@ -2,22 +2,31 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import CustomHTTPException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeBaseCreate,
+    KnowledgeBaseMigrateResponse,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
     ResourceScope,
 )
 from app.schemas.namespace import GroupRole
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.share import knowledge_share_service
 
@@ -68,7 +77,8 @@ def _add_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=namespace.id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role.value,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=invited_by_user_id,
@@ -103,7 +113,8 @@ def _add_kb_member(
     member = ResourceMember(
         resource_type="KnowledgeBase",
         resource_id=knowledge_base_id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role.value,
         status=status,
         invited_by_user_id=invited_by_user_id,
@@ -179,6 +190,29 @@ def test_all_scope_does_not_duplicate_organization_knowledge_base(
 
     matching_ids = [kb.id for kb in knowledge_bases if kb.id == knowledge_base_id]
     assert matching_ids == [knowledge_base_id]
+
+
+@pytest.mark.unit
+def test_grouped_organization_returns_namespace_without_knowledge_bases(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "empty-org-owner")
+    viewer = _create_user(test_db, "empty-org-viewer")
+    namespace = _create_namespace(
+        test_db,
+        owner,
+        "empty-org-space",
+        level="organization",
+    )
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, viewer, GroupRole.Developer, owner.id)
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, viewer.id)
+
+    assert grouped.organization.namespace == namespace.name
+    assert grouped.organization.display_name == namespace.display_name
+    assert grouped.organization.kb_count == 0
+    assert grouped.organization.knowledge_bases == []
 
 
 @pytest.mark.unit
@@ -410,7 +444,7 @@ def test_developer_can_add_document_to_someone_elses_namespace_kb(
 
 
 @pytest.mark.unit
-def test_developer_cannot_delete_someone_elses_namespace_document(
+def test_namespace_developer_can_manage_shared_kb_documents(
     test_db: Session,
 ) -> None:
     owner = _create_user(test_db, "owner-delete-other-doc")
@@ -436,8 +470,10 @@ def test_developer_cannot_delete_someone_elses_namespace_document(
         ),
     )
 
-    with pytest.raises(ValueError, match="permission"):
-        KnowledgeService.delete_document(test_db, owner_document.id, developer.id)
+    result = KnowledgeService.delete_document(test_db, owner_document.id, developer.id)
+
+    assert result.success is True
+    assert result.kb_id == knowledge_base_id
 
 
 @pytest.mark.unit
@@ -597,7 +633,7 @@ def test_explicit_kb_developer_can_add_document_to_shared_kb(test_db: Session) -
 
 
 @pytest.mark.unit
-def test_explicit_kb_developer_can_delete_own_document_but_not_others(
+def test_explicit_kb_developer_can_manage_shared_kb_documents(
     test_db: Session,
 ) -> None:
     owner = _create_user(test_db, "owner-kb-dev-doc-delete")
@@ -641,8 +677,11 @@ def test_explicit_kb_developer_can_delete_own_document_but_not_others(
         ),
     )
 
-    with pytest.raises(ValueError, match="permission"):
-        KnowledgeService.delete_document(test_db, owner_document.id, collaborator.id)
+    owner_delete_result = KnowledgeService.delete_document(
+        test_db, owner_document.id, collaborator.id
+    )
+    assert owner_delete_result.success is True
+    assert owner_delete_result.kb_id == knowledge_base_id
 
     result = KnowledgeService.delete_document(
         test_db, collaborator_document.id, collaborator.id
@@ -714,6 +753,77 @@ def test_admin_can_manage_organization_knowledge_base_without_namespace_membersh
         test_db, owner_document.id, admin.id
     )
     assert delete_result.success is True
+
+
+@pytest.mark.unit
+def test_developer_can_manage_document_area_but_not_kb_settings(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-folder-structure")
+    developer = _create_user(test_db, "developer-folder-structure")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="folder-structure-kb", namespace="default"),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        developer,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    assert KnowledgeService.can_manage_knowledge_base_documents(
+        test_db, knowledge_base_id, developer.id
+    )
+    assert not KnowledgeService.can_manage_knowledge_base(
+        test_db, knowledge_base_id, developer.id
+    )
+    assert KnowledgeService.can_manage_knowledge_document(
+        test_db, knowledge_base_id, developer.id, owner.id
+    )
+
+    owner_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            name="owner-owned-doc",
+            file_extension="md",
+            file_size=12,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+    delete_result = KnowledgeService.delete_document(
+        test_db, owner_document.id, developer.id
+    )
+    assert delete_result.success is True
+
+    owner_folder = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="owner-folder", parent_id=0),
+    )
+
+    updated_folder = KnowledgeFolderService.update_folder(
+        test_db,
+        owner_folder.id,
+        developer.id,
+        KnowledgeFolderUpdate(name="renamed-by-developer"),
+        knowledge_base_id=knowledge_base_id,
+    )
+    assert updated_folder.name == "renamed-by-developer"
+
+    folder_delete_result = KnowledgeFolderService.delete_folder(
+        test_db,
+        owner_folder.id,
+        developer.id,
+        knowledge_base_id=knowledge_base_id,
+    )
+    assert folder_delete_result["deleted_folder_count"] == 1
 
 
 @pytest.mark.unit
@@ -843,3 +953,690 @@ def test_owner_can_migrate_personal_knowledge_base_to_group(
     assert result["success"] is True
     assert result["new_namespace"] == namespace.name
     assert migrated_kb.namespace == namespace.name
+
+
+def _auth_header(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.unit
+def test_migrate_endpoint_uses_extracted_module(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    """Migration route is served by the extracted endpoint module."""
+    migrate_response = KnowledgeBaseMigrateResponse(
+        success=True,
+        knowledge_base_id=123,
+        old_namespace="default",
+        new_namespace="group-target",
+        message="Migrated",
+    )
+
+    with patch(
+        "app.api.endpoints.knowledge_transfer.KnowledgeService.migrate_knowledge_base_to_group",
+        return_value=migrate_response,
+    ) as mock_migrate:
+        response = test_client.post(
+            "/api/knowledge-bases/123/migrate",
+            json={"target_group_name": "group-target"},
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["new_namespace"] == "group-target"
+    mock_migrate.assert_called_once()
+    assert mock_migrate.call_args.kwargs["knowledge_base_id"] == 123
+    assert mock_migrate.call_args.kwargs["target_group_name"] == "group-target"
+
+
+@pytest.mark.unit
+def test_namespace_display_name_syncs_after_rename(test_db: Session) -> None:
+    """KB permission tab should show the latest namespace name, not stale snapshot."""
+    from app.schemas.share import MemberRole
+
+    owner = _create_user(test_db, "ns-rename-owner")
+    namespace = _create_namespace(test_db, owner, "ns-rename-group")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    # Use a personal KB (namespace=default) so adding namespace permission
+    # does not trigger the "own group" protection.
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="ns-rename-kb", namespace="default"),
+    )
+
+    # Add namespace permission with an old snapshot
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(namespace.id),
+        entity_display_name="OldSnapshotName",
+    )
+
+    # Rename the namespace
+    namespace.display_name = "NewRenamedName"
+    test_db.commit()
+
+    # get_members should return the live name, not the snapshot
+    members = knowledge_share_service.get_members(test_db, knowledge_base_id, owner.id)
+    namespace_members = [m for m in members.members if m.entity_type == "namespace"]
+    assert len(namespace_members) == 1
+    assert namespace_members[0].display_name == "NewRenamedName"
+
+
+@pytest.mark.unit
+def test_namespace_snapshot_is_suppressed(test_db: Session) -> None:
+    """add_member should ignore entity_display_name for namespace entries."""
+    from app.schemas.share import MemberRole
+
+    owner = _create_user(test_db, "ns-snapshot-owner")
+    namespace = _create_namespace(test_db, owner, "ns-snapshot-group")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    # Use a personal KB (namespace=default) so adding namespace permission
+    # does not trigger the "own group" protection.
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="ns-snapshot-kb", namespace="default"),
+    )
+
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(namespace.id),
+        entity_display_name="ShouldBeIgnored",
+    )
+
+    member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "KnowledgeBase",
+            ResourceMember.resource_id == knowledge_base_id,
+            ResourceMember.entity_type == "namespace",
+            ResourceMember.entity_id == str(namespace.id),
+        )
+        .first()
+    )
+    assert member is not None
+    assert member.entity_display_name == ""
+
+
+@pytest.mark.unit
+def test_kb_shown_in_all_target_groups_via_namespace_entity(
+    test_db: Session,
+) -> None:
+    """KB shared to multiple groups via namespace entity should appear in all target groups."""
+    owner = _create_user(test_db, "multi-group-owner")
+    group_a = _create_namespace(test_db, owner, "group-a")
+    group_b = _create_namespace(test_db, owner, "group-b")
+    member = _create_user(test_db, "multi-group-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_b, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_a, member, GroupRole.Developer, owner.id)
+    _add_member(test_db, group_b, member, GroupRole.Developer, owner.id)
+
+    # Create a personal KB and share it to both groups via namespace entity
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-to-both", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_b.id),
+    )
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, member.id)
+
+    group_names_with_kb = {
+        g.group_name
+        for g in grouped.groups
+        if any(kb.id == knowledge_base_id for kb in g.knowledge_bases)
+    }
+    assert "group-a" in group_names_with_kb
+    assert "group-b" in group_names_with_kb
+
+
+@pytest.mark.unit
+def test_get_user_kb_permission_merges_multiple_entity_roles(
+    test_db: Session,
+) -> None:
+    """get_user_kb_permission should return the highest role across all entity sources."""
+    owner = _create_user(test_db, "merge-owner")
+    group_a = _create_namespace(test_db, owner, "merge-group-a")
+    member = _create_user(test_db, "merge-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_a, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="merge-kb", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    # Share with Reporter role via namespace entity
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+    # Also share with Maintainer role via direct user entity
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=member.id,
+        role=MemberRole.Maintainer,
+    )
+
+    has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(
+        test_db, knowledge_base_id, member.id
+    )
+
+    assert has_access is True
+    assert role == ResourceRole.Maintainer.value
+    assert is_creator is False
+
+
+@pytest.mark.unit
+def test_permission_sources_consistent_with_user_kb_permission(
+    test_db: Session,
+) -> None:
+    """get_my_permission_sources and get_user_kb_permission should return the same effective_role."""
+    owner = _create_user(test_db, "consistent-owner")
+    group_a = _create_namespace(test_db, owner, "consistent-group-a")
+    member = _create_user(test_db, "consistent-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_a, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="consistent-kb", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+
+    _, role_from_permission, _ = knowledge_share_service.get_user_kb_permission(
+        test_db, knowledge_base_id, member.id
+    )
+    sources = knowledge_share_service.get_my_permission_sources(
+        test_db, knowledge_base_id, member.id
+    )
+
+    assert role_from_permission == sources.effective_role
+
+
+@pytest.mark.unit
+def test_get_resource_checks_all_entity_records(
+    test_db: Session,
+) -> None:
+    """_get_resource should check all entity records, not just the first one."""
+    owner = _create_user(test_db, "resource-owner")
+    group_a = _create_namespace(test_db, owner, "resource-group-a")
+    group_b = _create_namespace(test_db, owner, "resource-group-b")
+    member = _create_user(test_db, "resource-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_b, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_b, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="resource-kb", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    # Member is NOT in group_a, but IS in group_b
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_b.id),
+    )
+
+    # _get_resource should find the group_b match even if group_a was queried first
+    kb = knowledge_share_service._get_resource(test_db, knowledge_base_id, member.id)
+    assert kb is not None
+    assert kb.id == knowledge_base_id
+
+
+@pytest.mark.unit
+def test_delete_knowledge_base_removes_orphaned_folders(test_db: Session) -> None:
+    """Deleting a knowledge base must also delete all its folders to prevent orphaned records."""
+    owner = _create_user(test_db, "owner-kb-folder-cleanup")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-with-folders", namespace="default"),
+    )
+
+    # Create a root-level folder and a nested child folder inside the KB.
+    root_folder = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="root-folder", parent_id=0),
+    )
+    KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="child-folder", parent_id=root_folder.id),
+    )
+
+    # Verify folders exist before deletion.
+    folder_count_before = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+        .count()
+    )
+    assert folder_count_before == 2
+
+    # Delete the knowledge base (no documents, so deletion is allowed).
+    deleted = KnowledgeService.delete_knowledge_base(
+        test_db, knowledge_base_id, owner.id
+    )
+    assert deleted is True
+
+    # All folders belonging to the deleted KB must be gone.
+    folder_count_after = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+        .count()
+    )
+    assert (
+        folder_count_after == 0
+    ), f"Expected 0 folders after KB deletion, but found {folder_count_after} orphaned folder(s)"
+
+
+@pytest.mark.unit
+def test_create_folder_allows_up_to_four_levels_under_knowledge_base(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-folder-depth-ok")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-folder-depth-ok", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    deepest_folder = KnowledgeFolderService.get_folder(test_db, parent_id, owner.id)
+    assert deepest_folder.parent_id > 0
+
+
+@pytest.mark.unit
+def test_create_folder_rejects_fifth_folder_level_under_knowledge_base(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-folder-depth-limit")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-folder-depth-limit", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="maximum depth of 4 levels under a knowledge base",
+    ):
+        KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name="level-5", parent_id=parent_id),
+        )
+
+
+@pytest.mark.unit
+def test_move_folder_rejects_subtree_that_would_exceed_depth_limit(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-folder-move-depth")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-folder-move-depth", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+    level4_id = parent_id
+
+    move_root = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="move-root", parent_id=0),
+    )
+    move_child = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="move-child", parent_id=move_root.id),
+    )
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="maximum depth of 4 levels under a knowledge base",
+    ):
+        KnowledgeFolderService.update_folder(
+            test_db,
+            move_root.id,
+            owner.id,
+            KnowledgeFolderUpdate(parent_id=level4_id),
+            knowledge_base_id=knowledge_base_id,
+        )
+
+    refreshed_child = KnowledgeFolderService.get_folder(
+        test_db, move_child.id, owner.id
+    )
+    assert refreshed_child.parent_id == move_root.id
+
+
+@pytest.mark.unit
+def test_create_document_allows_target_folder_at_depth_four(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-document-depth-allowed")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-document-depth-allowed", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="doc.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=parent_id,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+    assert document.folder_id == parent_id
+
+
+@pytest.mark.unit
+def test_move_document_allows_target_folder_at_depth_four(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-move-document-depth-allowed")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-move-document-depth-allowed", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    doc = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="doc-root.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+
+    moved = KnowledgeFolderService.move_document(test_db, doc.id, parent_id, owner.id)
+    assert moved.folder_id == parent_id
+
+
+@pytest.mark.unit
+def test_document_operations_reject_target_folder_beyond_depth_four(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-document-depth-too-deep")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-document-depth-too-deep", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    # Simulate legacy dirty data created before the new depth rule existed.
+    too_deep_folder = KnowledgeFolder(
+        kind_id=knowledge_base_id,
+        parent_id=parent_id,
+        name="level-5-legacy",
+    )
+    test_db.add(too_deep_folder)
+    test_db.commit()
+    test_db.refresh(too_deep_folder)
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="Documents can only be placed within the 4th folder level",
+    ):
+        KnowledgeService.create_document(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeDocumentCreate(
+                attachment_id=0,
+                name="too-deep-doc.md",
+                file_extension="md",
+                file_size=10,
+                folder_id=too_deep_folder.id,
+                source_type=DocumentSourceType.TEXT,
+                source_config={},
+            ),
+        )
+
+    doc = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="root-doc.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="Documents can only be placed within the 4th folder level",
+    ):
+        KnowledgeFolderService.move_document(
+            test_db, doc.id, too_deep_folder.id, owner.id
+        )
+
+
+@pytest.mark.unit
+def test_batch_move_documents_uses_bulk_update(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-batch-move-bulk")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-batch-move-bulk", namespace="default"),
+    )
+    target_folder = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="target", parent_id=0),
+    )
+    doc1 = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="batch-doc-1.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+    doc2 = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="batch-doc-2.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+
+    with patch.object(
+        KnowledgeFolderService,
+        "move_document",
+        side_effect=AssertionError("batch move must not call per-document move"),
+    ):
+        result = KnowledgeFolderService.batch_move_documents(
+            test_db, [doc1.id, doc2.id], target_folder.id, owner.id
+        )
+
+    assert result.success_count == 2
+    assert result.failed_ids == []
+    test_db.expire_all()
+    moved_folder_ids = {
+        row.folder_id
+        for row in test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id.in_([doc1.id, doc2.id]))
+        .all()
+    }
+    assert moved_folder_ids == {target_folder.id}

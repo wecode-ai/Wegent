@@ -30,16 +30,40 @@ class QuickAccessPreference(BaseModel):
     teams: List[int] = Field(default_factory=list)
 
 
+class UserModelSelectionPreference(BaseModel):
+    """User-level model selection preference."""
+
+    modelName: str
+    modelType: Optional[Literal["public", "user", "group", "runtime"]] = None
+    options: dict[str, str] = Field(default_factory=dict)
+
+
+class UserRuntimeConfigPreference(BaseModel):
+    """User-level runtime configuration preference."""
+
+    use_user_config: bool = False
+    use_proxy: bool = False
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
     send_key: Literal["enter", "cmd_enter"] = "enter"
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
+    chat_status_items: Optional[List[str]] = None
+    tool_output_guard_enabled: bool = False
     mcp_provider_keys: Optional[MCPProviderKeys] = None
     quick_access: Optional[QuickAccessPreference] = None
     # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
     default_execution_target: Optional[str] = None
+    wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None
+    wework_project_execution_mode: Literal["current_workspace", "git_worktree"] = (
+        "current_workspace"
+    )
+    runtime_configs: dict[str, UserRuntimeConfigPreference] = Field(
+        default_factory=dict
+    )
 
 
 class Token(BaseModel):
@@ -144,6 +168,12 @@ class LoginResponse(BaseModel):
     token_type: str
 
 
+class AdminPasswordSetupRequest(BaseModel):
+    """Request body for setting the initial admin password."""
+
+    password: str = Field(..., min_length=6)
+
+
 class UserInfo(BaseModel):
     """User info model for admin list"""
 
@@ -179,3 +209,29 @@ class CLIPollResponse(BaseModel):
     access_token: Optional[str] = None
     username: Optional[str] = None
     error: Optional[str] = None
+
+
+class WeworkAuthSessionCreateResponse(BaseModel):
+    """Response model for Wework desktop cloud authorization initialization."""
+
+    session_id: str
+    poll_token: str
+    authorize_url: str
+    expires_at: int
+    poll_interval_seconds: int
+
+
+class WeworkAuthSessionPollResponse(BaseModel):
+    """Response model for Wework desktop authorization polling."""
+
+    status: str
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    username: Optional[str] = None
+    error: Optional[str] = None
+
+
+class WeworkAuthSessionActionResponse(BaseModel):
+    """Response model for Web authorization approve/decline actions."""
+
+    status: str

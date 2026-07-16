@@ -6,7 +6,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import { Loader2 } from 'lucide-react'
 
 export interface InlineMessageEditProps {
@@ -108,21 +107,34 @@ const InlineMessageEdit: React.FC<InlineMessageEditProps> = ({
   )
 
   return (
-    <div className="flex flex-col gap-2 w-full">
-      <Textarea
+    <div className="flex w-full flex-col rounded-3xl border border-primary/40 bg-base px-4 py-3 shadow-card-hover">
+      <textarea
         ref={textareaRef}
         value={content}
         onChange={e => setContent(e.target.value)}
         onKeyDown={handleKeyDown}
         disabled={isSaving}
-        className="min-h-[60px] resize-none bg-fill-sec border-border-muted focus:border-primary"
+        className="min-h-[88px] w-full resize-none bg-transparent text-base leading-[26px] text-text-primary placeholder:text-text-muted focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         placeholder={t('chat:placeholder.input')}
+        data-testid="inline-message-edit-input"
       />
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={isSaving}>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onCancel}
+          disabled={isSaving}
+          data-testid="inline-message-edit-cancel-button"
+        >
           {t('chat:actions.cancel') || 'Cancel'}
         </Button>
-        <Button size="sm" onClick={handleSave} disabled={isSaving || !content.trim()}>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleSave}
+          disabled={isSaving || !content.trim()}
+          data-testid="inline-message-edit-save-button"
+        >
           {isSaving ? (
             <>
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />

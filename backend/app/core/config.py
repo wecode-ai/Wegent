@@ -68,6 +68,27 @@ def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, s
     return normalized_mapping
 
 
+def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return {
+            str(key).strip(): item for key, item in value.items() if str(key).strip()
+        }
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{setting_name} must be a JSON object") from exc
+        if not isinstance(parsed, Mapping):
+            raise ValueError(f"{setting_name} must be a JSON object")
+        return _parse_json_object_setting(parsed, setting_name)
+    raise ValueError(f"{setting_name} must be a mapping")
+
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -75,6 +96,8 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
     # API docs toggle (from env ENABLE_API_DOCS, default True)
     ENABLE_API_DOCS: bool = True
+    # Whether the auth handshake should surface first-run system initialization.
+    CHECK_SYSTEM_INITIALIZATION_STATUS: bool = True
 
     # Environment configuration
     ENVIRONMENT: str = "development"  # development or production
@@ -87,8 +110,9 @@ class Settings(BaseSettings):
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development
     STANDALONE_MODE: bool = False
-    # Enable in-process executor (no Docker required) when in standalone mode
+    # Enable the bundled Rust executor process when in standalone mode
     STANDALONE_EXECUTOR_ENABLED: bool = True
+    STANDALONE_EXECUTOR_DEVICE_ID: str = "standalone-admin-device"
 
     # Database configuration
     # Supports both MySQL and SQLite:
@@ -109,6 +133,9 @@ class Settings(BaseSettings):
     # Latest Executor version (manually updated when releasing new versions)
     # This is used to show upgrade warnings in the UI
     EXECUTOR_LATEST_VERSION: str = "1.0.0"
+    # Optional local device command overrides/additions. API callers pass the key;
+    # Backend resolves the shell command and optional post processor from registry.
+    LOCAL_DEVICE_COMMANDS: dict[str, Any] = {}
 
     # Executor version checking configuration
     # If EXECUTOR_REGISTRY_URL is set, version is fetched from registry
@@ -136,6 +163,10 @@ class Settings(BaseSettings):
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
+
+    # Group entity member configuration
+    # Maximum number of entity members (departments, etc.) per group
+    MAX_ENTITY_MEMBERS_PER_GROUP: int = 30
 
     # Direct chat configuration
     MAX_CONCURRENT_CHATS: int = 50  # Maximum concurrent direct chat sessions
@@ -177,7 +208,7 @@ class Settings(BaseSettings):
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
     # Workspace archive configuration
-    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 2048
     WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
@@ -188,6 +219,9 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Optional Web URL used to build Wework desktop cloud authorization pages.
+    # Defaults to FRONTEND_URL when empty.
+    WEWORK_AUTHORIZE_BASE_URL: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
@@ -206,6 +240,23 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+
+    # External knowledge MCP configuration
+    # Disabled by default because this endpoint is intended for trusted integrations.
+    EXTERNAL_KNOWLEDGE_MCP_ENABLED: bool = False
+    EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_ENABLED: bool = True
+    EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_REQUESTS: int = 120
+    EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_ENABLED: bool = True
+    EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_REQUESTS: int = 30
+    EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED: bool = True
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_REQUESTS: int = 300
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_REQUESTS: int = 60
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS: int = 20
+    EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # Celery configuration
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
@@ -268,6 +319,12 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("LOCAL_DEVICE_COMMANDS", mode="before")
+    @classmethod
+    def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
+        """Parse local device command map from JSON settings."""
+        return _parse_json_object_setting(v, "LOCAL_DEVICE_COMMANDS")
+
     @field_validator("RAG_RUNTIME_MODE", mode="before")
     @classmethod
     def parse_rag_runtime_mode(cls, v: Any) -> str | dict[str, str]:
@@ -312,6 +369,7 @@ class Settings(BaseSettings):
     FLOW_DEFAULT_TIMEOUT_SECONDS: int = 600  # 10 minutes
     FLOW_DEFAULT_RETRY_COUNT: int = 1
     FLOW_EXECUTION_PAGE_LIMIT: int = 50
+    SUBSCRIPTION_SCHEDULER_ENABLED: bool = True
     # Subscription minimum interval configuration (minutes)
     SUBSCRIPTION_MIN_INTERVAL_MINUTES: int = 15
     # Stale execution cleanup thresholds (hours)
@@ -327,8 +385,65 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
     KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
     KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
-    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
-    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
+    KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
+
+    # --- Document Conversion Configuration ---
+
+    # [Retained] Master switch: when False, all files indexed directly
+    KNOWLEDGE_CONVERSION_ENABLED: bool = False
+    # [Retained] Comma-separated file extensions requiring conversion
+    KNOWLEDGE_CONVERSION_FILE_TYPES: str = ""
+    # [Retained] Celery queue name for conversion tasks
+    KNOWLEDGE_CONVERSION_QUEUE: str = "knowledge_conversion"
+    # [Retained, value adjusted] Stale detection for CONVERTING status
+    # MUST be > converter CONVERSION_TASK_TIME_LIMIT to avoid false kills
+    # See cross-service config constraints in design doc section 4.4
+    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = (
+        14400  # was 12000, 20% margin over lock_timeout
+    )
+
+    # [Migrated to knowledge_doc_converter] The following configs have been moved:
+    # KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS  -> converter config (value: 12000)
+    # KNOWLEDGE_CONVERSION_LOCK_EXTEND_INTERVAL_SECONDS -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_MAX_RETRIES -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_RETRY_DELAY_SECONDS -> converter config
+    # MINERU_API_BASE_URL -> converter config
+    # MINERU_BACKEND -> converter config
+    # MINERU_PARSE_METHOD -> converter config
+    # MINERU_LANG_LIST -> converter config
+    # MINERU_FORMULA_ENABLE -> converter config
+    # MINERU_TABLE_ENABLE -> converter config
+    # MINERU_POLL_INTERVAL_SECONDS -> converter config
+    # MINERU_MAX_WAIT_SECONDS -> converter config
+    # WORKER_CONVERSION_S3_ENABLED -> converter config
+    # WORKER_CONVERSION_S3_ENDPOINT -> converter config
+    # WORKER_CONVERSION_S3_ACCESS_KEY -> converter config
+    # WORKER_CONVERSION_S3_SECRET_KEY -> converter config
+    # WORKER_CONVERSION_S3_BUCKET_NAME -> converter config
+    # WORKER_CONVERSION_S3_REGION_NAME -> converter config
+    # --- End Document Conversion Configuration ---
+
+    # --- Knowledge Multimodal Analysis Configuration ---
+    # Master switch for multimodal (video/image) Gemini analysis in knowledge
+    # bases. When False the orchestrator never classifies a file as multimodal,
+    # so no dispatch/Gemini runs anywhere; already-converted documents keep
+    # re-indexing normally. The open-source build ships image analysis fully
+    # wired; video analysis requires a configured media staging provider.
+    KNOWLEDGE_MULTIMODAL_ENABLED: bool = False
+    # Dedicated Celery queue for multimodal conversion tasks. The converter
+    # worker consumes both this and the MinerU queue by default.
+    KNOWLEDGE_MULTIMODAL_CONVERSION_QUEUE: str = "knowledge_multimodal_conversion"
+    # Internal endpoint the converter calls at execution time to resolve the
+    # KB's multimodalAnalysisModelRef into a decrypted runtime config (api_key
+    # + resolved default_headers). Keeps the Celery broker free of secrets.
+    MULTIMODAL_MODEL_CONFIG_RESOLVE_PATH: str = "/api/internal/model-config/resolve"
+    # When False, video multimodal analysis is rejected up-front (the
+    # open-source default ships no media staging provider). Enable after
+    # configuring a concrete MediaStagingProvider implementation.
+    KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED: bool = False
+    # --- End Knowledge Multimodal Analysis Configuration ---
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
@@ -367,12 +482,27 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
-    # default header
-    EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
+    # Default headers forwarded to the model backend on every LLM call.
+    # Keys are sent verbatim as HTTP headers (resolved by model_resolver against
+    # task_data). The wegent-agent-* group carries agent (Team) identity; when a
+    # placeholder resolves empty (non-Team paths), the group is dropped downstream.
+    EXECUTOR_ENV: str = (
+        '{"DEFAULT_HEADERS":{'
+        '"user":"${task_data.user.name}",'
+        '"wegent-agent-namespace":"${task_data.team.namespace}",'
+        '"wegent-agent-name":"${task_data.team.name}"'
+        "}}"
+    )
 
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
-    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted text length
+    MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted (stored) text length
+    # Max chars of extracted text injected inline into the prompt. Far smaller
+    # than the stored length: the inline copy is only a preview — chat_shell can
+    # page the full text via read_attachment, and executor/device modes read the
+    # downloaded file directly. Keeps the prompt bounded for modes without the
+    # chat_shell token-level preview (executor/device, which have no L3 guard).
+    ATTACHMENT_INJECT_MAX_CHARS: int = 32000
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"
@@ -417,16 +547,18 @@ class Settings(BaseSettings):
     # - SOCKS5: "socks5://proxy.example.com:1080"
     # If empty, no proxy will be used (direct connection)
     WEBSCRAPER_PROXY: str = ""
-    # Proxy mode: "direct" or "fallback"
-    # - "direct": Always use proxy for all requests (proxy must be configured)
+    # Proxy mode: "none", "fallback", "proxy", or legacy "direct"
+    # - "none": Never use proxy
     # - "fallback": Try direct connection first, use proxy only if direct fails
+    # - "proxy": Always use proxy for all requests (proxy must be configured)
+    # - "direct": Legacy alias for "proxy"
     # Default is "fallback" for better reliability
     WEBSCRAPER_PROXY_MODE: str = "fallback"
     # Web scraper site-specific configuration
     # Configuration for specific sites that require special handling
     # due to anti-bot detection, dynamic content loading, or navigation patterns
     # Format: JSON object with site URL patterns as keys
-    # WEB_SCRAPER_SITE_CONFIG={"Example.com":{"wait_until":"networkidle","page_timeout":30000,"delay_before_return_html":3.0}}
+    # WEB_SCRAPER_SITE_CONFIG={"example.com":{"wait_until":"networkidle","page_timeout_ms":30000,"delay_before_return_html":3.0}}
     WEB_SCRAPER_SITE_CONFIG: str = "{}"
 
     # Web search configuration
@@ -511,6 +643,9 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_TASK: str = (
         "wegent-wework#default"  # Default team for task mode (devices/chat page)
     )
+    DEFAULT_TEAM_WEWORK: str = (
+        "wegent-wework#default"  # Default team for WeWork workbench
+    )
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:
@@ -594,6 +729,20 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
+
+    def needs_conversion(self, file_extension: str) -> bool:
+        """Check if a file extension requires conversion before indexing."""
+        if not self.KNOWLEDGE_CONVERSION_ENABLED:
+            return False
+        if not self.KNOWLEDGE_CONVERSION_FILE_TYPES:
+            return False
+        ext = file_extension.lstrip(".").lower()
+        types = [
+            t.strip().lower()
+            for t in self.KNOWLEDGE_CONVERSION_FILE_TYPES.split(",")
+            if t.strip()
+        ]
+        return ext in types
 
     def get_rag_runtime_mode(self, operation: str) -> str:
         """Resolve the effective RAG runtime mode for an operation."""

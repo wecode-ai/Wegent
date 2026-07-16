@@ -89,6 +89,29 @@ messages.append(current_user_message_with_datetime_suffix)
 - 动态内容分块构建，最后使用 `\n\n` 拼接。
 - 避免在 system prompt 中引入任何请求级变化内容。
 
+### 受控例外：Web UI runtime guidance
+
+从 Wegent Web UI 发起的任务会在 Backend 构建 `ExecutionRequest` 时追加一个很小的 `<wegent_runtime_guidance>` system prompt 块。这个块不是知识库或业务数据上下文，而是交互策略：它告诉模型当前请求来自 Web UI、运行在本地设备/云沙箱/托管运行时等环境，并要求模型在产出文件时提示用户通过任务页的“查看任务文件”入口预览或下载。
+
+这个例外应保持严格受控：
+
+- 只用于 Web UI 发起的任务，不应影响 API 或其它入口。
+- 只描述运行时与用户交互方式，不放入知识库内容、业务数据或大段请求上下文。
+- 注入内容必须保持简短、幂等，并用 `<wegent_runtime_guidance>` 标记避免重复追加。
+- 如果新增的是事实型请求上下文，仍应优先走 `dynamic_context`，而不是继续扩展 system prompt。
+
+### Wework：Terminal 运行时上下文
+
+Wework 桌面端可以把当前任务关联的 Terminal 最近输出作为请求级上下文传给本地 runtime。该能力用于帮助 Codex 理解用户刚刚在 Terminal 中看到的命令报错或构建输出。
+
+约束：
+
+- 只注入与当前 `taskId` 或 `workspacePath` 匹配的 Terminal 输出，不使用全局最近 Terminal 兜底，避免串上下文。
+- 默认只保留约 `2KB`、最近 `80` 行，单次输出 chunk 最多取 `512B`，避免额外 token 过大。
+- 首次成功发送会附带当前保留的 Terminal 输出；之后只附带自上次成功发送以来的新输出。发送失败不会消费该增量，下一次请求会重试携带，避免丢失诊断信息。
+- 用户可在 Wework 设置页的“上下文”中关闭 Terminal 信息注入。
+- Wework 通过 `additionalContext["wework.terminal.current"]` 传递该上下文；Backend 和 local runtime 只负责透传，Executor 在 Codex app-server `turn/start` 或 `turn/steer` 时继续转发。
+
 ## 模块职责划分
 
 - [`shared/prompts/knowledge_base.py`](shared/prompts/knowledge_base.py):
@@ -97,6 +120,7 @@ messages.append(current_user_message_with_datetime_suffix)
 - Backend：
   - 生成 `kb_meta_prompt` 并写入 [`ExecutionRequest.kb_meta_prompt`](shared/models/execution.py:46)。
   - 通过 [`OpenAIRequestConverter`](shared/models/openai_converter.py:55) 的 `metadata` 字段透传给 Chat Shell。
+  - 对 Web UI 发起的任务，在 [`TaskRequestBuilder`](backend/app/services/execution/request_builder.py:49) 中追加受控的 runtime guidance。
 
 - Chat Shell：
   - messages 构建时注入 `dynamic_context`（human message）。

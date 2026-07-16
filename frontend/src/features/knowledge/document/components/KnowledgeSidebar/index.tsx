@@ -24,7 +24,10 @@ import { RecentSection } from './RecentSection'
 import { NavigationSection, type KnowledgeGroup } from './NavigationSection'
 import { CommandPalette } from '../CommandPalette'
 import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeSourceView } from '@/features/knowledge/knowledgeSourceViewRegistry'
 import type { ViewMode } from '../../hooks/useKnowledgeSidebar'
+
+const KNOWLEDGE_SIDEBAR_SECTIONS_STORAGE_KEY = 'knowledge-sidebar-sections-v2'
 
 // Re-export KnowledgeGroup type
 export type { KnowledgeGroup }
@@ -54,6 +57,8 @@ export interface KnowledgeSidebarProps {
   selectedGroupId: string | null
   /** Current view mode */
   viewMode: ViewMode
+  /** Currently selected external source view ID */
+  selectedSourceViewId: string | null
   /** Select a knowledge base */
   onSelectKb: (kb: KnowledgeBase) => void
   /** Select a group */
@@ -64,12 +69,25 @@ export interface KnowledgeSidebarProps {
   onSelectGroups: () => void
   /** Select "DingTalk" docs */
   onSelectDingtalk: () => void
+  /** Select an external source view */
+  onSelectSourceView: (sourceViewId: string) => void
+  /** Registered external source views */
+  sourceViews: KnowledgeSourceView[]
+  /** All knowledge bases for search */
+  allKnowledgeBases?: KnowledgeBase[]
   /** Callback to collapse the sidebar */
   onCollapse?: () => void
   /** DingTalk synced doc count */
   dingtalkDocCount: number
   /** Whether DingTalk MCP is configured */
   isDingtalkConfigured: boolean
+  /** Summary counts from backend */
+  summary?: {
+    total_count: number
+    personal_count: number
+    group_count: number
+    organization_count: number
+  }
 }
 
 export function KnowledgeSidebar({
@@ -85,14 +103,19 @@ export function KnowledgeSidebar({
   selectedKbId,
   selectedGroupId,
   viewMode,
+  selectedSourceViewId,
   onSelectKb,
   onSelectGroup,
   onSelectAll,
   onSelectGroups,
   onSelectDingtalk,
+  onSelectSourceView,
+  sourceViews,
+  allKnowledgeBases,
   onCollapse,
   dingtalkDocCount,
   isDingtalkConfigured,
+  summary,
 }: KnowledgeSidebarProps) {
   const { t } = useTranslation('knowledge')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -100,10 +123,10 @@ export function KnowledgeSidebar({
   // Section collapse states (persisted in localStorage)
   const [sectionStates, setSectionStates] = useState<Record<string, boolean>>(() => {
     try {
-      const saved = localStorage.getItem('knowledge-sidebar-sections')
-      return saved ? JSON.parse(saved) : { favorites: true, recent: true, groups: true }
+      const saved = localStorage.getItem(KNOWLEDGE_SIDEBAR_SECTIONS_STORAGE_KEY)
+      return saved ? JSON.parse(saved) : { favorites: true, recent: true, groups: false }
     } catch {
-      return { favorites: true, recent: true, groups: true }
+      return { favorites: true, recent: true, groups: false }
     }
   })
 
@@ -111,7 +134,7 @@ export function KnowledgeSidebar({
     setSectionStates(prev => {
       const next = { ...prev, [section]: !prev[section] }
       try {
-        localStorage.setItem('knowledge-sidebar-sections', JSON.stringify(next))
+        localStorage.setItem(KNOWLEDGE_SIDEBAR_SECTIONS_STORAGE_KEY, JSON.stringify(next))
       } catch {
         // Ignore storage errors
       }
@@ -199,15 +222,19 @@ export function KnowledgeSidebar({
           isAllSelected={viewMode === 'all'}
           isGroupsSelected={viewMode === 'groups'}
           isDingtalkSelected={viewMode === 'dingtalk'}
+          selectedSourceViewId={selectedSourceViewId}
           isExpanded={sectionStates.groups}
           onToggle={() => toggleSection('groups')}
           onSelectAll={onSelectAll}
           onSelectGroup={onSelectGroup}
           onSelectGroups={onSelectGroups}
           onSelectDingtalk={onSelectDingtalk}
-          totalKbCount={groups.reduce((sum, g) => sum + g.kbCount, 0)}
+          onSelectSourceView={onSelectSourceView}
+          sourceViews={sourceViews}
+          totalKbCount={summary?.total_count ?? groups.reduce((sum, g) => sum + g.kbCount, 0)}
           dingtalkDocCount={dingtalkDocCount}
           isDingtalkConfigured={isDingtalkConfigured}
+          summary={summary}
         />
       </div>
 
@@ -217,6 +244,8 @@ export function KnowledgeSidebar({
         onOpenChange={setIsSearchOpen}
         onSelectKb={handleSearchSelectKb}
         onSelectGroup={handleSearchSelectGroup}
+        allKnowledgeBases={allKnowledgeBases}
+        allGroups={groups}
       />
     </div>
   )

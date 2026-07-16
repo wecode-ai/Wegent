@@ -37,8 +37,9 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
         <button
           type="button"
           disabled={disabled}
+          data-testid="team-icon-picker-trigger"
           className={`
-            flex items-center justify-center w-10 h-10 rounded-lg border border-border
+            flex items-center justify-center h-11 w-11 sm:w-10 sm:h-10 rounded-lg border border-border
             bg-base hover:bg-hover transition-colors
             ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
           `}
@@ -47,12 +48,17 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
           <SelectedIconComponent className="w-5 h-5 text-primary" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[300px] p-3" align="start" side="bottom" sideOffset={4}>
+      <PopoverContent
+        className="w-[332px] max-w-[calc(100vw-2rem)] p-3 sm:w-[368px]"
+        align="start"
+        side="bottom"
+        sideOffset={4}
+      >
         <div className="space-y-2">
           <div className="text-sm font-medium text-text-primary">
             {t('common:teams.selectIcon')}
           </div>
-          <div className="grid grid-cols-7 gap-1.5">
+          <div className="grid max-h-[320px] grid-cols-5 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-8">
             {TEAM_ICONS.map(iconConfig => {
               const IconComponent = iconConfig.icon
               const isSelected = iconConfig.id === (value || DEFAULT_TEAM_ICON_ID)
@@ -62,8 +68,9 @@ export function TeamIconPicker({ value, onChange, disabled = false }: TeamIconPi
                   key={iconConfig.id}
                   type="button"
                   onClick={() => handleSelectIcon(iconConfig.id)}
+                  data-testid={`team-icon-option-${iconConfig.id}`}
                   className={`
-                    flex items-center justify-center w-9 h-9 rounded-md transition-colors
+                    flex items-center justify-center h-11 w-11 rounded-md transition-colors sm:h-9 sm:w-9
                     ${
                       isSelected
                         ? 'bg-primary text-white'

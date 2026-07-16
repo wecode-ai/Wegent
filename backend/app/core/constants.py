@@ -15,6 +15,8 @@ and ensure consistency.
 # Used to broadcast task events (messages, status updates) to connected clients
 # Format: "task:{task_id}"
 TASK_ROOM_PREFIX = "task:"
+WEWORK_TASK_ROOM_PREFIX = "wework:task:"
+WEWORK_USER_ROOM_PREFIX = "wework:user:"
 
 
 def get_task_room(task_id: int) -> str:
@@ -28,6 +30,14 @@ def get_task_room(task_id: int) -> str:
         Room name in format "task:{task_id}"
     """
     return f"{TASK_ROOM_PREFIX}{task_id}"
+
+
+def get_wework_task_room(task_id: int) -> str:
+    return f"{WEWORK_TASK_ROOM_PREFIX}{task_id}"
+
+
+def get_wework_user_room(user_id: int) -> str:
+    return f"{WEWORK_USER_ROOM_PREFIX}{user_id}"
 
 
 # ========== Kind Names ==========
@@ -54,3 +64,10 @@ TRIGGER_TYPE_CRON = "cron"
 TRIGGER_TYPE_INTERVAL = "interval"
 TRIGGER_TYPE_ONE_TIME = "one_time"
 TRIGGER_TYPE_EVENT = "event"
+
+
+# ========== Client Origins ==========
+
+CLIENT_ORIGIN_FRONTEND = "frontend"
+CLIENT_ORIGIN_WEWORK = "wework"
+SUPPORTED_CLIENT_ORIGINS = (CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK)

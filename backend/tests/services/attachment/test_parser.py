@@ -6,7 +6,10 @@
 Unit tests for the document parser service.
 """
 
+import base64
 import io
+import json
+import zipfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +21,28 @@ from app.services.attachment.parser import (
     ParseResult,
     TruncationInfo,
 )
+
+
+def _build_xmind_archive() -> bytes:
+    """Build a minimal XMind archive for parser tests."""
+    content = [
+        {
+            "title": "Planning",
+            "rootTopic": {
+                "title": "Roadmap",
+                "children": {
+                    "attached": [
+                        {"title": "Discovery"},
+                        {"title": "Implementation"},
+                    ]
+                },
+            },
+        }
+    ]
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("content.json", json.dumps(content))
+    return archive.getvalue()
 
 
 class TestDocumentParser:
@@ -46,6 +71,7 @@ class TestDocumentParser:
             ".gif",
             ".bmp",
             ".webp",
+            ".xmind",
         ]
         for ext in expected_extensions:
             assert self.parser.is_supported_extension(
@@ -157,6 +183,18 @@ class TestDocumentParser:
         assert "Bob" in result.text
         assert result.truncation_info is None
 
+    def test_parse_xmind_file_extracts_topics_as_markdown(self):
+        """Test parsing XMind mind-map topics into Markdown text."""
+        result = self.parser.parse(_build_xmind_archive(), ".xmind")
+
+        assert isinstance(result, ParseResult)
+        assert "# Planning" in result.text
+        assert "- Roadmap" in result.text
+        assert "Discovery" in result.text
+        assert "Implementation" in result.text
+        assert result.text_length == len(result.text)
+        assert result.truncation_info is None
+
     def test_document_parse_error_codes(self):
         """Test that DocumentParseError has proper error codes."""
         # Test unsupported type
@@ -246,6 +284,17 @@ class TestParseResult:
         """Test ParseResult with image base64."""
         result = ParseResult(text="Image", text_length=5, image_base64="base64data")
         assert result.image_base64 == "base64data"
+        assert result.image_mime_type is None
+
+    def test_parse_result_with_image_mime_type(self):
+        """Test ParseResult with image_mime_type set."""
+        result = ParseResult(
+            text="Image",
+            text_length=5,
+            image_base64="base64data",
+            image_mime_type="image/jpeg",
+        )
+        assert result.image_mime_type == "image/jpeg"
 
 
 class TestMimeTypeDetection:
@@ -391,6 +440,114 @@ done
     def test_text_mime_types_constant(self):
         """Test that TEXT_MIME_TYPES contains expected types."""
         assert "text/plain" in TEXT_MIME_TYPES
+
+
+def _make_image_bytes(
+    fmt: str,
+    mode: str = "RGB",
+    size: tuple[int, int] = (4, 4),
+) -> bytes:
+    """Create minimal valid image bytes in the given PIL format."""
+    from PIL import Image
+
+    img = Image.new(mode, size, color=0)
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    return buf.getvalue()
+
+
+def _decoded_dimensions(image_base64: str) -> tuple[int, int]:
+    """Return image dimensions from base64-encoded image bytes."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(base64.b64decode(image_base64))) as image:
+        return image.size
+
+
+class TestImageParsing:
+    """Test image format normalisation in DocumentParser."""
+
+    def setup_method(self):
+        self.parser = DocumentParser()
+
+    def test_jpeg_preserved_without_conversion(self):
+        """JPEG images must be stored as-is; mime_type stays image/jpeg."""
+        jpeg_bytes = _make_image_bytes("JPEG")
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert result.image_mime_type == "image/jpeg"
+        decoded = base64.b64decode(result.image_base64)
+        assert decoded[:2] == b"\xff\xd8"  # JPEG SOI marker
+
+    def test_png_preserved_without_conversion(self):
+        """PNG images must be stored as-is; mime_type stays image/png."""
+        png_bytes = _make_image_bytes("PNG")
+        result = self.parser.parse(png_bytes, ".png")
+
+        assert result.image_mime_type == "image/png"
+        decoded = base64.b64decode(result.image_base64)
+        assert decoded[:4] == b"\x89PNG"  # PNG signature
+
+    def test_webp_preserved_without_conversion(self):
+        """WebP images must be stored as-is; mime_type stays image/webp."""
+        webp_bytes = _make_image_bytes("WEBP")
+        result = self.parser.parse(webp_bytes, ".webp")
+
+        assert result.image_mime_type == "image/webp"
+        decoded = base64.b64decode(result.image_base64)
+        assert decoded[8:12] == b"WEBP"  # WebP RIFF sub-chunk
+
+    def test_gif_preserved_without_resize(self):
+        """GIF within the model image limit is stored without conversion."""
+        gif_bytes = _make_image_bytes("GIF", mode="P")
+        result = self.parser.parse(gif_bytes, ".gif")
+
+        assert result.image_mime_type == "image/gif"
+        decoded = base64.b64decode(result.image_base64)
+        assert decoded[:6] in {b"GIF87a", b"GIF89a"}
+
+    def test_bmp_converted_to_png(self):
+        """BMP must be converted to PNG for model compatibility."""
+        bmp_bytes = _make_image_bytes("BMP")
+        result = self.parser.parse(bmp_bytes, ".bmp")
+
+        assert result.image_mime_type == "image/png"
+        decoded = base64.b64decode(result.image_base64)
+        assert decoded[:4] == b"\x89PNG"
+
+    def test_text_mime_types_constant(self):
+        """TEXT_MIME_TYPES must contain common structured text formats."""
         assert "application/json" in TEXT_MIME_TYPES
         assert "application/xml" in TEXT_MIME_TYPES
         assert "text/x-python" in TEXT_MIME_TYPES
+
+    def test_tall_jpeg_is_resized(self):
+        """Tall JPEG is resized so the long edge fits within the model limit."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        jpeg_bytes = _make_image_bytes("JPEG", size=(100, 9000))
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert result.image_mime_type == "image/jpeg"
+        width, height = _decoded_dimensions(result.image_base64)
+        assert max(width, height) <= MAX_IMAGE_LONG_EDGE
+
+    def test_wide_png_is_resized_and_keeps_png_mime_type(self):
+        """Oversized PNG is resized through the shared model image preprocessor."""
+        from app.services.attachment.parser import MAX_IMAGE_LONG_EDGE
+
+        png_bytes = _make_image_bytes("PNG", size=(9000, 100))
+        result = self.parser.parse(png_bytes, ".png")
+
+        assert result.image_mime_type == "image/png"
+        width, height = _decoded_dimensions(result.image_base64)
+        assert max(width, height) <= MAX_IMAGE_LONG_EDGE
+
+    def test_oversized_metadata_reflects_stored_dimensions(self):
+        """Metadata text reports post-resize dimensions."""
+        jpeg_bytes = _make_image_bytes("JPEG", size=(100, 9000))
+        result = self.parser.parse(jpeg_bytes, ".jpg")
+
+        assert "9000" not in result.text
+        width, height = _decoded_dimensions(result.image_base64)
+        assert f"{width} x {height}" in result.text

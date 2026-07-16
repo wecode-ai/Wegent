@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.services.openapi.output_builder import build_response_output
+from app.services.openapi.output_builder import (
+    build_response_output,
+    extract_pending_user_input_state,
+)
 
 
 def _assistant_subtask(*, subtask_id: int, result: dict) -> Subtask:
@@ -86,6 +89,59 @@ def test_build_response_output_includes_reasoning_content():
     assert output[0].content[0].text == "Thinking summary"
     assert output[0].content[1].text == "Final answer"
     assert output[0].status == "completed"
+
+
+def test_build_response_output_preserves_thinking_block_order():
+    subtask = _assistant_subtask(
+        subtask_id=109,
+        result={
+            "value": "Final answer",
+            "reasoning_content": "Before tool.After tool.",
+            "blocks": [
+                {
+                    "id": "thinking-1",
+                    "type": "thinking",
+                    "content": "Before tool.",
+                    "status": "done",
+                },
+                {
+                    "id": "shell_1",
+                    "type": "tool",
+                    "tool_use_id": "shell_1",
+                    "tool_name": "exec",
+                    "tool_input": {"command": "cat /etc/os-release"},
+                    "status": "done",
+                },
+                {
+                    "id": "thinking-2",
+                    "type": "thinking",
+                    "content": "After tool.",
+                    "status": "done",
+                },
+                {
+                    "id": "text-1",
+                    "type": "text",
+                    "content": "Final answer",
+                    "status": "done",
+                },
+            ],
+        },
+    )
+
+    output = build_response_output([subtask])
+
+    assert [item.type for item in output] == [
+        "message",
+        "shell_call",
+        "message",
+        "message",
+    ]
+    assert output[0].content[0].type == "reasoning"
+    assert output[0].content[0].text == "Before tool."
+    assert output[2].content[0].type == "reasoning"
+    assert output[2].content[0].text == "After tool."
+    assert output[3].content[0].type == "output_text"
+    assert output[3].content[0].text == "Final answer"
 
 
 def test_build_response_output_matches_tool_block_by_id():
@@ -276,3 +332,105 @@ def test_build_response_output_restores_mcp_call_by_unique_name_fallback():
     assert len(output) == 1
     assert output[0].type == "mcp_call"
     assert output[0].server_label == "wegent-knowledge"
+
+
+def test_build_response_output_restores_mcp_call_output_from_blocks():
+    subtask = _assistant_subtask(
+        subtask_id=108,
+        result={
+            "blocks": [
+                {
+                    "id": "call_mcp_2",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_2",
+                    "tool_name": "interactive_form_question",
+                    "tool_input": {
+                        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+                    },
+                    "tool_output": (
+                        '{"pending_user_input": true, '
+                        '"pending_user_input_payload": {'
+                        '"type": "interactive_form_question", '
+                        '"tool_use_id": "call_mcp_2", '
+                        '"submit_mode": "new_response", '
+                        '"submit_format": "markdown_message"}}'
+                    ),
+                    "tool_protocol": "mcp_call",
+                    "server_label": "interactive-form",
+                    "status": "done",
+                }
+            ]
+        },
+    )
+
+    output = build_response_output([subtask])
+
+    assert len(output) == 1
+    assert output[0].type == "mcp_call"
+    assert "pending_user_input" not in output[0].output
+    assert "pending_user_input_payload" not in output[0].output
+
+
+def test_extract_pending_user_input_state_from_tool_blocks():
+    subtask = _assistant_subtask(
+        subtask_id=109,
+        result={
+            "blocks": [
+                {
+                    "id": "call_mcp_3",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_3",
+                    "tool_name": "interactive_form_question",
+                    "tool_input": {
+                        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+                    },
+                    "tool_output": {
+                        "pending_user_input": True,
+                        "pending_user_input_payload": {
+                            "type": "interactive_form_question",
+                            "tool_use_id": "call_mcp_3",
+                        },
+                    },
+                    "tool_protocol": "mcp_call",
+                    "server_label": "interactive-form",
+                    "status": "done",
+                }
+            ]
+        },
+    )
+
+    pending_user_input, payload = extract_pending_user_input_state([subtask])
+
+    assert pending_user_input is False
+    assert payload is None
+
+
+def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback():
+    subtask = _assistant_subtask(
+        subtask_id=110,
+        result={
+            "blocks": [
+                {
+                    "id": "call_mcp_4",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_4",
+                    "tool_name": "interactive_form_question",
+                    "tool_input": {
+                        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+                    },
+                    "tool_output": {
+                        "pending_user_input": True,
+                        "tool_use_id": "call_mcp_4",
+                    },
+                    "tool_protocol": "mcp_call",
+                    "server_label": "interactive-form",
+                    "status": "done",
+                }
+            ]
+        },
+    )
+
+    pending_user_input, payload = extract_pending_user_input_state([subtask])
+
+    assert pending_user_input is False
+    assert payload is None

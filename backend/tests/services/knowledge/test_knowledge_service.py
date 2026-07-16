@@ -9,12 +9,318 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.task import TaskResource
+from app.schemas.knowledge import (
+    DocumentSourceType,
+    KnowledgeBaseCreate,
+    KnowledgeDocumentCreate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
+)
 from app.services.context import context_service
+from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
 )
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceCreateKnowledgeBase:
+    def test_create_knowledge_base_persists_retrieval_config_as_dict(
+        self, test_db, test_user
+    ) -> None:
+        """Create schema coercion must not leak Pydantic models into CRD spec."""
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(
+                name="rag-kb",
+                retrieval_config={
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                    "retrieval_mode": "vector",
+                    "top_k": 5,
+                    "score_threshold": 0.5,
+                    "hybrid_weights": {
+                        "vector_weight": 0.7,
+                        "keyword_weight": 0.3,
+                    },
+                },
+            ),
+        )
+
+        knowledge_base = test_db.query(Kind).filter(Kind.id == knowledge_base_id).one()
+        retrieval_config = knowledge_base.json["spec"]["retrievalConfig"]
+
+        assert isinstance(retrieval_config, dict)
+        assert retrieval_config["retriever_name"] == "retriever-1"
+        assert retrieval_config["embedding_config"]["model_name"] == "embedding-1"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDefaultViewSemantics:
+    def test_notebook_default_view_allows_more_than_50_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="large-notebook-kb", kb_type="notebook"),
+        )
+
+        for index in range(51):
+            KnowledgeService.create_document(
+                db=test_db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=test_user.id,
+                data=KnowledgeDocumentCreate(
+                    name=f"doc-{index}.md",
+                    file_extension="md",
+                    file_size=100,
+                    source_type=DocumentSourceType.TEXT,
+                ),
+            )
+
+        assert KnowledgeService.get_document_count(test_db, knowledge_base_id) == 51
+
+    def test_default_view_can_be_changed_to_notebook_with_more_than_50_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="large-documents-kb", kb_type="classic"),
+        )
+        for index in range(51):
+            KnowledgeService.create_document(
+                db=test_db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=test_user.id,
+                data=KnowledgeDocumentCreate(
+                    name=f"doc-{index}.md",
+                    file_extension="md",
+                    file_size=100,
+                    source_type=DocumentSourceType.TEXT,
+                ),
+            )
+
+        updated = KnowledgeService.update_knowledge_base_type(
+            db=test_db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=test_user.id,
+            new_type="notebook",
+        )
+
+        assert updated is not None
+        assert updated.json["spec"]["kbType"] == "notebook"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDocumentCountSemantics:
+    def test_chat_grouped_and_bound_counts_include_inactive_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="chat-count-kb"),
+        )
+        test_db.add_all(
+            [
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=0,
+                    attachment_id=0,
+                    name="indexed.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=0,
+                    attachment_id=0,
+                    name="pending.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=False,
+                    source_type="file",
+                ),
+            ]
+        )
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="chat-count-task",
+            namespace="default",
+            json={
+                "kind": "Task",
+                "metadata": {"name": "chat-count-task", "namespace": "default"},
+                "spec": {
+                    "knowledgeBaseRefs": [
+                        {
+                            "id": knowledge_base_id,
+                            "name": "chat-count-kb",
+                            "boundBy": test_user.user_name,
+                            "boundAt": "2026-07-09T00:00:00Z",
+                        }
+                    ]
+                },
+            },
+            is_active=TaskResource.STATE_ACTIVE,
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        all_grouped = KnowledgeService.get_all_knowledge_bases_grouped(
+            test_db, test_user.id
+        )
+        grouped_kb = next(
+            item
+            for item in all_grouped.personal.created_by_me
+            if item.id == knowledge_base_id
+        )
+        assert grouped_kb.document_count == 2
+
+        with patch(
+            "app.services.knowledge.task_knowledge_base_service.task_member_service"
+        ) as mock_member_service:
+            mock_member_service.is_member.return_value = True
+            bound = TaskKnowledgeBaseService().get_bound_knowledge_bases(
+                test_db, task.id, test_user.id
+            )
+
+        assert bound[0].document_count == 2
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDocumentFolderQueries:
+    def test_root_folder_with_subfolders_includes_all_descendants(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="root-subtree-documents"),
+        )
+        parent = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="parent", parent_id=0),
+        )
+        child = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="child", parent_id=parent.id),
+        )
+        root_doc = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            folder_id=0,
+            attachment_id=0,
+            name="root.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        child_doc = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            folder_id=child.id,
+            attachment_id=0,
+            name="child.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        test_db.add_all([root_doc, child_doc])
+        test_db.commit()
+
+        documents, total = KnowledgeService.list_documents_paginated(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            folder_id=0,
+            include_subfolders=True,
+        )
+
+        assert total == 2
+        assert {doc.name for doc in documents} == {"root.md", "child.md"}
+
+    def test_update_folder_returns_subtree_total_document_count(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="folder-update-subtree-count"),
+        )
+        parent = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="parent", parent_id=0),
+        )
+        child = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="child", parent_id=parent.id),
+        )
+        test_db.add_all(
+            [
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=parent.id,
+                    attachment_id=0,
+                    name="parent.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=child.id,
+                    attachment_id=0,
+                    name="child.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+            ]
+        )
+        test_db.commit()
+
+        updated = KnowledgeFolderService.update_folder(
+            test_db,
+            parent.id,
+            test_user.id,
+            KnowledgeFolderUpdate(name="renamed-parent"),
+            knowledge_base_id=knowledge_base_id,
+        )
+
+        assert updated.direct_document_count == 1
+        assert updated.total_document_count == 2
 
 
 @pytest.mark.unit
@@ -48,7 +354,7 @@ class TestKnowledgeServiceUpdateDocumentContent:
         with (
             patch.object(KnowledgeService, "get_document", return_value=document),
             patch.object(
-                context_service, "overwrite_attachment"
+                context_service, "overwrite_attachment_internal"
             ) as mock_overwrite_attachment,
         ):
             result = KnowledgeService.update_document_content(
@@ -63,8 +369,8 @@ class TestKnowledgeServiceUpdateDocumentContent:
         mock_overwrite_attachment.assert_called_once_with(
             db=db,
             context_id=20,
-            user_id=99,
             filename="release-notes.md",
+            reason="knowledge_manage",
             binary_data="# Updated release notes".encode("utf-8"),
         )
         db.refresh.assert_called_once_with(document)
@@ -177,6 +483,8 @@ class TestKnowledgeServiceDeleteDocument:
             id=8,
             kind_id=10,
             attachment_id=20,
+            user_id=42,
+            converted_attachment_id=None,
         )
         knowledge_base = SimpleNamespace(
             id=10,
@@ -221,7 +529,7 @@ class TestKnowledgeServiceDeleteDocument:
                 context_service,
                 "delete_context",
                 return_value=True,
-            ),
+            ) as mock_delete_context,
             patch(
                 "app.services.knowledge.knowledge_service._get_delete_gateway",
                 return_value=mock_gateway,
@@ -253,6 +561,90 @@ class TestKnowledgeServiceDeleteDocument:
             knowledge_base=knowledge_base,
             current_user_id=7,
         )
+        # Original attachment must be deleted with the document owner's user_id,
+        # not the requester's, because delete_context enforces ownership filtering.
+        mock_delete_context.assert_called_once_with(db=db, context_id=20, user_id=42)
+
+    def test_delete_document_uses_owner_id_for_both_attachments(self) -> None:
+        """Both original and converted attachments must be deleted with the
+        document owner's user_id, not the requester's. delete_context enforces
+        ownership filtering — passing the requester's id would silently fail
+        and leave orphaned context/storage when an admin deletes another user's
+        document."""
+        db = MagicMock()
+        document = SimpleNamespace(
+            id=9,
+            kind_id=10,
+            attachment_id=30,
+            user_id=42,
+            converted_attachment_id=99,
+        )
+        knowledge_base = SimpleNamespace(
+            id=10,
+            user_id=42,
+            namespace="default",
+            json={
+                "spec": {
+                    "retrievalConfig": {
+                        "retriever_name": "retriever-a",
+                        "retriever_namespace": "default",
+                    }
+                }
+            },
+        )
+
+        kb_query = MagicMock()
+        kb_query.filter.return_value.first.return_value = knowledge_base
+        db.query.return_value = kb_query
+        mock_gateway = MagicMock()
+        mock_gateway.delete_document_index = MagicMock()
+
+        with (
+            patch.object(KnowledgeService, "get_document", return_value=document),
+            patch.object(
+                KnowledgeService,
+                "_assert_can_manage_document",
+                return_value=None,
+            ),
+            patch.object(
+                KnowledgeService,
+                "_update_document_count_cache",
+                return_value=None,
+            ),
+            patch(
+                "app.services.knowledge.index_runtime.build_kb_index_info",
+                return_value=SimpleNamespace(
+                    index_owner_user_id=7, summary_enabled=False
+                ),
+            ),
+            patch.object(
+                context_service,
+                "delete_context",
+                return_value=True,
+            ) as mock_delete_context,
+            patch(
+                "app.services.knowledge.knowledge_service._get_delete_gateway",
+                return_value=mock_gateway,
+            ),
+            patch(
+                "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+                return_value=object(),
+            ),
+            patch(
+                "app.services.knowledge.knowledge_service._run_async_in_new_loop",
+                return_value={"status": "success"},
+            ),
+        ):
+            KnowledgeService.delete_document(
+                db=db,
+                document_id=9,
+                user_id=7,
+            )
+
+        # Both calls must use the document owner's user_id (42), not the requester's (7)
+        assert mock_delete_context.call_count == 2
+        mock_delete_context.assert_any_call(db=db, context_id=30, user_id=42)
+        mock_delete_context.assert_any_call(db=db, context_id=99, user_id=42)
 
     def test_delete_document_treats_deleted_status_as_success(self) -> None:
         db = MagicMock()
@@ -260,6 +652,8 @@ class TestKnowledgeServiceDeleteDocument:
             id=8,
             kind_id=10,
             attachment_id=None,
+            user_id=42,
+            converted_attachment_id=None,
         )
         knowledge_base = SimpleNamespace(
             id=10,

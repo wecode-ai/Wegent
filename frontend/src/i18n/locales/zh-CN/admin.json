@@ -148,6 +148,10 @@
       "name_placeholder": "请输入模型名称",
       "namespace": "命名空间",
       "namespace_placeholder": "default",
+      "model_group": "一级分组",
+      "model_group_placeholder": "填写一级分组",
+      "model_sub_group": "二级分组",
+      "model_sub_group_placeholder": "填写二级分组",
       "config": "模型配置",
       "config_placeholder": "请输入 JSON 格式的模型配置",
       "is_advanced": "高级模型"
@@ -318,12 +322,38 @@
     "tip_en_placeholder": "请输入英文提示内容",
     "delete_tip_title": "删除提示",
     "delete_tip_message": "确定要删除此提示吗？此操作无法撤销。",
-    "quick_access_title": "首页推荐智能体",
-    "quick_access_description": "选择首页 QuickCard 展示的系统内置智能体，右侧顺序即展示顺序。",
-    "quick_access_available": "可选智能体",
-    "quick_access_selected": "首页智能体",
-    "quick_access_name": "名称",
-    "quick_access_version": "首页智能体版本",
+    "quick_launch_functions_title": "系统功能",
+    "quick_launch_functions_description": "配置 QuickCard 中的系统功能、目标智能体和输入预设。",
+    "quick_launch_functions_version": "系统功能版本",
+    "quick_launch_function_add": "添加系统功能",
+    "quick_launch_function_empty": "暂无系统功能",
+    "quick_launch_function_untitled": "未命名功能",
+    "quick_launch_function_id": "功能 ID",
+    "quick_launch_function_title": "名称",
+    "quick_launch_function_description": "描述",
+    "quick_launch_function_team": "目标智能体",
+    "quick_launch_function_team_placeholder": "选择智能体",
+    "quick_launch_function_order": "排序",
+    "quick_launch_function_icon": "图标",
+    "quick_launch_function_enabled": "启用",
+    "quick_launch_function_disabled": "已停用",
+    "quick_launch_function_phrases": "快捷短语",
+    "quick_launch_function_add_phrase": "添加短语",
+    "quick_launch_function_phrase_placeholder": "例如：帮我创建一个产品路线图 PPT",
+    "quick_launch_function_presets": "输入预设",
+    "quick_launch_function_add_preset": "添加预设",
+    "quick_launch_function_preset_title": "预设名称",
+    "quick_launch_function_preset_title_placeholder": "例如：评审变更",
+    "quick_launch_function_preset_prompt": "输入框文本",
+    "quick_launch_function_preset_prompt_placeholder": "例如：请帮我评审当前代码变更",
+    "quick_launch_function_preset_skills": "预选技能",
+    "quick_launch_function_preset_skills_placeholder": "用英文逗号分隔技能名",
+    "quick_launch_function_preset_deep_thinking": "深度思考",
+    "quick_launch_function_preset_clarification": "澄清模式",
+    "quick_launch_function_preset_force_override": "强制覆盖模型",
+    "quick_launch_function_preset_attachments": "附件",
+    "quick_launch_function_preset_upload_attachment": "上传附件",
+    "quick_launch_function_preset_no_attachments": "暂无预设附件",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"
@@ -331,15 +361,19 @@
     "errors": {
       "load_failed": "加载配置失败",
       "save_failed": "保存配置失败",
+      "partial_save_failed": "部分配置已保存，另一些保存失败，请重试。",
+      "quick_launch_functions_required": "系统功能必须填写 ID、名称并选择目标智能体",
+      "quick_launch_attachment_upload_failed": "预设附件上传失败",
       "slogan_required": "中英文 Slogan 均为必填项",
       "tip_required": "中英文提示内容均为必填项"
     }
   },
   "api_keys": {
     "title": "密钥管理",
-    "description": "管理服务密钥和个人 API 密钥",
+    "description": "管理服务密钥、个人 API 密钥和对外签发配置",
     "service_keys": "服务密钥",
-    "personal_keys": "个人密钥"
+    "personal_keys": "个人密钥",
+    "outbound_tokens": "对外签发"
   },
   "service_keys": {
     "title": "服务密钥管理",
@@ -397,6 +431,105 @@
       "load_failed": "加载个人密钥失败",
       "delete_failed": "删除个人密钥失败",
       "toggle_failed": "切换个人密钥状态失败"
+    }
+  },
+  "outbound_tokens": {
+    "title": "对外签发管理",
+    "description": "管理技能访问外部服务时使用的签发器（TokenIssuer）和签名密钥（SigningKey）。",
+    "summary": "调用方使用 `issuer_id` 请求签发；对外 token 的受众（aud）由签发器内部配置决定。",
+    "empty_hint": "先创建一个签发器（TokenIssuer）；如果还没有签名密钥（SigningKey），可以在创建流程里直接生成。",
+    "common": {
+      "name": "名称",
+      "description": "描述",
+      "description_placeholder": "请输入描述（可选）",
+      "enabled": "状态",
+      "status_active": "已启用",
+      "status_disabled": "已禁用",
+      "created_at": "创建时间",
+      "delete_confirm_title": "确认删除"
+    },
+    "actions": {
+      "view_pem": "查看 PEM",
+      "copy_pem": "复制 PEM",
+      "edit": "编辑",
+      "enable": "启用",
+      "disable": "禁用"
+    },
+    "issuers": {
+      "create": "创建签发器（TokenIssuer）",
+      "create_dialog_title": "创建签发器（TokenIssuer）",
+      "edit_dialog_title": "编辑签发器（TokenIssuer）",
+      "dialog_description": "对外接入以签发器（TokenIssuer）为主配置。`issuer_id` 来自资源 id，签发时自动带出受众（aud）和签名密钥。",
+      "no_issuers": "暂无签发器（TokenIssuer）",
+      "name_placeholder": "例如 vip-sql-platform",
+      "audience": "受众（aud）",
+      "audience_placeholder": "例如 vip_sql_platform",
+      "jwt_issuer": "签发方（iss）",
+      "signing_key": "签名密钥（SigningKey）",
+      "current_signing_key": "当前签名密钥（SigningKey）",
+      "signing_key_hint": "此 issuer 的签发固定绑定到这把 key",
+      "signing_key_placeholder": "选择一个可用的签名密钥（SigningKey）",
+      "no_signing_keys_title": "暂无可用签名密钥",
+      "no_signing_keys_description": "请先生成一个签名密钥（SigningKey），再继续创建或编辑签发器。",
+      "default_ttl": "默认 TTL",
+      "max_ttl": "最大 TTL",
+      "create_success": "签发器（TokenIssuer）创建成功",
+      "update_success": "签发器（TokenIssuer）更新成功",
+      "delete_success": "签发器（TokenIssuer）删除成功",
+      "enabled_success": "签发器（TokenIssuer）已启用",
+      "disabled_success": "签发器（TokenIssuer）已禁用",
+      "delete_confirm_message": "确定要删除签发器（TokenIssuer）\"{{name}}\" 吗？删除后该 `issuer_id` 将无法继续签发 token。",
+      "errors": {
+        "create_failed": "创建签发器（TokenIssuer）失败",
+        "update_failed": "更新签发器（TokenIssuer）失败",
+        "delete_failed": "删除签发器（TokenIssuer）失败",
+        "toggle_failed": "切换签发器（TokenIssuer）状态失败",
+        "requires_active_signing_key": "签发器只能绑定已启用的签名密钥，请先启用对应的 SigningKey。"
+      }
+    },
+    "signing_keys": {
+      "section_title": "底层签名密钥（SigningKey）管理",
+      "section_description": "这里用于维护底层签名密钥。日常配置时优先从签发器（TokenIssuer）入口完成绑定和生成。",
+      "create": "创建签名密钥（SigningKey）",
+      "inline_create": "生成新签名密钥",
+      "cancel_inline_create": "收起",
+      "inline_create_title": "内联创建签名密钥（SigningKey）",
+      "name_placeholder": "例如 vip-signing-key",
+      "description_placeholder": "请输入密钥用途描述（可选）",
+      "loading": "正在加载签名密钥（SigningKey）...",
+      "kid": "KID",
+      "algorithm": "算法",
+      "usage_count": "关联签发器数",
+      "no_keys": "暂无签名密钥（SigningKey）",
+      "create_success": "签名密钥（SigningKey）创建成功",
+      "delete_success": "签名密钥（SigningKey）删除成功",
+      "enabled_success": "签名密钥（SigningKey）已启用",
+      "disabled_success": "签名密钥（SigningKey）已禁用",
+      "delete_confirm_message": "确定要删除签名密钥（SigningKey）\"{{name}}\" 吗？如果仍被任何签发器引用，删除会失败。",
+      "errors": {
+        "load_failed": "加载签名密钥（SigningKey）失败",
+        "create_failed": "创建签名密钥（SigningKey）失败",
+        "delete_failed": "删除签名密钥（SigningKey）失败",
+        "toggle_failed": "切换签名密钥（SigningKey）状态失败",
+        "disable_blocked_by_active_issuers": "该签名密钥仍被 {{count}} 个已启用签发器引用：{{names}}。请先停用这些签发器后再禁用此密钥。",
+        "delete_blocked_by_issuers": "该签名密钥仍被 {{count}} 个签发器引用：{{names}}。请先解除这些引用后再删除。",
+        "disable_blocked_by_issuer": "该签名密钥仍被已启用的签发器引用，请先停用相关签发器再禁用此密钥。",
+        "delete_blocked_by_issuer": "该签名密钥仍被签发器引用，请先解除相关引用后再删除。"
+      }
+    },
+    "pem_dialog": {
+      "issuer_title": "签发器（TokenIssuer）公钥",
+      "key_title": "签名密钥（SigningKey）公钥",
+      "description": "当前显示的是 {{name}} 的 PEM 公钥，kid 为 {{kid}}。请把这把公钥提供给外部服务用于本地验签。"
+    },
+    "errors": {
+      "load_failed": "加载对外签发配置失败",
+      "copy_failed": "复制 PEM 失败",
+      "issuer_name_required": "签发器（TokenIssuer）名称不能为空",
+      "signing_key_required": "请选择签名密钥（SigningKey）",
+      "signing_key_name_required": "签名密钥（SigningKey）名称不能为空",
+      "audience_required": "受众（aud）不能为空",
+      "invalid_ttl": "TTL 配置不合法"
     }
   },
   "monitor": {
@@ -638,7 +771,7 @@
       "namespace_placeholder": "default",
       "config": "Shell 配置",
       "config_placeholder": "请输入 JSON 格式的 Shell 配置",
-      "config_hint": "配置应包含 spec.shellType（ClaudeCode、Agno、Dify、Chat）"
+      "config_hint": "配置应包含 spec.shellType（ClaudeCode、Dify、Chat）"
     },
     "confirm": {
       "delete_title": "删除 Shell",
@@ -742,7 +875,7 @@
   },
   "im_channels": {
     "title": "IM 渠道管理",
-    "description": "管理 IM 平台集成（钉钉、飞书）",
+    "description": "管理 IM 平台集成（钉钉、微博、Telegram、Discord）",
     "create_description": "创建新的 IM 渠道集成。配置平台凭据和默认智能体。",
     "loading": "加载渠道中...",
     "no_channels": "暂无 IM 渠道配置",
@@ -754,8 +887,10 @@
     "restart_channel": "重启连接",
     "types": {
       "dingtalk": "钉钉",
+      "weibo": "微博",
       "feishu": "飞书",
       "telegram": "Telegram",
+      "discord": "Discord",
       "not_supported": "暂不支持"
     },
     "status": {
@@ -779,16 +914,26 @@
       "card_template_id_placeholder": "请输入钉钉 AI 卡片模板 ID（可选）",
       "card_template_id_help": "配置后，订阅通知将使用 AI 卡片格式发送",
       "bot_token": "Bot Token",
-      "bot_token_placeholder": "请输入 Telegram Bot Token",
+      "bot_token_placeholder": "请输入 Bot Token",
       "bot_token_edit_placeholder": "请输入新的 Bot Token（留空保持不变）",
+      "weibo_app_id": "微博 App ID",
+      "weibo_app_id_placeholder": "请私信微博龙虾助手获取 App ID",
+      "weibo_app_secret": "微博 App Secret",
+      "weibo_app_secret_placeholder": "请私信微博龙虾助手获取 App Secret",
+      "weibo_app_secret_edit_placeholder": "请输入新的微博 App Secret（私信微博龙虾助手获取，留空保持不变）",
+      "weibo_ws_endpoint": "WebSocket 地址",
+      "weibo_ws_endpoint_placeholder": "默认使用微博开放私信 WebSocket 地址",
+      "weibo_token_endpoint": "Token 地址",
+      "weibo_token_endpoint_placeholder": "默认使用微博开放私信 Token 地址",
+      "weibo_endpoint_help": "通常无需填写，只有使用代理或测试环境时才需要覆盖默认地址",
       "leave_empty_to_keep": "留空保持不变",
       "default_team": "默认智能体",
       "default_team_placeholder": "选择默认智能体",
       "no_default_team": "无默认智能体",
       "default_model": "默认模型",
       "default_model_placeholder": "选择默认模型",
-      "no_default_model": "使用智能体默认模型",
-      "team_no_model_warning": "该智能体没有配置模型，必须选择一个默认模型",
+      "no_default_model": "使用智能体/运行时默认模型",
+      "team_no_model_warning": "该智能体没有配置 Wegent 模型；不选择默认模型时，将使用智能体或运行时默认模型。",
       "is_enabled": "启用渠道",
       "user_mapping_mode": "用户映射方式",
       "user_mapping_mode_description": "选择如何将 IM 用户映射到系统用户",
@@ -823,8 +968,9 @@
       "name_required": "渠道名称不能为空",
       "config_required": "Client ID 和 Client Secret 不能为空",
       "bot_token_required": "Bot Token 不能为空",
+      "weibo_config_required": "微博 App ID 和 App Secret 不能为空",
       "team_required": "必须选择一个默认智能体",
-      "model_required_for_team": "所选智能体没有配置模型，必须选择一个默认模型",
+      "model_required_for_team": "所选智能体没有配置 Wegent 模型，可选择默认模型或使用运行时默认模型",
       "target_user_required": "使用指定用户模式时必须选择一个目标用户"
     }
   },
@@ -886,17 +1032,29 @@
       "load_failed": "加载设备列表失败",
       "load_stats_failed": "加载统计数据失败",
       "upgrade_failed": "发送升级命令失败",
+      "upgrade_all_local_failed": "批量升级本地设备失败",
       "restart_failed": "发送重启命令失败",
+      "restart_all_cloud_failed": "批量重启云设备失败",
       "migrate_failed": "发送迁移命令失败"
     },
     "actions": {
       "upgrade": "升级",
+      "upgrade_all_local": "升级全部本地设备",
       "upgrade_unsupported": "版本低于 {{version}}，不支持在线升级",
       "restart": "重启",
+      "restart_all_cloud": "重启全部云设备",
       "migrate": "迁移",
       "upgrade_sent": "升级命令已发送",
       "restart_sent": "重启命令已发送",
       "migrate_sent": "迁移命令已发送"
+    },
+    "confirm": {
+      "upgrade_all_local_title": "确认升级全部本地设备",
+      "upgrade_all_local_message": "将向所有符合条件的本地设备发送升级命令，可能影响正在运行的任务。请确认后继续。",
+      "upgrade_all_local_confirm": "确认升级",
+      "restart_all_cloud_title": "确认重启全部云设备",
+      "restart_all_cloud_message": "将向所有云设备发送重启命令，可能中断正在运行的任务。请确认后继续。",
+      "restart_all_cloud_confirm": "确认重启"
     }
   },
   "templates": {

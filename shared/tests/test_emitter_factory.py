@@ -272,6 +272,32 @@ class TestThrottledTransport:
         assert call_args[0][3]["delta"] == " world!"
 
     @pytest.mark.asyncio
+    async def test_cross_type_events_flush_pending_buffer_in_order(self):
+        """Test that reasoning buffered before text is sent before that text."""
+        mock_transport = AsyncMock(spec=EventTransport)
+        config = ThrottleConfig(default_interval=10.0)
+        throttled = ThrottledTransport(mock_transport, config)
+
+        await throttled.send(
+            "response.reasoning_summary_text.delta", 1, 2, {"delta": "Good"}
+        )
+        mock_transport.reset_mock()
+
+        await throttled.send(
+            "response.reasoning_summary_text.delta", 1, 2, {"delta": "思考"}
+        )
+        mock_transport.send.assert_not_called()
+
+        await throttled.send("response.output_text.delta", 1, 2, {"delta": "数据"})
+
+        calls = mock_transport.send.call_args_list
+        assert [call.args[0] for call in calls] == [
+            "response.reasoning_summary_text.delta",
+            "response.output_text.delta",
+        ]
+        assert [call.args[3]["delta"] for call in calls] == ["思考", "数据"]
+
+    @pytest.mark.asyncio
     async def test_flush_all(self):
         """Test flushing all buffers."""
         mock_transport = AsyncMock(spec=EventTransport)
@@ -346,6 +372,82 @@ class TestRedisTransport:
 
 
 class TestResponsesAPIEmitter:
+    @pytest.mark.asyncio
+    async def test_done_merges_completion_provider_fields(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        async def completion_fields():
+            return {"file_changes": {"version": 1, "file_count": 2}}
+
+        emitter.set_completion_fields_provider(completion_fields)
+
+        await emitter.done(content="done")
+
+        completed = transport.get_events()[-1][1]["response"]
+        assert completed["file_changes"] == {
+            "version": 1,
+            "file_count": 2,
+        }
+
+    @pytest.mark.asyncio
+    async def test_done_ignores_empty_completion_provider_fields(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        emitter.set_completion_fields_provider(lambda: {})
+
+        await emitter.done(content="done")
+
+        completed = transport.get_events()[-1][1]["response"]
+        assert "file_changes" not in completed
+
+    @pytest.mark.asyncio
+    async def test_done_logs_provider_failure_and_still_emits_completion(self, caplog):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        async def fail():
+            raise RuntimeError("snapshot failed")
+
+        emitter.set_completion_fields_provider(fail)
+
+        await emitter.done(content="done")
+
+        completed = transport.get_events()[-1][1]["response"]
+        assert completed["output"][0]["content"][0]["text"] == "done"
+        assert "Failed to collect response completion fields" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_done_consumes_completion_provider_once(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        calls = 0
+
+        async def completion_fields():
+            nonlocal calls
+            calls += 1
+            return {"file_changes": {"version": 1}}
+
+        emitter.set_completion_fields_provider(completion_fields)
+
+        await emitter.done(content="first")
+        await emitter.done(content="second")
+
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_reasoning_emits_summary_text_delta(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.reasoning("目标")
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.reasoning_summary_text.delta"
+        ]
+        assert events[0][1]["delta"] == "目标"
+
     @pytest.mark.asyncio
     async def test_mcp_tool_done_failed_emits_failed_terminal_events(self):
         transport = GeneratorTransport()
@@ -462,3 +564,32 @@ class TestResponsesAPIEmitter:
             "response.output_item.done",
         ]
         assert events[-1][1]["item"]["type"] == "mcp_call"
+
+    @pytest.mark.asyncio
+    async def test_mcp_tool_done_completed_carries_output(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="mcp_789",
+            name="search_docs",
+            arguments={"query": "tool blocks"},
+            tool_protocol="mcp_call",
+            server_label="wegent-knowledge",
+        )
+        await emitter.tool_done(
+            call_id="mcp_789",
+            name="search_docs",
+            output='{"results":["block output"]}',
+            tool_protocol="mcp_call",
+            server_label="wegent-knowledge",
+        )
+
+        events = transport.get_events()
+        completed_event = next(
+            data
+            for event_type, data in events
+            if event_type == "response.mcp_call.completed"
+        )
+
+        assert completed_event["output"] == '{"results":["block output"]}'

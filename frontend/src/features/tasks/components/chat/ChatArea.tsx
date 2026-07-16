@@ -5,8 +5,8 @@
 'use client'
 
 import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react'
-import { ShieldX } from 'lucide-react'
-import { useSearchParams } from 'next/navigation'
+import { Command, MessageSquareText, ShieldX, X } from 'lucide-react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import MessagesArea from '../message/MessagesArea'
 import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
@@ -26,19 +26,29 @@ import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
 import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
-import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType } from '@/types/api'
+import type { PipelineContextPassing } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
-import type { ContextItem, QueueMessageContext } from '@/types/context'
+import type { ContextItem, ExternalKnowledgeRef, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useRouter } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { getAttachment } from '@/apis/attachments'
+import { userApis } from '@/apis/user'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { QueryParamAutoSend } from '../params'
@@ -46,6 +56,23 @@ import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { useChatStatusIndicator } from '@/features/tasks/hooks/useChatStatusIndicator'
+import {
+  buildInteractiveFormCancellation,
+  findPendingInteractiveForm,
+} from './interactiveFormPending'
+import {
+  parseQuickLaunchIntent,
+  removeQuickLaunchQueryParams,
+  type QuickLaunchIntent,
+} from './quick-launch/launch-intent'
+import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
+import type { QuickPresetSelection } from './quick-launch/types'
+import { useDevices } from '@/contexts/DeviceContext'
+import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
+import type { UnifiedMessage } from '@wegent/chat-core'
+import { getFirstSearchParam, getSearchParam, stringifySearchParams } from '@/lib/search-params'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -53,8 +80,36 @@ import type { ChatAreaExtension } from './types'
  */
 const COLLAPSE_SELECTORS_THRESHOLD = 420
 
+function buildExternalRefFromContext(context: SubtaskContextBrief): ExternalKnowledgeRef | null {
+  if (!context.external_provider || !context.external_mode) return null
+  return {
+    provider: context.external_provider,
+    mode: context.external_mode,
+    id: context.external_id ?? undefined,
+    name: context.name,
+    scope: context.external_scope ?? undefined,
+    target_type: context.external_target_type ?? undefined,
+    node_id: context.external_node_id ?? undefined,
+    document_id: context.external_document_id ?? undefined,
+    parent_id: context.external_parent_id ?? undefined,
+  }
+}
+
+function buildExternalContextId(ref: ExternalKnowledgeRef) {
+  const targetType = ref.target_type ?? 'knowledge_base'
+  if (targetType !== 'knowledge_base') {
+    const targetId = ref.node_id ?? ref.document_id ?? 'unknown'
+    return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
+  }
+  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}`
+}
+
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
+
+type SendMessageOptions = {
+  interactiveFormAnswer?: InteractiveFormAnswerPayload
+}
 
 const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
   'attachment',
@@ -87,12 +142,35 @@ function getPipelineNextStepContexts(contexts: unknown): SubtaskContextBrief[] |
   return validContexts.length > 0 ? validContexts : undefined
 }
 
+function getPipelineContextPassingForStage(
+  team: Team | null | undefined,
+  stageInfo: PipelineStageInfo | null
+): PipelineContextPassing {
+  const stageIndex = stageInfo?.current_stage ?? 0
+  return team?.bots?.[stageIndex]?.contextPassing ?? 'none'
+}
+
+function getSystemQuickLaunchFunctionId(selection: QuickPresetSelection): string | null {
+  if (selection.launcher.type !== 'system_function') {
+    return null
+  }
+
+  const [prefix, ...idParts] = selection.launcher.key.split(':')
+  if (prefix !== 'system' || idParts.length === 0) {
+    return null
+  }
+
+  const functionId = idParts.join(':').trim()
+  return functionId || null
+}
+
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
   selectedTeamForNewTask?: Team | null
   showRepositorySelector?: boolean
   taskType?: TaskType
+  teamModeFilter?: TeamModeFilter
   onShareButtonRender?: (button: React.ReactNode) => void
   onRefreshTeams?: () => Promise<Team[]>
   /** Initial knowledge base to pre-select when starting a new chat from knowledge page */
@@ -134,6 +212,7 @@ function ChatAreaContent({
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
+  teamModeFilter = taskType,
   onShareButtonRender,
   onRefreshTeams,
   initialKnowledgeBase,
@@ -148,23 +227,52 @@ function ChatAreaContent({
   emptyStateContent,
   extension,
 }: ChatAreaProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('chat')
   const { toast } = useToast()
   const router = useRouter()
-  const chatStreamContext = useOptionalChatStreamContext()
+  const pathname = usePathname()
+  const { setSelectedDeviceId } = useDevices()
+  const chatStreamContext = useOptionalTaskSession()
+  const chatStatus = useChatStatusIndicator()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
   const [isPipelineNextStepOpen, setIsPipelineNextStepOpen] = useState(false)
   const [isPipelineNextStepConfirming, setIsPipelineNextStepConfirming] = useState(false)
+  const [pendingReplacementMessage, setPendingReplacementMessage] = useState<string | null>(null)
+  const [pendingReplacementOptions, setPendingReplacementOptions] =
+    useState<SendMessageOptions | null>(null)
+  const [quickLaunchIntent, setQuickLaunchIntent] = useState<QuickLaunchIntent | null>(null)
+  const [isPendingReplacementOpen, setIsPendingReplacementOpen] = useState(false)
+  const [isPendingReplacementConfirming, setIsPendingReplacementConfirming] = useState(false)
+  const [pendingFormReplacementMessage, setPendingFormReplacementMessage] = useState<string | null>(
+    null
+  )
+  const [isPendingFormReplacementOpen, setIsPendingFormReplacementOpen] = useState(false)
+  const [isPendingFormReplacementConfirming, setIsPendingFormReplacementConfirming] =
+    useState(false)
+  const [pendingQuickPhrase, setPendingQuickPhrase] = useState<string | null>(null)
+  const [isQuickPhraseOverwriteOpen, setIsQuickPhraseOverwriteOpen] = useState(false)
+  const [focusInputAtEndSignal, setFocusInputAtEndSignal] = useState(0)
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    selectTask,
+    accessDenied,
+    taskState: sessionTaskState,
+  } = useTaskSession()
   const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
-  // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { state: taskState } = useTaskStateMachine(effectiveTaskId)
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskId ? sessionTaskState : null
+  const runtimeTaskStatus = taskState?.runtime.taskStatus
+  const pendingInteractiveForm = useMemo(
+    () => findPendingInteractiveForm(taskState?.messages?.values()),
+    [taskState?.messages]
+  )
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
@@ -215,10 +323,26 @@ function ChatAreaContent({
   const chatState = useChatAreaState({
     teams,
     taskType,
+    teamModeFilter,
     selectedTeamForNewTask,
     initialKnowledgeBase,
     maxAttachments: maxAttachmentsFromModel,
   })
+
+  const effectiveTaskType = useMemo<TaskType>(() => {
+    if (
+      taskType === 'chat' &&
+      teamModeFilter === 'all' &&
+      chatState.selectedTeam?.bind_mode?.includes('code') &&
+      !chatState.selectedTeam.bind_mode.includes('chat')
+    ) {
+      return 'code'
+    }
+
+    return taskType
+  }, [chatState.selectedTeam?.bind_mode, taskType, teamModeFilter])
+
+  const effectiveShowRepositorySelector = showRepositorySelector && effectiveTaskType === 'code'
 
   // Compute initial selected skills from task detail (for page refresh recovery)
   const initialSelectedSkills = useMemo(() => {
@@ -327,27 +451,47 @@ function ChatAreaContent({
 
   // Get taskId from URL for team sync logic
   const searchParams = useSearchParams()
-  const taskIdFromUrl =
-    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  const searchParamsString = stringifySearchParams(searchParams)
+  const taskIdFromUrl = getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
+  // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
+  const teamIdFromUrl =
+    getSearchParam(searchParams, 'teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
+  // Get project info when in project context
+  const projectIdFromUrl = getSearchParam(searchParams, 'projectId')
+  const { projects } = useProjectContext()
+  const activeProject = useMemo(() => {
+    if (!projectIdFromUrl) return null
+    const project = projects.find(p => p.id === Number(projectIdFromUrl))
+    if (!project) return null
+    const explicitPath = project.config?.workspace?.localPath
+    const defaultPath = `~/.wegent-executor/workspace/project${project.id}`
+    return {
+      name: project.name,
+      path: explicitPath || defaultPath,
+    }
+  }, [projectIdFromUrl, projects])
+
+  useEffect(() => {
+    const intent = parseQuickLaunchIntent(new URLSearchParams(searchParamsString))
+    if (!intent) {
+      return
+    }
+
+    setQuickLaunchIntent(intent)
+    const nextParams = removeQuickLaunchQueryParams(new URLSearchParams(searchParamsString))
+    const nextSearch = nextParams.toString()
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname)
+  }, [pathname, router, searchParamsString])
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
   const lastSyncedTaskIdRef = useRef<number | null>(null)
 
-  // Filter teams by bind_mode based on current mode
-  const filteredTeams = useMemo(() => {
-    const teamsWithValidBindMode = teams.filter(team => {
-      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
-      return true
-    })
-    const result = teamsWithValidBindMode.filter(team => {
-      if (!team.bind_mode) return true
-      const included = team.bind_mode.includes(taskType)
-      return included
-    })
-
-    return result
-  }, [teams, taskType])
+  // Filter teams by bind_mode based on current visible agent mode.
+  const filteredTeams = useMemo(
+    () => filterTeamsByMode(teams, teamModeFilter),
+    [teams, teamModeFilter]
+  )
 
   // Extract values for dependency array
   const selectedTeam = chatState.selectedTeam
@@ -401,6 +545,20 @@ function ChatAreaContent({
       }
     }
 
+    // Case 2a: teamId URL param present - select specific team regardless of initialization state
+    // This handles navigation after accepting a share invite (/chat?teamId=xxx)
+    if (!taskIdFromUrl && teamIdFromUrl) {
+      const targetTeamId = Number(teamIdFromUrl)
+      const teamFromUrl =
+        filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
+      if (teamFromUrl) {
+        handleTeamChange(teamFromUrl)
+        hasInitializedTeamRef.current = true
+        lastSyncedTaskIdRef.current = null
+        return
+      }
+    }
+
     // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
       // Use the default team computed from server config
@@ -434,8 +592,10 @@ function ChatAreaContent({
     }
   }, [
     filteredTeams,
+    teams,
     selectedTaskDetail,
     taskIdFromUrl,
+    teamIdFromUrl,
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
@@ -451,9 +611,12 @@ function ChatAreaContent({
   // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
+      if (effectiveTaskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
+        setSelectedDeviceId(null)
+      }
       handleTeamChange(team)
     },
-    [handleTeamChange]
+    [effectiveTaskType, handleTeamChange, setSelectedDeviceId]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls
@@ -486,11 +649,11 @@ function ChatAreaContent({
   // For video/image mode, use respective model selection; otherwise use regular model selection
   // This ensures the correct model is passed to the backend for routing
   const effectiveSelectedModel = useMemo(() => {
-    if (taskType === 'video') return videoModelSelection.selectedModel
-    if (taskType === 'image') return imageModelSelection.selectedModel
+    if (effectiveTaskType === 'video') return videoModelSelection.selectedModel
+    if (effectiveTaskType === 'image') return imageModelSelection.selectedModel
     return chatState.selectedModel
   }, [
-    taskType,
+    effectiveTaskType,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
     chatState.selectedModel,
@@ -499,7 +662,7 @@ function ChatAreaContent({
   // Build generate params for video/image generation tasks
   // Include model name for display in user message bubble
   const generateParams = useMemo(() => {
-    if (taskType === 'video') {
+    if (effectiveTaskType === 'video') {
       return {
         resolution: selectedResolution,
         ratio: selectedRatio,
@@ -507,7 +670,7 @@ function ChatAreaContent({
         model: videoModelSelection.selectedModel?.name,
       }
     }
-    if (taskType === 'image') {
+    if (effectiveTaskType === 'image') {
       return {
         size: selectedImageSize,
         model: imageModelSelection.selectedModel?.name,
@@ -515,7 +678,7 @@ function ChatAreaContent({
     }
     return undefined
   }, [
-    taskType,
+    effectiveTaskType,
     selectedResolution,
     selectedRatio,
     selectedDuration,
@@ -533,18 +696,17 @@ function ChatAreaContent({
     setForceOverride: chatState.setForceOverride,
     selectedRepo: chatState.selectedRepo,
     selectedBranch: chatState.selectedBranch,
-    showRepositorySelector,
+    showRepositorySelector: effectiveShowRepositorySelector,
     effectiveRequiresWorkspace: chatState.effectiveRequiresWorkspace,
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
-    setIsLoading: chatState.setIsLoading,
     enableDeepThinking: chatState.enableDeepThinking,
     enableClarification: chatState.enableClarification,
     externalApiParams: chatState.externalApiParams,
     attachments: chatState.attachmentState.attachments,
     resetAttachment: chatState.resetAttachment,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
-    taskType,
+    taskType: effectiveTaskType,
     knowledgeBaseId,
     shouldHideChatInput: chatState.shouldHideChatInput,
     scrollToBottom,
@@ -580,7 +742,6 @@ function ChatAreaContent({
     const hasSelectedTask = Boolean(effectiveTaskId)
     const hasNewTaskStream =
       !effectiveTaskId && streamHandlers.pendingTaskId && streamHandlers.isStreaming
-    const hasLocalPending = streamHandlers.localPendingMessage !== null
     // Use taskState from state machine (single source of truth)
     const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
 
@@ -589,24 +750,14 @@ function ChatAreaContent({
       return true
     }
 
-    // In inputAlwaysAtBottom mode (knowledge notebook), only consider actual messages
-    // not just the presence of selectedTaskDetail
-    if (inputAlwaysAtBottom) {
-      return Boolean(
-        streamHandlers.hasPendingUserMessage ||
-        streamHandlers.isStreaming ||
-        hasNewTaskStream ||
-        hasLocalPending ||
-        hasUnifiedMessages
-      )
-    }
-
+    // Fallback: consider task selected (hasSelectedTask) as having messages to avoid
+    // brief hasMessages=false gap between task creation and state machine message population,
+    // which would cause empty-state content (e.g. SummaryCard) to flash.
     return Boolean(
       hasSelectedTask ||
       streamHandlers.hasPendingUserMessage ||
       streamHandlers.isStreaming ||
       hasNewTaskStream ||
-      hasLocalPending ||
       hasUnifiedMessages
     )
   }, [
@@ -614,15 +765,14 @@ function ChatAreaContent({
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
     streamHandlers.pendingTaskId,
-    streamHandlers.localPendingMessage,
     taskState?.messages,
-    inputAlwaysAtBottom,
   ])
 
   const pipelineNextStepMessages = useMemo<PipelineNextStepMessage[]>(() => {
     if (!taskState?.messages) return []
 
-    return Array.from(taskState.messages.values()).map(message => ({
+    const messages: UnifiedMessage[] = Array.from(taskState.messages.values())
+    return messages.map(message => ({
       id: message.id,
       type: message.type,
       status: message.status,
@@ -633,9 +783,18 @@ function ChatAreaContent({
     }))
   }, [taskState?.messages])
 
+  const pipelineContextPassing = useMemo(
+    () =>
+      getPipelineContextPassingForStage(
+        chatState.selectedTeam ?? selectedTaskDetail?.team,
+        pipelineStageInfo
+      ),
+    [chatState.selectedTeam, pipelineStageInfo, selectedTaskDetail?.team]
+  )
+
   const pipelineNextStepDraft = useMemo(
-    () => buildPipelineNextStepDraft(pipelineNextStepMessages),
-    [pipelineNextStepMessages]
+    () => buildPipelineNextStepDraft(pipelineNextStepMessages, pipelineContextPassing),
+    [pipelineContextPassing, pipelineNextStepMessages]
   )
 
   useEffect(() => {
@@ -652,12 +811,12 @@ function ChatAreaContent({
     // OpenClaw devices handle model on device side, no model selection required
     if (hideSelectors) return false
     // Video mode uses video model selection, not regular model selection
-    if (taskType === 'video') {
+    if (effectiveTaskType === 'video') {
       // In video mode, we need a video model selected
       return !videoModelSelection.selectedModel
     }
     // Image mode uses image model selection
-    if (taskType === 'image') {
+    if (effectiveTaskType === 'image') {
       // In image mode, we need an image model selected
       return !imageModelSelection.selectedModel
     }
@@ -668,7 +827,7 @@ function ChatAreaContent({
   }, [
     chatState.selectedTeam,
     chatState.selectedModel,
-    taskType,
+    effectiveTaskType,
     hideSelectors,
     videoModelSelection.selectedModel,
     imageModelSelection.selectedModel,
@@ -678,15 +837,14 @@ function ChatAreaContent({
   const canSubmit = useMemo(() => {
     return (
       !disabledReason &&
-      !chatState.isLoading &&
-      !streamHandlers.isStreaming &&
+      (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
   }, [
     disabledReason,
-    chatState.isLoading,
     streamHandlers.isStreaming,
+    streamHandlers.canQueueMessage,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
   ])
@@ -718,8 +876,225 @@ function ChatAreaContent({
   const setSelectedContexts = chatState.setSelectedContexts
   const resetAttachment = chatState.resetAttachment
   const addExistingAttachment = chatState.addExistingAttachment
+  const handleFileSelect = chatState.handleFileSelect
+  const handleAttachmentRemove = chatState.handleAttachmentRemove
+  const quickPresetAttachmentIdsRef = useRef<Set<number>>(new Set())
   const selectedContextsRef = useRef(chatState.selectedContexts)
   selectedContextsRef.current = chatState.selectedContexts
+
+  const shouldConfirmPendingReplacement =
+    runtimeTaskStatus === 'PENDING' &&
+    !streamHandlers.canQueueMessage &&
+    !selectedTaskDetail?.is_group_chat
+
+  const applyQuickPhraseToInput = useCallback(
+    (phrase: string) => {
+      setTaskInputMessage(phrase)
+      setFocusInputAtEndSignal(signal => signal + 1)
+    },
+    [setTaskInputMessage]
+  )
+
+  const handleQuickPhraseSelect = useCallback(
+    (phrase: string) => {
+      if (chatState.taskInputMessage.trim()) {
+        setPendingQuickPhrase(phrase)
+        setIsQuickPhraseOverwriteOpen(true)
+        return
+      }
+
+      applyQuickPhraseToInput(phrase)
+    },
+    [applyQuickPhraseToInput, chatState.taskInputMessage]
+  )
+
+  const clearQuickPresetAttachments = useCallback(async () => {
+    const attachmentIds = Array.from(quickPresetAttachmentIdsRef.current)
+    if (attachmentIds.length === 0) {
+      return
+    }
+
+    quickPresetAttachmentIdsRef.current = new Set()
+    await Promise.all(attachmentIds.map(attachmentId => handleAttachmentRemove(attachmentId)))
+  }, [handleAttachmentRemove])
+
+  const handleUserFileSelect = useCallback(
+    async (files: File | File[]) => {
+      await clearQuickPresetAttachments()
+      await handleFileSelect(files)
+    },
+    [clearQuickPresetAttachments, handleFileSelect]
+  )
+
+  const handleInputAttachmentRemove = useCallback(
+    async (attachmentId: number) => {
+      await handleAttachmentRemove(attachmentId)
+      if (quickPresetAttachmentIdsRef.current.has(attachmentId)) {
+        const nextIds = new Set(quickPresetAttachmentIdsRef.current)
+        nextIds.delete(attachmentId)
+        quickPresetAttachmentIdsRef.current = nextIds
+      }
+    },
+    [handleAttachmentRemove]
+  )
+
+  const handleQuickPresetSelect = useCallback(
+    async (selection: QuickPresetSelection) => {
+      const { preset } = selection
+      const options = preset.options
+      if (options?.enable_deep_thinking !== undefined && options.enable_deep_thinking !== null) {
+        chatState.setEnableDeepThinking(options.enable_deep_thinking)
+      }
+      if (options?.enable_clarification !== undefined && options.enable_clarification !== null) {
+        chatState.setEnableClarification(options.enable_clarification)
+      }
+      if (options?.force_override !== undefined && options.force_override !== null) {
+        chatState.setForceOverride(options.force_override)
+      }
+      if (options?.selected_skill_names && options.selected_skill_names.length > 0) {
+        skillSelector.setSelectedSkillNames(options.selected_skill_names)
+      }
+
+      const prompt = preset.prompt?.trim()
+      if (prompt) {
+        handleQuickPhraseSelect(prompt)
+      }
+
+      const sourceAttachmentIds = preset.source_attachment_ids ?? []
+      if (sourceAttachmentIds.length === 0) {
+        await clearQuickPresetAttachments()
+        return
+      }
+
+      const hasUserAttachment = chatState.attachmentState.attachments.some(
+        attachment => !quickPresetAttachmentIdsRef.current.has(attachment.id)
+      )
+      if (hasUserAttachment) {
+        await clearQuickPresetAttachments()
+        return
+      }
+
+      const functionId = getSystemQuickLaunchFunctionId(selection)
+      if (!functionId) {
+        return
+      }
+
+      await clearQuickPresetAttachments()
+      try {
+        const response = await userApis.prepareQuickLaunchPreset({
+          function_id: functionId,
+          preset_id: preset.id,
+        })
+        response.attachments.forEach(attachment => {
+          addExistingAttachment(attachment)
+        })
+        quickPresetAttachmentIdsRef.current = new Set(
+          response.attachments.map(attachment => attachment.id)
+        )
+      } catch (error) {
+        console.error('Failed to prepare quick launch preset attachments:', error)
+      }
+    },
+    [
+      addExistingAttachment,
+      chatState,
+      clearQuickPresetAttachments,
+      handleQuickPhraseSelect,
+      skillSelector,
+    ]
+  )
+
+  const handleConfirmQuickPhraseOverwrite = useCallback(() => {
+    if (!pendingQuickPhrase) return
+
+    applyQuickPhraseToInput(pendingQuickPhrase)
+    setPendingQuickPhrase(null)
+    setIsQuickPhraseOverwriteOpen(false)
+  }, [applyQuickPhraseToInput, pendingQuickPhrase])
+
+  const sendOrConfirmPendingReplacement = useCallback(
+    async (message: string, options?: SendMessageOptions) => {
+      const trimmedMessage = message.trim()
+      const hasAttachments = chatState.attachmentState.attachments.length > 0
+      if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
+
+      if (pendingInteractiveForm && !options?.interactiveFormAnswer) {
+        setPendingFormReplacementMessage(trimmedMessage)
+        setIsPendingFormReplacementOpen(true)
+        return
+      }
+
+      if (shouldConfirmPendingReplacement) {
+        setPendingReplacementMessage(trimmedMessage)
+        setPendingReplacementOptions(options ?? null)
+        setIsPendingReplacementOpen(true)
+        return
+      }
+
+      await streamHandlers.handleSendMessage(trimmedMessage, options)
+    },
+    [
+      chatState.attachmentState.attachments.length,
+      chatState.shouldHideChatInput,
+      pendingInteractiveForm,
+      shouldConfirmPendingReplacement,
+      streamHandlers,
+    ]
+  )
+
+  const handleConfirmPendingFormReplacement = useCallback(async () => {
+    if (
+      !pendingFormReplacementMessage ||
+      !pendingInteractiveForm ||
+      isPendingFormReplacementConfirming
+    ) {
+      return
+    }
+
+    setIsPendingFormReplacementConfirming(true)
+    try {
+      const cancellation = buildInteractiveFormCancellation(
+        pendingInteractiveForm,
+        pendingFormReplacementMessage
+      )
+      setPendingFormReplacementMessage(null)
+      setIsPendingFormReplacementOpen(false)
+      await streamHandlers.handleSendMessage(cancellation.message, {
+        interactiveFormAnswer: cancellation.answer,
+      })
+    } finally {
+      setIsPendingFormReplacementConfirming(false)
+    }
+  }, [
+    isPendingFormReplacementConfirming,
+    pendingFormReplacementMessage,
+    pendingInteractiveForm,
+    streamHandlers,
+  ])
+
+  const handleConfirmPendingReplacement = useCallback(async () => {
+    if (pendingReplacementMessage === null || isPendingReplacementConfirming) return
+
+    setIsPendingReplacementConfirming(true)
+    try {
+      const cancelled = await streamHandlers.handleCancelTask()
+      if (!cancelled) return
+
+      const message = pendingReplacementMessage
+      const options = pendingReplacementOptions ?? undefined
+      setPendingReplacementMessage(null)
+      setPendingReplacementOptions(null)
+      setIsPendingReplacementOpen(false)
+      await streamHandlers.handleSendMessage(message, options)
+    } finally {
+      setIsPendingReplacementConfirming(false)
+    }
+  }, [
+    pendingReplacementMessage,
+    pendingReplacementOptions,
+    isPendingReplacementConfirming,
+    streamHandlers,
+  ])
 
   // Handle queue message loaded from inbox - adds the message(s) as context(s)
   // Supports both single message and batch processing
@@ -763,10 +1138,10 @@ function ChatAreaContent({
   const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
     useAttachmentUpload({
       team: chatState.selectedTeam,
-      isLoading: chatState.isLoading,
+      isSendPending: streamHandlers.hasPendingUserMessage,
       isStreaming: streamHandlers.isStreaming,
       attachmentState: chatState.attachmentState,
-      onFileSelect: chatState.handleFileSelect,
+      onFileSelect: handleUserFileSelect,
       setIsDragging: chatState.setIsDragging,
     })
 
@@ -779,13 +1154,23 @@ function ChatAreaContent({
 
   // Callback for child components to send messages
   const handleSendMessageFromChild = useCallback(
-    async (content: string) => {
+    async (content: string, options?: SendMessageOptions) => {
       const existingInput = taskInputMessageRef.current.trim()
       const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content
       setTaskInputMessage('')
-      await handleSendMessageRef.current(combinedMessage)
+      await sendOrConfirmPendingReplacement(
+        combinedMessage,
+        options?.interactiveFormAnswer
+          ? {
+              interactiveFormAnswer: {
+                ...options.interactiveFormAnswer,
+                message: combinedMessage,
+              },
+            }
+          : options
+      )
     },
-    [setTaskInputMessage]
+    [sendOrConfirmPendingReplacement, setTaskInputMessage]
   )
 
   // Callback for child components to send messages with a specific model (for regeneration)
@@ -828,6 +1213,11 @@ function ChatAreaContent({
           name: context.name,
           type: 'knowledge_base',
           document_count: context.document_count ?? undefined,
+          document_ids: context.document_ids ?? undefined,
+          folder_ids: context.folder_ids ?? undefined,
+          folder_names: context.folder_names ?? undefined,
+          include_subfolders: context.include_subfolders ?? undefined,
+          scope_restricted: context.scope_restricted ?? undefined,
         }
       } else if (context.context_type === 'table') {
         if (!context.document_id) return
@@ -837,6 +1227,15 @@ function ChatAreaContent({
           type: 'table',
           document_id: context.document_id,
           source_config: context.source_config ?? undefined,
+        }
+      } else if (context.context_type === 'external_knowledge') {
+        const ref = buildExternalRefFromContext(context)
+        if (!ref) return
+        contextItem = {
+          id: buildExternalContextId(ref),
+          name: context.name,
+          type: 'external_knowledge',
+          ref,
         }
       }
 
@@ -865,7 +1264,7 @@ function ChatAreaContent({
       if (!taskId || !teamId) {
         toast({
           variant: 'destructive',
-          title: t('chat:pipeline.next_step_dialog.missing_task'),
+          title: t('pipeline.next_step_dialog.missing_task'),
         })
         return
       }
@@ -873,7 +1272,7 @@ function ChatAreaContent({
       if (!chatStreamContext) {
         toast({
           variant: 'destructive',
-          title: t('chat:pipeline.confirm_failed'),
+          title: t('pipeline.confirm_failed'),
         })
         return
       }
@@ -901,13 +1300,13 @@ function ChatAreaContent({
 
         setIsPipelineNextStepOpen(false)
         toast({
-          title: t('chat:pipeline.stage_confirmed'),
+          title: t('pipeline.stage_confirmed'),
         })
       } catch (error) {
         console.error('Failed to confirm pipeline next step:', error)
         toast({
           variant: 'destructive',
-          title: t('chat:pipeline.confirm_failed'),
+          title: t('pipeline.confirm_failed'),
         })
       } finally {
         setIsPipelineNextStepConfirming(false)
@@ -968,7 +1367,7 @@ function ChatAreaContent({
       // 1. Primary: match by shared messageId (works for messages loaded from backend)
       // 2. Fallback: use Map insertion order - find the last user message that appears
       //    before the AI message in the Map (works for live-session messages that have no messageId yet)
-      let userStateMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+      let userStateMsg: import('@wegent/chat-core').UnifiedMessage | undefined
 
       if (aiStateMsg.messageId != null) {
         // Primary lookup: match by shared messageId
@@ -983,7 +1382,7 @@ function ChatAreaContent({
       if (!userStateMsg) {
         // Fallback: iterate the Map in insertion order; track the last user message seen
         // before we reach the target AI message entry
-        let lastUserMsg: import('../../state/TaskStateMachine').UnifiedMessage | undefined
+        let lastUserMsg: import('@wegent/chat-core').UnifiedMessage | undefined
         for (const [key, msg] of stateMessages.entries()) {
           if (key === `ai-${aiMsg.subtaskId}`) {
             // Reached the AI message - the previous user message is the one we want
@@ -1046,6 +1445,11 @@ function ChatAreaContent({
             name: ctx.name,
             type: 'knowledge_base',
             document_count: ctx.document_count ?? undefined,
+            document_ids: ctx.document_ids ?? undefined,
+            folder_ids: ctx.folder_ids ?? undefined,
+            folder_names: ctx.folder_names ?? undefined,
+            include_subfolders: ctx.include_subfolders ?? undefined,
+            scope_restricted: ctx.scope_restricted ?? undefined,
           })
         } else if (ctx.context_type === 'table') {
           if (!ctx.document_id) continue
@@ -1055,6 +1459,15 @@ function ChatAreaContent({
             type: 'table',
             document_id: ctx.document_id,
             source_config: ctx.source_config ?? undefined,
+          })
+        } else if (ctx.context_type === 'external_knowledge') {
+          const ref = buildExternalRefFromContext(ctx)
+          if (!ref) continue
+          restoredContextItems.push({
+            id: buildExternalContextId(ref),
+            name: ctx.name,
+            type: 'external_knowledge',
+            ref,
           })
         }
       }
@@ -1068,7 +1481,7 @@ function ChatAreaContent({
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      setSelectedTask(null)
+      selectTask(null)
       router.push('/chat')
     }
 
@@ -1111,6 +1524,7 @@ function ChatAreaContent({
   const inputCardProps = {
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
+    focusInputAtEndSignal,
     selectedTeam: chatState.selectedTeam,
     teams: teams,
     externalApiParams: chatState.externalApiParams,
@@ -1125,7 +1539,8 @@ function ChatAreaContent({
     // Only enable restore when default team exists
     onRestoreDefaultTeam: chatState.defaultTeam ? chatState.restoreDefaultTeam : undefined,
     isUsingDefaultTeam: chatState.isUsingDefaultTeam,
-    taskType,
+    taskType: effectiveTaskType,
+    teamModeFilter,
     tipText: chatState.randomTip,
     isGroupChat: selectedTaskDetail?.is_group_chat || false,
     isDragging: chatState.isDragging,
@@ -1134,6 +1549,18 @@ function ChatAreaContent({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
+    canQueueMessage: streamHandlers.canQueueMessage,
+    canCancelTask: streamHandlers.canCancelTask,
+    queuedMessages: streamHandlers.queuedMessages,
+    onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
+    onEditQueuedMessage: streamHandlers.editQueuedMessage,
+    onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
+    canSendGuidance: streamHandlers.canSendGuidance,
+    guidanceMessages: streamHandlers.guidanceMessages,
+    expiredGuidanceMessages: streamHandlers.expiredGuidanceMessages,
+    onCancelGuidance: streamHandlers.cancelGuidance,
+    onEditGuidanceMessage: streamHandlers.editGuidanceMessage,
+    onSendExpiredGuidanceAsMessage: streamHandlers.sendExpiredGuidanceAsMessage,
     handleSendMessage: async (overrideMessage?: string) => {
       // Format message with quote if present, then clear quote
       const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()
@@ -1141,7 +1568,15 @@ function ChatAreaContent({
       if (quote) {
         clearQuote()
       }
-      await streamHandlers.handleSendMessage(message)
+      await sendOrConfirmPendingReplacement(message)
+    },
+    onSendGuidance: async () => {
+      const baseMessage = chatState.taskInputMessage.trim()
+      const message = formatQuoteForMessage(baseMessage)
+      if (quote) {
+        clearQuote()
+      }
+      await streamHandlers.handleSendGuidance(message)
     },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
@@ -1151,7 +1586,7 @@ function ChatAreaContent({
     setForceOverride: chatState.setForceOverride,
     teamId: chatState.selectedTeam?.id,
     taskId: selectedTaskDetail?.id,
-    showRepositorySelector,
+    showRepositorySelector: effectiveShowRepositorySelector,
     selectedRepo: chatState.selectedRepo,
     setSelectedRepo: chatState.setSelectedRepo,
     selectedBranch: chatState.selectedBranch,
@@ -1171,27 +1606,25 @@ function ChatAreaContent({
     selectedContexts: chatState.selectedContexts,
     setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
-    onFileSelect: chatState.handleFileSelect,
-    onAttachmentRemove: chatState.handleAttachmentRemove,
-    isLoading: chatState.isLoading,
+    onFileSelect: handleUserFileSelect,
+    onAttachmentRemove: handleInputAttachmentRemove,
     isStreaming: streamHandlers.isStreaming,
-    isAwaitingResponseStart: streamHandlers.isAwaitingResponseStart,
     isStopping: streamHandlers.isStopping,
     hasMessages,
     shouldCollapseSelectors,
-    shouldHideQuotaUsage: chatState.shouldHideQuotaUsage,
+    shouldHideToolbarStatus: chatState.shouldHideToolbarStatus,
     shouldHideChatInput: chatState.shouldHideChatInput,
     isModelSelectionRequired,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
-    isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
+    onCancelTask: streamHandlers.handleCancelTask,
     onSendMessage: () => {
       // Format message with quote if present, then clear quote
       const message = formatQuoteForMessage(chatState.taskInputMessage.trim())
       if (quote) {
         clearQuote()
       }
-      streamHandlers.handleSendMessage(message)
+      void sendOrConfirmPendingReplacement(message)
     },
     // Whether there are no available teams for current mode
     hasNoTeams: filteredTeams.length === 0,
@@ -1199,6 +1632,8 @@ function ChatAreaContent({
     knowledgeBaseId,
     // Reason why input is disabled (shown as placeholder)
     disabledReason,
+    // Project context
+    projectId: projectIdFromUrl ? Number(projectIdFromUrl) : null,
     // Skill selector props
     availableSkills: skillSelector.availableSkills,
     teamSkillNames: skillSelector.teamSkillNames,
@@ -1237,7 +1672,10 @@ function ChatAreaContent({
   }
 
   const shouldMountQueueMessageHandler =
-    taskType === 'chat' || taskType === 'task' || taskType === 'code'
+    effectiveTaskType === 'chat' || effectiveTaskType === 'task' || effectiveTaskType === 'code'
+  const compactingWaitMessage = chatStatus.isCompacting
+    ? t('common:chat_status.compacting')
+    : undefined
 
   return (
     <div
@@ -1270,7 +1708,7 @@ function ChatAreaContent({
             selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
           }
           onStageInfoChange={setPipelineStageInfo}
-          canContinueToNextStage={pipelineNextStepDraft.canSubmit}
+          canContinueToNextStage={pipelineNextStepDraft.hasSelectableContext}
           onNextStepClick={handlePipelineNextStepClick}
         />
       )}
@@ -1322,6 +1760,7 @@ function ChatAreaContent({
               hideGroupChatOptions={taskType === 'knowledge'}
               onUseAsReference={handleUseAsReference}
               onReEdit={handleReEdit}
+              waitingMessage={compactingWaitMessage}
             />
           </div>
         </div>
@@ -1344,7 +1783,9 @@ function ChatAreaContent({
             style={{ marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
+              {taskType !== 'knowledge' && (
+                <SloganDisplay slogan={chatState.randomSlogan} project={activeProject} />
+              )}
               {taskType === 'knowledge' && guidedQuestions && guidedQuestions.length > 0 && (
                 <GuidedQuestions
                   questions={guidedQuestions}
@@ -1356,18 +1797,22 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              {taskType !== 'knowledge' && !hideSelectors && (
+              {taskType !== 'knowledge' && !hideSelectors && !activeProject && (
                 <QuickAccessCards
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}
                   onTeamSelect={handleTeamSelect}
-                  currentMode={taskType}
+                  onPhraseSelect={handleQuickPhraseSelect}
+                  onPresetSelect={handleQuickPresetSelect}
+                  currentMode={teamModeFilter}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
                   hideSelected={true}
                   onRefreshTeams={onRefreshTeams}
-                  showWizardButton={taskType === 'chat'}
+                  showWizardButton={effectiveTaskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
+                  launchIntent={quickLaunchIntent}
+                  onLaunchIntentConsumed={() => setQuickLaunchIntent(null)}
                 />
               )}
             </div>
@@ -1451,11 +1896,177 @@ function ChatAreaContent({
         <PipelineNextStepDialog
           open={isPipelineNextStepOpen}
           messages={pipelineNextStepMessages}
+          contextPassing={pipelineContextPassing}
           isConfirming={isPipelineNextStepConfirming}
           onOpenChange={setIsPipelineNextStepOpen}
           onConfirm={handlePipelineNextStepConfirm}
         />
       )}
+      <AlertDialog
+        open={isQuickPhraseOverwriteOpen}
+        onOpenChange={open => {
+          setIsQuickPhraseOverwriteOpen(open)
+          if (!open) {
+            setPendingQuickPhrase(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[420px] max-w-[calc(100vw-32px)] rounded-2xl border-border bg-base">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('quick_launch.overwrite_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('quick_launch.overwrite_confirm_description')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="quick-phrase-overwrite-cancel">
+              {t('quick_launch.overwrite_confirm_cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="quick-phrase-overwrite-confirm"
+              onClick={handleConfirmQuickPhraseOverwrite}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
+              {t('quick_launch.overwrite_confirm_action')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={isPendingFormReplacementOpen}
+        onOpenChange={open => {
+          if (isPendingFormReplacementConfirming) return
+          setIsPendingFormReplacementOpen(open)
+          if (!open) {
+            setPendingFormReplacementMessage(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[520px] max-w-[calc(100vw-32px)] gap-0 overflow-hidden rounded-2xl border-border bg-base p-0 shadow-2xl">
+          <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+            <Command className="h-4 w-4 text-text-secondary" />
+            <span className="text-sm text-text-secondary">{t('pending_form_confirm.eyebrow')}</span>
+            <AlertDialogCancel
+              disabled={isPendingFormReplacementConfirming}
+              className="ml-auto mt-0 h-8 w-8 rounded-full border-0 bg-transparent p-0 text-text-muted hover:bg-surface hover:text-text-primary"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">{t('pending_form_confirm.keep')}</span>
+            </AlertDialogCancel>
+          </div>
+          <AlertDialogHeader className="space-y-0 px-5 py-5 text-left">
+            <div className="flex items-start gap-3 rounded-xl bg-surface p-4">
+              <MessageSquareText className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div>
+                <AlertDialogTitle className="text-sm font-semibold text-text-primary">
+                  {t('pending_form_confirm.title')}
+                </AlertDialogTitle>
+                <AlertDialogDescription className="mt-1 text-sm leading-6 text-text-secondary">
+                  {t('pending_form_confirm.description')}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="grid grid-cols-2 gap-2 px-5 pb-5 pt-0 sm:space-x-0">
+            <AlertDialogCancel
+              disabled={isPendingFormReplacementConfirming}
+              className="mt-0 flex h-auto flex-col items-start justify-start gap-0 rounded-xl border-border bg-base px-4 py-3 text-left hover:bg-surface"
+            >
+              <span className="block text-sm font-medium text-text-primary">
+                {t('pending_form_confirm.keep')}
+              </span>
+              <span className="mt-1 block text-xs font-normal text-text-secondary">
+                {t('pending_form_confirm.keep_hint')}
+              </span>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={event => {
+                event.preventDefault()
+                void handleConfirmPendingFormReplacement()
+              }}
+              disabled={isPendingFormReplacementConfirming}
+              className="flex h-auto flex-col items-start justify-start gap-0 rounded-xl border border-primary bg-primary/8 px-4 py-3 text-left hover:bg-primary/12"
+            >
+              <span className="block text-sm font-medium text-primary">
+                {isPendingFormReplacementConfirming
+                  ? t('pending_form_confirm.confirming')
+                  : t('pending_form_confirm.confirm')}
+              </span>
+              <span className="mt-1 block text-xs font-normal text-text-secondary">
+                {t('pending_form_confirm.confirm_hint')}
+              </span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={isPendingReplacementOpen}
+        onOpenChange={open => {
+          if (isPendingReplacementConfirming) return
+          setIsPendingReplacementOpen(open)
+          if (!open) {
+            setPendingReplacementMessage(null)
+            setPendingReplacementOptions(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[520px] max-w-[calc(100vw-32px)] gap-0 overflow-hidden rounded-2xl border-border bg-base p-0 shadow-2xl">
+          <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+            <Command className="h-4 w-4 text-text-secondary" />
+            <span className="text-sm text-text-secondary">{t('pending_task_confirm.eyebrow')}</span>
+            <AlertDialogCancel
+              disabled={isPendingReplacementConfirming}
+              className="ml-auto mt-0 h-8 w-8 rounded-full border-0 bg-transparent p-0 text-text-muted hover:bg-surface hover:text-text-primary"
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">{t('pending_task_confirm.wait')}</span>
+            </AlertDialogCancel>
+          </div>
+          <AlertDialogHeader className="space-y-0 px-5 py-5 text-left">
+            <div className="flex items-start gap-3 rounded-xl bg-surface p-4">
+              <MessageSquareText className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div>
+                <AlertDialogTitle className="text-sm font-semibold text-text-primary">
+                  {t('pending_task_confirm.title')}
+                </AlertDialogTitle>
+                <AlertDialogDescription className="mt-1 text-sm leading-6 text-text-secondary">
+                  {t('pending_task_confirm.description')}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="grid grid-cols-2 gap-2 px-5 pb-5 pt-0 sm:space-x-0">
+            <AlertDialogCancel
+              disabled={isPendingReplacementConfirming}
+              className="mt-0 flex h-auto flex-col items-start justify-start gap-0 rounded-xl border-border bg-base px-4 py-3 text-left hover:bg-surface"
+            >
+              <span className="block text-sm font-medium text-text-primary">
+                {t('pending_task_confirm.wait')}
+              </span>
+              <span className="mt-1 block text-xs font-normal text-text-secondary">
+                {t('pending_task_confirm.wait_hint')}
+              </span>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={event => {
+                event.preventDefault()
+                void handleConfirmPendingReplacement()
+              }}
+              disabled={isPendingReplacementConfirming}
+              className="flex h-auto flex-col items-start justify-start gap-0 rounded-xl border border-primary bg-primary/8 px-4 py-3 text-left hover:bg-primary/12"
+            >
+              <span className="block text-sm font-medium text-primary">
+                {isPendingReplacementConfirming
+                  ? t('pending_task_confirm.confirming')
+                  : t('pending_task_confirm.confirm')}
+              </span>
+              <span className="mt-1 block text-xs font-normal text-text-secondary">
+                {t('pending_task_confirm.confirm_hint')}
+              </span>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {extension?.teamEdit?.renderDialog()}
     </div>
   )

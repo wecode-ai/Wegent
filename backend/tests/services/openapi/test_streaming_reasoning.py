@@ -236,6 +236,25 @@ class TestStreamingServiceReasoning:
 
     @pytest.mark.asyncio
     async def test_mcp_call_stream(self, streaming_service):
+        tool_output = {
+            "__silent_exit__": True,
+            "reason": "interactive_form_question form displayed; waiting for user response via new conversation",
+            "pending_user_input": True,
+            "pending_user_input_payload": {
+                "type": "interactive_form_question",
+                "interaction_type": "interactive_form",
+                "tool_name": "interactive_form_question",
+                "tool_use_id": "call_mcp_123",
+                "task_id": 321,
+                "subtask_id": 456,
+                "questions": [
+                    {"id": "exp_id", "question": "Enter experiment id"},
+                ],
+                "submit_mode": "new_response",
+                "submit_format": "markdown_message",
+            },
+        }
+
         async def mcp_call_stream():
             yield StreamingChunk(
                 type="mcp_call_added",
@@ -255,6 +274,7 @@ class TestStreamingServiceReasoning:
                     "arguments": '{"query": "SSE timeout"}',
                     "output_index": 0,
                     "status": "completed",
+                    "output": tool_output,
                 },
             )
             yield StreamingChunk(type="text", content="resolved")
@@ -280,6 +300,32 @@ class TestStreamingServiceReasoning:
             and e["item"]["type"] == "mcp_call"
         )
         assert mcp_added["item"]["server_label"] == "wegent-knowledge"
+
+        mcp_completed = next(
+            e for e in events if e["type"] == "response.mcp_call.completed"
+        )
+        assert "pending_user_input" not in mcp_completed["output"]
+        assert "pending_user_input_payload" not in mcp_completed["output"]
+
+        mcp_done = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.done"
+            and e["item"]["type"] == "mcp_call"
+        )
+        assert "pending_user_input" not in mcp_done["item"]["output"]
+        assert "pending_user_input_payload" not in mcp_done["item"]["output"]
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        assert completed["response"]["pending_user_input"] is None
+        assert completed["response"]["pending_user_input_payload"] is None
+        assert completed["response"]["output"][0]["type"] == "mcp_call"
+        assert "pending_user_input" not in completed["response"]["output"][0]["output"]
+        assert (
+            "pending_user_input_payload"
+            not in completed["response"]["output"][0]["output"]
+        )
+        assert completed["response"]["output"][1]["type"] == "message"
 
     @pytest.mark.asyncio
     async def test_shell_call_stream(self, streaming_service):
@@ -409,3 +455,75 @@ class TestStreamingServiceReasoning:
             message_added["output_index"],
         }
         assert len(indexes) == 3
+
+    @pytest.mark.asyncio
+    async def test_reasoning_segments_stay_split_around_tool_calls(
+        self, streaming_service
+    ):
+        async def mixed_stream():
+            yield StreamingChunk(type="reasoning", content="Before tool.")
+            yield StreamingChunk(
+                type="shell_call_added",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "cat /etc/os-release"},
+                },
+            )
+            yield StreamingChunk(
+                type="shell_call_done",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "cat /etc/os-release"},
+                    "status": "completed",
+                },
+            )
+            yield StreamingChunk(type="reasoning", content="After tool.")
+            yield StreamingChunk(type="text", content="Final answer.")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=mixed_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        reasoning_parts = [
+            e for e in events if e["type"] == "response.reasoning_summary_part.added"
+        ]
+        reasoning_deltas = [
+            e for e in events if e["type"] == "response.reasoning_summary_text.delta"
+        ]
+        assert len(reasoning_parts) == 2
+        assert [e["delta"] for e in reasoning_deltas] == [
+            "Before tool.",
+            "After tool.",
+        ]
+        assert reasoning_deltas[0]["item_id"] == reasoning_parts[0]["item"]["id"]
+        assert reasoning_deltas[1]["item_id"] == reasoning_parts[1]["item"]["id"]
+        assert reasoning_deltas[0]["output_index"] == reasoning_parts[0]["output_index"]
+        assert reasoning_deltas[1]["output_index"] == reasoning_parts[1]["output_index"]
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        output = completed["response"]["output"]
+        assert [item["type"] for item in output] == [
+            "message",
+            "shell_call",
+            "message",
+            "message",
+        ]
+        assert output[0]["content"][0] == {
+            "type": "reasoning",
+            "text": "Before tool.",
+            "annotations": [],
+        }
+        assert output[2]["content"][0] == {
+            "type": "reasoning",
+            "text": "After tool.",
+            "annotations": [],
+        }
+        assert output[3]["content"][0]["type"] == "output_text"
+        assert output[3]["content"][0]["text"] == "Final answer."

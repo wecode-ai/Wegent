@@ -1,499 +1,495 @@
 # Wegent
 
-> 🚀 An open-source AI-native operating system to define, organize, and run intelligent agent teams
+> An open-source, self-hostable platform for building and running AI agent teams.
 
 English | [简体中文](README_zh.md)
 
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
-[![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
-[![Gemini](https://img.shields.io/badge/Gemini-supported-4285F4.svg)](https://ai.google.dev)
-[![Version](https://img.shields.io/badge/version-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
+[![CI](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml/badge.svg)](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/wecode-ai/Wegent)](LICENSE)
+[![GitHub Issues](https://img.shields.io/github/issues/wecode-ai/Wegent)](https://github.com/wecode-ai/Wegent/issues)
+
+Wegent helps teams create and share AI agents that perform real work across chat, coding, knowledge, and automation. Manage team capabilities on the web, and use Wework when agents need to work directly with local projects and development environments.
 
 <div align="center">
 
-
-
-
-[Quick Start](#-quick-start) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Development Guide](https://wecode-ai.github.io/wegent-docs/docs/category/developer-guide)
+**[Deploy Wegent](#quick-start)** · **[Download Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)** · **[Documentation](https://wecode-ai.github.io/wegent-docs/)**
 
 </div>
 
----
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Wegent product interface" />
 
-## 🏗️ Architecture Overview
+## What You Can Build
+
+| Scenario | What Wegent provides |
+| --- | --- |
+| **Team AI assistants** | A private chat entry point with shared models, knowledge, skills, group collaboration, and file handling |
+| **AI coding** | Change code, run tests, commit updates, and open pull requests in isolated or local environments |
+| **Knowledge assistants** | Parse and index documents, webpages, and enterprise data for grounded answers |
+| **Continuous automation** | Track information, analyze webpages, filter notifications, and publish feeds from schedules and events |
+| **Local and private-network execution** | Work with local code, CLIs, browsers, dedicated development environments, and intranet resources |
+| **Existing system integration** | Bring agents into applications and team tools through APIs, MCP, and IM bots |
+
+## Choose How You Work
+
+| Use Wegent Web | Use Wework |
+| --- | --- |
+| Create and share agents, models, knowledge bases, and automation | Open local projects and let AI use files, terminals, CLIs, and development environments |
+| Manage users, permissions, and execution devices | Use local Codex, local models, and the local executor |
+| Serve teams through the browser, APIs, and IM | Focus on daily AI coding and local workflows |
+
+Wework can connect to a team deployment of Wegent to use shared models, cloud devices, and remote tasks while working locally.
+
+**[Deploy Wegent](#quick-start)** · **[Download Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
+
+## Why Choose Wegent
+
+| Capability | Benefit |
+| --- | --- |
+| **Reuse capabilities** | Combine models, knowledge, tools, and skills into agents that work across many tasks |
+| **Let bots collaborate** | Organize bots to divide research, analysis, coding, and review work |
+| **Run tasks in the right place** | Choose cloud, containers, local devices, or private environments based on where code and data live |
+| **Reach teams from every entry point** | Use the same agent capabilities from the web, Wework, APIs, and IM |
+
+## Quick Start
+
+### Deploy Wegent Web
+
+Prerequisite: Docker. Run Wegent in a single container with SQLite:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+```
+
+After it starts:
+
+1. Open http://localhost:3000.
+2. Follow the setup flow to create the administrator password.
+3. Configure a model and API key in Settings.
+4. Choose a built-in agent and send your first message.
+
+Common management commands:
+
+```bash
+wegent-standalone status
+wegent-standalone logs
+wegent-standalone restart
+wegent-standalone stop
+```
+
+If the command is not in your current `PATH`, use `~/.local/bin/wegent-standalone`.
+
+### Use Wework
+
+Download Wework and open a local project to start AI coding. Wework includes local execution and can also connect to a team deployment of Wegent from Settings.
+
+**[Download Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
+
+### Wegent Web Deployment Options
+
+| Option | Best for | Start here |
+| --- | --- | --- |
+| **Standalone** | Personal trials and lightweight self-hosting | Use the install command above |
+| **Standard** | Team deployments with MySQL, Redis, and dedicated services | [Installation Guide](docs/en/getting-started/installation.md) |
+| **Development** | Contributing and extending Wegent | [Development Setup](docs/en/developer-guide/setup.md) |
+
+Standalone can also use `host`, `container`, or `hybrid` executor modes. See [Standalone Mode](docs/en/deployment/standalone-mode.md) for details.
+
+## Agent Model
+
+<details>
+<summary>See how Wegent organizes agents and tasks</summary>
+
+Wegent manages capabilities, collaboration, and runtime context separately so they can be reused across tasks and environments.
+
+```text
+Ghost (prompt + MCP + skills)
+  + Shell (Chat / ClaudeCode / Agno / Dify)
+  + Model
+  = Bot
+
+Multiple Bots + collaboration mode = Team (the user-facing Agent)
+Team + Workspace = Task (a traceable execution)
+```
+
+Manage these resources through the UI, YAML, or APIs. See [Core Concepts](docs/en/concepts/core-concepts.md) and the [YAML Specification](docs/en/reference/yaml-specification.md) for details.
+
+</details>
+
+## Architecture
+
+<details>
+<summary>View Wegent's technical components</summary>
 
 ```mermaid
 graph TB
-    subgraph Access["Entry Layer"]
-        direction TB
-        Web["🌐 Web"]
-        IM["💬 IM Tools"]
-        API["🔌 API"]
-    end
+    User["User / API / IM"] --> Frontend["Wegent Web<br/>Next.js"]
+    User --> Wework["Wework Desktop<br/>Tauri + React"]
+    Frontend --> Backend["Backend<br/>FastAPI"]
+    Wework -. "Optional cloud connection" .-> Backend
+    Wework --> LocalWork["Local Codex / Files / Terminal"]
 
-    subgraph Features["Feature Layer"]
-        direction TB
-        Chat["💬 Chat"]
-        Code["💻 Coding"]
-        Feed["📡 Feed"]
-        Knowledge["📚 Knowledge"]
-    end
+    Backend --> Database[("MySQL / SQLite")]
+    Backend --> Redis[("Redis")]
+    Backend --> ChatShell["Chat Shell"]
+    Backend --> ExecutorManager["Executor Manager"]
+    Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    subgraph Agents["Agent Layer"]
-        direction TB
-        ChatShell["🗣️ Wegent Chat"]
-        ClaudeCode["🧠 Claude Code"]
-        Agno["🤝 Agno"]
-        Dify["✨ Dify"]
-    end
-
-    subgraph Execution["Execution Environment"]
-        direction TB
-        Docker["🐳 Agent Sandbox"]
-        Cloud["☁️ Cloud Device"]
-        Local["💻 Local Device"]
-    end
-
-    Access --> Features
-    Features --> Agents
-    Agents --> Execution
-```
-
----
-
-## ✨ Core Features
-
-### 💬 Chat Agent
-<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
-A fully open-source chat agent with powerful capabilities:
-
-- **Multi-Model Support**: Compatible with Claude, OpenAI, Gemini, DeepSeek, GLM and other mainstream models
-- **Conversation History**: Create new conversations, multi-turn dialogues, save and share chat history
-- **Group Chat**: AI group chat where AI responds based on conversation context with @mentions
-- **Attachment Parsing**: Send txt, pdf, ppt, doc, images and other file formats in single/group chats
-- **Follow-up Mode**: AI asks clarifying questions to help refine your requirements
-- **Error Correction Mode**: Multiple AI models automatically detect and correct response errors
-- **Long-term Memory**: Supports mem0 integration for conversation memory persistence
-- **Sandbox Execution**: Execute commands or modify files via sandbox, E2B protocol compatible
-- **Extensions**: Customize prompts, MCP tools and Skills (includes chart drawing skill)
-
-### 💻 Code Agent
-<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
-
-A cloud-based Claude Code execution engine:
-
-- **Multi-Model Configuration**: Configure various Claude-compatible models
-- **Concurrent Execution**: Run multiple coding tasks simultaneously in the cloud
-- **Requirement Clarification**: AI analyzes code and asks questions to generate specification documents
-- **Git Integration**: Integrate with GitHub/GitLab/Gitea/Gerrit to clone, modify and create PRs
-- **MCP/Skill Support**: Configure MCP tools and Skills for agents
-- **Multi-turn Conversations**: Continue conversations with follow-up questions
-
-### 📡 AI Feed
-<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
-
-A cloud-based AI task trigger system:
-
-- **Full Capability Access**: Tasks can use all Chat and Code mode capabilities
-- **Scheduled/Event Triggers**: Set up cron schedules or event-based AI task execution
-- **Information Feed**: Display AI-generated content as an information stream
-- **Event Filtering**: Filter conditions like "only notify me if it will rain tomorrow"
-
-### 📚 AI Knowledge
-<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
-
-A cloud-based AI document repository:
-
-- **Document Management**: Upload and manage txt/doc/ppt/xls and other document formats
-- **Web Import**: Import web pages and DingTalk multi-dimensional tables
-- **NotebookLM Mode**: Select documents directly in notebooks for Q&A
-- **Online Editing**: Edit text files directly in notebook mode
-- **Chat Integration**: Reference knowledge bases in single/group chats for AI responses
-
-### 🖥️ AI Device
-<img src="https://github.com/user-attachments/assets/ead0cc30-b3a4-4eb6-a6dd-77ffcbd72238" width="100%" alt="AI Device Demo"/>
-
-Run AI tasks on your local machine with full control:
-
-- **Local Executor**: Install and run the Wegent executor on your own device
-- **Multi-Device Management**: Register and manage multiple local devices
-- **Default Device**: Set a preferred device for quick task execution
-- **Secure Connection**: Connect to Wegent backend via authenticated WebSocket
-
-### 💬 IM Integration
-
-Integrate AI agents into your favorite IM tools:
-
-- **DingTalk Bot**: Deploy agents as DingTalk bots for team collaboration
-- **Telegram Bot**: Connect agents to Telegram for personal or group chats
-
-### 🔧 Customization
-
-All features above are fully customizable:
-
-- **Custom Agents**: Create custom agents in the web UI, configure prompts, MCP, Skills and multi-agent collaboration
-- **Agent Creation Wizard**: 4-step creation: Describe requirements → AI asks questions → Real-time fine-tuning → One-click create
-- **Organization Management**: Create and join groups, share agents, models, Skills within groups
-
----
-
-## 🔧 Extensibility
-- **Agent Creation Wizard**: 4-step creation: Describe requirements → AI asks questions → Real-time fine-tuning → One-click create
-- **Collaboration Modes**: 4 out-of-the-box multi-Agent collaboration modes (Sequential/Parallel/Router/Loop)
-- **Skill Support**: Dynamically load skill packages to improve Token efficiency
-- **MCP Tools**: Model Context Protocol for calling external tools and services
-- **Execution Engines**: ClaudeCode / Agno sandboxed isolation, Dify API proxy, Chat direct mode
-- **YAML Config**: Kubernetes-style CRD for defining Ghost / Bot / Team / Skill
-- **API**: OpenAI-compatible interface for easy integration with other systems
-
----
-
-## 🚀 Quick Start
-
-**One command to start:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
-```
-
-Then open http://localhost:3000 in your browser.
-
-### Other Deployment Options
-
-| Mode | Description |
-|------|-------------|
-| **Standalone** (default) | Single container, SQLite, recommended for most users |
-| **Standard** | Multi-container, MySQL, for production |
-| **Development** | Hot reload, for developers |
-
-```bash
-# Standard mode (multi-container with MySQL)
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
-
-# Development mode (from source, with hot reload)
-git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
-```
-
-<details>
-<summary><b>🔧 Common Commands</b></summary>
-
-```bash
-# Standalone mode (single container)
-docker logs -f wegent-standalone      # View logs
-docker stop wegent-standalone         # Stop
-docker start wegent-standalone        # Start
-docker restart wegent-standalone      # Restart
-
-# Standard mode (multi-container)
-docker compose logs -f   # View logs
-docker compose down      # Stop
-docker compose up -d     # Start
-
-# Development mode
-./start.sh --status      # Check status
-./start.sh --stop        # Stop
-./start.sh --restart     # Restart
+    ExecutorManager --> CloudExecutor["Cloud / Container Executor"]
+    Backend <--> LocalExecutor["Local Executor"]
+    KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
+    KnowledgeRuntime --> DocConverter["Document Converter"]
 ```
 
 </details>
 
-> 📖 See [Standalone Mode Documentation](docs/en/deployment/standalone-mode.md) for details.
+### Repository Map
 
----
+| Directory | Responsibility |
+| --- | --- |
+| `frontend/` | Wegent Web product |
+| `backend/` | REST API and core business logic |
+| `wework/` | Tauri desktop workbench |
+| `executor/` | Agent task execution environments |
+| `executor_manager/` | Executor scheduling and orchestration |
+| `chat_shell/` | Chat runtime |
+| `knowledge_runtime/` | Knowledge retrieval services |
+| `knowledge_doc_converter/` | Document parsing and conversion |
+| `shared/` | Modules shared across services |
 
-## 📦 Built-in Agents
+## Documentation
 
-| Team | Purpose |
-|------|---------|
-| chat-team | General AI assistant + Mermaid diagrams |
-| translator | Multi-language translation |
-| dev-team | Git workflow: branch → code → commit → PR |
-| wiki-team | Codebase Wiki documentation generation |
+- [Quick Start](docs/en/getting-started/quick-start.md)
+- [Installation and Deployment](docs/en/getting-started/installation.md)
+- [Core Concepts](docs/en/concepts/core-concepts.md)
+- [User Guide](docs/en/user-guide/README.md)
+- [OpenAPI Responses API](docs/en/reference/openapi-responses-api.md)
+- [Developer Guide](docs/en/developer-guide/README.md)
+- [Troubleshooting](docs/en/troubleshooting.md)
 
----
+## Get Involved
 
-## 🤝 Contributing
+Bug reports, documentation improvements, code contributions, and new ways of using Wegent are all welcome.
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [GitHub Issues](https://github.com/wecode-ai/Wegent/issues)
+- [Discord Community](https://discord.gg/MVzJzyqEUp)
+- [License](LICENSE)
 
-## 📞 Support
+## Contributors
 
-- 🐛 Issues: [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
-- 💬 Discord: [Join our community](https://discord.gg/MVzJzyqEUp)
-
-## 👥 Contributors
-
-Thanks to the following developers for their contributions and efforts to make this project better. 💪
+Thanks to everyone who helps Wegent grow.
 
 <!-- readme: contributors -start -->
 <table>
-<tr>
-    <td align="center">
-        <a href="https://github.com/qdaxb">
-            <img src="https://avatars.githubusercontent.com/u/4157870?v=4" width="80;" alt="qdaxb"/>
-            <br />
-            <sub><b>Axb</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/Micro66">
-            <img src="https://avatars.githubusercontent.com/u/27556103?v=4" width="80;" alt="Micro66"/>
-            <br />
-            <sub><b>MicroLee</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/feifei325">
-            <img src="https://avatars.githubusercontent.com/u/46489071?v=4" width="80;" alt="feifei325"/>
-            <br />
-            <sub><b>Feifei</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/FicoHu">
-            <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
-            <br />
-            <sub><b>FicoHu</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/cc-yafei">
-            <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
-            <br />
-            <sub><b>YaFei Liu</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/kissghosts">
-            <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
-            <br />
-            <sub><b>Yanhe</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/johnny0120">
-            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
-            <br />
-            <sub><b>Johnny0120</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/parabala">
-            <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
-            <br />
-            <sub><b>Parabala</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
-        <a href="https://github.com/icycrystal4">
-            <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
-            <br />
-            <sub><b>Icycrystal4</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/yixiangxx">
-            <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
-            <br />
-            <sub><b>Yi Xiang</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/joyway1978">
-            <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
-            <br />
-            <sub><b>Joyway78</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/moqimoqidea">
-            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
-            <br />
-            <sub><b>Moqimoqidea</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/2561056571">
-            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
-            <br />
-            <sub><b>Xuemin</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/sunnights">
-            <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
-            <br />
-            <sub><b>Jake Zhang</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/fengkuizhi">
-            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
-            <br />
-            <sub><b>Fengkuizhi</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/kerwin612">
-            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
-            <br />
-            <sub><b>Kerwin Bryant</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
-        <a href="https://github.com/maquan0927">
-            <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
-            <br />
-            <sub><b>Just Quan</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/junbaor">
-            <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
-            <br />
-            <sub><b>Junbaor</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/fingki">
-            <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
-            <br />
-            <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/cocowh">
-            <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
-            <br />
-            <sub><b>Birch</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/RockysGit">
-            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
-            <br />
-            <sub><b>RockysGit</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/flyhope">
-            <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
-            <br />
-            <sub><b>李枨煊</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/jolestar">
-            <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
-            <br />
-            <sub><b>Jolestar</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/code-wangdi">
-            <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
-            <br />
-            <sub><b>Code-wangdi</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
-        <a href="https://github.com/haosenwang1018">
-            <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
-            <br />
-            <sub><b>Sense_wang</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/LiDaiyan">
-            <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
-            <br />
-            <sub><b>Li Daiyan</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/qwertyerge">
-            <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
-            <br />
-            <sub><b>Erdawang</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/DeadLion">
-            <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
-            <br />
-            <sub><b>Jasper Zhong</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/rayzhang0603">
-            <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
-            <br />
-            <sub><b>Ray</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/RichardoMrMu">
-            <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
-            <br />
-            <sub><b>RichardoMu</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/Ged0">
-            <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
-            <br />
-            <sub><b>_</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/andrewzq777">
-            <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
-            <br />
-            <sub><b>Andrewzq777</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
-        <a href="https://github.com/ch15084">
-            <img src="https://avatars.githubusercontent.com/u/2509224?v=4" width="80;" alt="ch15084"/>
-            <br />
-            <sub><b>ch15084</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/graindt">
-            <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
-            <br />
-            <sub><b>Graindt</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/qingchengliu">
-            <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
-            <br />
-            <sub><b>Qingcheng</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/salt-hai">
-            <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
-            <br />
-            <sub><b>Salt-hai</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/wxcfox">
-            <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
-            <br />
-            <sub><b>Wxcfox</b></sub>
-        </a>
-    </td></tr>
+	<tbody>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/qdaxb">
+                    <img src="https://avatars.githubusercontent.com/u/4157870?v=4" width="80;" alt="qdaxb"/>
+                    <br />
+                    <sub><b>Axb</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Micro66">
+                    <img src="https://avatars.githubusercontent.com/u/27556103?v=4" width="80;" alt="Micro66"/>
+                    <br />
+                    <sub><b>MicroLee</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/feifei325">
+                    <img src="https://avatars.githubusercontent.com/u/46489071?v=4" width="80;" alt="feifei325"/>
+                    <br />
+                    <sub><b>Feifei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/FicoHu">
+                    <img src="https://avatars.githubusercontent.com/u/19767574?v=4" width="80;" alt="FicoHu"/>
+                    <br />
+                    <sub><b>FicoHu</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/icycrystal4">
+                    <img src="https://avatars.githubusercontent.com/u/946207?v=4" width="80;" alt="icycrystal4"/>
+                    <br />
+                    <sub><b>Icycrystal4</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/cc-yafei">
+                    <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
+                    <br />
+                    <sub><b>YaFei Liu</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/kissghosts">
+                    <img src="https://avatars.githubusercontent.com/u/3409715?v=4" width="80;" alt="kissghosts"/>
+                    <br />
+                    <sub><b>Yanhe</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/johnny0120">
+                    <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+                    <br />
+                    <sub><b>Johnny0120</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/parabala">
+                    <img src="https://avatars.githubusercontent.com/u/115564000?v=4" width="80;" alt="parabala"/>
+                    <br />
+                    <sub><b>Parabala</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/moqimoqidea">
+                    <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+                    <br />
+                    <sub><b>Moqimoqidea</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/yixiangxx">
+                    <img src="https://avatars.githubusercontent.com/u/3120662?v=4" width="80;" alt="yixiangxx"/>
+                    <br />
+                    <sub><b>Yi Xiang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/joyway1978">
+                    <img src="https://avatars.githubusercontent.com/u/184585080?v=4" width="80;" alt="joyway1978"/>
+                    <br />
+                    <sub><b>Joyway78</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/sunnights">
+                    <img src="https://avatars.githubusercontent.com/u/1886887?v=4" width="80;" alt="sunnights"/>
+                    <br />
+                    <sub><b>Jake Zhang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/cocowh">
+                    <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+                    <br />
+                    <sub><b>Birch</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/2561056571">
+                    <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+                    <br />
+                    <sub><b>Xuemin</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/fengkuizhi">
+                    <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+                    <br />
+                    <sub><b>Fengkuizhi</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/jnhu76">
+                    <img src="https://avatars.githubusercontent.com/u/5766215?v=4" width="80;" alt="jnhu76"/>
+                    <br />
+                    <sub><b>Jm.hu</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/kerwin612">
+                    <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
+                    <br />
+                    <sub><b>Kerwin Bryant</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/maquan0927">
+                    <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
+                    <br />
+                    <sub><b>Just Quan</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/RockysGit">
+                    <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
+                    <br />
+                    <sub><b>RockysGit</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/DavidLeeUX">
+                    <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
+                    <br />
+                    <sub><b>Kva</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/junbaor">
+                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
+                    <br />
+                    <sub><b>Junbaor</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/fingki">
+                    <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
+                    <br />
+                    <sub><b>Fingki</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/flyhope">
+                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
+                    <br />
+                    <sub><b>李枨煊</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/hustfisher">
+                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
+                    <br />
+                    <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/jolestar">
+                    <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
+                    <br />
+                    <sub><b>Jolestar</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/code-wangdi">
+                    <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
+                    <br />
+                    <sub><b>Code-wangdi</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/haosenwang1018">
+                    <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
+                    <br />
+                    <sub><b>Sense_wang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/LiDaiyan">
+                    <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
+                    <br />
+                    <sub><b>Li Daiyan</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/qwertyerge">
+                    <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
+                    <br />
+                    <sub><b>Erdawang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/DeadLion">
+                    <img src="https://avatars.githubusercontent.com/u/2594907?v=4" width="80;" alt="DeadLion"/>
+                    <br />
+                    <sub><b>Jasper Zhong</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/rayzhang0603">
+                    <img src="https://avatars.githubusercontent.com/u/2917437?v=4" width="80;" alt="rayzhang0603"/>
+                    <br />
+                    <sub><b>Ray</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/RichardoMrMu">
+                    <img src="https://avatars.githubusercontent.com/u/44485717?v=4" width="80;" alt="RichardoMrMu"/>
+                    <br />
+                    <sub><b>RichardoMu</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Ged0">
+                    <img src="https://avatars.githubusercontent.com/u/4569451?v=4" width="80;" alt="Ged0"/>
+                    <br />
+                    <sub><b>_</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/andrewzq777">
+                    <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
+                    <br />
+                    <sub><b>Andrewzq777</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/ch15084">
+                    <img src="https://avatars.githubusercontent.com/u/2509224?v=4" width="80;" alt="ch15084"/>
+                    <br />
+                    <sub><b>Ch15084</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/gdouyang">
+                    <img src="https://avatars.githubusercontent.com/u/13996763?v=4" width="80;" alt="gdouyang"/>
+                    <br />
+                    <sub><b>Gdouyang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/graindt">
+                    <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
+                    <br />
+                    <sub><b>Graindt</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/qingchengliu">
+                    <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>
+                    <br />
+                    <sub><b>Qingcheng</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/salt-hai">
+                    <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>
+                    <br />
+                    <sub><b>Salt-hai</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/wxcfox">
+                    <img src="https://avatars.githubusercontent.com/u/33141411?v=4" width="80;" alt="wxcfox"/>
+                    <br />
+                    <sub><b>Wxcfox</b></sub>
+                </a>
+            </td>
+		</tr>
+	<tbody>
 </table>
 <!-- readme: contributors -end -->
 

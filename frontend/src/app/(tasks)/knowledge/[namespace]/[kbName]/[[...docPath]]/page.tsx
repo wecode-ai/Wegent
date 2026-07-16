@@ -22,7 +22,9 @@
  */
 
 import { Suspense, useState, useCallback, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
+import { BookOpen, FileText } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -36,17 +38,31 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  AddRepoModal,
-  useWikiProjects,
-  CancelConfirmDialog,
-  KnowledgeTabs,
-  KnowledgeDocumentPage,
-} from '@/features/knowledge'
+import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
+import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { KnowledgeView } from '@/types/knowledge'
+import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
+
+const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
+  ssr: false,
+})
+
+const CancelConfirmDialog = dynamic(() => import('@/features/knowledge/CancelConfirmDialog'), {
+  ssr: false,
+})
+
+const KnowledgeDocumentPage = dynamic(
+  () =>
+    import('@/features/knowledge/document/components/KnowledgeDocumentPage').then(mod => ({
+      default: mod.KnowledgeDocumentPage,
+    })),
+  { ssr: false }
+)
 
 // Storage key for knowledge sidebar collapsed state
 const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
@@ -55,8 +71,8 @@ function KnowledgeVirtualPageContent() {
   const params = useParams()
   const router = useRouter()
   const isMobile = useIsMobile()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
+  const { t } = useTranslation('knowledge')
 
   // Decode URL params and resolve namespace/kbName
   // URL formats:
@@ -100,6 +116,11 @@ function KnowledgeVirtualPageContent() {
       return localStorage.getItem(KNOWLEDGE_SIDEBAR_COLLAPSED_KEY) === 'true'
     }
     return false
+  })
+
+  const [knowledgeViewState, setKnowledgeViewState] = useState<KnowledgeViewState>({
+    visible: false,
+    currentView: 'notebook',
   })
 
   // Listen for knowledge sidebar collapse changes from KnowledgeDocumentPageDesktop
@@ -152,14 +173,42 @@ function KnowledgeVirtualPageContent() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 
+  const knowledgeViewSwitcher = knowledgeViewState.visible ? (
+    <Tabs
+      value={knowledgeViewState.currentView}
+      onValueChange={value => knowledgeViewState.onViewChange?.(value as KnowledgeView)}
+      className="flex-shrink-0"
+    >
+      <TabsList className="h-11 sm:h-8 rounded-md bg-surface/80 p-0 sm:p-0.5">
+        <TabsTrigger
+          value="documents"
+          aria-label={t('document.knowledgeBase.typeClassic')}
+          data-testid="knowledge-view-documents-trigger"
+          className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+        >
+          <FileText className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">{t('document.knowledgeBase.typeClassic')}</span>
+        </TabsTrigger>
+        <TabsTrigger
+          value="notebook"
+          aria-label={t('document.knowledgeBase.typeNotebook')}
+          data-testid="knowledge-view-notebook-trigger"
+          className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">{t('document.knowledgeBase.typeNotebook')}</span>
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  ) : null
+
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* TaskParamSync handles URL taskId parameter synchronization with TaskContext */}
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskSessionContext */}
       <Suspense>
         <TaskParamSync />
       </Suspense>
@@ -201,6 +250,7 @@ function KnowledgeVirtualPageContent() {
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
+          {knowledgeViewSwitcher}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
@@ -210,30 +260,35 @@ function KnowledgeVirtualPageContent() {
             initialKbNamespace={namespace}
             initialKbName={kbName}
             initialDocPath={docPath}
+            onKnowledgeViewStateChange={setKnowledgeViewState}
           />
         </div>
       </div>
 
       {/* Add repository modal */}
-      <AddRepoModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        formErrors={formErrors}
-        isSubmitting={isSubmitting}
-        onRepoChange={handleRepoChange}
-        onSubmit={handleSubmit}
-        selectedRepo={selectedRepo}
-        wikiConfig={wikiConfig}
-      />
+      {isModalOpen && (
+        <AddRepoModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          formErrors={formErrors}
+          isSubmitting={isSubmitting}
+          onRepoChange={handleRepoChange}
+          onSubmit={handleSubmit}
+          selectedRepo={selectedRepo}
+          wikiConfig={wikiConfig}
+        />
+      )}
       {/* Cancel confirm dialog */}
-      <CancelConfirmDialog
-        isOpen={confirmDialogOpen}
-        onClose={() => {
-          setConfirmDialogOpen(false)
-          setPendingCancelProjectId(null)
-        }}
-        onConfirm={confirmCancelGeneration}
-      />
+      {confirmDialogOpen && (
+        <CancelConfirmDialog
+          isOpen={confirmDialogOpen}
+          onClose={() => {
+            setConfirmDialogOpen(false)
+            setPendingCancelProjectId(null)
+          }}
+          onConfirm={confirmCancelGeneration}
+        />
+      )}
     </div>
   )
 }

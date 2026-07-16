@@ -58,6 +58,7 @@ graph TB
         KnowledgeOrch["🎼 KnowledgeOrchestrator<br/>统一知识管理"]
         RAG["🔍 RAG<br/>检索增强生成"]
         Embedding["📊 Embedding<br/>向量化服务"]
+        DocConverter["📄 Doc Converter<br/>文档转换"]
     end
 
     %% 系统交互
@@ -82,6 +83,7 @@ graph TB
     %% 知识层集成
     KnowledgeOrch --> RAG
     KnowledgeOrch --> Embedding
+    KnowledgeOrch --> DocConverter
     ChatShell --> KnowledgeOrch
 
     %% 样式
@@ -95,7 +97,7 @@ graph TB
     class MySQL,Redis,Celery data
     class ExecutorManager,Executor1,Executor2,ExecutorN,LocalDevice execution
     class Claude,Agno,Dify agent
-    class KnowledgeOrch,RAG,Embedding knowledge
+    class KnowledgeOrch,RAG,Embedding,DocConverter knowledge
 ```
 
 ### 架构层次说明
@@ -104,9 +106,9 @@ graph TB
 |------|------|----------|
 | **管理平台层** | 用户交互、资源管理、API 服务、对话处理 | Next.js 15, FastAPI, React 19, Chat Shell |
 | **数据层** | 数据持久化、缓存管理、异步任务调度 | MySQL 9.4, Redis 7, Celery |
-| **执行层** | 任务调度、容器编排、资源隔离、本地设备管理 | Docker, Python, WebSocket |
+| **执行层** | 任务调度、容器编排、资源隔离、本地设备管理 | Docker, Rust Executor, WebSocket, App IPC |
 | **智能体层** | AI 能力提供、代码执行、对话处理、外部 API 集成 | Claude Code, Agno, Dify |
-| **知识层** | 知识库管理、RAG 检索、向量化服务 | KnowledgeOrchestrator, Embedding |
+| **知识层** | 知识库管理、RAG 检索、向量化服务、文档格式转换 | KnowledgeOrchestrator, Embedding, Doc Converter |
 
 ---
 
@@ -349,6 +351,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 
 **技术栈**：
 - **容器**: Docker
+- **执行器**: Rust (`executor/`)
 - **运行时**: Claude Code, Agno, Dify
 - **版本控制**: Git
 
@@ -361,6 +364,12 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 | **Dify** | external_api | 代理到 Dify 平台 |
 | **ImageValidator** | validator | 自定义基础镜像验证 |
 
+Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍可走进程内路径，其他任务由 standalone/local executor 执行；Wework 打包 App 的 local-first 模式不启动本地 Backend，而是通过 Tauri app IPC 直接调用 executor。Codex 运行时通过 `codex app-server --stdio` 的 JSON-RPC 协议创建、继续、读取、归档和重命名线程，executor 只保存必要的本地任务索引和 `localTaskId -> threadId` 关联。
+
+Wework 的内置浏览器 MCP 由 Rust executor 的 `browser-mcp-server` 子命令提供，并通过每个 Tauri 实例独立分配的本地桥接地址控制右侧浏览器。打包 App 无需安装 Node.js 或单独部署 browser MCP server，多实例也不会共享固定端口。
+
+Codex 使用共享 app-server 线程时，取消活动轮次必须先等待 `turn/interrupt` 的确认，再向调用方报告已取消。这样重试会在前一轮真正停止后创建，避免上一轮的中断和新轮请求交错，从而恢复已取消的输入或丢失重试消息。
+
 **核心特性**：
 - 🔒 完全隔离的执行环境
 - 💼 独立的工作空间
@@ -368,6 +377,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 - 📝 实时日志输出
 - 🛠️ MCP 工具支持
 - 📚 技能动态加载
+- 🪝 [预执行钩子](./pre-execute-hooks.md) 支持任务启动前自定义初始化
 
 **生命周期**：
 ```mermaid
@@ -440,6 +450,7 @@ wegent_db/
 **职责**：
 - 知识库文档索引（异步）
 - 文档摘要生成
+- 文档格式转换（PDF/PPTX → Markdown）
 - 长时间运行任务处理
 
 **核心任务**：
@@ -448,6 +459,14 @@ wegent_db/
 |------|------|
 | `index_document_task` | 文档向量化索引 |
 | `generate_document_summary_task` | 文档摘要生成 |
+| `convert_document_task` | 文档格式转换（知识文档转换器消费） |
+
+**任务队列**：
+
+| 队列 | 用途 | 消费者 |
+|------|------|--------|
+| `celery` (默认) | 文档索引、摘要生成 | Backend Worker |
+| `knowledge_conversion` | PDF/PPTX 文档转换为 Markdown | Knowledge Doc Converter |
 
 ---
 
@@ -474,6 +493,58 @@ Celery Tasks (异步处理)
 - 🤖 自动模型选择：Task → Team → Bot → Model 链式解析
 - 📚 多作用域支持：个人、组、组织三级知识库
 - ⚡ 异步索引：通过 Celery 处理大文档
+
+---
+
+### 10. 📄 知识文档转换器 (Knowledge Doc Converter)
+
+**职责**：
+- 将 PDF/PPTX 文档通过 MinerU OCR 转换为 Markdown
+- 上传转换结果至 S3 存储
+- 通过回调接口通知 Backend 转换状态
+
+**技术栈**：
+- **任务队列**: Celery + Redis
+- **OCR 引擎**: MinerU
+- **对象存储**: S3
+- **监控**: Prometheus（端口 9090，multiprocess 模式）
+
+**核心特性**：
+- 🔧 独立 Celery Worker，监听 `knowledge_conversion` 队列
+- 📊 Prometheus 指标暴露（multiprocess 模式）
+- 🔄 回调驱动的异步转换流程
+
+**内部 API**：
+
+| 端点 | 用途 |
+|------|------|
+| `POST /api/internal/conversion/callback/status` | 转换状态回调 |
+| `POST /api/internal/conversion/callback/completed` | 转换完成回调 |
+| `POST /api/internal/conversion/callback/failed` | 转换失败回调 |
+| `GET /api/internal/attachments/{id}/download` | 附件下载 |
+
+**文档转换流程**：
+
+```mermaid
+sequenceDiagram
+    participant Backend as ⚙️ Backend
+    participant Queue as ⚡ Celery Queue
+    participant Converter as 📄 Doc Converter
+    participant MinerU as 🔍 MinerU OCR
+    participant S3 as ☁️ S3
+
+    Backend->>Backend: 1. 设置附件状态为 pending_conversion
+    Backend->>Queue: 2. 发送转换任务至 knowledge_conversion 队列
+    Queue->>Converter: 3. Worker 消费任务
+    Converter->>Backend: 4. 下载原始文件 (GET /api/internal/attachments/{id}/download)
+    Converter->>MinerU: 5. 调用 MinerU OCR 引擎转换
+    MinerU-->>Converter: 6. 返回 Markdown 内容与图片
+    Converter->>S3: 7. 上传 Markdown 和图片至 S3
+    S3-->>Converter: 8. 返回 S3 URL
+    Converter->>Backend: 9. 回调通知 (callback/completed 或 callback/failed)
+    Backend->>Backend: 10. 更新附件状态，触发索引
+    Backend->>Backend: 11. 转换成功
+```
 
 ---
 
@@ -862,6 +933,7 @@ logger.info("task.created",
 - [CRD 架构](./crd-architecture.md) - CRD 设计详情
 - [技能系统](../concepts/skill-system.md) - 技能开发和集成
 - [本地设备架构](./local-device-architecture.md) - 本地设备支持
+- [预执行钩子](./pre-execute-hooks.md) - Executor 任务启动前自定义初始化
 
 ---
 

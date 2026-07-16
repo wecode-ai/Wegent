@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles } from 'lucide-react'
+import { Upload, Sparkles, X, Hand, Pencil } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
@@ -17,14 +17,30 @@ import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
+
+export interface QueuedInputMessage {
+  id: string
+  displayMessage: string
+  status: 'queued' | 'sending' | 'failed'
+  error?: string
+}
+
+export interface GuidanceInputMessage {
+  id: string
+  displayMessage: string
+  status: 'pending' | 'queued' | 'sending' | 'failed' | 'applied' | 'expired'
+  error?: string
+}
 
 export interface ChatInputCardProps extends Omit<
   ChatInputControlsProps,
-  'taskInputMessage' | 'taskType'
+  'taskInputMessage' | 'taskType' | 'teamModeFilter'
 > {
   // Input message
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
+  focusInputAtEndSignal?: number
 
   // Team and external API
   selectedTeam: Team | null
@@ -42,6 +58,7 @@ export interface ChatInputCardProps extends Omit<
 
   // Task type
   taskType: TaskType
+  teamModeFilter?: TeamModeFilter
   autoFocus?: boolean
 
   // Knowledge base ID to exclude from context selector (used in notebook mode)
@@ -65,6 +82,16 @@ export interface ChatInputCardProps extends Omit<
 
   // Submit
   canSubmit: boolean
+  canQueueMessage?: boolean
+  queuedMessages?: QueuedInputMessage[]
+  onCancelQueuedMessage?: (id: string) => void
+  onEditQueuedMessage?: (id: string) => void
+  onSendQueuedAsGuidance?: (id: string) => void
+  guidanceMessages?: GuidanceInputMessage[]
+  expiredGuidanceMessages?: GuidanceInputMessage[]
+  onCancelGuidance?: (id: string) => void
+  onEditGuidanceMessage?: (id: string) => void
+  onSendExpiredGuidanceAsMessage?: (id: string) => void
   handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
@@ -81,6 +108,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Callback to open team edit dialog (shown as pencil icon on badge)
   onEditTeam?: () => void
+
+  // Project context (for project selector in controls)
+  projectId?: number | null
 }
 
 /**
@@ -100,6 +130,7 @@ export interface ChatInputCardProps extends Omit<
 export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
+  focusInputAtEndSignal,
   selectedTeam,
   teams = [],
   onTeamChange,
@@ -109,6 +140,7 @@ export function ChatInputCard({
   onRestoreDefaultTeam,
   isUsingDefaultTeam = false,
   taskType,
+  teamModeFilter,
   autoFocus = false,
   knowledgeBaseId,
   tipText,
@@ -119,6 +151,16 @@ export function ChatInputCard({
   onDragOver,
   onDrop,
   canSubmit,
+  canQueueMessage = false,
+  queuedMessages = [],
+  onCancelQueuedMessage,
+  onEditQueuedMessage,
+  onSendQueuedAsGuidance,
+  guidanceMessages = [],
+  expiredGuidanceMessages = [],
+  onCancelGuidance,
+  onEditGuidanceMessage,
+  onSendExpiredGuidanceAsMessage,
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
@@ -126,6 +168,7 @@ export function ChatInputCard({
   disabledReason,
   hideSelectors,
   onEditTeam,
+  projectId,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -153,18 +196,20 @@ export function ChatInputCard({
   attachmentState,
   onFileSelect,
   onAttachmentRemove,
-  isLoading,
   isStreaming,
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
-  shouldHideQuotaUsage,
+  shouldHideToolbarStatus,
   shouldHideChatInput,
   isModelSelectionRequired,
   isAttachmentReadyToSend,
-  isSubtaskStreaming,
+  canSendGuidance,
+  canCancelTask,
   onStopStream,
+  onCancelTask,
   onSendMessage,
+  onSendGuidance,
   // Skill selector props
   availableSkills,
   teamSkillNames,
@@ -212,6 +257,19 @@ export function ChatInputCard({
     !taskInputMessage.trim() &&
     selectedContexts.some(context => context.type === 'queue_message')
 
+  const getQueuedMessageStatusLabel = (status: QueuedInputMessage['status']) => {
+    if (status === 'sending') return t('messages.status_sending')
+    if (status === 'failed') return t('messages.queue_failed')
+    return t('messages.status_queued')
+  }
+
+  const getGuidanceStatusLabel = (status: GuidanceInputMessage['status']) => {
+    if (status === 'sending') return t('guidance.status_sending')
+    if (status === 'failed') return t('guidance.status_failed')
+    if (status === 'expired') return t('guidance.status_expired')
+    return t('guidance.status_queued')
+  }
+
   // Get skill button element for fly animation
   const getSkillButtonElement = () => {
     return skillSelectorRef.current?.getButtonElement() ?? null
@@ -237,8 +295,197 @@ export function ChatInputCard({
         </div>
       )}
 
+      {(queuedMessages.length > 0 ||
+        guidanceMessages.length > 0 ||
+        expiredGuidanceMessages.length > 0) &&
+        !shouldHideChatInput && (
+          <div className="mx-auto mb-9 w-full max-w-[820px] px-1">
+            <div
+              data-testid="queued-message-list"
+              className="space-y-0 rounded-xl border border-border bg-surface/90 px-3 py-2 shadow-sm"
+            >
+              {/* Queue items */}
+              {queuedMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  data-testid="queued-message-item"
+                  className={`flex min-w-0 items-start gap-2 py-2 ${
+                    index < queuedMessages.length - 1 ||
+                    guidanceMessages.length > 0 ||
+                    expiredGuidanceMessages.length > 0
+                      ? 'border-b border-border/60'
+                      : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                          message.status === 'failed'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-primary/10 text-primary'
+                        }`}
+                      >
+                        {getQueuedMessageStatusLabel(message.status)}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                      {message.displayMessage}
+                    </p>
+                  </div>
+                  {message.status !== 'sending' && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {canSendGuidance && onSendQueuedAsGuidance && (
+                        <button
+                          type="button"
+                          data-testid="send-queued-as-guidance-button"
+                          title={t('guidance.send')}
+                          onClick={() => onSendQueuedAsGuidance(message.id)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-primary/30 bg-primary/8 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+                        >
+                          <Hand className="h-3 w-3" />
+                          {t('guidance.send')}
+                        </button>
+                      )}
+                      {onEditQueuedMessage && (
+                        <button
+                          type="button"
+                          data-testid="edit-queued-message-button"
+                          title={t('actions.edit')}
+                          onClick={() => onEditQueuedMessage(message.id)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          {t('actions.edit')}
+                        </button>
+                      )}
+                      {onCancelQueuedMessage && (
+                        <button
+                          type="button"
+                          data-testid="cancel-queued-message-button"
+                          aria-label={t('messages.cancel_queued')}
+                          title={t('messages.cancel_queued')}
+                          onClick={() => onCancelQueuedMessage(message.id)}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Guidance items */}
+              {guidanceMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  data-testid="pending-guidance-card"
+                  className={`flex min-w-0 items-start gap-2 py-2 ${
+                    index < guidanceMessages.length - 1 || expiredGuidanceMessages.length > 0
+                      ? 'border-b border-border/60'
+                      : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                          message.status === 'failed'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-primary/10 text-primary'
+                        }`}
+                      >
+                        {getGuidanceStatusLabel(message.status)}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                      {message.displayMessage}
+                    </p>
+                  </div>
+                  {message.status !== 'sending' && (onCancelGuidance || onEditGuidanceMessage) && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {onEditGuidanceMessage && (
+                        <button
+                          type="button"
+                          data-testid="edit-guidance-message-button"
+                          title={t('actions.edit')}
+                          onClick={() => onEditGuidanceMessage(message.id)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          {t('actions.edit')}
+                        </button>
+                      )}
+                      {onCancelGuidance && (
+                        <button
+                          type="button"
+                          data-testid="cancel-guidance-button"
+                          aria-label={t('guidance.cancel')}
+                          title={t('guidance.cancel')}
+                          onClick={() => onCancelGuidance(message.id)}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Expired guidance items */}
+              {expiredGuidanceMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  data-testid="expired-guidance-card"
+                  className={`flex min-w-0 items-start gap-2 py-2 ${
+                    index < expiredGuidanceMessages.length - 1 ? 'border-b border-border/60' : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                        {getGuidanceStatusLabel(message.status)}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                      {message.displayMessage}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {onSendExpiredGuidanceAsMessage && (
+                      <button
+                        type="button"
+                        data-testid="send-expired-guidance-as-message-button"
+                        onClick={() => onSendExpiredGuidanceAsMessage(message.id)}
+                        className="h-8 shrink-0 rounded-lg px-3 text-xs font-medium text-primary transition-colors hover:bg-base"
+                      >
+                        {t('guidance.send_as_message')}
+                      </button>
+                    )}
+                    {onCancelGuidance && (
+                      <button
+                        type="button"
+                        data-testid="cancel-expired-guidance-button"
+                        aria-label={t('guidance.cancel')}
+                        title={t('guidance.cancel')}
+                        onClick={() => onCancelGuidance(message.id)}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
       {/* Chat Input Card */}
       <div
+        data-testid="chat-input-card"
         className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-start ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
@@ -250,7 +497,7 @@ export function ChatInputCard({
         {!shouldHideChatInput && (
           <div className="absolute -top-[29px] left-4 z-10">
             <DeviceSelectorTab
-              disabled={isLoading || isStreaming}
+              disabled={isStreaming || !!projectId}
               hasMessages={hasMessages}
               taskDeviceId={selectedTaskDetail?.device_id}
               className="rounded-t-lg"
@@ -265,7 +512,9 @@ export function ChatInputCard({
               <Upload className="h-8 w-8 text-primary" />
             </div>
             <p className="text-lg font-medium text-primary">释放以上传文件</p>
-            <p className="text-sm text-text-muted mt-1">支持 PDF, Word, TXT, Markdown 等格式</p>
+            <p className="text-sm text-text-muted mt-1">
+              支持 PDF, Word, XMind, TXT, Markdown 等格式
+            </p>
           </div>
         )}
 
@@ -277,7 +526,7 @@ export function ChatInputCard({
             setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId))
           }}
           onRemoveAttachment={onAttachmentRemove}
-          disabled={isLoading || isStreaming}
+          disabled={isStreaming}
         />
 
         {/* Quote Card - shows quoted text from text selection */}
@@ -293,7 +542,7 @@ export function ChatInputCard({
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
               handleSendMessage={handleSendMessage}
-              isLoading={isLoading}
+              isLoading={false}
               taskType={taskType}
               autoFocus={autoFocus}
               canSubmit={canSubmit}
@@ -331,6 +580,7 @@ export function ChatInputCard({
               isExpanded={isInputExpanded}
               onExpandToggle={handleExpandToggle}
               compactSpacing={shouldUseCompactQueueSpacing}
+              focusAtEndSignal={focusInputAtEndSignal}
             />
           </div>
         )}
@@ -380,19 +630,22 @@ export function ChatInputCard({
             attachmentState={attachmentState}
             onFileSelect={onFileSelect}
             onAttachmentRemove={onAttachmentRemove}
-            isLoading={isLoading}
             isStreaming={isStreaming}
             isStopping={isStopping}
             hasMessages={hasMessages}
             shouldCollapseSelectors={shouldCollapseSelectors}
-            shouldHideQuotaUsage={shouldHideQuotaUsage}
+            shouldHideToolbarStatus={shouldHideToolbarStatus}
             shouldHideChatInput={shouldHideChatInput}
             isModelSelectionRequired={isModelSelectionRequired}
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
-            isSubtaskStreaming={isSubtaskStreaming}
+            canQueueMessage={canQueueMessage}
+            canSendGuidance={canSendGuidance}
+            canCancelTask={canCancelTask}
             onStopStream={onStopStream}
+            onCancelTask={onCancelTask}
             onSendMessage={onSendMessage}
+            onSendGuidance={onSendGuidance}
             hasNoTeams={hasNoTeams}
             knowledgeBaseId={knowledgeBaseId}
             availableSkills={availableSkills}
@@ -403,6 +656,7 @@ export function ChatInputCard({
             skillSelectorRef={skillSelectorRef}
             // Video mode props
             taskType={taskType}
+            teamModeFilter={teamModeFilter}
             videoModels={videoModels}
             selectedVideoModel={selectedVideoModel}
             onVideoModelChange={onVideoModelChange}
@@ -426,6 +680,8 @@ export function ChatInputCard({
             onGenerateModeChange={onGenerateModeChange}
             // Hide all selectors (for OpenClaw devices)
             hideSelectors={hideSelectors}
+            // Project context
+            projectId={projectId}
           />
         </div>
       </div>

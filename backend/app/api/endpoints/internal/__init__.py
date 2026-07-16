@@ -6,9 +6,13 @@
 
 from app.core.config import settings
 
+from .attachments import router as attachments_router
 from .bots import router as bots_router
 from .callback import router as callback_router
 from .chat_storage import router as chat_storage_router
+from .conversion_callback import router as conversion_callback_router
+from .knowledge import router as knowledge_router
+from .model_config import router as model_config_router
 from .object_storage import router as object_storage_router
 from .rag_content import router as rag_content_router
 from .services import router as services_router
@@ -23,9 +27,13 @@ if not settings.STANDALONE_MODE:
     from .rag import router as rag_router
 
 __all__ = [
+    "attachments_router",
     "bots_router",
     "callback_router",
     "chat_storage_router",
+    "conversion_callback_router",
+    "knowledge_router",
+    "model_config_router",
     "object_storage_router",
     "rag_content_router",
     "services_router",

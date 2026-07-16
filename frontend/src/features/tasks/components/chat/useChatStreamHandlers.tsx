@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import type { Task } from '@/types/api'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -17,8 +18,17 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { getStreamingJoinWarningKey } from './streamingJoinWarning'
+import { generateMessageId } from '@wegent/chat-core'
+import {
+  useMessageSendQueue,
+  type QueuedMessage,
+  type QueuedMessageStatus,
+} from './useMessageSendQueue'
+import { useGuidanceQueue, type GuidanceQueueItem } from './useGuidanceQueue'
+import { useChatTransientState } from './useChatTransientState'
+import { useGuidanceSocketHandlers } from './useGuidanceSocketHandlers'
+import { useQueuedRuntimeHealthCheck } from './useQueuedRuntimeHealthCheck'
+import { useStreamingJoinWarning } from './useStreamingJoinWarning'
 import type { Model } from '../selector/ModelSelector'
 import type { UnifiedModel } from '@/apis/models'
 import type {
@@ -28,9 +38,14 @@ import type {
   Attachment,
   SubtaskContextBrief,
   TaskType,
+  InteractiveFormAnswerPayload,
 } from '@/types/api'
-import type { ContextItem } from '@/types/context'
+import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+
+function isVirtualKnowledgeBasePath(path: string): boolean {
+  return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
+}
 
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -50,9 +65,6 @@ export interface UseChatStreamHandlersOptions {
   // Input
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
-
-  // Loading
-  setIsLoading: (value: boolean) => void
 
   // Toggles
   enableDeepThinking: boolean
@@ -119,14 +131,28 @@ export interface ChatStreamHandlers {
   /** Pending task ID - can be tempTaskId (negative) or taskId (positive) before selectedTaskDetail updates */
   pendingTaskId: number | null
   isStreaming: boolean
-  isAwaitingResponseStart: boolean
-  isSubtaskStreaming: boolean
   isStopping: boolean
   hasPendingUserMessage: boolean
-  localPendingMessage: string | null
+  canQueueMessage: boolean
+  canCancelTask?: boolean
+  queuedMessageCount: number
+  queuedMessages: QueuedChatMessagePreview[]
+  cancelQueuedMessage: (id: string) => void
+  editQueuedMessage: (id: string) => void
+  sendQueuedAsGuidance: (id: string) => Promise<void>
+  canSendGuidance: boolean
+  guidanceMessages: GuidanceMessagePreview[]
+  expiredGuidanceMessages: GuidanceMessagePreview[]
+  cancelGuidance: (id: string) => void
+  editGuidanceMessage: (id: string) => void
+  handleSendGuidance: (overrideMessage?: string) => Promise<void>
+  sendExpiredGuidanceAsMessage: (id: string) => Promise<void>
 
   // Actions
-  handleSendMessage: (overrideMessage?: string) => Promise<void>
+  handleSendMessage: (
+    overrideMessage?: string,
+    options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+  ) => Promise<void>
   /**
    * Send a message with a temporary model override (used for regeneration).
    * @param overrideMessage - The message content to send
@@ -145,16 +171,23 @@ export interface ChatStreamHandlers {
     subtaskId?: number
   }) => Promise<boolean>
   handleRetryWithModel: (message: { subtaskId?: number }, model: UnifiedModel) => Promise<boolean>
-  handleCancelTask: () => Promise<void>
+  handleCancelTask: () => Promise<boolean>
   stopStream: () => Promise<void>
   resetStreamingState: () => void
+}
 
-  // Group chat handlers
-  handleNewMessages: (messages: unknown[]) => void
-  handleStreamComplete: (subtaskId: number, result?: Record<string, unknown>) => void
+export interface QueuedChatMessagePreview {
+  id: string
+  displayMessage: string
+  status: QueuedMessageStatus
+  error?: string
+}
 
-  // State
-  isCancelling: boolean
+export interface GuidanceMessagePreview {
+  id: string
+  displayMessage: string
+  status: GuidanceQueueItem['status']
+  error?: string
 }
 
 /**
@@ -166,7 +199,6 @@ export interface ChatStreamHandlers {
  * - Retrying failed messages
  * - Cancelling tasks
  * - Tracking streaming state
- * - Group chat message handling
  *
  * This hook extracts all the complex streaming logic from ChatArea
  * to reduce the component size and improve maintainability.
@@ -174,7 +206,6 @@ export interface ChatStreamHandlers {
 export function useChatStreamHandlers({
   selectedTeam,
   selectedModel,
-  forceOverride,
   setSelectedModel,
   setForceOverride,
   selectedRepo,
@@ -183,7 +214,6 @@ export function useChatStreamHandlers({
   effectiveRequiresWorkspace,
   taskInputMessage,
   setTaskInputMessage,
-  setIsLoading,
   enableDeepThinking,
   enableClarification,
   externalApiParams,
@@ -209,213 +239,141 @@ export function useChatStreamHandlers({
   const searchParams = useSearchParams()
   const pathname = usePathname()
 
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
-    useTaskContext()
-
   const {
+    currentTaskId,
+    selectedTaskDetail,
+    selectTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    markTaskAsViewed,
     sendMessage: contextSendMessage,
     stopStream: contextStopStream,
-    clearVersion,
-  } = useChatStreamContext()
+    taskState: sessionTaskState,
+    recoverCurrentTask,
+  } = useTaskSession()
 
-  const { retryMessage } = useSocket()
+  // Navigate to a knowledge task without triggering Next.js re-renders.
+  // Uses selectTask + replaceState to avoid the router.push cascade
+  // that causes selectedTaskDetail=null and hasMessages flip (UI flickering).
+  const navigateToKnowledgeTask = useCallback(
+    (taskId: number, kbId: number) => {
+      selectTask({ id: taskId } as Task)
+      const params = new URLSearchParams(Array.from(searchParams.entries()))
+      params.set('taskId', String(taskId))
+      const currentPath = window.location.pathname || pathname || ''
+      if (!isVirtualKnowledgeBasePath(currentPath)) {
+        params.set('kb', String(kbId))
+      }
+      window.history.replaceState({}, '', `?${params.toString()}`)
+    },
+    [selectTask, searchParams, pathname]
+  )
+
+  type ContextSendRequest = Parameters<typeof contextSendMessage>[0]
+  type ContextSendOptions = NonNullable<Parameters<typeof contextSendMessage>[1]>
+
+  interface PreparedChatSend {
+    localMessageId: string
+    displayMessage: string
+    sourceMessage: string
+    request: ContextSendRequest
+    options: ContextSendOptions
+  }
+
+  const { retryMessage, sendChatGuidance, registerChatHandlers } = useSocket()
 
   // Get selected device ID for executor-based tasks
   const { selectedDeviceId } = useDevices()
+  const { projects, refreshProjects } = useProjectContext()
+
+  // Project context - for workspace project conversations
+  const projectId = searchParams?.get('projectId')
+    ? Number(searchParams.get('projectId'))
+    : undefined
+  const projectConfig = useMemo(() => {
+    if (!projectId) return null
+    const project = projects.find(p => p.id === projectId)
+    return project?.config ?? null
+  }, [projectId, projects])
+  const projectDeviceId = projectConfig?.execution?.deviceId ?? undefined
 
   // Determine if we're in device mode - devices page or chat page with device selected
   // This prevents coding tasks from accidentally inheriting a device_id
   const isDevicesPage = pathname?.startsWith('/devices')
-  const isDeviceMode = isDevicesPage || taskType === 'task'
+  const isDeviceMode = isDevicesPage || taskType === 'task' || !!projectId
 
   // Determine effective device_id to send:
   // - Send device_id when in device mode (devices page or chat page with device selected) AND team is not Chat Shell
+  // - For project conversations, use the project's configured device
   // - This ensures coding tasks don't get routed to devices
   const effectiveDeviceId =
-    isDeviceMode && !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined
-
-  // Local state
-  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
-  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
-  const [isAwaitingResponseStart, setIsAwaitingResponseStart] = useState(false)
-  const [isCancelling, setIsCancelling] = useState(false)
+    isDeviceMode && !isChatShell(selectedTeam)
+      ? projectDeviceId || selectedDeviceId || undefined
+      : undefined
 
   // Refs
+  const selectedContextsRef = useRef(selectedContexts)
+  selectedContextsRef.current = selectedContexts
   const lastFailedMessageRef = useRef<string | null>(null)
-  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null)
-  const previousTaskIdRef = useRef<number | null | undefined>(undefined)
-  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
-  const prevClearVersionRef = useRef(clearVersion)
-  const lastJoinWarningRef = useRef<string | null>(null)
+  const handleSendMessageRef = useRef<
+    | ((
+        message?: string,
+        options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+      ) => Promise<void>)
+    | null
+  >(null)
+  const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
 
-  // Unified function to reset streaming-related state
-  const resetStreamingState = useCallback(() => {
-    setLocalPendingMessage(null)
-    setPendingTaskId(null)
-    setIsAwaitingResponseStart(false)
-  }, [])
+  const { pendingTaskId, setPendingTaskId, resetStreamingState, effectiveTaskIdForState } =
+    useChatTransientState({
+      selectedTaskId: currentTaskId,
+    })
 
-  // Get current display task ID
-  const currentDisplayTaskId = selectedTaskDetail?.id
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskIdForState
+      ? sessionTaskState
+      : null
+  const isMachineStreaming = taskState?.phase === 'streaming'
+  const runtimeDerived = taskState?.derived
+  const activeStreamSubtaskId = taskState?.runtime.activeStreamSubtaskId
 
-  // Determine effective task ID for state machine subscription
-  // Use currentDisplayTaskId if available, otherwise use pendingTaskId
-  const effectiveTaskIdForState = useMemo(() => {
-    return currentDisplayTaskId || pendingTaskId || undefined
-  }, [currentDisplayTaskId, pendingTaskId])
-
-  // Use useTaskStateMachine to properly subscribe to state changes
-  // This ensures isStreaming updates when chat:done is received
-  // IMPORTANT: All streaming state comes from the state machine - no local state variables
-  const { state: taskState, isStreaming: isMachineStreaming } =
-    useTaskStateMachine(effectiveTaskIdForState)
-
-  // Keep "stop" state aligned with backend task lifecycle:
-  // a task can stay RUNNING even when no stream chunk is currently arriving.
-  // In that window, UI should still block sending and show stop action.
-  const isStreaming = isMachineStreaming || selectedTaskDetail?.status === 'RUNNING'
-
-  // Alias for backward compatibility - both refer to the same state machine value
-  const isSubtaskStreaming = isStreaming
   const isStopping = taskState?.isStopping || false
 
-  useEffect(() => {
-    if (isMachineStreaming || selectedTaskDetail?.status === 'RUNNING') {
-      setIsAwaitingResponseStart(false)
-    }
-  }, [isMachineStreaming, selectedTaskDetail?.status])
   // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
-    if (localPendingMessage) return true
     if (!taskState?.messages) return false
     for (const msg of taskState.messages.values()) {
       if (msg.type === 'user' && msg.status === 'pending') return true
     }
     return false
-  }, [localPendingMessage, taskState?.messages])
+  }, [taskState?.messages])
+  const isStreaming = Boolean(runtimeDerived?.isStreaming) || hasPendingUserMessage
 
   // Stop stream wrapper
   // Note: subtasks parameter is no longer passed to contextStopStream
   // The streaming subtask info is now obtained from TaskStateMachine state
   const stopStream = useCallback(async () => {
-    const taskIdToStop = currentDisplayTaskId || pendingTaskId
+    const taskIdToStop = currentTaskId || pendingTaskId
 
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
         typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
       await contextStopStream(taskIdToStop, undefined, team)
     }
-  }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
+  }, [currentTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
-  // Group chat handlers
-  const handleNewMessages = useCallback(
-    (messages: unknown[]) => {
-      if (Array.isArray(messages) && messages.length > 0) {
-        refreshSelectedTaskDetail()
-      }
-    },
-    [refreshSelectedTaskDetail]
+  const notifyStreamingJoinWarning = useCallback(
+    (title: string) => toast({ title, variant: 'warning' }),
+    [toast]
   )
 
-  const handleStreamComplete = useCallback(
-    (_subtaskId: number, _result?: Record<string, unknown>) => {
-      refreshSelectedTaskDetail()
-    },
-    [refreshSelectedTaskDetail]
-  )
-
-  // Reset state when clearVersion changes (e.g., "New Chat")
-  useEffect(() => {
-    if (clearVersion !== prevClearVersionRef.current) {
-      prevClearVersionRef.current = clearVersion
-
-      setIsLoading(false)
-      setLocalPendingMessage(null)
-      setPendingTaskId(null)
-      previousTaskIdRef.current = undefined
-      prevTaskIdForModelRef.current = undefined
-      setIsCancelling(false)
-    }
-  }, [clearVersion, setIsLoading])
-
-  // Clear pendingTaskId when switching to a different task
-  useEffect(() => {
-    if (pendingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== pendingTaskId) {
-      setPendingTaskId(null)
-    }
-  }, [selectedTaskDetail?.id, pendingTaskId])
-
-  // Reset when navigating to fresh new task state
-  useEffect(() => {
-    if (!selectedTaskDetail?.id && !pendingTaskId) {
-      resetStreamingState()
-      setIsLoading(false)
-    }
-  }, [selectedTaskDetail?.id, pendingTaskId, resetStreamingState, setIsLoading])
-
-  // Reset when switching to a DIFFERENT task
-  useEffect(() => {
-    const currentTaskId = selectedTaskDetail?.id
-    const previousTaskId = previousTaskIdRef.current
-
-    if (
-      previousTaskId !== undefined &&
-      currentTaskId !== previousTaskId &&
-      previousTaskId !== null
-    ) {
-      resetStreamingState()
-    }
-
-    previousTaskIdRef.current = currentTaskId
-  }, [selectedTaskDetail?.id, resetStreamingState])
-
-  // Show join-time warning for long-running streaming tasks recovered from WebSocket join
-  useEffect(() => {
-    const streamingInfo = taskState?.streamingInfo
-    if (!streamingInfo || taskState?.status !== 'streaming') {
-      lastJoinWarningRef.current = null
-      return
-    }
-
-    const warningKey = getStreamingJoinWarningKey({
-      started_at: streamingInfo.started_at,
-      last_activity_at: streamingInfo.last_activity_at,
-    })
-
-    const nowMs = Date.now()
-    const startedAtMs = streamingInfo.started_at ? Date.parse(streamingInfo.started_at) : NaN
-    const lastActivityAtMs = streamingInfo.last_activity_at
-      ? Date.parse(streamingInfo.last_activity_at)
-      : NaN
-    console.info('[StreamingJoinDebug] warning evaluation', {
-      taskId: selectedTaskDetail?.id || pendingTaskId || 0,
-      status: taskState?.status,
-      subtaskId: streamingInfo.subtask_id,
-      startedAt: streamingInfo.started_at,
-      lastActivityAt: streamingInfo.last_activity_at,
-      startedAgeMs: Number.isNaN(startedAtMs) ? null : nowMs - startedAtMs,
-      lastActivityAgeMs: Number.isNaN(lastActivityAtMs) ? null : nowMs - lastActivityAtMs,
-      warningKey,
-    })
-
-    if (!warningKey) return
-
-    const taskId = selectedTaskDetail?.id || pendingTaskId || 0
-    const dedupeKey = `${taskId}:${warningKey}`
-    if (lastJoinWarningRef.current === dedupeKey) return
-
-    lastJoinWarningRef.current = dedupeKey
-    toast({
-      title: t(warningKey),
-      variant: 'destructive',
-    })
-  }, [pendingTaskId, selectedTaskDetail?.id, t, taskState?.status, taskState?.streamingInfo, toast])
-
-  // Note: Stream recovery is now handled by TaskStateMachine via useUnifiedMessages
-  // The state machine automatically recovers streaming state when:
-  // - Task is selected (via recover() in useUnifiedMessages)
-  // - Page becomes visible (via usePageVisibility in chatStreamContext)
-  // - WebSocket reconnects (via TaskStateManager.recoverAll())
+  useStreamingJoinWarning({
+    taskId: currentTaskId || pendingTaskId,
+    phase: taskState?.phase,
+    runtime: taskState?.runtime,
+    translate: t,
+    notify: notifyStreamingJoinWarning,
+  })
 
   // Helper: create retry button
   const createRetryButton = useCallback(
@@ -430,6 +388,11 @@ export function useChatStreamHandlers({
   // Helper: handle send errors
   const handleSendError = useCallback(
     (error: Error, message: string) => {
+      if (runtimeDerived?.blocksQueuedDispatch) {
+        void recoverCurrentTask('manual-refresh')
+        return
+      }
+
       resetStreamingState()
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
@@ -449,14 +412,617 @@ export function useChatStreamHandlers({
           : undefined,
       })
     },
-    [resetStreamingState, toast, t, createRetryButton]
+    [
+      recoverCurrentTask,
+      resetStreamingState,
+      runtimeDerived?.blocksQueuedDispatch,
+      toast,
+      t,
+      createRetryButton,
+    ]
+  )
+
+  const prepareChatSend = useCallback(
+    (
+      message: string,
+      localMessageId: string,
+      immediateTaskId: number,
+      effectiveRepo: Pick<
+        GitRepoInfo,
+        'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'
+      > | null,
+      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+    ): PreparedChatSend => {
+      const snapshotAttachments = [...attachments]
+      const snapshotContexts = [...selectedContextsRef.current]
+      const snapshotAdditionalSkills = additionalSkills ? [...additionalSkills] : undefined
+      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
+
+      let finalMessage = message
+      if (Object.keys(externalApiParams).length > 0) {
+        const paramsJson = JSON.stringify(externalApiParams)
+        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
+      }
+
+      const contextItems: Array<{
+        type: 'knowledge_base' | 'table' | 'selected_documents' | 'external_knowledge'
+        data: Record<string, unknown>
+      }> = snapshotContexts
+        .filter(
+          ctx =>
+            ctx.type !== 'queue_message' &&
+            ctx.type !== 'dingtalk_doc' &&
+            ctx.type !== 'external_knowledge'
+        )
+        .map(ctx => {
+          if (ctx.type === 'knowledge_base') {
+            return {
+              type: 'knowledge_base' as const,
+              data: {
+                knowledge_id: ctx.id,
+                name: ctx.name,
+                document_count: ctx.document_count,
+                document_ids: ctx.document_ids,
+                folder_ids: ctx.folder_ids,
+                folder_names: ctx.folder_names,
+                include_subfolders: ctx.include_subfolders,
+                scope_restricted: ctx.scope_restricted,
+              },
+            }
+          }
+          return {
+            type: 'table' as const,
+            data: {
+              document_id: (ctx as { document_id: number }).document_id,
+              name: ctx.name,
+              source_config: (ctx as { source_config?: { url?: string } }).source_config,
+            },
+          }
+        })
+
+      snapshotContexts
+        .filter(ctx => ctx.type === 'external_knowledge')
+        .map(ctx => (ctx as ExternalKnowledgeContext).ref)
+        .forEach(ref => {
+          contextItems.push({
+            type: 'external_knowledge',
+            data: {
+              provider: ref.provider,
+              mode: ref.mode,
+              id: ref.id,
+              name: ref.name,
+              scope: ref.scope,
+              target_type: ref.target_type,
+              node_id: ref.node_id,
+              document_id: ref.document_id,
+              parent_id: ref.parent_id,
+              target_name: ref.target_name,
+            },
+          })
+        })
+
+      let messageWithQueueContent = finalMessage
+      const queueMessageContexts = snapshotContexts.filter(ctx => ctx.type === 'queue_message')
+      if (queueMessageContexts.length > 0) {
+        const queueContents = queueMessageContexts
+          .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
+          .join('\n\n---\n\n')
+        messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
+      }
+
+      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+      if (dingtalkDocContexts.length > 0) {
+        const docRefs = dingtalkDocContexts
+          .map(ctx => {
+            const docCtx = ctx as import('@/types/context').DingTalkDocContext
+            return `- [${docCtx.name}](${docCtx.doc_url})`
+          })
+          .join('\n')
+        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
+        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
+      }
+
+      const queueAttachmentIds = queueMessageContexts.flatMap(
+        ctx => (ctx as import('@/types/context').QueueMessageContext).attachmentContextIds ?? []
+      )
+
+      const inboxAttachmentContexts = queueMessageContexts.flatMap(
+        ctx => (ctx as import('@/types/context').QueueMessageContext).inboxAttachments ?? []
+      )
+
+      if (
+        taskType === 'knowledge' &&
+        selectedDocumentIds &&
+        selectedDocumentIds.length > 0 &&
+        knowledgeBaseId
+      ) {
+        contextItems.push({
+          type: 'selected_documents' as const,
+          data: {
+            knowledge_base_id: knowledgeBaseId,
+            document_ids: selectedDocumentIds,
+          },
+        })
+      }
+
+      const pendingContexts: Array<{
+        id: number
+        context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
+        name: string
+        status: 'pending' | 'ready'
+        file_extension?: string
+        file_size?: number
+        mime_type?: string
+        document_count?: number
+        document_ids?: number[]
+        folder_ids?: number[]
+        folder_names?: string[]
+        include_subfolders?: boolean
+        scope_restricted?: boolean
+        knowledge_id?: number
+        document_id?: number
+        source_config?: {
+          url?: string
+        }
+        external_provider?: string
+        external_mode?: string
+        external_id?: string
+        external_scope?: string
+        external_target_type?: string
+        external_node_id?: string
+        external_document_id?: string
+        external_parent_id?: string
+        video_count?: number
+        site?: string | null
+        source_url?: string
+        cover_url?: string | null
+      }> = []
+
+      for (const attachment of snapshotAttachments) {
+        pendingContexts.push({
+          id: attachment.id,
+          context_type: 'attachment',
+          name: attachment.filename,
+          status: attachment.status === 'ready' ? 'ready' : 'pending',
+          file_extension: attachment.file_extension,
+          file_size: attachment.file_size,
+          mime_type: attachment.mime_type,
+        })
+      }
+
+      for (const inboxAtt of inboxAttachmentContexts) {
+        pendingContexts.push({
+          id: inboxAtt.id,
+          context_type: 'attachment',
+          name: inboxAtt.name,
+          status: 'ready',
+          file_extension: inboxAtt.file_extension,
+          file_size: inboxAtt.file_size,
+          mime_type: inboxAtt.mime_type,
+        })
+      }
+
+      for (const ctx of snapshotContexts) {
+        if (ctx.type === 'knowledge_base') {
+          const kbContext = ctx as typeof ctx & {
+            document_count?: number
+            document_ids?: number[]
+            folder_ids?: number[]
+            folder_names?: string[]
+            include_subfolders?: boolean
+            scope_restricted?: boolean
+          }
+          pendingContexts.push({
+            id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+            context_type: 'knowledge_base',
+            name: ctx.name,
+            status: 'ready',
+            knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+            document_count: kbContext.document_count,
+            document_ids: kbContext.document_ids,
+            folder_ids: kbContext.folder_ids,
+            folder_names: kbContext.folder_names,
+            include_subfolders: kbContext.include_subfolders,
+            scope_restricted: kbContext.scope_restricted,
+          })
+        } else if (ctx.type === 'table') {
+          const tableContext = ctx as typeof ctx & {
+            document_id: number
+            source_config?: { url?: string }
+          }
+          pendingContexts.push({
+            id: tableContext.document_id,
+            context_type: 'table',
+            name: ctx.name,
+            status: 'ready',
+            document_id: tableContext.document_id,
+            source_config: tableContext.source_config,
+          })
+        } else if (ctx.type === 'external_knowledge') {
+          const externalContext = ctx as ExternalKnowledgeContext
+          pendingContexts.push({
+            id: -(pendingContexts.length + 1),
+            context_type: 'external_knowledge',
+            name: ctx.name,
+            status: 'ready',
+            external_provider: externalContext.ref.provider,
+            external_mode: externalContext.ref.mode,
+            external_id: externalContext.ref.id,
+            external_scope: externalContext.ref.scope,
+            external_target_type: externalContext.ref.target_type,
+            external_node_id: externalContext.ref.node_id,
+            external_document_id: externalContext.ref.document_id,
+            external_parent_id: externalContext.ref.parent_id,
+          })
+        }
+      }
+
+      const request: ContextSendRequest = {
+        message: messageWithQueueContent,
+        team_id: selectedTeam?.id ?? 0,
+        task_id: currentTaskId ?? undefined,
+        model_id: modelId,
+        force_override_bot_model: Boolean(modelId),
+        force_override_bot_model_type: selectedModel?.type,
+        attachment_ids: [...snapshotAttachments.map(a => a.id), ...queueAttachmentIds],
+        enable_deep_thinking: enableDeepThinking,
+        enable_clarification: enableClarification,
+        is_group_chat: selectedTaskDetail?.is_group_chat || false,
+        git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
+        git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
+        git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
+        git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
+        branch_name: showRepositorySelector
+          ? selectedBranch?.name || selectedTaskDetail?.branch_name
+          : undefined,
+        task_type: taskType,
+        knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+        contexts: contextItems.length > 0 ? contextItems : undefined,
+        device_id: effectiveDeviceId,
+        // Project association for workspace project conversations
+        project_id: currentTaskId ? undefined : projectId,
+        additional_skills:
+          snapshotAdditionalSkills && snapshotAdditionalSkills.length > 0
+            ? snapshotAdditionalSkills
+            : undefined,
+        generate_params: generateParams,
+        interactive_form_answer: sendOptions?.interactiveFormAnswer
+          ? {
+              ...sendOptions.interactiveFormAnswer,
+              message: messageWithQueueContent,
+            }
+          : undefined,
+      }
+
+      const contextOptions: ContextSendOptions = {
+        pendingUserMessage: messageWithQueueContent,
+        pendingAttachments: snapshotAttachments,
+        pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
+        immediateTaskId,
+        currentUserId: user?.id,
+        onMessageSent: (_localMessageId: string, completedTaskId: number) => {
+          if (completedTaskId > 0) {
+            setPendingTaskId(completedTaskId)
+          }
+
+          if (completedTaskId && !currentTaskId && onTaskCreated) {
+            onTaskCreated(completedTaskId)
+          }
+
+          if (completedTaskId && !currentTaskId) {
+            if (taskType === 'knowledge' && knowledgeBaseId) {
+              navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
+            } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
+              const params = new URLSearchParams()
+              params.set('taskId', String(completedTaskId))
+              if (effectiveDeviceId) {
+                params.set('deviceId', effectiveDeviceId)
+              }
+              if (projectId) {
+                params.set('projectId', String(projectId))
+              }
+              router.push(`/devices/chat?${params.toString()}`)
+            } else {
+              const params = new URLSearchParams(Array.from(searchParams.entries()))
+              params.set('taskId', String(completedTaskId))
+              router.push(`?${params.toString()}`)
+            }
+            refreshTasks()
+            if (projectId) {
+              refreshProjects()
+            }
+          }
+
+          if (selectedTaskDetail?.is_group_chat && completedTaskId) {
+            markTaskAsViewed(completedTaskId, selectedTaskDetail.status, new Date().toISOString())
+          }
+        },
+        onError: (error: Error) => {
+          handleSendError(error, message)
+        },
+      }
+
+      return {
+        localMessageId,
+        displayMessage: message,
+        sourceMessage: messageWithQueueContent,
+        request,
+        options: contextOptions,
+      }
+    },
+    [
+      attachments,
+      additionalSkills,
+      selectedModel?.name,
+      selectedModel?.type,
+      externalApiParams,
+      taskType,
+      selectedDocumentIds,
+      knowledgeBaseId,
+      t,
+      selectedTeam?.id,
+      currentTaskId,
+      selectedTaskDetail,
+      enableDeepThinking,
+      enableClarification,
+      showRepositorySelector,
+      selectedBranch?.name,
+      effectiveDeviceId,
+      generateParams,
+      user?.id,
+      onTaskCreated,
+      pathname,
+      router,
+      searchParams,
+      navigateToKnowledgeTask,
+      refreshTasks,
+      projectId,
+      refreshProjects,
+      markTaskAsViewed,
+      handleSendError,
+      setPendingTaskId,
+    ]
+  )
+
+  const sendPreparedChatMessage = useCallback(
+    async (prepared: PreparedChatSend, optionOverrides?: Partial<ContextSendOptions>) => {
+      const tempTaskId = await contextSendMessage(prepared.request, {
+        ...prepared.options,
+        ...optionOverrides,
+        localMessageId: prepared.localMessageId,
+      })
+
+      const immediateTaskId = prepared.options.immediateTaskId || prepared.request.task_id || 0
+      if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+        setPendingTaskId(tempTaskId)
+      }
+
+      if (currentTaskId) {
+        void refreshSelectedTaskDetail()
+      }
+
+      setTimeout(() => scrollToBottom(true), 0)
+    },
+    [contextSendMessage, refreshSelectedTaskDetail, scrollToBottom, currentTaskId, setPendingTaskId]
+  )
+
+  const activeTaskId = currentTaskId && currentTaskId > 0 ? currentTaskId : null
+  const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
+  const isActiveTaskBlocked =
+    Boolean(runtimeDerived?.isStreaming) || hasPendingUserMessage || isRuntimeBlockingQueue
+  const canQueueMessage = Boolean(
+    activeTaskId && (isStreaming || hasPendingUserMessage || runtimeDerived?.canQueueMessage)
+  )
+  const canSendGuidance = Boolean(
+    activeTaskId && isChatShell(selectedTeam) && activeStreamSubtaskId
+  )
+
+  const getActiveSubtaskId = useCallback(() => {
+    return typeof activeStreamSubtaskId === 'number' ? activeStreamSubtaskId : null
+  }, [activeStreamSubtaskId])
+
+  const {
+    activeGuidanceQueue,
+    expiredGuidance,
+    enqueueGuidance,
+    markGuidanceSending,
+    markGuidanceQueued,
+    markGuidanceFailed,
+    markGuidanceApplied,
+    markGuidanceExpired,
+    cancelGuidance,
+    removeExpiredGuidance,
+  } = useGuidanceQueue({
+    taskId: activeTaskId,
+    isGuidanceAllowed: canSendGuidance,
+    expirationMessage: t('chat:guidance.expired'),
+  })
+
+  useGuidanceSocketHandlers({
+    taskId: activeTaskId,
+    registerChatHandlers,
+    markGuidanceApplied,
+    markGuidanceExpired,
+    expiredMessage: t('chat:guidance.expired'),
+  })
+
+  const dispatchQueuedMessage = useCallback(
+    async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
+      const prepared = queuedMessage.snapshot
+      await sendPreparedChatMessage(prepared, { onError: undefined })
+    },
+    [sendPreparedChatMessage]
+  )
+
+  const handleQueuedDispatchError = useCallback(
+    (queuedMessage: QueuedMessage<PreparedChatSend>, error: Error) => {
+      const retryQueuedMessage = () => {
+        retryQueuedMessageRef.current?.(queuedMessage.id)
+      }
+
+      toast({
+        variant: 'destructive',
+        title: error.message,
+        action: (
+          <Button variant="outline" size="sm" onClick={retryQueuedMessage}>
+            {t('chat:actions.retry') || 'Retry'}
+          </Button>
+        ),
+      })
+    },
+    [t, toast]
+  )
+
+  const {
+    activeTaskQueue,
+    enqueueMessage,
+    retryMessage: retryQueuedMessage,
+    cancelMessage,
+    updateQueuedMessage,
+  } = useMessageSendQueue<PreparedChatSend>({
+    taskId: activeTaskId,
+    isDispatchBlocked: isActiveTaskBlocked,
+    dispatchMessage: dispatchQueuedMessage,
+    onDispatchError: handleQueuedDispatchError,
+    dispatchMode: 'one-per-unblock',
+  })
+  retryQueuedMessageRef.current = retryQueuedMessage
+
+  useQueuedRuntimeHealthCheck({
+    taskId: activeTaskId,
+    queuedMessages: activeTaskQueue,
+    blocksQueuedDispatch: runtimeDerived?.blocksQueuedDispatch ?? false,
+    isStreaming: isMachineStreaming,
+    hasPendingUserMessage,
+    recoverCurrentTask: () => recoverCurrentTask('queued-message-blocked'),
+  })
+
+  const cancelQueuedMessage = useCallback(
+    (id: string) => {
+      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+
+      cancelMessage(id)
+
+      const restoredMessage = queuedMessage.snapshot.sourceMessage || queuedMessage.displayMessage
+      const currentInput = taskInputMessage.trim()
+      setTaskInputMessage(
+        currentInput && currentInput !== restoredMessage
+          ? `${restoredMessage}\n\n${taskInputMessage}`
+          : restoredMessage
+      )
+    },
+    [activeTaskQueue, cancelMessage, setTaskInputMessage, taskInputMessage]
+  )
+
+  const editQueuedMessage = useCallback(
+    (id: string) => {
+      cancelQueuedMessage(id)
+    },
+    [cancelQueuedMessage]
+  )
+
+  const queuedMessages = useMemo<QueuedChatMessagePreview[]>(
+    () =>
+      activeTaskQueue.map(message => ({
+        id: message.id,
+        displayMessage: message.displayMessage,
+        status: message.status,
+        error: message.error,
+      })),
+    [activeTaskQueue]
+  )
+
+  const guidanceMessages = useMemo<GuidanceMessagePreview[]>(
+    () =>
+      activeGuidanceQueue
+        .filter(message => message.status !== 'expired')
+        .map(message => ({
+          id: message.guidanceId,
+          displayMessage: message.content,
+          status: message.status,
+          error: message.error,
+        })),
+    [activeGuidanceQueue]
+  )
+
+  const expiredGuidanceMessages = useMemo<GuidanceMessagePreview[]>(
+    () =>
+      expiredGuidance.map(message => ({
+        id: message.guidanceId,
+        displayMessage: message.content,
+        status: message.status,
+        error: message.error,
+      })),
+    [expiredGuidance]
+  )
+
+  const editGuidanceMessage = useCallback(
+    (id: string) => {
+      const guidance = activeGuidanceQueue.find(message => message.guidanceId === id)
+      if (!guidance || guidance.status === 'sending') return
+
+      cancelGuidance(id)
+      const currentInput = taskInputMessage.trim()
+      setTaskInputMessage(
+        currentInput && currentInput !== guidance.content
+          ? `${guidance.content}\n\n${taskInputMessage}`
+          : guidance.content
+      )
+    },
+    [activeGuidanceQueue, cancelGuidance, setTaskInputMessage, taskInputMessage]
+  )
+
+  const mergePreparedChatSend = useCallback(
+    (current: PreparedChatSend, next: PreparedChatSend): PreparedChatSend => {
+      const displayMessage = `${current.displayMessage}\n\n${next.displayMessage}`
+      const sourceMessage = `${current.sourceMessage}\n\n${next.sourceMessage}`
+
+      return {
+        ...current,
+        displayMessage,
+        sourceMessage,
+        request: {
+          ...current.request,
+          message: sourceMessage,
+          attachment_ids: [
+            ...(current.request.attachment_ids ?? []),
+            ...(next.request.attachment_ids ?? []),
+          ],
+          contexts: [...(current.request.contexts ?? []), ...(next.request.contexts ?? [])],
+          additional_skills: [
+            ...(current.request.additional_skills ?? []),
+            ...(next.request.additional_skills ?? []),
+          ],
+          generate_params: next.request.generate_params ?? current.request.generate_params,
+        },
+        options: {
+          ...current.options,
+          pendingUserMessage: sourceMessage,
+          pendingAttachments: [
+            ...(current.options.pendingAttachments ?? []),
+            ...(next.options.pendingAttachments ?? []),
+          ],
+          pendingContexts: [
+            ...(current.options.pendingContexts ?? []),
+            ...(next.options.pendingContexts ?? []),
+          ],
+        },
+      }
+    },
+    []
   )
 
   // Core message sending logic
   const handleSendMessage = useCallback(
-    async (overrideMessage?: string) => {
-      const message = overrideMessage?.trim() || taskInputMessage.trim()
-      if (!message && !shouldHideChatInput) return
+    async (
+      overrideMessage?: string,
+      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+    ) => {
+      const message =
+        overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
+      const hasAttachments = attachments.length > 0
+      if (!message && !hasAttachments && !shouldHideChatInput) return
 
       if (!isAttachmentReadyToSend) {
         toast({
@@ -466,7 +1032,6 @@ export function useChatStreamHandlers({
         return
       }
 
-      // For code type tasks, repository is required
       const effectiveRepo =
         selectedRepo ||
         (selectedTaskDetail
@@ -491,336 +1056,183 @@ export function useChatStreamHandlers({
         return
       }
 
-      setIsLoading(true)
-      setIsAwaitingResponseStart(!(selectedTaskDetail?.is_group_chat || false))
+      const immediateTaskId = currentTaskId || -Date.now()
+      const localMessageId = generateMessageId('user')
+      const prepared = prepareChatSend(
+        message,
+        localMessageId,
+        immediateTaskId,
+        effectiveRepo,
+        sendOptions
+      )
 
-      // Set local pending state immediately
-      setLocalPendingMessage(message)
+      if (canQueueMessage && activeTaskId) {
+        const mergeTarget = [...activeTaskQueue]
+          .reverse()
+          .find(queuedMessage => queuedMessage.status === 'queued')
+
+        if (mergeTarget) {
+          updateQueuedMessage(mergeTarget.id, queuedMessage => {
+            const mergedPrepared = mergePreparedChatSend(queuedMessage.snapshot, prepared)
+            return {
+              ...queuedMessage,
+              displayMessage: mergedPrepared.displayMessage,
+              snapshot: mergedPrepared,
+            }
+          })
+        } else {
+          enqueueMessage({
+            taskId: activeTaskId,
+            localMessageId,
+            displayMessage: prepared.displayMessage,
+            snapshot: prepared,
+          })
+        }
+        setTaskInputMessage('')
+        resetAttachment()
+        resetContexts?.()
+        setTimeout(() => scrollToBottom(true), 0)
+        return
+      }
+
       setTaskInputMessage('')
       resetAttachment()
       resetContexts?.()
 
-      // For new tasks, set pendingTaskId to immediateTaskId immediately
-      // This ensures useTaskStateMachine subscribes to the temp state machine
-      // and can track streaming state from the start
-      const immediateTaskId = selectedTaskDetail?.id || -Date.now()
-      if (!selectedTaskDetail?.id) {
+      if (!currentTaskId) {
         setPendingTaskId(immediateTaskId)
       }
 
-      // Model ID handling
-      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
-
-      // Prepare message with external API parameters
-      let finalMessage = message
-      if (Object.keys(externalApiParams).length > 0) {
-        const paramsJson = JSON.stringify(externalApiParams)
-        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
-      }
-
       try {
-        // Convert selected contexts to backend format
-        // Each context item contains type and data fields
-        // Note: queue_message and dingtalk_doc contexts are handled separately -
-        //       their content is prepended to the message text
-        const contextItems: Array<{
-          type: 'knowledge_base' | 'table' | 'selected_documents'
-          data: Record<string, unknown>
-        }> = selectedContexts
-          .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
-          .map(ctx => {
-            if (ctx.type === 'knowledge_base') {
-              return {
-                type: 'knowledge_base' as const,
-                data: {
-                  knowledge_id: ctx.id,
-                  name: ctx.name,
-                  document_count: ctx.document_count,
-                },
-              }
-            }
-            // ctx.type === 'table'
-            return {
-              type: 'table' as const,
-              data: {
-                document_id: (ctx as { document_id: number }).document_id,
-                name: ctx.name,
-                source_config: (ctx as { source_config?: { url?: string } }).source_config,
-              },
-            }
-          })
-
-        // Handle queue_message contexts - prepend their content to the message
-        // This allows the AI to see the forwarded message content
-        let messageWithQueueContent = finalMessage
-        const queueMessageContexts = selectedContexts.filter(ctx => ctx.type === 'queue_message')
-        if (queueMessageContexts.length > 0) {
-          const queueContents = queueMessageContexts
-            .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
-            .join('\n\n---\n\n')
-          messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
-        }
-
-        // Handle dingtalk_doc contexts - prepend document references to the message
-        // This allows the AI to know which DingTalk documents are being referenced
-        const dingtalkDocContexts = selectedContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-        if (dingtalkDocContexts.length > 0) {
-          const docRefs = dingtalkDocContexts
-            .map(ctx => {
-              const docCtx = ctx as import('@/types/context').DingTalkDocContext
-              return `- [${docCtx.name}](${docCtx.doc_url})`
-            })
-            .join('\n')
-          const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-          messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
-        }
-
-        // Collect attachment context IDs from queue_message contexts so the AI
-        // can access uploaded file content via context injection.
-        const queueAttachmentIds = queueMessageContexts.flatMap(
-          ctx => (ctx as import('@/types/context').QueueMessageContext).attachmentContextIds ?? []
-        )
-
-        // Collect inbox attachment metadata for immediate display in message bubble.
-        // These are SubtaskContext records pre-written during ingest, displayed as attachment badges.
-        const inboxAttachmentContexts = queueMessageContexts.flatMap(
-          ctx => (ctx as import('@/types/context').QueueMessageContext).inboxAttachments ?? []
-        )
-
-        // Add selected document IDs as a context for notebook mode
-        // This allows direct content injection of selected documents
-        if (
-          taskType === 'knowledge' &&
-          selectedDocumentIds &&
-          selectedDocumentIds.length > 0 &&
-          knowledgeBaseId
-        ) {
-          contextItems.push({
-            type: 'selected_documents' as const,
-            data: {
-              knowledge_base_id: knowledgeBaseId,
-              document_ids: selectedDocumentIds,
-            },
-          })
-        }
-
-        // Build pending contexts for immediate display (SubtaskContextBrief format)
-        // This includes attachments, knowledge bases, and tables
-        const pendingContexts: Array<{
-          id: number
-          context_type: 'attachment' | 'knowledge_base' | 'table'
-          name: string
-          status: 'pending' | 'ready'
-          file_extension?: string
-          file_size?: number
-          mime_type?: string
-          document_count?: number
-          knowledge_id?: number
-          document_id?: number
-          source_config?: {
-            url?: string
-          }
-        }> = []
-
-        // Add attachments as contexts
-        for (const attachment of attachments) {
-          pendingContexts.push({
-            id: attachment.id,
-            context_type: 'attachment',
-            name: attachment.filename,
-            status: attachment.status === 'ready' ? 'ready' : 'pending',
-            file_extension: attachment.file_extension,
-            file_size: attachment.file_size,
-            mime_type: attachment.mime_type,
-          })
-        }
-
-        // Add inbox attachments (from queue_message contexts) as attachment contexts
-        // so they appear as badges in the sent message bubble
-        for (const inboxAtt of inboxAttachmentContexts) {
-          pendingContexts.push({
-            id: inboxAtt.id,
-            context_type: 'attachment',
-            name: inboxAtt.name,
-            status: 'ready',
-            file_extension: inboxAtt.file_extension,
-            file_size: inboxAtt.file_size,
-            mime_type: inboxAtt.mime_type,
-          })
-        }
-
-        // Add knowledge bases and tables as contexts
-        for (const ctx of selectedContexts) {
-          if (ctx.type === 'knowledge_base') {
-            const kbContext = ctx as typeof ctx & { document_count?: number }
-            pendingContexts.push({
-              id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
-              context_type: 'knowledge_base',
-              name: ctx.name,
-              status: 'ready',
-              knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
-              document_count: kbContext.document_count,
-            })
-          } else if (ctx.type === 'table') {
-            const tableContext = ctx as typeof ctx & {
-              document_id: number
-              source_config?: { url?: string }
-            }
-            pendingContexts.push({
-              id: tableContext.document_id,
-              context_type: 'table',
-              name: ctx.name,
-              status: 'ready',
-              document_id: tableContext.document_id,
-              source_config: tableContext.source_config,
-            })
-          }
-        }
-
-        const tempTaskId = await contextSendMessage(
-          {
-            message: messageWithQueueContent,
-            team_id: selectedTeam?.id ?? 0,
-            task_id: selectedTaskDetail?.id,
-            model_id: modelId,
-            force_override_bot_model: forceOverride,
-            force_override_bot_model_type: selectedModel?.type,
-            attachment_ids: [...attachments.map(a => a.id), ...queueAttachmentIds],
-            enable_deep_thinking: enableDeepThinking,
-            enable_clarification: enableClarification,
-            is_group_chat: selectedTaskDetail?.is_group_chat || false,
-            git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
-            git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
-            git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
-            git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
-            branch_name: showRepositorySelector
-              ? selectedBranch?.name || selectedTaskDetail?.branch_name
-              : undefined,
-            task_type: taskType,
-            knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
-            contexts: contextItems.length > 0 ? contextItems : undefined,
-            // Device ID for local device execution
-            // Only send device_id when on devices page to prevent coding tasks from being routed to devices
-            device_id: effectiveDeviceId,
-            // Skill selection - backend determines preload vs download based on executor type
-            additional_skills:
-              additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
-            // Generation parameters for video/image generation tasks
-            generate_params: generateParams,
-          },
-          {
-            pendingUserMessage: messageWithQueueContent,
-            pendingAttachments: attachments,
-            pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
-            immediateTaskId: immediateTaskId,
-            currentUserId: user?.id,
-            onMessageSent: (
-              _localMessageId: string,
-              completedTaskId: number,
-              _subtaskId: number
-            ) => {
-              if (completedTaskId > 0) {
-                setPendingTaskId(completedTaskId)
-              }
-
-              // Call onTaskCreated callback when a new task is created
-              // This is used for binding knowledge base to the task
-              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
-                onTaskCreated(completedTaskId)
-              }
-
-              if (completedTaskId && !selectedTaskDetail?.id) {
-                // For knowledge type tasks on /knowledge page, navigate to the dedicated KB chat page
-                // This ensures full task functionality (follow-up questions, link sharing, etc.)
-                if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
-                  router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
-                } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
-                  // For device tasks started from /chat, navigate to /devices/chat
-                  const params = new URLSearchParams()
-                  params.set('taskId', String(completedTaskId))
-                  if (effectiveDeviceId) {
-                    params.set('deviceId', effectiveDeviceId)
-                  }
-                  router.push(`/devices/chat?${params.toString()}`)
-                } else {
-                  const params = new URLSearchParams(Array.from(searchParams.entries()))
-                  params.set('taskId', String(completedTaskId))
-                  router.push(`?${params.toString()}`)
-                }
-                refreshTasks()
-              }
-
-              if (selectedTaskDetail?.is_group_chat && completedTaskId) {
-                markTaskAsViewed(
-                  completedTaskId,
-                  selectedTaskDetail.status,
-                  new Date().toISOString()
-                )
-              }
-            },
-            onError: (error: Error) => {
-              handleSendError(error, message)
-            },
-          }
-        )
-
-        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-          setPendingTaskId(tempTaskId)
-        }
-
-        if (selectedTaskDetail?.id) {
-          refreshSelectedTaskDetail(false)
-        }
-
-        setTimeout(() => scrollToBottom(true), 0)
+        await sendPreparedChatMessage(prepared)
       } catch (err) {
         handleSendError(err as Error, message)
       }
-
-      setIsLoading(false)
     },
     [
       taskInputMessage,
+      attachments.length,
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,
-      selectedTeam,
-      attachments,
-      resetAttachment,
-      selectedContexts,
-      resetContexts,
-      selectedModel?.name,
-      selectedModel?.type,
-      selectedTaskDetail,
-      contextSendMessage,
-      forceOverride,
-      enableDeepThinking,
-      enableClarification,
-      refreshTasks,
-      refreshSelectedTaskDetail,
-      searchParams,
-      router,
-      pathname,
-      showRepositorySelector,
       selectedRepo,
-      selectedBranch,
+      currentTaskId,
+      selectedTaskDetail,
       taskType,
-      knowledgeBaseId,
-      markTaskAsViewed,
-      user?.id,
-      handleSendError,
-      scrollToBottom,
-      setIsLoading,
-      setTaskInputMessage,
-      externalApiParams,
-      onTaskCreated,
-      selectedDocumentIds,
-      effectiveDeviceId,
+      showRepositorySelector,
       effectiveRequiresWorkspace,
-      additionalSkills,
-      generateParams,
-      t,
+      selectedTeam,
+      prepareChatSend,
+      canQueueMessage,
+      activeTaskId,
+      activeTaskQueue,
+      enqueueMessage,
+      updateQueuedMessage,
+      mergePreparedChatSend,
+      setTaskInputMessage,
+      resetAttachment,
+      resetContexts,
+      scrollToBottom,
+      setPendingTaskId,
+      sendPreparedChatMessage,
+      handleSendError,
     ]
+  )
+
+  const autoForwardedExpiredGuidanceRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    for (const guidance of expiredGuidance) {
+      if (autoForwardedExpiredGuidanceRef.current.has(guidance.guidanceId)) continue
+
+      autoForwardedExpiredGuidanceRef.current.add(guidance.guidanceId)
+      removeExpiredGuidance(guidance.guidanceId)
+      void handleSendMessage(guidance.content)
+    }
+  }, [expiredGuidance, handleSendMessage, removeExpiredGuidance])
+
+  const handleSendGuidance = useCallback(
+    async (overrideMessage?: string) => {
+      const message = overrideMessage?.trim() || taskInputMessage.trim()
+      if (!message || !activeTaskId || !selectedTeam?.id || !canSendGuidance) return
+
+      const subtaskId = getActiveSubtaskId()
+      if (!subtaskId) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:guidance.no_active_stream'),
+        })
+        return
+      }
+
+      const guidanceId = `guidance-${activeTaskId}-${Date.now()}`
+      enqueueGuidance({
+        taskId: activeTaskId,
+        guidanceId,
+        content: message,
+      })
+      markGuidanceSending(guidanceId)
+      setTaskInputMessage('')
+
+      try {
+        const response = await sendChatGuidance({
+          task_id: activeTaskId,
+          subtask_id: subtaskId,
+          team_id: selectedTeam.id,
+          message,
+          guidance: message,
+          client_guidance_id: guidanceId,
+        })
+
+        if (response.error || response.success === false) {
+          markGuidanceFailed(guidanceId, response.error || t('chat:guidance.send_failed'))
+          return
+        }
+
+        markGuidanceQueued(guidanceId)
+        return
+      } catch (error) {
+        const normalizedError = error instanceof Error ? error : new Error(String(error))
+        markGuidanceFailed(guidanceId, normalizedError.message)
+      }
+    },
+    [
+      taskInputMessage,
+      activeTaskId,
+      selectedTeam?.id,
+      canSendGuidance,
+      getActiveSubtaskId,
+      enqueueGuidance,
+      markGuidanceSending,
+      markGuidanceQueued,
+      setTaskInputMessage,
+      sendChatGuidance,
+      markGuidanceFailed,
+      t,
+      toast,
+    ]
+  )
+
+  const sendQueuedAsGuidance = useCallback(
+    async (id: string) => {
+      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+      const text = queuedMessage.snapshot.sourceMessage || queuedMessage.displayMessage
+      cancelMessage(id)
+      await handleSendGuidance(text)
+    },
+    [activeTaskQueue, cancelMessage, handleSendGuidance]
+  )
+
+  const sendExpiredGuidanceAsMessage = useCallback(
+    async (id: string) => {
+      const guidance = expiredGuidance.find(item => item.guidanceId === id)
+      if (!guidance) return
+
+      removeExpiredGuidance(id)
+      await handleSendMessage(guidance.content)
+    },
+    [expiredGuidance, handleSendMessage, removeExpiredGuidance]
   )
   /**
    * Send a message with a temporary model override.
@@ -872,11 +1284,6 @@ export function useChatStreamHandlers({
         return
       }
 
-      setIsLoading(true)
-      setIsAwaitingResponseStart(!(selectedTaskDetail?.is_group_chat || false))
-
-      // Set local pending state immediately
-      setLocalPendingMessage(message)
       setTaskInputMessage('')
       // Note: Don't reset attachments/contexts for regeneration since we're reusing existing ones
 
@@ -891,7 +1298,7 @@ export function useChatStreamHandlers({
       }
 
       try {
-        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+        const immediateTaskId = currentTaskId || -Date.now()
 
         // Extract attachment IDs from existing contexts (for regeneration)
         const attachmentIds =
@@ -900,7 +1307,7 @@ export function useChatStreamHandlers({
 
         // Build context items for backend from existing contexts (knowledge bases, tables)
         const contextItems: Array<{
-          type: 'knowledge_base' | 'table' | 'selected_documents'
+          type: 'knowledge_base' | 'table' | 'selected_documents' | 'external_knowledge'
           data: Record<string, unknown>
         }> = []
 
@@ -913,6 +1320,11 @@ export function useChatStreamHandlers({
                   knowledge_id: ctx.knowledge_id,
                   name: ctx.name,
                   document_count: ctx.document_count,
+                  document_ids: ctx.document_ids,
+                  folder_ids: ctx.folder_ids,
+                  folder_names: ctx.folder_names,
+                  include_subfolders: ctx.include_subfolders,
+                  scope_restricted: ctx.scope_restricted,
                 },
               })
             } else if (ctx.context_type === 'table' && ctx.document_id) {
@@ -924,6 +1336,21 @@ export function useChatStreamHandlers({
                   source_config: ctx.source_config,
                 },
               })
+            } else if (ctx.context_type === 'external_knowledge' && ctx.external_provider) {
+              contextItems.push({
+                type: 'external_knowledge' as const,
+                data: {
+                  provider: ctx.external_provider,
+                  mode: ctx.external_mode,
+                  id: ctx.external_id,
+                  name: ctx.name,
+                  scope: ctx.external_scope,
+                  target_type: ctx.external_target_type,
+                  node_id: ctx.external_node_id,
+                  document_id: ctx.external_document_id,
+                  parent_id: ctx.external_parent_id,
+                },
+              })
             }
           }
         }
@@ -931,18 +1358,35 @@ export function useChatStreamHandlers({
         // Build pending contexts for immediate display from existing contexts
         const pendingContexts: Array<{
           id: number
-          context_type: 'attachment' | 'knowledge_base' | 'table'
+          context_type: 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
           name: string
           status: 'pending' | 'ready'
           file_extension?: string
           file_size?: number
           mime_type?: string
           document_count?: number
+          document_ids?: number[] | null
+          folder_ids?: number[] | null
+          folder_names?: string[] | null
+          include_subfolders?: boolean | null
+          scope_restricted?: boolean | null
           knowledge_id?: number
           document_id?: number
           source_config?: {
             url?: string
           }
+          external_provider?: string | null
+          external_mode?: string | null
+          external_id?: string | null
+          external_scope?: string | null
+          external_target_type?: string | null
+          external_node_id?: string | null
+          external_document_id?: string | null
+          external_parent_id?: string | null
+          video_count?: number | null
+          site?: string | null
+          source_url?: string | null
+          cover_url?: string | null
         }> =
           existingContexts?.map(ctx => ({
             id: ctx.id,
@@ -953,16 +1397,33 @@ export function useChatStreamHandlers({
             file_size: ctx.file_size ?? undefined,
             mime_type: ctx.mime_type ?? undefined,
             document_count: ctx.document_count ?? undefined,
+            document_ids: ctx.document_ids ?? undefined,
+            folder_ids: ctx.folder_ids ?? undefined,
+            folder_names: ctx.folder_names ?? undefined,
+            include_subfolders: ctx.include_subfolders ?? undefined,
+            scope_restricted: ctx.scope_restricted ?? undefined,
             knowledge_id: ctx.knowledge_id ?? undefined,
             document_id: ctx.document_id ?? undefined,
             source_config: ctx.source_config ?? undefined,
+            external_provider: ctx.external_provider ?? undefined,
+            external_mode: ctx.external_mode ?? undefined,
+            external_id: ctx.external_id ?? undefined,
+            external_scope: ctx.external_scope ?? undefined,
+            external_target_type: ctx.external_target_type ?? undefined,
+            external_node_id: ctx.external_node_id ?? undefined,
+            external_document_id: ctx.external_document_id ?? undefined,
+            external_parent_id: ctx.external_parent_id ?? undefined,
+            video_count: ctx.video_count ?? undefined,
+            site: ctx.site ?? undefined,
+            source_url: ctx.source_url ?? undefined,
+            cover_url: ctx.cover_url ?? undefined,
           })) || []
 
         const tempTaskId = await contextSendMessage(
           {
             message: finalMessage,
             team_id: selectedTeam?.id ?? 0,
-            task_id: selectedTaskDetail?.id,
+            task_id: currentTaskId ?? undefined,
             model_id: modelId,
             force_override_bot_model: true, // Always force override when using model override
             force_override_bot_model_type: modelOverride.type,
@@ -997,15 +1458,22 @@ export function useChatStreamHandlers({
               }
 
               // Call onTaskCreated callback when a new task is created
-              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+              if (completedTaskId && !currentTaskId && onTaskCreated) {
                 onTaskCreated(completedTaskId)
               }
 
-              if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()))
-                params.set('taskId', String(completedTaskId))
-                router.push(`?${params.toString()}`)
+              if (completedTaskId && !currentTaskId) {
+                if (taskType === 'knowledge' && knowledgeBaseId) {
+                  navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
+                } else {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()))
+                  params.set('taskId', String(completedTaskId))
+                  router.push(`?${params.toString()}`)
+                }
                 refreshTasks()
+                if (projectId) {
+                  refreshProjects()
+                }
               }
 
               if (selectedTaskDetail?.is_group_chat && completedTaskId) {
@@ -1026,22 +1494,21 @@ export function useChatStreamHandlers({
           setPendingTaskId(tempTaskId)
         }
 
-        if (selectedTaskDetail?.id) {
-          refreshSelectedTaskDetail(false)
+        if (currentTaskId) {
+          void refreshSelectedTaskDetail()
         }
 
         setTimeout(() => scrollToBottom(true), 0)
       } catch (err) {
         handleSendError(err as Error, message)
       }
-
-      setIsLoading(false)
     },
     [
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,
       selectedTeam,
+      currentTaskId,
       selectedTaskDetail,
       contextSendMessage,
       enableDeepThinking,
@@ -1053,25 +1520,26 @@ export function useChatStreamHandlers({
       showRepositorySelector,
       selectedRepo,
       selectedBranch,
+      selectedContexts,
       taskType,
       knowledgeBaseId,
       markTaskAsViewed,
       user?.id,
       handleSendError,
       scrollToBottom,
-      setIsLoading,
+      setPendingTaskId,
       setTaskInputMessage,
       externalApiParams,
       onTaskCreated,
       t,
       effectiveRequiresWorkspace,
+      projectId,
+      refreshProjects,
+      navigateToKnowledgeTask,
     ]
   )
 
-  // Update ref when handleSendMessage changes
-  useEffect(() => {
-    handleSendMessageRef.current = handleSendMessage
-  }, [handleSendMessage])
+  handleSendMessageRef.current = handleSendMessage
 
   // Handle retry for failed messages
   const handleRetry = useCallback(
@@ -1085,7 +1553,7 @@ export function useChatStreamHandlers({
         return false
       }
 
-      if (!selectedTaskDetail?.id) {
+      if (!currentTaskId) {
         toast({
           variant: 'destructive',
           title: t('chat:errors.generic_error'),
@@ -1098,7 +1566,7 @@ export function useChatStreamHandlers({
         'chat-retry-message',
         {
           'action.type': 'retry',
-          'task.id': selectedTaskDetail.id.toString(),
+          'task.id': currentTaskId.toString(),
           'subtask.id': message.subtaskId.toString(),
           ...(selectedModel && { 'model.id': selectedModel.name }),
         },
@@ -1109,11 +1577,11 @@ export function useChatStreamHandlers({
             const modelType = modelId ? selectedModel?.type : undefined
 
             const result = await retryMessage(
-              selectedTaskDetail.id,
+              currentTaskId,
               message.subtaskId!,
               modelId,
               modelType,
-              forceOverride
+              Boolean(modelId)
             )
 
             if (result.error) {
@@ -1142,19 +1610,19 @@ export function useChatStreamHandlers({
         }
       )
     },
-    [retryMessage, selectedTaskDetail?.id, selectedModel, forceOverride, t, toast, traceAction]
+    [retryMessage, currentTaskId, selectedModel, t, toast, traceAction]
   )
 
   // Handle retry with a specific model (from error card recommendation)
   const handleRetryWithModel = useCallback(
     async (message: { subtaskId?: number }, model: UnifiedModel) => {
-      if (!message.subtaskId || !selectedTaskDetail?.id) {
+      if (!message.subtaskId || !currentTaskId) {
         return false
       }
 
       try {
         const result = await retryMessage(
-          selectedTaskDetail.id,
+          currentTaskId,
           message.subtaskId,
           model.name,
           model.type,
@@ -1173,7 +1641,7 @@ export function useChatStreamHandlers({
           setForceOverride(true)
 
           // Refresh task detail to pick up the new model configuration from backend
-          refreshSelectedTaskDetail(false)
+          void refreshSelectedTaskDetail()
           return true
         }
       } catch (error) {
@@ -1187,7 +1655,7 @@ export function useChatStreamHandlers({
     },
     [
       retryMessage,
-      selectedTaskDetail?.id,
+      currentTaskId,
       setSelectedModel,
       setForceOverride,
       refreshSelectedTaskDetail,
@@ -1198,16 +1666,14 @@ export function useChatStreamHandlers({
 
   // Handle cancel task
   const handleCancelTask = useCallback(async () => {
-    if (!selectedTaskDetail?.id || isCancelling) return
-
-    setIsCancelling(true)
+    if (!currentTaskId) return false
 
     try {
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Cancel operation timed out')), 60000)
       })
 
-      await Promise.race([taskApis.cancelTask(selectedTaskDetail.id), timeoutPromise])
+      await Promise.race([taskApis.cancelTask(currentTaskId), timeoutPromise])
 
       toast({
         title: 'Task cancelled successfully',
@@ -1215,7 +1681,8 @@ export function useChatStreamHandlers({
       })
 
       refreshTasks()
-      refreshSelectedTaskDetail(false)
+      void refreshSelectedTaskDetail()
+      return true
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error && err.message === 'Cancel operation timed out'
@@ -1230,7 +1697,6 @@ export function useChatStreamHandlers({
             variant="outline"
             size="sm"
             onClick={() => {
-              setIsCancelling(false)
               handleCancelTask()
             }}
           >
@@ -1243,22 +1709,32 @@ export function useChatStreamHandlers({
 
       if (err instanceof Error && err.message === 'Cancel operation timed out') {
         refreshTasks()
-        refreshSelectedTaskDetail(false)
+        void refreshSelectedTaskDetail()
       }
-    } finally {
-      setIsCancelling(false)
+      return false
     }
-  }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail])
+  }, [currentTaskId, toast, refreshTasks, refreshSelectedTaskDetail])
 
   return {
     // Stream state
     pendingTaskId,
     isStreaming,
-    isAwaitingResponseStart,
-    isSubtaskStreaming,
     isStopping,
     hasPendingUserMessage,
-    localPendingMessage,
+    canQueueMessage,
+    canCancelTask: runtimeDerived?.canCancelTask,
+    queuedMessageCount: activeTaskQueue.length,
+    queuedMessages,
+    cancelQueuedMessage,
+    editQueuedMessage,
+    sendQueuedAsGuidance,
+    canSendGuidance,
+    guidanceMessages,
+    expiredGuidanceMessages,
+    cancelGuidance,
+    editGuidanceMessage,
+    handleSendGuidance,
+    sendExpiredGuidanceAsMessage,
 
     // Actions
     handleSendMessage,
@@ -1268,13 +1744,6 @@ export function useChatStreamHandlers({
     handleCancelTask,
     stopStream,
     resetStreamingState,
-
-    // Group chat handlers
-    handleNewMessages,
-    handleStreamComplete,
-
-    // State
-    isCancelling,
   }
 }
 

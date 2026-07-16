@@ -12,12 +12,12 @@ sidebar_position: 2
 
 ### 硬件要求
 
-| 组件 | 最低要求 | 推荐配置 |
-|------|----------|----------|
-| **CPU** | 2 核 | 4 核或更多 |
-| **内存** | 4 GB | 8 GB 或更多 |
-| **存储** | 20 GB | 50 GB 或更多 |
-| **网络** | 稳定的互联网连接 | - |
+| 组件     | 最低要求         | 推荐配置     |
+| -------- | ---------------- | ------------ |
+| **CPU**  | 2 核             | 4 核或更多   |
+| **内存** | 4 GB             | 8 GB 或更多  |
+| **存储** | 20 GB            | 50 GB 或更多 |
+| **网络** | 稳定的互联网连接 | -            |
 
 ### 软件要求
 
@@ -83,10 +83,12 @@ MYSQL_PASSWORD=your_password
 
 # Redis 配置
 REDIS_PASSWORD=your_redis_password  # 可选
+REDIS_PROTOCOL=2  # 默认使用 RESP2，兼容不支持 HELLO 的 Redis 兼容服务
 
 # 后端配置
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
+CHECK_SYSTEM_INITIALIZATION_STATUS=True
 
 # 附件存储配置（可选）
 # 默认: mysql（将文件存储在数据库中）
@@ -106,12 +108,24 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # 通过 docker-compose.yml 的 environment 部分设置
 # RUNTIME_INTERNAL_API_URL=http://backend:8000
 # RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # 可选：编码入口跳转到 Wework
 # 旧版（已弃用）: NEXT_PUBLIC_API_URL=http://localhost:8000
 
+# Wework 前端构建配置（可选）
+# 用于设置“设置 → 连接”云设备资源说明卡中的扩容 Wiki 链接
+# VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.example.com/cloud-device-scaling
+
+# 镜像配置
+# 使用 CI 发布的 edge 镜像时改为 edge
+WEGENT_IMAGE_TAG=latest
+
 # Executor Manager 配置
-EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
+# 可选：显式覆盖 executor 镜像；未设置时跟随 WEGENT_IMAGE_TAG
+# EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
 ```
+
+`RUNTIME_WEWORK_CODE_URL` 为空时，Wegent Web 的编码入口会进入 `/chat?agent=code`，并只显示编码智能体；配置后，左侧菜单显示 **WeWork** 而不是 **编码**，并打开该运行时 URL。该配置只通过 `/runtime-config` 下发，不支持 `NEXT_PUBLIC_*` 回退。
 
 ### 步骤 3: 启动服务
 
@@ -124,6 +138,18 @@ docker-compose ps
 
 # 查看日志
 docker-compose logs -f
+```
+
+如需测试 CI 发布的 edge 镜像，可以设置统一镜像 tag：
+
+```bash
+WEGENT_IMAGE_TAG=edge docker compose up -d
+```
+
+使用 `install.sh` 时也可以直接传入 edge 快捷参数：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --edge
 ```
 
 ### 步骤 4: 验证安装
@@ -161,7 +187,7 @@ sudo apt-get update
 sudo apt-get install python3.10 python3-pip python3-venv
 
 # 安装 Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # 安装 MySQL
@@ -239,24 +265,29 @@ mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET ut
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+> **管理员密码**: 首次启动会自动创建 `admin` 管理员账号，但不会写入默认密码。默认情况下，`CHECK_SYSTEM_INITIALIZATION_STATUS=True` 会让后端启动时把初始化状态加载到内存，第一次打开登录页时系统会强制进入管理员密码设置流程；完成设置后才能登录和继续使用系统。特殊部署需要跳过该检查时，可设置 `CHECK_SYSTEM_INITIALIZATION_STATUS=False`。
+
 ### 步骤 5: 安装前端
 
 在新终端中：
 
 ```bash
-# 进入前端目录
-cd frontend
+# 回到仓库根目录
+cd Wegent
 
-# 安装依赖
-npm install
+# 安装 pnpm workspace 依赖
+pnpm install
 
 # 配置环境变量
+cd frontend
 cp .env.local.example .env.local
 vim .env.local  # 编辑配置
 
 # 运行开发服务器
-npm run dev
+pnpm run dev
 ```
+
+仓库根目录的 `pnpm-workspace.yaml` 已声明 pnpm 安装所需的依赖构建脚本 allowlist，并关闭非交互环境下的 `node_modules` 重建确认。开发者和 Git hooks 应从仓库根目录运行 `pnpm install`，不要在子目录中单独维护 `approve-builds` 配置。
 
 ### 步骤 6: 安装 Executor Manager
 
@@ -275,10 +306,10 @@ npm run dev
 services:
   frontend:
     ports:
-      - "3001:3000"  # 改为 3001
+      - "3001:3000" # 改为 3001
   backend:
     ports:
-      - "8001:8000"  # 改为 8001
+      - "8001:8000" # 改为 8001
 ```
 
 ### 配置 HTTPS
@@ -370,6 +401,7 @@ curl http://localhost:8000/api/health
 **错误**: `Error: Port 3000 is already in use`
 
 **解决方案**:
+
 ```bash
 # 查找占用端口的进程
 lsof -i :3000
@@ -385,6 +417,7 @@ kill -9 <PID>
 **错误**: `Can't connect to MySQL server`
 
 **解决方案**:
+
 ```bash
 # 确保 MySQL 正在运行
 docker-compose ps mysql
@@ -400,6 +433,7 @@ mysql -u task_user -p -h localhost task_manager
 **错误**: `Error connecting to Redis`
 
 **解决方案**:
+
 ```bash
 # 确保 Redis 正在运行
 redis-cli ping
@@ -413,6 +447,7 @@ docker-compose logs redis
 **错误**: `Error pulling image`
 
 **解决方案**:
+
 ```bash
 # 使用国内镜像源
 # 编辑 /etc/docker/daemon.json

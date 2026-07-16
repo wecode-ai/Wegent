@@ -28,8 +28,11 @@ from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
+from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.orchestrator import (
+    DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
+    MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
 
@@ -50,6 +53,8 @@ def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[Use
         "query": "Search query text",
         "max_results": "Maximum number of results to return (default: 10, max: 50)",
         "document_ids": "Optional list of document IDs to restrict search scope",
+        "folder_ids": "Optional list of folder IDs to restrict search scope",
+        "include_subfolders": "Whether folder_ids include descendant folders",
     },
 )
 async def search_knowledge_base(
@@ -58,6 +63,8 @@ async def search_knowledge_base(
     query: str,
     max_results: int = 10,
     document_ids: Optional[list[int]] = None,
+    folder_ids: Optional[list[int]] = None,
+    include_subfolders: bool = True,
 ) -> Dict[str, Any]:
     """
     Search knowledge base using RAG retrieval.
@@ -68,6 +75,8 @@ async def search_knowledge_base(
         query: Search query text
         max_results: Maximum number of results (default: 10, max: 50)
         document_ids: Optional document IDs to filter search scope
+        folder_ids: Optional folder IDs to filter search scope
+        include_subfolders: Whether folder_ids include descendant folders
 
     Returns:
         Dict with search results including chunks and sources
@@ -95,13 +104,35 @@ async def search_knowledge_base(
                 "total": 0,
             }
 
+        scope_specified = folder_ids is not None or document_ids is not None
+        resolved_document_ids = document_ids
+        if scope_specified:
+            resolved_document_ids = (
+                KnowledgeFolderService.resolve_document_ids_for_scope(
+                    db=db,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user.id,
+                    folder_ids=folder_ids,
+                    document_ids=document_ids,
+                    include_subfolders=include_subfolders,
+                )
+            )
+            if not resolved_document_ids:
+                return {
+                    "query": query,
+                    "chunks": [],
+                    "sources": [],
+                    "total": 0,
+                    "mode": "rag_retrieval",
+                }
+
         result = await knowledge_orchestrator.retrieve_knowledge(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
             query=query,
             max_results=max_results,
-            document_ids=document_ids,
+            document_ids=resolved_document_ids if scope_specified else None,
             route_mode="rag_retrieval",
         )
 
@@ -167,12 +198,16 @@ async def search_knowledge_base(
     param_descriptions={
         "scope": "Resource scope - 'all', 'personal', or 'group'",
         "group_name": "Group name (required when scope='group')",
+        "limit": "Maximum number of knowledge bases to return",
+        "offset": "Start offset for paginated listing",
     },
 )
 def list_knowledge_bases(
     token_info: TaskTokenInfo,
     scope: str = "all",
     group_name: Optional[str] = None,
+    limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
+    offset: int = 0,
 ) -> Dict[str, Any]:
     """
     List all knowledge bases accessible to the current user.
@@ -190,16 +225,34 @@ def list_knowledge_bases(
         user = _get_user_from_token(db, token_info)
         if not user:
             return {"error": "User not found", "total": 0, "items": []}
+        if limit < 1 or limit > MAX_KNOWLEDGE_LIST_LIMIT:
+            return {
+                "error": f"limit must be between 1 and {MAX_KNOWLEDGE_LIST_LIMIT}",
+                "total": 0,
+                "items": [],
+            }
+        if offset < 0:
+            return {
+                "error": "offset must be greater than or equal to 0",
+                "total": 0,
+                "items": [],
+            }
 
         result = knowledge_orchestrator.list_knowledge_bases(
             db=db,
             user=user,
             scope=scope,
             group_name=group_name,
+            limit=limit,
+            offset=offset,
         )
 
         return {
             "total": result.total,
+            "returned_count": result.returned_count,
+            "limit": result.limit,
+            "offset": result.offset,
+            "has_more": result.has_more,
             "items": [item.model_dump() for item in result.items],
         }
 
@@ -213,15 +266,29 @@ def list_knowledge_bases(
 
 @mcp_tool(
     name="wegent_kb_list_documents",
-    description="List all documents in a knowledge base.",
+    description="List all documents in a knowledge base, optionally filtered by folder.",
     server="knowledge",
     param_descriptions={
         "knowledge_base_id": "Knowledge base ID to list documents from",
+        "folder_id": "Optional folder ID to filter documents by (0 or omit for root/all documents)",
+        "include_subfolders": "Whether folder_id includes descendant folders",
+        "keyword": "Optional keyword to search document names",
+        "sort_by": "Sort field: name, size, createdAt, or updatedAt",
+        "sort_order": "Sort order: asc or desc",
+        "limit": "Maximum number of documents to return",
+        "offset": "Start offset for paginated listing",
     },
 )
 def list_documents(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
+    folder_id: Optional[int] = None,
+    include_subfolders: bool = False,
+    keyword: Optional[str] = None,
+    sort_by: str = "createdAt",
+    sort_order: str = "desc",
+    limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
+    offset: int = 0,
 ) -> Dict[str, Any]:
     """
     List all documents in a knowledge base.
@@ -229,6 +296,11 @@ def list_documents(
     Args:
         token_info: Task token information containing user context
         knowledge_base_id: Knowledge base ID
+        folder_id: Optional folder ID to filter documents by
+        include_subfolders: Whether folder_id includes descendant folders
+        keyword: Optional keyword to search document names
+        sort_by: Sort field
+        sort_order: Sort order
 
     Returns:
         Dict with total count and list of documents
@@ -238,15 +310,38 @@ def list_documents(
         user = _get_user_from_token(db, token_info)
         if not user:
             return {"error": "User not found", "total": 0, "items": []}
+        if limit < 1 or limit > MAX_KNOWLEDGE_LIST_LIMIT:
+            return {
+                "error": f"limit must be between 1 and {MAX_KNOWLEDGE_LIST_LIMIT}",
+                "total": 0,
+                "items": [],
+            }
+        if offset < 0:
+            return {
+                "error": "offset must be greater than or equal to 0",
+                "total": 0,
+                "items": [],
+            }
 
         result = knowledge_orchestrator.list_documents(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
+            folder_id=folder_id,
+            limit=limit,
+            offset=offset,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         return {
             "total": result.total,
+            "returned_count": result.returned_count,
+            "limit": result.limit,
+            "offset": result.offset,
+            "has_more": result.has_more,
             "items": [item.model_dump() for item in result.items],
         }
 
@@ -355,6 +450,7 @@ def create_knowledge_base(
             "Source type: 'text', 'file', 'web', or 'attachment'. "
             "Use 'attachment' for inbox messages (see contentAttachmentIds in inbox context)."
         ),
+        "folder_id": "Optional folder ID to place the document in (0 or omit for root folder)",
         "content": "Text content (for source_type='text'). Avoid for large content - use 'attachment' instead.",
         "file_base64": "Base64-encoded file content (for source_type='file')",
         "file_extension": "File extension like 'txt', 'md', 'pdf' (for source_type='file')",
@@ -374,6 +470,7 @@ def create_document(
     knowledge_base_id: int,
     name: str,
     source_type: str,
+    folder_id: int = 0,
     content: Optional[str] = None,
     file_base64: Optional[str] = None,
     file_extension: Optional[str] = None,
@@ -399,6 +496,7 @@ def create_document(
         knowledge_base_id: Target knowledge base ID
         name: Document name
         source_type: Source type ("text", "file", "web", or "attachment")
+        folder_id: Optional folder ID to place the document in (0 means root folder)
         content: Text content (for source_type="text")
         file_base64: Base64-encoded file content (for source_type="file")
         file_extension: File extension (for source_type="file", e.g., "txt", "md", "pdf")
@@ -423,6 +521,7 @@ def create_document(
             knowledge_base_id=knowledge_base_id,
             name=name,
             source_type=source_type,
+            folder_id=folder_id,
             content=content,
             file_base64=file_base64,
             file_extension=file_extension,

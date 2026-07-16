@@ -32,6 +32,11 @@ export interface RerankConfig {
   return_documents?: boolean
 }
 
+export interface ModelCapabilities {
+  supportsImage?: boolean
+  supportsVideo?: boolean
+}
+
 export interface AspectRatioOption {
   label: string
   value: string
@@ -101,10 +106,13 @@ export interface ModelCRD {
     maxOutputTokens?: number // Maximum output tokens the model can generate per response
     // New fields for multi-type model support
     modelType?: ModelCategoryType
+    modelGroup?: string
+    modelSubGroup?: string
     ttsConfig?: TTSConfig
     sttConfig?: STTConfig
     embeddingConfig?: EmbeddingConfig
     rerankConfig?: RerankConfig
+    modelCapabilities?: ModelCapabilities
     videoConfig?: VideoGenerationConfig
     imageConfig?: ImageGenerationConfig
   }
@@ -152,11 +160,11 @@ export interface ModelNamesResponse {
 }
 
 // Unified Model Types (new API with type differentiation)
-export type ModelTypeEnum = 'public' | 'user' | 'group'
+export type ModelTypeEnum = 'public' | 'user' | 'group' | 'runtime'
 
 export interface UnifiedModel {
   name: string
-  type: ModelTypeEnum // 'public' or 'user' or 'group' - identifies model source
+  type: ModelTypeEnum // identifies model source
   displayName?: string | null
   provider?: string | null // 'openai' | 'claude'
   modelId?: string | null
@@ -165,6 +173,10 @@ export interface UnifiedModel {
   isActive?: boolean
   modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
   isAdvanced?: boolean
+  modelGroup?: string | null
+  modelSubGroup?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface UnifiedModelListResponse {
@@ -182,7 +194,13 @@ export type ErrorRecommendationsResponse = {
 
 // Test Connection Types
 export interface TestConnectionRequest {
-  provider_type: 'openai' | 'anthropic' | 'gemini' | 'gemini-deep-research' | 'openai-responses'
+  provider_type:
+    | 'openai'
+    | 'anthropic'
+    | 'gemini'
+    | 'gemini-deep-research'
+    | 'openai-responses'
+    | 'custom'
   model_id: string
   api_key: string
   base_url?: string
@@ -244,7 +262,7 @@ export const modelApis = {
    * @param shellType - Optional shell type to filter compatible models
    * @param includeConfig - Whether to include full model config in response
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    * @param modelCategoryType - Optional model category type filter (llm, tts, stt, embedding, rerank)
    */
   async getUnifiedModels(
@@ -293,7 +311,7 @@ export const modelApis = {
   /**
    * Get all models as CRD resources (user's own models)
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (also used as namespace when scope is 'group')
+   * @param groupName - Optional group name. Also used as namespace when creating in group scope.
    */
   async getAllModels(
     scope?: 'personal' | 'group' | 'all',

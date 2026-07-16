@@ -55,7 +55,7 @@ See [Knowledge Base Types](./knowledge-base-types.md) for detailed comparison.
 |---------|---------|-------------|
 | **Retrieval Mode** | Vector / Keyword / Hybrid | Search method |
 | **top_k** | 1-10 (default: 5) | Number of results |
-| **score_threshold** | 0.0-1.0 (default: 0.7) | Minimum relevance score |
+| **score_threshold** | 0.0-1.0 (default: 0.5) | Minimum relevance score |
 
 ### Step 5: Upload Documents
 
@@ -148,6 +148,21 @@ Generate an aggregate summary of the entire Knowledge Base:
 2. Click **Generate Summary**
 3. View combined summary of all documents
 
+#### Manually Editing Knowledge Base Summary
+
+Knowledge base summaries can be edited manually to correct AI-generated content, add missing context, or rewrite the summary in a form that better fits team usage.
+
+- Manual summary takes priority in UI display
+- Manual summary takes priority when injected into knowledge-base chat context
+- AI summary generation continues running in the background
+- Use **Restore AI Summary** to switch back to the latest AI-generated summary
+
+**Notes:**
+
+- The current version only supports manual editing of the knowledge base long summary
+- Document summaries are still generated automatically
+- If **Auto Generate Summary** is disabled, new AI summaries stop updating, but saved manual summary content can still be displayed
+
 ### Summary Retry
 
 If summary generation fails:
@@ -202,6 +217,61 @@ Sources:
 
 ---
 
+## 🔐 Permission Management
+
+Knowledge bases support fine-grained access control through the Share Service architecture. You can manage members, assign roles, and authorize external entities (e.g., groups) to access your knowledge bases.
+
+### Member Roles
+
+| Role | Permissions |
+|------|-------------|
+| **Owner** | Full control, can transfer ownership and manage all members |
+| **Maintainer** | Can manage documents, settings, and invite members |
+| **Developer** | Can read and contribute documents |
+| **Reporter** | Read-only access |
+
+### Managing Members
+
+1. Open a knowledge base and click **Permission Management**
+2. Under the **Personal** tab, invite users by username or email
+3. Assign a role from the dropdown (Owner, Maintainer, Developer, Reporter)
+4. Click **Add** to send the invitation
+
+### Entity-Level Authorization
+
+In addition to individual users, you can authorize entire groups or namespaces:
+
+1. Switch to the **Group** tab in the permission dialog
+2. Search for a group or namespace
+3. Select the desired group and assign a role
+4. All members of that group inherit the assigned permissions
+
+**Note:** Entity-authorized knowledge bases appear in the members' **Shared with Me** section rather than under the group's native knowledge bases.
+
+### Permission Source Visualization
+
+When viewing members, the system displays how each member gained access:
+
+- **Direct** — Added directly as a member
+- **Entity** — Access granted through a group or namespace
+- **Link** — Access obtained via a share link
+
+### Role Conflict Resolution
+
+When a user has multiple access paths to the same knowledge base (e.g., direct membership and group membership), the system automatically resolves conflicts by selecting the highest-privilege role.
+
+### Ownership Transfer
+
+Owners can transfer ownership to another member:
+
+1. In **Permission Management**, locate the target member
+2. Click **Transfer Ownership** next to their name
+3. Confirm the transfer in the dialog
+
+The previous owner is downgraded to Maintainer, and the new owner gains full control.
+
+---
+
 ## ❓ Troubleshooting
 
 ### Upload Issues
@@ -247,3 +317,4 @@ Sources:
 - [Document Management](./document-management.md) - Adding and managing documents
 - [Chunking Strategies](./chunking-strategies.md) - Document chunking options
 - [Configuring Retrievers](./configuring-retrievers.md) - Retrieval configuration
+- [Permission Management](#-permission-management) - Member roles and access control

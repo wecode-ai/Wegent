@@ -3,14 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.subtask_context import ContextStatus, ContextType
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
@@ -20,20 +22,40 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
-from app.schemas.subscription import NotificationChannelInfo
-from app.schemas.user import UserCreate, UserInDB, UserUpdate
-from app.services.kind import kind_service
-from app.services.mcp_provider_registry import (
-    get_mcp_provider,
-    get_mcp_provider_service,
+from app.schemas.quick_launch import (
+    QuickLaunchFavoriteAgent,
+    QuickLaunchFunctionConfig,
+    QuickLaunchFunctionResponse,
+    QuickLaunchPreparePresetRequest,
+    QuickLaunchPreparePresetResponse,
+    QuickLaunchResponse,
+    input_presets_from_phrases,
+    normalize_quick_phrases,
 )
+from app.schemas.subscription import NotificationChannelInfo
+from app.schemas.subtask_context import AttachmentDetailResponse
+from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.services.admin_password_bootstrap import (
+    get_cached_admin_password_setup_required,
+    raise_admin_password_setup_required,
+)
+from app.services.auth import extract_token_from_header, verify_task_token
+from app.services.context import context_service
+from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
 from app.services.user import user_service
 from app.services.user_mcp_service import user_mcp_service
+from app.services.user_runtime_config import (
+    UserRuntimeConfigError,
+    UserRuntimeConfigSyncError,
+    user_runtime_config_service,
+)
+from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ==================== Feature Flags ====================
@@ -63,6 +85,63 @@ class MCPProviderServiceConfigResponse(BaseModel):
     url: str = ""
 
 
+class UserRuntimeConfigResponse(BaseModel):
+    """Public status for a user-scoped runtime configuration."""
+
+    runtime: str
+    display_name: str
+    use_user_config: bool = False
+    use_proxy: bool = False
+    configured: bool = False
+    target_path: str
+    auth_json_sha256: Optional[str] = None
+    auth_json_updated_at: Optional[str] = None
+    proxy_configured: bool = False
+    proxy_url_masked: str = ""
+    proxy_updated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserProxyConfigResponse(BaseModel):
+    """Public status for a user-scoped proxy configuration."""
+
+    configured: bool = False
+    proxy_url_masked: str = ""
+    proxy_updated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UserRuntimeConfigUpdateRequest(BaseModel):
+    """Update request for runtime config preferences."""
+
+    use_user_config: bool
+    use_proxy: Optional[bool] = None
+
+
+class UserRuntimeAuthJsonRequest(BaseModel):
+    """Request body for uploading runtime auth JSON."""
+
+    auth_json: str
+
+
+class UserProxyConfigRequest(BaseModel):
+    """Request body for saving a user proxy URL."""
+
+    proxy_url: str = ""
+
+
+class UserRuntimeConfigImportRequest(BaseModel):
+    """Request body for importing runtime auth JSON from one local device."""
+
+    device_id: str
+
+
+class WegentRuntimeUserResponse(BaseModel):
+    """Encrypted user information for sandbox runtime clients."""
+
+    user: str
+
+
 @router.get("/features", response_model=FeatureFlags)
 async def get_feature_flags(
     _current_user: User = Depends(security.get_current_user),
@@ -86,12 +165,21 @@ async def get_feature_flags(
 @router.get("/me", response_model=UserInDB)
 async def read_current_user(
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """Get current user information.
 
     For the initial 'admin' user, also returns admin_setup_completed status.
     """
+    if current_user is None:
+        if get_cached_admin_password_setup_required():
+            raise_admin_password_setup_required()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Check admin setup status only for the initial 'admin' user
     # This is used by GlobalAdminSetupWizard to show setup wizard on first login
     admin_setup_completed = None
@@ -119,6 +207,46 @@ async def read_current_user(
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
         admin_setup_completed=admin_setup_completed,
+    )
+
+
+@router.get("/me/wegent-runtime", response_model=WegentRuntimeUserResponse)
+async def read_wegent_runtime_user(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Return encrypted user information for a Wegent task token."""
+
+    token = extract_token_from_header(authorization or "")
+    token_info = verify_task_token(token or "")
+    if not token_info:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Wegent token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == token_info.user_id, User.is_active.is_(True))
+        .first()
+    )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
+
+    payload = {
+        "employee_id": "",
+        "email": user.email or "",
+        "name": user.user_name,
+        "uid": str(user.id),
+        "expire_at": int(token_info.expire_at or 0),
+    }
+    return WegentRuntimeUserResponse(
+        user=encrypt_sensitive_data_with_embedded_iv(
+            json.dumps(payload, ensure_ascii=False)
+        )
     )
 
 
@@ -154,6 +282,163 @@ async def update_current_user_endpoint(
 
 
 @router.get(
+    "/me/runtime-configs/{runtime}",
+    response_model=UserRuntimeConfigResponse,
+)
+async def get_user_runtime_config(
+    runtime: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user's runtime config status."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.get_config(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.put(
+    "/me/runtime-configs/{runtime}",
+    response_model=UserRuntimeConfigResponse,
+)
+async def update_user_runtime_config(
+    runtime: str,
+    request: UserRuntimeConfigUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Update whether a user runtime config is enabled."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.set_use_user_config(
+                db,
+                user=current_user,
+                runtime=runtime,
+                use_user_config=request.use_user_config,
+                use_proxy=request.use_proxy,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.put(
+    "/me/proxy-config",
+    response_model=UserProxyConfigResponse,
+)
+async def update_user_proxy_config(
+    request: UserProxyConfigRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Upload and encrypt current user's proxy URL."""
+    try:
+        return UserProxyConfigResponse(
+            **user_runtime_config_service.save_proxy_url(
+                db,
+                user=current_user,
+                proxy_url=request.proxy_url,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/me/proxy-config",
+    response_model=UserProxyConfigResponse,
+)
+async def get_user_proxy_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get current user's proxy config status."""
+    return UserProxyConfigResponse(
+        **user_runtime_config_service.get_proxy_config(
+            db,
+            user_id=current_user.id,
+        )
+    )
+
+
+@router.post(
+    "/me/runtime-configs/{runtime}/auth-json",
+    response_model=UserRuntimeConfigResponse,
+)
+async def upload_user_runtime_auth_json(
+    runtime: str,
+    request: UserRuntimeAuthJsonRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Upload and encrypt current user's runtime auth JSON."""
+    try:
+        return UserRuntimeConfigResponse(
+            **user_runtime_config_service.save_auth_json(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                auth_json=request.auth_json,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/me/runtime-configs/{runtime}/import-device",
+    response_model=UserRuntimeConfigResponse,
+)
+async def import_user_runtime_auth_json_from_device(
+    runtime: str,
+    request: UserRuntimeConfigImportRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Import and encrypt current user's runtime auth JSON from a local device."""
+    try:
+        return UserRuntimeConfigResponse(
+            **await user_runtime_config_service.import_auth_json_from_device(
+                db,
+                user_id=current_user.id,
+                runtime=runtime,
+                device_id=request.device_id,
+                preferences=current_user.preferences,
+            )
+        )
+    except UserRuntimeConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except UserRuntimeConfigSyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
     "/me/mcps/providers/{provider_id}/services",
     response_model=list[MCPProviderServiceConfigResponse],
 )
@@ -162,8 +447,10 @@ async def list_mcp_provider_services(
     current_user: User = Depends(security.get_current_user),
 ):
     """List MCP provider services merged with the current user's configuration."""
-    provider = get_mcp_provider(provider_id)
-    if not provider:
+    if not user_mcp_service.has_provider_services(
+        current_user.preferences,
+        provider_id,
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Unsupported MCP provider: {provider_id}",
@@ -187,7 +474,11 @@ async def get_mcp_provider_service_config(
     current_user: User = Depends(security.get_current_user),
 ):
     """Get the current user's MCP provider service configuration."""
-    service = get_mcp_provider_service(provider_id, service_id)
+    service = user_mcp_service.get_provider_service_definition(
+        current_user.preferences,
+        provider_id,
+        service_id,
+    )
     if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -214,7 +505,11 @@ async def update_mcp_provider_service_config(
     current_user: User = Depends(security.get_current_user),
 ):
     """Update the current user's MCP provider service configuration."""
-    service = get_mcp_provider_service(provider_id, service_id)
+    service = user_mcp_service.get_provider_service_definition(
+        current_user.preferences,
+        provider_id,
+        service_id,
+    )
     if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -317,6 +612,122 @@ def create_user(
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
+QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY = "quick_launch_functions"
+
+
+def _get_system_config_value(db: Session, key: str) -> tuple[int, dict]:
+    config = db.query(SystemConfig).filter(SystemConfig.config_key == key).first()
+    if not config:
+        return 0, {}
+    return config.version, config.config_value or {}
+
+
+def _get_user_preferences(current_user: User) -> dict:
+    preferences = {}
+    if current_user.preferences:
+        try:
+            preferences = json.loads(current_user.preferences)
+        except (json.JSONDecodeError, TypeError):
+            preferences = {}
+    return preferences if isinstance(preferences, dict) else {}
+
+
+def _get_user_quick_access_config(current_user: User) -> dict:
+    quick_access_config = _get_user_preferences(current_user).get("quick_access")
+    return quick_access_config if isinstance(quick_access_config, dict) else {}
+
+
+def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
+    quick_access_config = _get_user_quick_access_config(current_user)
+    return quick_access_config.get("teams", [])
+
+
+def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
+    team_data = kind_service.get_team_by_id(team_id)
+    if not team_data:
+        return None
+
+    metadata = team_data.get("metadata", {})
+    spec = team_data.get("spec", {})
+    title = metadata.get("displayName") or metadata.get("name", f"Team {team_id}")
+
+    return QuickLaunchFavoriteAgent(
+        id=team_data.get("id", team_id),
+        team_id=team_data.get("id", team_id),
+        name=metadata.get("name", f"team-{team_id}"),
+        title=title,
+        description=spec.get("description"),
+        icon=spec.get("icon"),
+        recommended_mode=spec.get("recommended_mode", "both"),
+        agent_type=team_data.get("agent_type"),
+        quick_phrases=normalize_quick_phrases(spec.get("quick_phrases")),
+        input_presets=input_presets_from_phrases(spec.get("quick_phrases")),
+    )
+
+
+def _build_system_function(
+    config: QuickLaunchFunctionConfig,
+) -> Optional[QuickLaunchFunctionResponse]:
+    if not config.enabled:
+        return None
+
+    team_data = kind_service.get_team_by_id(config.team_id)
+    if not team_data:
+        return None
+
+    metadata = team_data.get("metadata", {})
+    return QuickLaunchFunctionResponse(
+        **config.model_dump(),
+        name=metadata.get("name", f"team-{config.team_id}"),
+    )
+
+
+def _load_quick_launch_function_configs(
+    raw_functions: object,
+) -> list[QuickLaunchFunctionConfig]:
+    if not isinstance(raw_functions, list):
+        logger.warning(
+            "Skipping quick launch functions config because it is not a list"
+        )
+        return []
+
+    function_configs: list[QuickLaunchFunctionConfig] = []
+    for index, item in enumerate(raw_functions):
+        if not isinstance(item, dict):
+            logger.warning(
+                "Skipping invalid quick launch function config at index %s: expected object",
+                index,
+            )
+            continue
+
+        try:
+            function_configs.append(QuickLaunchFunctionConfig(**item))
+        except ValidationError as exc:
+            logger.warning(
+                "Skipping invalid quick launch function config at index %s: %s",
+                index,
+                exc,
+            )
+
+    return function_configs
+
+
+def _find_enabled_quick_launch_function(
+    function_configs: list[QuickLaunchFunctionConfig],
+    function_id: str,
+) -> Optional[QuickLaunchFunctionConfig]:
+    for config in function_configs:
+        if config.id == function_id and config.enabled:
+            return config
+    return None
+
+
+def _is_ready_attachment_context(context: object) -> bool:
+    return bool(
+        context
+        and getattr(context, "context_type", None) == ContextType.ATTACHMENT.value
+        and getattr(context, "status", None) == ContextStatus.READY.value
+    )
 
 
 @router.get("/quick-access", response_model=QuickAccessResponse)
@@ -342,14 +753,7 @@ async def get_user_quick_access(
     )
 
     # Get user preferences
-    user_preferences = {}
-    if current_user.preferences:
-        try:
-            user_preferences = json.loads(current_user.preferences)
-        except (json.JSONDecodeError, TypeError):
-            user_preferences = {}
-
-    quick_access_config = user_preferences.get("quick_access", {})
+    quick_access_config = _get_user_quick_access_config(current_user)
     user_version = quick_access_config.get("version")
     user_team_ids = quick_access_config.get("teams", [])
 
@@ -404,6 +808,111 @@ async def get_user_quick_access(
         user_version=user_version,
         show_system_recommended=show_system_recommended,
         teams=result_teams,
+    )
+
+
+@router.get("/quick-launch", response_model=QuickLaunchResponse)
+async def get_user_quick_launch(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get homepage launchers split into system functions and user favorite agents.
+    """
+    _, function_config = _get_system_config_value(db, QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
+    raw_functions = function_config.get("functions", [])
+    function_configs = _load_quick_launch_function_configs(raw_functions)
+    system_functions = [
+        function
+        for function in (
+            _build_system_function(config)
+            for config in sorted(function_configs, key=lambda item: item.order)
+        )
+        if function is not None
+    ]
+
+    favorite_agents = [
+        agent
+        for agent in (
+            _build_favorite_agent(team_id)
+            for team_id in _get_user_quick_access_team_ids(current_user)
+        )
+        if agent is not None
+    ]
+
+    return QuickLaunchResponse(
+        system_functions=system_functions,
+        favorite_agents=favorite_agents,
+    )
+
+
+@router.post(
+    "/quick-launch/prepare-preset",
+    response_model=QuickLaunchPreparePresetResponse,
+)
+async def prepare_quick_launch_preset(
+    request: QuickLaunchPreparePresetRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Prepare a system quick launch preset for the current user.
+
+    Source attachments configured by admins are templates. They are copied into
+    current-user-owned, unlinked attachments before the normal send flow uses
+    them.
+    """
+    _, function_config = _get_system_config_value(db, QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
+    function_configs = _load_quick_launch_function_configs(
+        function_config.get("functions", [])
+    )
+    config = _find_enabled_quick_launch_function(
+        function_configs,
+        request.function_id,
+    )
+    if not config:
+        raise HTTPException(status_code=404, detail="Quick launch function not found")
+
+    if not kind_service.get_team_by_id(config.team_id):
+        raise HTTPException(
+            status_code=404, detail="Quick launch target team not found"
+        )
+
+    preset = next(
+        (item for item in config.input_presets if item.id == request.preset_id),
+        None,
+    )
+    if not preset:
+        raise HTTPException(status_code=404, detail="Quick launch preset not found")
+
+    attachments: list[AttachmentDetailResponse] = []
+    for source_attachment_id in preset.source_attachment_ids:
+        source_context = context_service.get_context_optional(
+            db,
+            source_attachment_id,
+        )
+        if not _is_ready_attachment_context(source_context):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Quick launch preset attachment is unavailable",
+            )
+
+        copied_context = context_service.copy_attachment_for_user(
+            db=db,
+            source_context=source_context,
+            target_user_id=current_user.id,
+            source_metadata={
+                "source": "quick_launch_preset",
+                "quick_launch_function_id": config.id,
+                "quick_launch_preset_id": preset.id,
+            },
+        )
+        attachments.append(AttachmentDetailResponse.from_context(copied_context))
+
+    return QuickLaunchPreparePresetResponse(
+        function_id=config.id,
+        preset_id=preset.id,
+        attachments=attachments,
     )
 
 
@@ -569,6 +1078,7 @@ class DefaultTeamConfig(BaseModel):
 class DefaultTeamsResponse(BaseModel):
     """Response model for default teams configuration"""
 
+    wework: Optional[DefaultTeamConfig] = None
     chat: Optional[DefaultTeamConfig] = None
     code: Optional[DefaultTeamConfig] = None
     knowledge: Optional[DefaultTeamConfig] = None
@@ -601,6 +1111,7 @@ async def get_default_teams(
     from app.core.config import settings
 
     return DefaultTeamsResponse(
+        wework=parse_default_team_config(settings.DEFAULT_TEAM_WEWORK),
         chat=parse_default_team_config(settings.DEFAULT_TEAM_CHAT),
         code=parse_default_team_config(settings.DEFAULT_TEAM_CODE),
         knowledge=parse_default_team_config(settings.DEFAULT_TEAM_KNOWLEDGE),

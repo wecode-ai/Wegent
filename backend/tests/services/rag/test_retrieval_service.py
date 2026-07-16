@@ -3,9 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from shared.models import RetrievalScope
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +23,191 @@ def set_auto_direct_injection_enabled_by_default(monkeypatch):
         False,
         raising=False,
     )
+
+
+class _FakeQaCountQuery:
+    def __init__(self, qa_pair_count):
+        self.qa_pair_count = qa_pair_count
+
+    def select_from(self, *args, **kwargs):
+        return self
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def scalar(self):
+        return self.qa_pair_count
+
+
+class _FakeQaCountDb:
+    def __init__(self, qa_pair_count):
+        self.qa_pair_count = qa_pair_count
+
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
+
+    def query(self, *args, **kwargs):
+        return _FakeQaCountQuery(self.qa_pair_count)
+
+
+def test_build_qa_query_plan_detects_qa_pair_chunks():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    plan = RetrievalService._build_qa_query_plan(
+        db=_FakeQaCountDb(5),
+        knowledge_base_id=1,
+    )
+
+    assert plan == {"retrieval_profile": "qa_pair", "qa_pair_count": 5}
+
+
+def test_build_qa_query_plan_ignores_non_qa_chunks():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    plan = RetrievalService._build_qa_query_plan(
+        db=_FakeQaCountDb(0),
+        knowledge_base_id=1,
+    )
+
+    assert plan is None
+
+
+def test_build_qa_query_plan_uses_sqlite_json_and_scope_filter():
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.rag.retrieval_service import RetrievalService
+
+    engine = create_engine("sqlite:///:memory:")
+    KnowledgeDocument.__table__.create(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    with session_factory() as db:
+        included_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=1,
+            name="included.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 3},
+        )
+        excluded_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=2,
+            name="excluded.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 5},
+        )
+        non_qa_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=3,
+            name="non-qa.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "sentence", "qa_pair_count": 9},
+        )
+        db.add_all([included_doc, excluded_doc, non_qa_doc])
+        db.commit()
+
+        plan = RetrievalService._build_qa_query_plan(
+            db=db,
+            knowledge_base_id=1,
+            scope=RetrievalScope(document_ids=[included_doc.id, non_qa_doc.id]),
+        )
+
+    assert plan == {"retrieval_profile": "qa_pair", "qa_pair_count": 3}
+
+
+@pytest.mark.asyncio
+async def test_retrieve_from_kb_internal_builds_qa_plan_for_vector_mode():
+    from app.services.rag.retrieval_service import RetrievalService
+    from shared.models import (
+        RemoteKnowledgeBaseQueryConfig,
+        RuntimeEmbeddingModelConfig,
+        RuntimeRetrievalConfig,
+        RuntimeRetrieverConfig,
+    )
+
+    service = RetrievalService()
+    service._execute_runtime_query = AsyncMock(return_value={"records": []})
+    kb = SimpleNamespace(id=1, name="qa-kb")
+    kb_config = RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=1,
+        index_owner_user_id=1,
+        retriever_config=RuntimeRetrieverConfig(
+            name="milvus",
+            namespace="default",
+            storage_config={"type": "milvus"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed",
+            model_namespace="default",
+            resolved_config={},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(retrieval_mode="vector"),
+    )
+
+    with patch.object(
+        RetrievalService,
+        "_build_qa_query_plan",
+        return_value={"retrieval_profile": "qa_pair", "qa_pair_count": 2},
+    ) as mock_build_plan:
+        await service._retrieve_from_kb_internal(
+            query="how to refund",
+            kb=kb,
+            db=MagicMock(),
+            knowledge_base_config=kb_config,
+        )
+
+    mock_build_plan.assert_called_once()
+    service._execute_runtime_query.assert_awaited_once()
+    assert service._execute_runtime_query.await_args.kwargs["query_plan"] == {
+        "retrieval_profile": "qa_pair",
+        "qa_pair_count": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_retrieve_from_kb_internal_skips_qa_plan_for_hybrid_mode():
+    from app.services.rag.retrieval_service import RetrievalService
+    from shared.models import (
+        RemoteKnowledgeBaseQueryConfig,
+        RuntimeEmbeddingModelConfig,
+        RuntimeRetrievalConfig,
+        RuntimeRetrieverConfig,
+    )
+
+    service = RetrievalService()
+    service._execute_runtime_query = AsyncMock(return_value={"records": []})
+    kb = SimpleNamespace(id=1, name="qa-kb")
+    kb_config = RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=1,
+        index_owner_user_id=1,
+        retriever_config=RuntimeRetrieverConfig(
+            name="milvus",
+            namespace="default",
+            storage_config={"type": "milvus"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed",
+            model_namespace="default",
+            resolved_config={},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(retrieval_mode="hybrid"),
+    )
+
+    with patch.object(RetrievalService, "_build_qa_query_plan") as mock_build_plan:
+        await service._retrieve_from_kb_internal(
+            query="how to refund",
+            kb=kb,
+            db=MagicMock(),
+            knowledge_base_config=kb_config,
+        )
+
+    mock_build_plan.assert_not_called()
+    assert service._execute_runtime_query.await_args.kwargs["query_plan"] is None
 
 
 @pytest.mark.asyncio
@@ -62,6 +252,73 @@ async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
     mock_get_context_map.assert_not_called()
     mock_create_context.assert_not_called()
     mock_update_context.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_with_routing_treats_empty_scope_as_unfiltered():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    service = RetrievalService()
+    service.retrieve_from_knowledge_base_internal = AsyncMock(
+        return_value={
+            "records": [
+                {
+                    "content": "retrieved chunk",
+                    "score": 0.9,
+                    "title": "doc.md",
+                    "metadata": {},
+                }
+            ]
+        }
+    )
+
+    scope = RetrievalScope()
+
+    result = await service.retrieve_with_routing(
+        query="test",
+        knowledge_base_ids=[1],
+        db=MagicMock(),
+        scope=scope,
+        route_mode="rag_retrieval",
+    )
+
+    assert result["records"] == [
+        {
+            "content": "retrieved chunk",
+            "score": 0.9,
+            "title": "doc.md",
+            "metadata": {},
+            "knowledge_base_id": 1,
+            "document_id": None,
+        }
+    ]
+    assert result["total"] == 1
+    service.retrieve_from_knowledge_base_internal.assert_awaited_once_with(
+        query="test",
+        search_hints=None,
+        knowledge_base_id=1,
+        db=ANY,
+        scope=scope,
+        metadata_condition=None,
+        user_name=None,
+        knowledge_base_config=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_original_documents_treats_empty_document_ids_as_empty_scope():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    db = MagicMock()
+
+    result = await RetrievalService().get_original_documents_from_knowledge_base(
+        knowledge_base_ids=[1],
+        db=db,
+        document_ids=[],
+    )
+
+    assert result == []
+    db.query.assert_not_called()
 
 
 @pytest.mark.unit
@@ -140,7 +397,14 @@ class TestGetAllChunksFromKnowledgeBase:
 
 @pytest.mark.unit
 class TestRetrieveForChatShell:
-    def test_internal_retrieve_endpoint_uses_gateway_runtime_spec(self, test_client):
+    def test_internal_retrieve_endpoint_uses_gateway_runtime_spec(
+        self,
+        test_client,
+        monkeypatch,
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
         payload = {
             "query": "test",
             "knowledge_base_ids": [123],
@@ -171,7 +435,11 @@ class TestRetrieveForChatShell:
                 },
             ) as mock_query,
         ):
-            response = test_client.post("/api/internal/rag/retrieve", json=payload)
+            response = test_client.post(
+                "/api/internal/rag/retrieve",
+                json=payload,
+                headers={"Authorization": "Bearer test-internal-token"},
+            )
 
         assert response.status_code == 200
         mock_resolve.assert_called_once()
@@ -356,7 +624,7 @@ class TestRetrieveForChatShell:
                 db=db,
                 max_results=5,
                 context_window=10000,
-                document_ids=[1],
+                scope=RetrievalScope(document_ids=[1]),
                 user_id=7,
             )
 
@@ -466,6 +734,30 @@ class TestRetrieveForChatShell:
                 context_window=10000,
                 used_context_tokens=9990,
                 reserved_output_tokens=0,
+                context_buffer_ratio=0.0,
+            )
+
+        assert result == "rag_retrieval"
+
+    def test_decide_route_mode_for_chat_shell_uses_available_budget_ratio(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        db = MagicMock()
+
+        with patch.object(
+            RetrievalService,
+            "_estimate_total_tokens_for_knowledge_bases",
+            return_value=1000,
+        ):
+            result = service.decide_route_mode_for_chat_shell(
+                query="test",
+                knowledge_base_ids=[123],
+                db=db,
+                route_mode="auto",
+                context_window=10000,
+                used_context_tokens=0,
+                reserved_output_tokens=8000,
                 context_buffer_ratio=0.0,
             )
 
@@ -641,7 +933,9 @@ class TestRetrieveForChatShell:
             knowledge_base_ids=[1],
             document_names=["release.md"],
         )
-        assert mock_retrieve.await_args.kwargs["document_ids"] == [301]
+        assert mock_retrieve.await_args.kwargs["scope"] == RetrievalScope(
+            document_ids=[301]
+        )
 
     @pytest.mark.asyncio
     async def test_force_rag_route_sorts_and_limits_results_globally(self):
@@ -758,6 +1052,7 @@ class TestRetrieveForChatShell:
                     ]
                 },
             ) as mock_execute,
+            patch.object(RetrievalService, "_build_qa_query_plan", return_value=None),
         ):
             result = await RetrievalService().retrieve_with_routing(
                 query="release checklist",
@@ -765,7 +1060,7 @@ class TestRetrieveForChatShell:
                 db=db,
                 max_results=5,
                 route_mode="rag_retrieval",
-                document_ids=[9],
+                scope=RetrievalScope(document_ids=[9]),
                 knowledge_base_configs=[kb_config],
             )
 
@@ -777,6 +1072,7 @@ class TestRetrieveForChatShell:
                 "title": "Checklist",
                 "metadata": {"doc_ref": "9"},
                 "knowledge_base_id": 123,
+                "document_id": 9,
             }
         ]
         mock_storage.assert_called_once_with(kb_config.retriever_config)
@@ -784,10 +1080,64 @@ class TestRetrieveForChatShell:
         mock_execute.assert_awaited_once_with(
             knowledge_id="123",
             query="release checklist",
+            query_plan=None,
+            search_hints=None,
             retrieval_config=kb_config.retrieval_config,
-            metadata_condition={
-                "operator": "and",
-                "conditions": [{"key": "doc_ref", "operator": "in", "value": ["9"]}],
-            },
+            scope=RetrievalScope(document_ids=[9]),
+            metadata_condition=None,
             user_id=7,
         )
+
+    @pytest.mark.asyncio
+    async def test_rag_retrieval_leaves_non_numeric_doc_ref_without_document_id(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        service.retrieve_from_knowledge_base_internal = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "chunk",
+                        "score": 0.9,
+                        "title": "doc.md",
+                        "metadata": {"doc_ref": "doc_abc"},
+                    }
+                ]
+            }
+        )
+
+        result = await service.retrieve_with_routing(
+            query="chunk",
+            knowledge_base_ids=[1],
+            db=MagicMock(),
+            route_mode="rag_retrieval",
+        )
+
+        assert result["records"][0]["document_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_rag_retrieval_extracts_document_id_from_prefixed_doc_ref(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        service.retrieve_from_knowledge_base_internal = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "chunk",
+                        "score": 0.9,
+                        "title": "doc.md",
+                        "metadata": {"doc_ref": "doc_9"},
+                    }
+                ]
+            }
+        )
+
+        result = await service.retrieve_with_routing(
+            query="chunk",
+            knowledge_base_ids=[1],
+            db=MagicMock(),
+            route_mode="rag_retrieval",
+        )
+
+        assert result["records"][0]["document_id"] == 9

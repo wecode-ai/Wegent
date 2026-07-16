@@ -15,6 +15,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
 )
+from app.services.context import context_service
 from app.services.knowledge.indexing import get_rag_indexing_skip_reason
 from app.services.knowledge.orchestrator import (
     KnowledgeOrchestrator,
@@ -171,6 +172,225 @@ class TestKnowledgeOrchestrator:
 
             assert result is None
 
+    def test_resolve_retrieval_config_completes_partial_explicit_config(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test explicit retrieval config is completed before persistence."""
+        partial_config = {
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+        }
+
+        with patch.object(
+            orchestrator,
+            "get_default_retriever",
+            return_value={
+                "retriever_name": "retriever-1",
+                "retriever_namespace": "default",
+            },
+        ) as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config=partial_config,
+                )
+
+        assert result == {
+            "retriever_name": "retriever-1",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+        mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
+        mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_defaults_auto_mode_to_vector(
+        self, orchestrator, mock_db, mock_user
+    ):
+        with (
+            patch.object(
+                orchestrator,
+                "get_default_retriever",
+                return_value={
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                },
+            ),
+            patch.object(
+                orchestrator,
+                "get_default_embedding_model",
+                return_value={
+                    "model_name": "embedding-1",
+                    "model_namespace": "default",
+                },
+            ),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config=None,
+            )
+
+        assert result["retrieval_mode"] == "vector"
+
+    def test_resolve_retrieval_config_normalizes_blank_mode_to_vector(
+        self, orchestrator, mock_db, mock_user
+    ):
+        with (
+            patch.object(
+                orchestrator,
+                "get_default_retriever",
+                return_value={
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                },
+            ),
+            patch.object(
+                orchestrator,
+                "get_default_embedding_model",
+                return_value={
+                    "model_name": "embedding-1",
+                    "model_namespace": "default",
+                },
+            ),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={"retrieval_mode": None},
+            )
+
+        assert result["retrieval_mode"] == "vector"
+
+    def test_resolve_retrieval_config_auto_selects_when_config_absent(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test auto mode builds a complete config when no config is provided."""
+        with patch.object(
+            orchestrator,
+            "get_default_retriever",
+            return_value={
+                "retriever_name": "retriever-1",
+                "retriever_namespace": "default",
+            },
+        ) as mock_get_retriever:
+            with patch.object(
+                orchestrator,
+                "get_default_embedding_model",
+                return_value={
+                    "model_name": "embedding-1",
+                    "model_namespace": "default",
+                },
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config=None,
+                )
+
+        assert result == {
+            "retriever_name": "retriever-1",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+        mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
+        mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
+
+    def test_resolve_retrieval_config_returns_none_when_defaults_unavailable(
+        self, orchestrator, mock_db, mock_user
+    ):
+        with patch.object(
+            orchestrator, "get_default_retriever", return_value=None
+        ) as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model", return_value=None
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config=None,
+                )
+
+        assert result is None
+        mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
+        mock_get_embedding.assert_called_once_with(mock_db, mock_user.id, "default")
+
+    def test_resolve_retrieval_config_disabled_returns_none_without_auto_select(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test disabled mode creates a knowledge base without RAG."""
+        with patch.object(orchestrator, "get_default_retriever") as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={"retrieval_mode": "vector"},
+                    rag_config_mode="disabled",
+                )
+
+        assert result is None
+        mock_get_retriever.assert_not_called()
+        mock_get_embedding.assert_not_called()
+
+    def test_resolve_retrieval_config_complete_explicit_config_does_not_auto_select(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Test a complete explicit config is persisted without default selection."""
+        with patch.object(orchestrator, "get_default_retriever") as mock_get_retriever:
+            with patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding:
+                result = orchestrator._resolve_retrieval_config(
+                    db=mock_db,
+                    user=mock_user,
+                    namespace="default",
+                    retrieval_config={
+                        "retriever_name": "retriever-1",
+                        "embedding_config": {"model_name": "embedding-1"},
+                    },
+                )
+
+        assert result == {
+            "retriever_name": "retriever-1",
+            "retriever_namespace": "default",
+            "embedding_config": {
+                "model_name": "embedding-1",
+                "model_namespace": "default",
+            },
+            "retrieval_mode": "vector",
+            "top_k": 5,
+            "score_threshold": 0.5,
+        }
+        mock_get_retriever.assert_not_called()
+        mock_get_embedding.assert_not_called()
+
     def test_get_task_model_returns_none_when_task_not_found(
         self, orchestrator, mock_db
     ):
@@ -191,7 +411,7 @@ class TestKnowledgeOrchestrator:
         ) as mock_service:
             mock_kb = MagicMock()
             mock_kb.id = 1
-            mock_service.list_knowledge_bases.return_value = [mock_kb]
+            mock_service.list_knowledge_bases_paginated.return_value = ([mock_kb], 1)
             mock_service.get_document_count.return_value = 5
 
             with patch(
@@ -208,6 +428,9 @@ class TestKnowledgeOrchestrator:
                     # Return a mock that has the expected attributes
                     result_mock = MagicMock()
                     result_mock.total = 1
+                    result_mock.returned_count = 1
+                    result_mock.offset = 0
+                    result_mock.has_more = False
                     mock_list_response.return_value = result_mock
 
                     result = orchestrator.list_knowledge_bases(
@@ -215,7 +438,10 @@ class TestKnowledgeOrchestrator:
                     )
 
                     assert result.total == 1
-                    mock_service.list_knowledge_bases.assert_called_once()
+                    assert result.returned_count == 1
+                    assert result.offset == 0
+                    assert result.has_more is False
+                    mock_service.list_knowledge_bases_paginated.assert_called_once()
 
     def test_list_documents_raises_when_kb_not_found(
         self, orchestrator, mock_db, mock_user
@@ -1057,6 +1283,176 @@ class TestKnowledgeOrchestrator:
                     user=mock_user,
                 )
 
+    def test_schedule_indexing_celery_uses_converted_attachment_when_present(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Already-converted documents index the converted attachment directly."""
+        mock_kb = MagicMock()
+        mock_kb.id = 1
+        mock_kb.namespace = "default"
+        mock_kb.json = {
+            "spec": {
+                "retrievalConfig": {
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                    "embedding_config": {
+                        "model_name": "embedding-1",
+                        "model_namespace": "default",
+                    },
+                }
+            }
+        }
+
+        mock_document = MagicMock()
+        mock_document.id = 10
+        mock_document.attachment_id = 20  # original source attachment
+        mock_document.converted_attachment_id = 77  # converted -> must be used
+        mock_document.file_extension = "pdf"
+
+        with patch(
+            "app.services.knowledge.index_state_machine.prepare_document_index_enqueue"
+        ) as mock_prepare:
+            mock_prepare.return_value = SimpleNamespace(
+                should_enqueue=True,
+                generation=7,
+                reason="scheduled",
+                previous_status="failed",
+            )
+
+            with patch(
+                "app.tasks.knowledge_tasks.index_document_task.delay"
+            ) as mock_delay:
+                mock_delay.return_value = SimpleNamespace(id="celery-task-1")
+
+                result = orchestrator._schedule_indexing_celery(
+                    db=mock_db,
+                    knowledge_base=mock_kb,
+                    document=mock_document,
+                    user=mock_user,
+                )
+
+        assert result["scheduled"] is True
+        mock_delay.assert_called_once()
+        # Indexing dispatches with the converted attachment id (77), not the
+        # original (20), so re-conversion is skipped for already-converted docs.
+        assert mock_delay.call_args.kwargs["attachment_id"] == 77
+
+    def test_update_document_content_cleans_converted_attachment_on_success(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """converted_attachment_id is cleared unconditionally; on a successful
+        delete the orphan attachment is gone too."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch.object(context_service, "delete_context") as mock_delete_context,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_delete_context.return_value = True
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared so reindex uses the freshly-overwritten source
+        assert document.converted_attachment_id is None
+        mock_delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_db.commit.assert_called()
+        # The document handed to reindex carries no stale converted pointer
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
+    def test_update_document_content_clears_reference_even_when_delete_returns_false(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Even when delete_context fails, the stale reference must be cleared so
+        the next reindex uses the freshly-overwritten source, not the old
+        converted Markdown (tmp/2.md P1). The leftover attachment is an orphan."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch.object(context_service, "delete_context") as mock_delete_context,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_delete_context.return_value = False  # physical delete failed
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared unconditionally — reindex must not see the stale id
+        assert document.converted_attachment_id is None
+        mock_delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
+    def test_update_document_content_clears_reference_even_when_delete_raises_exception(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Even when delete_context raises an exception, the stale reference must
+        be cleared so the next reindex uses the freshly-overwritten source, not
+        the old converted Markdown (tmp/2.md P1, exception path). The leftover
+        attachment is an orphan."""
+        document = SimpleNamespace(
+            id=1, kind_id=10, user_id=42, converted_attachment_id=999
+        )
+        kb = SimpleNamespace(id=10)
+
+        with (
+            patch("app.services.knowledge.orchestrator.KnowledgeService") as mock_svc,
+            patch.object(context_service, "delete_context") as mock_delete_context,
+            patch.object(orchestrator, "_schedule_indexing_celery") as mock_schedule,
+        ):
+            mock_svc.update_document_content.return_value = document
+            mock_svc.get_knowledge_base.return_value = (kb, True)
+            mock_delete_context.side_effect = RuntimeError("storage unavailable")
+
+            result = orchestrator.update_document_content(
+                db=mock_db,
+                user=mock_user,
+                document_id=1,
+                content="new content",
+            )
+
+        assert result["success"] is True
+        # Reference cleared unconditionally — reindex must not see the stale id
+        assert document.converted_attachment_id is None
+        mock_delete_context.assert_called_once_with(
+            db=mock_db, context_id=999, user_id=42
+        )
+        mock_schedule.assert_called_once()
+        assert (
+            mock_schedule.call_args.kwargs["document"].converted_attachment_id is None
+        )
+
     def test_reindex_document_returns_reason_specific_skip_message(
         self, orchestrator, mock_db, mock_user
     ):
@@ -1276,8 +1672,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[doc1, doc2],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc1, doc2], 2),
             ),
         ):
             # Mock db.query for User lookup
@@ -1299,6 +1695,9 @@ class TestListDocumentsCreatedBy:
 
         assert isinstance(result, KnowledgeDocumentListResponse)
         assert result.total == 2
+        assert result.returned_count == 2
+        assert result.offset == 0
+        assert result.has_more is False
         # Verify created_by is populated
         items = result.items
         created_by_map = {item.id: item.created_by for item in items}
@@ -1320,8 +1719,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[doc],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc], 1),
             ),
         ):
             mock_db = MagicMock()
@@ -1351,8 +1750,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([], 0),
             ),
         ):
             mock_db = MagicMock()
@@ -1366,6 +1765,8 @@ class TestListDocumentsCreatedBy:
         # No db.query should be called since documents list is empty
         mock_db.query.assert_not_called()
         assert result.total == 0
+        assert result.returned_count == 0
+        assert result.has_more is False
         assert result.items == []
 
     def test_list_documents_deduplicates_user_ids(self) -> None:
@@ -1385,8 +1786,8 @@ class TestListDocumentsCreatedBy:
                 return_value=(kb_mock, True),
             ),
             patch(
-                "app.services.knowledge.orchestrator.KnowledgeService.list_documents",
-                return_value=[doc1, doc2],
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc1, doc2], 2),
             ),
         ):
             mock_db = MagicMock()
@@ -1407,3 +1808,39 @@ class TestListDocumentsCreatedBy:
         assert result.items[1].created_by == "alice"
         # Verify db.query was called exactly once (batch query, not per-document)
         mock_db.query.assert_called_once()
+
+    def test_list_documents_propagates_pagination_metadata(self) -> None:
+        """list_documents should preserve pagination metadata from service results."""
+        orchestrator = KnowledgeOrchestrator()
+        user = SimpleNamespace(id=1, user_name="testuser")
+        doc = self._make_doc(doc_id=1, user_id=1, name="doc1.pdf")
+        kb_mock = SimpleNamespace(id=10)
+
+        with (
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                return_value=(kb_mock, True),
+            ),
+            patch(
+                "app.services.knowledge.orchestrator.KnowledgeService.list_documents_paginated",
+                return_value=([doc], 3),
+            ),
+        ):
+            mock_db = MagicMock()
+            user_query = MagicMock()
+            user_query.filter.return_value.all.return_value = [(1, "alice")]
+            mock_db.query.return_value = user_query
+
+            result = orchestrator.list_documents(
+                db=mock_db,
+                user=user,
+                knowledge_base_id=10,
+                offset=1,
+                limit=1,
+            )
+
+        assert result.total == 3
+        assert result.returned_count == 1
+        assert result.offset == 1
+        assert result.limit == 1
+        assert result.has_more is True

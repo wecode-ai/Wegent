@@ -9,7 +9,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlalchemy.orm import Session
 
 from app.schemas.kind import Bot, Shell
+from app.schemas.subtask_context import SubtaskContextBrief
 from app.schemas.task import SkillRef
+from app.services.task_fork_history import ForkHistoryItem
 from app.services.task_skill_selection import parse_requested_skill_refs_from_labels
 from app.utils.prompt_utils import extract_display_prompt
 
@@ -89,41 +91,29 @@ def convert_subtasks_to_dict(
 ) -> List[Dict[str, Any]]:
     """Convert subtask objects to response dictionaries."""
     subtasks_dict = []
-    for subtask in subtasks:
+    for item in subtasks:
+        subtask = item.subtask if isinstance(item, ForkHistoryItem) else item
+        inherited = item.inherited if isinstance(item, ForkHistoryItem) else False
+        origin_task_id = (
+            item.origin_task_id
+            if isinstance(item, ForkHistoryItem)
+            else subtask.task_id
+        )
+        origin_subtask_id = (
+            item.origin_subtask_id if isinstance(item, ForkHistoryItem) else subtask.id
+        )
         contexts_list = []
         if hasattr(subtask, "contexts") and subtask.contexts:
             for ctx in subtask.contexts:
-                ctx_dict = {
-                    "id": ctx.id,
-                    "context_type": ctx.context_type,
-                    "name": ctx.name,
-                    "status": (
-                        ctx.status.value if hasattr(ctx.status, "value") else ctx.status
-                    ),
-                }
-
-                if ctx.context_type == "attachment":
-                    ctx_dict.update(
-                        {
-                            "file_extension": ctx.file_extension,
-                            "file_size": ctx.file_size,
-                            "mime_type": ctx.mime_type,
-                        }
-                    )
-                elif ctx.context_type == "knowledge_base":
-                    ctx_dict.update({"document_count": ctx.document_count})
-                elif ctx.context_type == "table":
-                    type_data = ctx.type_data or {}
-                    url = type_data.get("url")
-                    if url:
-                        ctx_dict["source_config"] = {"url": url}
-
-                contexts_list.append(ctx_dict)
+                contexts_list.append(_serialize_context_brief(ctx))
 
         subtasks_dict.append(
             {
                 "id": subtask.id,
                 "task_id": subtask.task_id,
+                "inherited": inherited,
+                "origin_task_id": origin_task_id,
+                "origin_subtask_id": origin_subtask_id,
                 "team_id": subtask.team_id,
                 "title": subtask.title,
                 "bot_ids": subtask.bot_ids,
@@ -160,6 +150,13 @@ def convert_subtasks_to_dict(
         )
 
     return subtasks_dict
+
+
+def _serialize_context_brief(ctx: Any) -> Dict[str, Any]:
+    """Serialize a subtask context through the shared display-field schema."""
+    if hasattr(ctx, "model_dump"):
+        return ctx.model_dump(mode="json")
+    return SubtaskContextBrief.from_model(ctx).model_dump(mode="json")
 
 
 def add_group_chat_info_to_task(

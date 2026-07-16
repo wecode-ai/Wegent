@@ -22,6 +22,10 @@ from knowledge_engine.ingestion.metadata import (
     build_ingestion_metadata,
     enrich_nodes_metadata,
 )
+from knowledge_engine.ingestion.qa_unitizer import (
+    QAUnitizationResult,
+    unitize_qa_documents,
+)
 from knowledge_engine.splitter.config import (
     FlatChunkConfig,
     MarkdownEnhancementConfig,
@@ -35,6 +39,7 @@ from knowledge_engine.splitter.hierarchical import build_hierarchical_nodes
 from knowledge_engine.splitter.markdown_enhancement import enhance_markdown_nodes
 
 DEFAULT_FILE_AWARE_EXTENSION = ".txt"
+QA_PAIR_PARSER_SUBTYPE = "qa_pair"
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +199,41 @@ def build_ingestion_result(
             parser_subtype=hierarchical_parser_subtype,
         )
 
+    qa_unitization = _try_unitize_qa_documents(
+        documents=documents,
+        preparation=preparation,
+    )
+    if qa_unitization is not None:
+        qa_ingestion_metadata = build_ingestion_metadata(
+            preparation.normalized_splitter_config,
+            parser_subtype=QA_PAIR_PARSER_SUBTYPE,
+        )
+        qa_nodes = enrich_nodes_metadata(
+            qa_unitization.qa_nodes,
+            ingestion_metadata=qa_ingestion_metadata,
+        )
+        prose_nodes: list[BaseNode] = []
+        if qa_unitization.prose_documents:
+            prose_pipeline = IngestionPipeline(
+                transformations=_build_transformations(
+                    preparation.normalized_splitter_config,
+                    ingestion_metadata=preparation.ingestion_metadata,
+                    parser_subtype=preparation.parser_subtype,
+                    embed_model=embed_model,
+                )
+            )
+            prose_nodes = list(
+                prose_pipeline.run(documents=qa_unitization.prose_documents)
+            )
+        return IngestionResult(
+            index_nodes=[*qa_nodes, *prose_nodes],
+            parent_nodes=None,
+            child_nodes=None,
+            normalized_splitter_config=preparation.normalized_splitter_config,
+            ingestion_metadata=qa_ingestion_metadata,
+            parser_subtype=QA_PAIR_PARSER_SUBTYPE,
+        )
+
     pipeline = IngestionPipeline(
         transformations=_build_transformations(
             preparation.normalized_splitter_config,
@@ -211,6 +251,23 @@ def build_ingestion_result(
         ingestion_metadata=preparation.ingestion_metadata,
         parser_subtype=preparation.parser_subtype,
     )
+
+
+def _try_unitize_qa_documents(
+    *,
+    documents: list[Document],
+    preparation: IngestionPreparation,
+) -> QAUnitizationResult | None:
+    """Auto-unitize clear Q/A documents without changing the query contract."""
+    splitter_config = preparation.normalized_splitter_config
+    if splitter_config.chunk_strategy != "flat":
+        return None
+    if splitter_config.format_enhancement != "file_aware":
+        return None
+    if preparation.parser_subtype not in {"markdown_sentence", "sentence"}:
+        return None
+
+    return unitize_qa_documents(documents)
 
 
 def _prepare_hierarchical_documents(

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskType } from './api'
+import type { InteractiveFormAnswerPayload, TaskType } from './api'
 
 /**
  * Socket.IO event types and payload definitions
@@ -14,6 +14,7 @@ import type { TaskType } from './api'
 
 export const ClientEvents = {
   CHAT_SEND: 'chat:send',
+  CHAT_GUIDE: 'chat:guide',
   CHAT_CANCEL: 'chat:cancel',
   CHAT_RESUME: 'chat:resume',
   CHAT_RETRY: 'chat:retry',
@@ -35,6 +36,10 @@ export const ServerEvents = {
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+  CHAT_STATUS_UPDATED: 'chat:status_updated',
+  CHAT_GUIDANCE_QUEUED: 'chat:guidance_queued',
+  CHAT_GUIDANCE_APPLIED: 'chat:guidance_applied',
+  CHAT_GUIDANCE_EXPIRED: 'chat:guidance_expired',
 
   // Block events for mixed content rendering (to task room)
   CHAT_BLOCK_CREATED: 'chat:block_created',
@@ -123,6 +128,8 @@ export interface ChatSendPayload {
   knowledge_base_id?: number
   // Local device execution
   device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
+  // Project association
+  project_id?: number // Project ID to associate this task with
   // Skill selection
   /** Skill names to preload (for Chat Shell - prompts injected into system message) */
   preload_skill_names?: string[]
@@ -145,11 +152,22 @@ export interface ChatSendPayload {
     /** Duration in seconds for video generation */
     duration?: number
   }
+  interactive_form_answer?: InteractiveFormAnswerPayload
 }
 
 export interface ChatCancelPayload {
   subtask_id: number
   partial_content?: string
+}
+
+export interface ChatGuidePayload {
+  task_id: number
+  team_id?: number
+  message?: string
+  guidance: string
+  client_guidance_id: string
+  guidance_id?: string
+  subtask_id?: number
 }
 
 export interface ChatResumePayload {
@@ -193,7 +211,31 @@ export interface SourceReference {
   /** Document title/filename */
   title: string
   /** Knowledge base ID */
-  kb_id: number
+  kb_id?: number | null
+  /** Provider-specific source ID */
+  source_id?: string
+  /** Provider source type */
+  source_type?: string
+  /** Provider source URI */
+  source_uri?: string
+  /** Provider source name */
+  source_name?: string
+}
+
+export interface RetrievalSummaryPayload {
+  searched_source_ids?: string[]
+  ignored_source_ids?: string[]
+  source_statuses?: RetrievalSourceStatus[]
+}
+
+export interface RetrievalSourceStatus {
+  provider: string
+  source_id: string
+  source_name?: string | null
+  status: 'hit' | 'no_hit' | 'ignored' | 'failed'
+  record_count: number
+  citation_count: number
+  mode?: 'rag_retrieval' | 'direct_injection' | string | null
 }
 
 /** Gemini Deep Research grounding annotation */
@@ -204,6 +246,25 @@ export interface GeminiAnnotation {
   end_index: number
   /** Source URL for the citation */
   source: string
+}
+
+export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
+
+export interface ChatBlock {
+  id: string
+  type: ChatBlockType
+  content?: string
+  tool_use_id?: string
+  tool_name?: string
+  tool_input?: Record<string, unknown>
+  tool_output?: unknown
+  render_payload?: unknown
+  guidance_id?: string
+  loop_index?: number
+  applied_at?: string
+  argument_status?: 'streaming' | 'done'
+  status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
+  timestamp?: number
 }
 
 export interface ChatStartPayload {
@@ -238,19 +299,11 @@ export interface ChatChunkPayload {
     /** Incremental reasoning chunk for streaming */
     reasoning_chunk?: string
     /** Message blocks for mixed rendering (new format) */
-    blocks?: Array<{
-      id: string
-      type: 'text' | 'tool' | 'thinking' | 'error'
-      content?: string
-      tool_use_id?: string
-      tool_name?: string
-      tool_input?: Record<string, unknown>
-      tool_output?: unknown
-      status?: 'pending' | 'streaming' | 'done' | 'error'
-      timestamp?: number
-    }>
+    blocks?: ChatBlock[]
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
+    /** Aggregated retrieval coverage summary */
+    retrieval_summary?: RetrievalSummaryPayload
   }
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
@@ -268,25 +321,20 @@ export interface ChatDonePayload {
     shell_type?: string
     reasoning_content?: string
     /** Message blocks for mixed rendering (new format) */
-    blocks?: Array<{
-      id: string
-      type: 'text' | 'tool' | 'thinking' | 'error'
-      content?: string
-      tool_use_id?: string
-      tool_name?: string
-      tool_input?: Record<string, unknown>
-      tool_output?: unknown
-      status?: 'pending' | 'streaming' | 'done' | 'error'
-      timestamp?: number
-    }>
+    blocks?: ChatBlock[]
     error?: string // Error message if result represents error completion
+    termination_reason?: string
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
+    /** Aggregated retrieval coverage summary */
+    retrieval_summary?: RetrievalSummaryPayload
   }
   /** Message ID for ordering (primary sort key) */
   message_id?: number
   /** Knowledge base source references (for RAG citations) */
   sources?: SourceReference[]
+  /** Aggregated retrieval coverage summary */
+  retrieval_summary?: RetrievalSummaryPayload
 }
 
 export interface ChatErrorPayload {
@@ -305,21 +353,76 @@ export interface ChatCancelledPayload {
 }
 
 /**
+ * Snapshot of the current model-visible context budget for a chat turn.
+ *
+ * All numeric budget fields use token units except the *_percent fields.
+ * `display_*` values are intended for UI display, while the raw remaining/limit
+ * values follow the stricter internal guard accounting.
+ */
+export interface ContextMetricsSnapshot {
+  /** Full context window size for the active model, in tokens. */
+  context_window: number
+  /** Output tokens reserved up front when computing the usable input budget. */
+  reserved_output_tokens: number
+  /** Effective input budget after reserving output tokens, in tokens. */
+  available_input_tokens: number
+  /** Current model-visible input usage, in tokens. */
+  used_input_tokens: number
+  /** Strict remaining input budget after internal guard reservation, in tokens. */
+  remaining_input_tokens: number
+  /** Strict remaining input budget expressed as a percentage. */
+  remaining_percent: number
+  /** UI-facing remaining budget based on the full context window, in tokens. */
+  display_remaining_tokens: number
+  /** UI-facing remaining budget percentage shown to users. */
+  display_remaining_percent: number
+  /** Threshold where request-level compaction should begin, in tokens. */
+  trigger_limit: number
+  /** Desired post-compaction target budget, in tokens. */
+  target_limit: number
+  /** Whether current usage has crossed the trigger limit. */
+  is_over_trigger: boolean
+}
+
+/**
+ * Socket payload for `chat:status_updated`.
+ *
+ * Emitted when the active chat/subtask advances through major runtime phases
+ * such as post-tool updates, finalization, or other context-budget checkpoints.
+ */
+export interface ChatStatusUpdatedPayload {
+  /** Parent task identifier. */
+  task_id: number
+  /** Active subtask identifier for this status snapshot. */
+  subtask_id: number
+  /** Backend-provided phase name for the status update. */
+  phase: string
+  /** Context budget snapshot associated with this phase transition. */
+  context_metrics: ContextMetricsSnapshot
+  /** Optional transient summary-compaction runtime event. */
+  context_compaction?: ChatContextCompactionPayload
+}
+
+export interface ChatContextCompactionPayload {
+  type: 'summary_compact'
+  status: 'started' | 'completed' | 'fallback'
+  before_tokens: number
+  trigger_limit: number
+  target_limit: number
+  used_legacy_fallback: boolean
+  created_at: string
+  after_tokens?: number
+  summary_message_id?: string
+  failure_reason?: string
+}
+
+/**
  * Block event payloads for mixed content rendering
  */
 export interface ChatBlockCreatedPayload {
   task_id: number
   subtask_id: number
-  block: {
-    id: string
-    type: 'text' | 'tool' | 'thinking' | 'error'
-    content?: string
-    tool_use_id?: string
-    tool_name?: string
-    tool_input?: Record<string, unknown>
-    status?: 'pending' | 'streaming' | 'done' | 'error'
-    timestamp?: number
-  }
+  block: ChatBlock
 }
 
 export interface ChatBlockUpdatedPayload {
@@ -329,7 +432,37 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
-  status?: 'pending' | 'streaming' | 'running' | 'done' | 'error'
+  render_payload?: unknown
+  argument_status?: 'streaming' | 'done'
+  guidance_id?: string
+  loop_index?: number
+  applied_at?: string
+  status?: ChatBlock['status'] | 'running'
+}
+
+export interface ChatGuidanceQueuedPayload {
+  task_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  subtask_id?: number
+  content?: string
+  loop_index?: number
+  created_at?: string
+}
+
+export interface ChatGuidanceAppliedPayload {
+  task_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  subtask_id?: number
+  loop_index?: number
+  applied_at: string
+}
+
+export interface ChatGuidanceExpiredPayload {
+  task_id: number
+  subtask_id?: number
+  guidance_ids: string[]
 }
 export interface ChatMessageAttachment {
   id: number
@@ -409,6 +542,7 @@ export interface TaskStatusPayload {
   task_id: number
   status: string
   progress?: number
+  updated_at?: string
   completed_at?: string
 }
 
@@ -562,6 +696,15 @@ export interface ChatSendAck {
   next_stage_name?: string | null
 }
 
+export interface ChatGuideAck {
+  success?: boolean
+  task_id?: number
+  subtask_id?: number
+  guidance_id?: string
+  client_guidance_id?: string
+  error?: string
+}
+
 export interface TaskJoinAck {
   streaming?: {
     subtask_id: number
@@ -572,6 +715,8 @@ export interface TaskJoinAck {
   }
   /** Subtasks data for immediate message sync (same format as task detail API) */
   subtasks?: Array<Record<string, unknown>>
+  /** Latest cached status snapshot for active streaming recovery. */
+  status_updated?: ChatStatusUpdatedPayload
   error?: string
 }
 

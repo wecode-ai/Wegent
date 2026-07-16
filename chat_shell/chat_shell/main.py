@@ -49,6 +49,18 @@ _storage_provider: Optional[StorageProvider] = None
 _start_time = time.time()
 
 
+def _extract_request_context(body_json: dict) -> dict:
+    """Extract task context from legacy top-level fields or Responses metadata."""
+    metadata = body_json.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    return {
+        "task_id": body_json.get("task_id", metadata.get("task_id")),
+        "subtask_id": body_json.get("subtask_id", metadata.get("subtask_id")),
+    }
+
+
 async def get_storage_provider() -> StorageProvider:
     """Get the global storage provider."""
     global _storage_provider
@@ -82,8 +94,13 @@ async def lifespan(app: FastAPI):
     if storage_type == StorageType.SQLITE:
         storage_kwargs["db_path"] = settings.SQLITE_DB_PATH
     elif storage_type == StorageType.REMOTE:
+        if not settings.backend_internal_token:
+            raise RuntimeError(
+                "CHAT_SHELL_REMOTE_STORAGE_TOKEN or "
+                "CHAT_SHELL_INTERNAL_SERVICE_TOKEN is required for remote storage"
+            )
         storage_kwargs["base_url"] = settings.REMOTE_STORAGE_URL
-        storage_kwargs["auth_token"] = settings.REMOTE_STORAGE_TOKEN
+        storage_kwargs["auth_token"] = settings.backend_internal_token
 
     _storage_provider = create_storage_provider(storage_type, **storage_kwargs)
     await _storage_provider.initialize()
@@ -95,7 +112,6 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Chat Shell Service...")
 
     # Graceful shutdown: wait for active streams to complete
-    from chat_shell.api.v1.response import _active_streams
     from chat_shell.core.shutdown import shutdown_manager
 
     if not shutdown_manager.is_shutting_down:
@@ -115,7 +131,7 @@ async def lifespan(app: FastAPI):
             logger.warning(
                 f"Timeout waiting for streams. Cancelling {remaining} remaining streams..."
             )
-            cancelled = await shutdown_manager.cancel_all_streams(_active_streams)
+            cancelled = await shutdown_manager.cancel_all_streams()
             logger.info(f"Cancelled {cancelled} streams")
     else:
         logger.info("No active streams, proceeding with shutdown")
@@ -319,8 +335,9 @@ def create_app(
                     try:
                         body_json = json.loads(request_body)
                         session_id = body_json.get("session_id")
-                        task_id = body_json.get("task_id")
-                        subtask_id = body_json.get("subtask_id")
+                        request_context = _extract_request_context(body_json)
+                        task_id = request_context["task_id"]
+                        subtask_id = request_context["subtask_id"]
                         if task_id is not None or subtask_id is not None:
                             set_task_context(task_id=task_id, subtask_id=subtask_id)
                         user_id = body_json.get("user_id")

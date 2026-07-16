@@ -10,21 +10,48 @@ Online status is managed via Redis with heartbeat mechanism.
 """
 
 import logging
-from typing import Optional
+import os
+import posixpath
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.models.project import Project
 from app.models.user import User
-from app.schemas.device import DeviceInfo, DeviceListResponse
+from app.schemas.device import (
+    DeviceCommandRequest,
+    DeviceCommandResponse,
+    DeviceInfo,
+    DeviceListResponse,
+)
+from app.schemas.project import ProjectConfig
+from app.services.device.command_service import (
+    DeviceCommandConfigurationError,
+    DeviceCommandError,
+    DeviceCommandNotFoundError,
+    DeviceCommandUnknownKeyError,
+    execute_configured_device_command,
+)
+from app.services.device.runtime_rpc_service import RuntimeRpcError, runtime_rpc_service
 from app.services.device_service import device_service
+from app.services.runtime_work_kind_store import list_device_workspace_kinds
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+WORKSPACE_FILE_COMMAND_KEYS = {
+    "workspace_tree",
+    "workspace_read_text_file",
+    "workspace_read_file_chunk",
+}
+WORKSPACE_ROOTS_ENV = "WEGENT_WORKSPACE_ROOTS"
+WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS = 5
 
 
 # ==================== Request/Response Schemas ====================
@@ -70,6 +97,202 @@ class DeviceUpgradeResponse(BaseModel):
 
     success: bool = Field(..., description="Whether the upgrade command was sent")
     message: str = Field(..., description="Human-readable status message")
+
+
+def _normalize_device_path(path: str) -> str:
+    normalized = posixpath.normpath(path.strip())
+    if normalized == ".":
+        return ""
+    return normalized.rstrip("/") or "/"
+
+
+def _is_device_path_within(path: str, root: str) -> bool:
+    normalized_path = _normalize_device_path(path)
+    normalized_root = _normalize_device_path(root)
+    if normalized_root == "/":
+        return normalized_path.startswith("/")
+    return normalized_path == normalized_root or normalized_path.startswith(
+        f"{normalized_root}/"
+    )
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen = set()
+    deduped = []
+    for path in paths:
+        normalized = _normalize_device_path(path)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _wework_local_workspace_roots_for_command(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    if not path:
+        return []
+
+    roots = []
+    projects = (
+        db.query(Project)
+        .filter(
+            Project.user_id == user_id,
+            Project.client_origin == CLIENT_ORIGIN_WEWORK,
+            Project.is_active.is_(True),
+        )
+        .all()
+    )
+    for project in projects:
+        try:
+            config = ProjectConfig.model_validate(project.config or {})
+        except Exception:
+            continue
+        if (
+            not config.execution
+            or not config.workspace
+            or config.execution.deviceId != device_id
+        ):
+            continue
+        workspace_paths: list[str] = []
+        if config.workspace.source == "local_path" and config.workspace.localPath:
+            workspace_paths.append(config.workspace.localPath)
+        elif (
+            config.workspace.source == "git"
+            and config.workspace.checkoutPath
+            and posixpath.isabs(config.workspace.checkoutPath)
+        ):
+            workspace_paths.append(config.workspace.checkoutPath)
+
+        for workspace_path in workspace_paths:
+            root = _normalize_device_path(workspace_path)
+            if _is_device_path_within(path, root):
+                roots.append(root)
+
+    return _dedupe_paths(roots)
+
+
+def _runtime_device_workspace_roots_for_command(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    if not path:
+        return []
+
+    roots = []
+    for mapping in list_device_workspace_kinds(db=db, user_id=user_id):
+        if mapping.device_id != device_id or not mapping.workspace_path:
+            continue
+        root = _normalize_device_path(mapping.workspace_path)
+        if _is_device_path_within(path, root):
+            roots.append(root)
+
+    return _dedupe_paths(roots)
+
+
+def _runtime_workspace_roots_from_rpc_result(
+    result: dict[str, Any], path: str
+) -> list[str]:
+    roots: list[str] = []
+    raw_workspaces = result.get("workspaces")
+    if not isinstance(raw_workspaces, list):
+        return roots
+
+    for raw_workspace in raw_workspaces:
+        if not isinstance(raw_workspace, dict):
+            continue
+        workspace_path = raw_workspace.get("workspacePath") or raw_workspace.get(
+            "workspace_path"
+        )
+        if isinstance(workspace_path, str) and workspace_path.strip():
+            root = _normalize_device_path(workspace_path)
+            if _is_device_path_within(path, root):
+                roots.append(root)
+
+        raw_tasks = (
+            raw_workspace.get("localTasks") or raw_workspace.get("local_tasks") or []
+        )
+        if not isinstance(raw_tasks, list):
+            continue
+        for raw_task in raw_tasks:
+            if not isinstance(raw_task, dict):
+                continue
+            task_path = raw_task.get("workspacePath") or raw_task.get("workspace_path")
+            if not isinstance(task_path, str) or not task_path.strip():
+                continue
+            root = _normalize_device_path(task_path)
+            if _is_device_path_within(path, root):
+                roots.append(root)
+
+    return _dedupe_paths(roots)
+
+
+async def _runtime_local_task_workspace_roots_for_command(
+    *,
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    if not path:
+        return []
+
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.tasks.list",
+            payload={},
+            timeout_seconds=WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError:
+        return []
+
+    return _runtime_workspace_roots_from_rpc_result(result, path)
+
+
+async def _device_command_env(
+    *,
+    db: Session,
+    user_id: int,
+    device_id: str,
+    request: DeviceCommandRequest,
+) -> dict[str, str]:
+    env = dict(request.env)
+    if request.command_key not in WORKSPACE_FILE_COMMAND_KEYS:
+        return env
+
+    env.pop(WORKSPACE_ROOTS_ENV, None)
+    path = request.path or request.cwd
+    roots = _wework_local_workspace_roots_for_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        path=path,
+    )
+    roots += _runtime_device_workspace_roots_for_command(
+        db=db,
+        user_id=user_id,
+        device_id=device_id,
+        path=path,
+    )
+    roots = _dedupe_paths(roots)
+    if not roots:
+        roots = await _runtime_local_task_workspace_roots_for_command(
+            user_id=user_id,
+            device_id=device_id,
+            path=path,
+        )
+    if roots:
+        env[WORKSPACE_ROOTS_ENV] = os.pathsep.join(roots)
+    return env
 
 
 @router.get("", response_model=DeviceListResponse)
@@ -362,3 +585,190 @@ async def trigger_device_upgrade(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to trigger upgrade: {str(e)}",
         )
+
+
+@router.post("/{device_id}/commands", response_model=DeviceCommandResponse)
+async def execute_device_command(
+    device_id: str,
+    request: DeviceCommandRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> DeviceCommandResponse:
+    """
+    Execute a shell command on an online local executor device.
+
+    The backend sends a Socket.IO RPC to the target local executor and waits for
+    the completed process result.
+    """
+    user_id = current_user.id
+    try:
+        result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key=request.command_key,
+            path=request.path or request.cwd,
+            args=request.args,
+            env=await _device_command_env(
+                db=db,
+                user_id=user_id,
+                device_id=device_id,
+                request=request,
+            ),
+            timeout_seconds=request.timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+        )
+    except DeviceCommandNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+    except DeviceCommandUnknownKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except DeviceCommandConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        )
+    except DeviceCommandError as exc:
+        logger.warning(
+            "[Device Command] Command RPC failed: user_id=%s, device_id=%s, error=%s",
+            user_id,
+            device_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    logger.info(
+        "[Device Command] Command completed: user_id=%s, device_id=%s, "
+        "exit_code=%s, duration=%s",
+        user_id,
+        device_id,
+        result.get("exit_code"),
+        result.get("duration"),
+    )
+    return DeviceCommandResponse(**result)
+
+
+# ==================== Device Session Endpoints ====================
+
+DEFAULT_DEVICE_SESSION_PATH = "/home/ubuntu/.wegent-executor/workspace"
+
+
+class DeviceSessionResponse(BaseModel):
+    """Response model for device session creation."""
+
+    session_id: str = Field(..., description="Unique session identifier")
+    device_id: str = Field(..., description="Target device ID")
+    type: Literal["terminal", "code_server"] = Field(
+        ...,
+        description="Session type",
+    )
+    path: str = Field(..., description="Working directory path")
+    url: str = Field(default="", description="Browser-accessible session URL")
+    transport: Literal["url", "socketio"] = Field(
+        default="url",
+        description="Browser transport for the interactive session",
+    )
+
+
+class DeviceSessionCreate(BaseModel):
+    """Request model for device session creation."""
+
+    path: Optional[str] = Field(
+        default=None,
+        description="Optional working directory path",
+    )
+
+
+@router.post("/{device_id}/terminal", response_model=DeviceSessionResponse)
+async def start_device_terminal(
+    device_id: str,
+    payload: DeviceSessionCreate | None = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a terminal session on a device.
+
+    Sends a Socket.IO RPC to the online device executor to start an embedded
+    PTY session. Requires the device to be online.
+    """
+    from app.services.device.session_service import (
+        DeviceSessionError,
+        local_device_session_service,
+    )
+
+    requested_path = payload.path.strip() if payload and payload.path else ""
+    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
+    try:
+        result = await local_device_session_service.start_session(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+            project_id=0,
+            session_type="terminal",
+            path=session_path,
+            create_if_missing=not bool(requested_path),
+        )
+    except DeviceSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return DeviceSessionResponse(
+        session_id=result.get("session_id", ""),
+        device_id=result.get("device_id", device_id),
+        type="terminal",
+        path=result.get("path", session_path),
+        url=result.get("url", ""),
+        transport=result.get("transport", "socketio"),
+    )
+
+
+@router.post("/{device_id}/code-server", response_model=DeviceSessionResponse)
+async def start_device_code_server(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a code-server (IDE) session on a device.
+
+    Sends a Socket.IO RPC to the online device executor to start a
+    code-server session. Requires the device to be online.
+    """
+    from app.services.device.session_service import (
+        DeviceSessionError,
+        local_device_session_service,
+    )
+
+    try:
+        result = await local_device_session_service.start_session(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+            project_id=0,
+            session_type="code_server",
+            path=DEFAULT_DEVICE_SESSION_PATH,
+            create_if_missing=True,
+        )
+    except DeviceSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return DeviceSessionResponse(
+        session_id=result.get("session_id", ""),
+        device_id=result.get("device_id", device_id),
+        type="code_server",
+        path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
+        url=result.get("url", ""),
+        transport=result.get("transport", "url"),
+    )

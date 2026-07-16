@@ -9,9 +9,21 @@ Tests the core functionality of unified context management.
 Uses mocks to avoid database dependencies.
 """
 
+import importlib
 from unittest.mock import Mock, patch
 
 import pytest
+
+
+class _FakeStorageBackend:
+    backend_type = "mysql"
+
+    def __init__(self):
+        self.saved: list[tuple[str, bytes, dict]] = []
+
+    def save(self, storage_key: str, binary_data: bytes, metadata: dict) -> str:
+        self.saved.append((storage_key, binary_data, metadata))
+        return storage_key
 
 
 class TestSubtaskContextBrief:
@@ -42,6 +54,37 @@ class TestSubtaskContextBrief:
         assert brief.knowledge_id == 123
         assert brief.document_count == 5
 
+    def test_subtask_brief_preserves_scoped_knowledge_base_documents(self) -> None:
+        """Knowledge base context briefs preserve scoped document selections."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.schemas.subtask import SubtaskContextBrief
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.KNOWLEDGE_BASE.value,
+            name="Scoped KB",
+            status=ContextStatus.READY.value,
+            type_data={
+                "knowledge_id": 123,
+                "document_count": 2,
+                "document_ids": [10, 11],
+                "scope_restricted": True,
+            },
+        )
+        context.id = 1000
+
+        brief = SubtaskContextBrief.from_model(context)
+
+        assert brief.knowledge_id == 123
+        assert brief.document_count == 2
+        assert brief.document_ids == [10, 11]
+        assert brief.scope_restricted is True
+
     def test_subtask_brief_includes_table_document_id(self) -> None:
         """Table context briefs expose the underlying document ID."""
         from app.models.subtask_context import (
@@ -66,6 +109,95 @@ class TestSubtaskContextBrief:
         assert brief.id == 888
         assert brief.document_id == 456
         assert brief.source_config == {"url": "https://example.com/table"}
+
+
+class TestContextServiceAttachmentCopy:
+    """Test trusted attachment copy operations."""
+
+    def test_copy_attachment_for_user_creates_quick_launch_preset_copy(
+        self, monkeypatch
+    ) -> None:
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context_service_module = importlib.import_module(
+            "app.services.context.context_service"
+        )
+
+        source = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="template.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="Template extracted text",
+            text_length=23,
+            image_base64="",
+            type_data={
+                "original_filename": "template.pdf",
+                "file_extension": ".pdf",
+                "file_size": 2048,
+                "mime_type": "application/pdf",
+                "storage_backend": "mysql",
+                "storage_key": "attachments/source",
+            },
+        )
+        source.id = 50
+        storage = _FakeStorageBackend()
+        added_contexts = []
+        db = Mock()
+
+        def add_context(context):
+            added_contexts.append(context)
+
+        def flush_context():
+            if added_contexts and added_contexts[-1].id is None:
+                added_contexts[-1].id = 501
+
+        db.add.side_effect = add_context
+        db.flush.side_effect = flush_context
+        monkeypatch.setattr(
+            context_service_module,
+            "get_storage_backend",
+            lambda _db: storage,
+        )
+        monkeypatch.setattr(
+            context_service,
+            "get_attachment_binary_data",
+            lambda _db, _context: b"template-bytes",
+        )
+
+        copied = context_service.copy_attachment_for_user(
+            db=db,
+            source_context=source,
+            target_user_id=7,
+            source_metadata={
+                "source": "quick_launch_preset",
+                "quick_launch_function_id": "create_ppt",
+                "quick_launch_preset_id": "roadmap",
+            },
+        )
+
+        assert copied.id == 501
+        assert copied.user_id == 7
+        assert copied.subtask_id == 0
+        assert copied.context_type == ContextType.ATTACHMENT.value
+        assert copied.status == ContextStatus.READY.value
+        assert copied.extracted_text == "Template extracted text"
+        assert copied.text_length == 23
+        assert copied.type_data["source"] == "quick_launch_preset"
+        assert copied.type_data["source_attachment_id"] == 50
+        assert copied.type_data["quick_launch_function_id"] == "create_ppt"
+        assert copied.type_data["quick_launch_preset_id"] == "roadmap"
+        assert copied.type_data["original_filename"] == "template.pdf"
+        assert copied.type_data["storage_key"].endswith("_7_501")
+        assert storage.saved[0][1] == b"template-bytes"
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(copied)
 
 
 class TestContextServiceKnowledgeBaseRetrieval:
@@ -1245,17 +1377,20 @@ class TestContextServiceFormatting:
         assert "File Path(already in sandbox)" in prefix
 
     def test_build_document_text_prefix_with_truncation(self):
-        """Test building document text prefix with truncation notice"""
+        """Truncated attachments get a length-free partial-content notice.
+
+        The notice is driven by the persisted ``is_truncated`` flag (not a
+        length-vs-cap comparison) and intentionally omits any character count,
+        so it never restates the old "(truncated to N characters)" wording.
+        """
         from app.models.subtask_context import (
             ContextStatus,
             ContextType,
             SubtaskContext,
         )
-        from app.services.attachment.parser import DocumentParser
         from app.services.context import context_service
 
-        # Arrange - set text_length >= max to trigger truncation notice
-        max_text_length = DocumentParser.get_max_text_length()
+        # Arrange - parse-time truncation recorded in type_data
         context = SubtaskContext(
             subtask_id=0,
             user_id=1,
@@ -1263,11 +1398,12 @@ class TestContextServiceFormatting:
             name="large.pdf",
             status=ContextStatus.READY.value,
             extracted_text="Content...",
-            text_length=max_text_length,  # At max length
+            text_length=10,
             type_data={
                 "original_filename": "large.pdf",
                 "mime_type": "application/pdf",
                 "file_size": 5242880,  # 5 MB
+                "is_truncated": True,
             },
         )
         context.id = 100
@@ -1279,10 +1415,83 @@ class TestContextServiceFormatting:
         assert prefix is not None
         assert "[Attachment: large.pdf |" in prefix
         assert "ID: 100" in prefix
-        assert "Type: application/pdf" in prefix
-        assert "Size: 5.0 MB" in prefix
-        assert "URL: /api/attachments/100/download" in prefix
-        assert "truncated" in prefix.lower()
+        # Partial-content notice present, but no character count.
+        assert "only partial content is shown" in prefix
+        assert "has been truncated to" not in prefix
+        assert "characters" not in prefix
+
+    def test_build_document_text_prefix_bounds_injected_text(self):
+        """Long extracted text is bounded inline; full text stays in the DB."""
+        from app.core.config import settings
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        long_text = "x" * (settings.ATTACHMENT_INJECT_MAX_CHARS + 50_000)
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="huge.txt",
+            status=ContextStatus.READY.value,
+            extracted_text=long_text,
+            text_length=len(long_text),
+            type_data={
+                "original_filename": "huge.txt",
+                "mime_type": "text/plain",
+                "file_size": len(long_text),
+                # Parse also truncated this file: the merged logic must still emit
+                # only the inline marker, not an additional prefix note.
+                "is_truncated": True,
+            },
+        )
+        context.id = 102
+
+        prefix = context_service.build_document_text_prefix(context)
+
+        assert prefix is not None
+        # Inline copy is bounded well below the stored text length.
+        assert len(prefix) < len(long_text)
+        assert "inline preview truncated" in prefix
+        # Mode-neutral marker: no chat_shell-only read_attachment mention.
+        assert "read_attachment" not in prefix
+        # Merged signal: the inline marker is the only notice — no separate
+        # "(parsing truncated ...)" prefix note is duplicated.
+        assert "parsing truncated this file" not in prefix
+
+    def test_build_document_text_prefix_without_truncation_has_no_notice(self):
+        """Non-truncated attachments get no partial-content notice."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="small.pdf",
+            status=ContextStatus.READY.value,
+            extracted_text="Full content.",
+            text_length=13,
+            type_data={
+                "original_filename": "small.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 1024,
+            },
+        )
+        context.id = 101
+
+        prefix = context_service.build_document_text_prefix(context)
+
+        assert prefix is not None
+        assert "only partial content is shown" not in prefix
+        assert "Full content." in prefix
 
 
 class TestContextServiceOverwrite:
@@ -1359,6 +1568,68 @@ class TestContextServiceOverwrite:
         assert saved_key == storage_key
         assert saved_data == new_binary_data
         assert saved_metadata["file_size"] == len(new_binary_data)
+
+    def test_overwrite_clears_stale_is_truncated_flag(self):
+        """Overwriting a truncated attachment with a non-truncated file clears
+        the persisted is_truncated flag (so prefixes/readback stop warning)."""
+        import sys
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.parser import ParseResult
+        from app.services.context.context_service import context_service as cs_instance
+
+        cs_module = sys.modules["app.services.context.context_service"]
+
+        mock_db = Mock()
+        storage_key = "attachments/test_trunc"
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="big.txt",
+            status=ContextStatus.READY.value,
+            binary_data=b"old big data",
+            type_data={
+                "storage_backend": "mysql",
+                "storage_key": storage_key,
+                "original_filename": "big.txt",
+                "file_extension": ".txt",
+                "file_size": 12,
+                "mime_type": "text/plain",
+                "is_encrypted": False,
+                "is_truncated": True,  # previously truncated
+            },
+        )
+        context.id = 101
+
+        mock_query = Mock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = context
+
+        # New parse does NOT truncate (no truncation_info).
+        parse_result = ParseResult(text="small", text_length=5)
+
+        with patch.object(cs_module, "_should_encrypt", return_value=False):
+            with patch.object(cs_module, "get_storage_backend") as mock_get_backend:
+                mock_get_backend.return_value = Mock()
+                with patch.object(
+                    cs_instance.parser, "parse", return_value=parse_result
+                ):
+                    updated_context, truncation_info = cs_instance.overwrite_attachment(
+                        db=mock_db,
+                        context_id=context.id,
+                        user_id=context.user_id,
+                        filename="small.txt",
+                        binary_data=b"small",
+                    )
+
+        assert truncation_info is None
+        assert updated_context.is_truncated is False
 
 
 class TestContextServiceCreateKnowledgeBaseContextWithResult:

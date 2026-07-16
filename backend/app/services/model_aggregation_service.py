@@ -18,14 +18,48 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.kind import kind_service
+from app.services.runtime_codex_model import (
+    CODEX_RUNTIME_MODEL_CATEGORY_TYPE,
+    CODEX_RUNTIME_MODEL_DISPLAY_NAME,
+    CODEX_RUNTIME_MODEL_GROUP,
+    CODEX_RUNTIME_MODEL_ID,
+    CODEX_RUNTIME_MODEL_NAME,
+    CODEX_RUNTIME_MODEL_NAMESPACE,
+    CODEX_RUNTIME_MODEL_PROVIDER,
+    CODEX_RUNTIME_MODEL_SUB_GROUP,
+    build_codex_runtime_model_config,
+    is_codex_runtime_model_enabled,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_runtime_family_part(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def build_model_runtime_family(
+    provider: Optional[str], config: Optional[Dict[str, Any]]
+) -> Optional[str]:
+    provider_key = _normalize_runtime_family_part(provider)
+    if not provider_key:
+        return None
+
+    protocol_key = _normalize_runtime_family_part((config or {}).get("protocol"))
+    if not protocol_key:
+        return provider_key
+
+    return f"{provider_key}.{protocol_key}"
 
 
 class ModelType(str, Enum):
@@ -35,20 +69,22 @@ class ModelType(str, Enum):
     - PUBLIC: Models from kinds table with user_id=0, shared across all users
     - USER: User-defined models from kinds table, private to each user
     - GROUP: Models from kinds table in group namespace, shared within group
+    - RUNTIME: Runtime-only models derived from user execution config
     """
 
     PUBLIC = "public"
     USER = "user"
     GROUP = "group"
+    RUNTIME = "runtime"
 
 
 class UnifiedModel:
     """
     Unified model representation that includes type information
-    to distinguish between public, user-defined, and group models.
+    to distinguish between public, user-defined, group, and runtime models.
 
     The 'type' field is critical for:
-    1. Avoiding naming conflicts between public, user, and group models
+    1. Avoiding naming conflicts between model sources
     2. Determining which table to query when resolving a model
     3. Frontend display differentiation
     """
@@ -67,11 +103,15 @@ class UnifiedModel:
             str
         ] = None,  # New: llm, tts, stt, embedding, rerank
         is_advanced: bool = False,
+        model_group: Optional[str] = None,
+        model_sub_group: Optional[str] = None,
+        resource_user_id: Optional[int] = None,
+        runtime_family: Optional[str] = None,
+        created_at: Optional[Any] = None,
+        updated_at: Optional[Any] = None,
     ):
         self.name = name
-        self.type = (
-            model_type  # 'public' or 'user' or 'group' - identifies model source
-        )
+        self.type = model_type
         self.display_name = display_name
         self.provider = provider
         self.model_id = model_id
@@ -82,6 +122,18 @@ class UnifiedModel:
             model_category_type or "llm"
         )  # Default to 'llm' for backward compatibility
         self.is_advanced = is_advanced
+        self.model_group = model_group
+        self.model_sub_group = model_sub_group
+        self.resource_user_id = resource_user_id
+        self.created_at = created_at
+        self.updated_at = updated_at
+        self.runtime_family = runtime_family or build_model_runtime_family(
+            provider, self.config
+        )
+
+    @property
+    def runtime(self) -> Dict[str, Optional[str]]:
+        return {"family": self.runtime_family, "provider": self.provider}
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -92,22 +144,29 @@ class UnifiedModel:
         safe_config = (
             {k: v for k, v in self.config.items() if k != "env"} if self.config else {}
         )
-        return {
+        result = {
             "name": self.name,
-            "type": self.type.value,  # 'public', 'user', or 'group'
+            "type": self.type.value,
             "displayName": self.display_name,
             "provider": self.provider,
             "modelId": self.model_id,
             "namespace": self.namespace,
             "modelCategoryType": self.model_category_type,
             "isAdvanced": self.is_advanced,
+            "modelGroup": self.model_group,
+            "modelSubGroup": self.model_sub_group,
+            "runtime": self.runtime,
             "config": safe_config,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
+        if self.resource_user_id is not None:
+            result["resourceUserId"] = self.resource_user_id
+        return result
 
     def to_full_dict(self) -> Dict[str, Any]:
-        """Convert to full dictionary including config with env"""
+        """Convert to full dictionary without exposing sensitive env values."""
         result = self.to_dict()
-        result["config"] = self.config
         result["isActive"] = self.is_active
         return result
 
@@ -142,6 +201,8 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "model_group": None,
+                "model_sub_group": None,
             }
 
         try:
@@ -156,6 +217,18 @@ class ModelAggregationService:
                 model_category_type = model_crd.spec.modelType.value
 
             config = model_crd.spec.modelConfig
+            if model_crd.spec.protocol:
+                config = {**config, "protocol": model_crd.spec.protocol}
+            if model_crd.spec.apiFormat:
+                config = {**config, "apiFormat": model_crd.spec.apiFormat.value}
+
+            if model_crd.spec.modelCapabilities:
+                config = {
+                    **config,
+                    "modelCapabilities": model_crd.spec.modelCapabilities.model_dump(
+                        exclude_none=True
+                    ),
+                }
 
             # Include type-specific config for non-LLM models
             if model_category_type == "video":
@@ -191,6 +264,8 @@ class ModelAggregationService:
                     if model_crd.spec.isAdvanced
                     else False
                 ),
+                "model_group": model_crd.spec.modelGroup,
+                "model_sub_group": model_crd.spec.modelSubGroup,
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -201,10 +276,16 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "model_group": None,
+                "model_sub_group": None,
             }
 
     def _is_model_compatible_with_shell(
-        self, provider: Optional[str], shell_type: str, support_model: List[str]
+        self,
+        provider: Optional[str],
+        shell_type: str,
+        support_model: List[str],
+        config: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Check if a model is compatible with the given shell type.
@@ -221,12 +302,18 @@ class ModelAggregationService:
         # Agno supports OpenAI, Claude and Gemini models
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
-            "ClaudeCode": ["claude"],
+            "ClaudeCode": ["claude", "openai"],
         }
 
-        # If supportModel is specified in shell, use it
         if support_model:
-            return provider in support_model
+            if provider not in support_model:
+                return False
+
+        if shell_type == "ClaudeCode" and provider == "openai":
+            return self._is_codex_compatible_model_config(config or {})
+
+        if support_model:
+            return True
 
         # Otherwise, filter by shell's supported providers
         supported_providers = shell_provider_map.get(shell_type)
@@ -238,6 +325,18 @@ class ModelAggregationService:
 
         # No filter, allow all
         return True
+
+    @staticmethod
+    def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
+        """Return whether an OpenAI model config can run through CodeXAgent."""
+        api_format = str(config.get("apiFormat") or config.get("api_format") or "")
+        protocol = str(config.get("protocol") or "")
+        wire_api = str(config.get("wire_api") or "")
+        return (
+            api_format.lower() == "responses"
+            or protocol.lower() == "openai-responses"
+            or wire_api.lower() == "responses"
+        )
 
     def _get_shell_support_model(
         self, db: Session, shell_name: str, current_user: Optional[User] = None
@@ -293,6 +392,56 @@ class ModelAggregationService:
             logger.warning("Failed to check if model is custom: %s", e)
             return False
 
+    def _build_codex_runtime_model(
+        self,
+        db: Session,
+        current_user: User,
+        shell_type: Optional[str],
+        actual_shell_type: str,
+        support_model: List[str],
+        scope: str,
+        model_category_type: Optional[str],
+        client_origin: Optional[str],
+    ) -> Optional[UnifiedModel]:
+        """Build the Wework-only runtime Codex model when user auth is enabled."""
+        if client_origin != CLIENT_ORIGIN_WEWORK:
+            return None
+        if scope == "group":
+            return None
+        if (
+            model_category_type
+            and model_category_type != CODEX_RUNTIME_MODEL_CATEGORY_TYPE
+        ):
+            return None
+        if not is_codex_runtime_model_enabled(db, current_user):
+            return None
+
+        config = build_codex_runtime_model_config()
+        if shell_type and not self._is_model_compatible_with_shell(
+            CODEX_RUNTIME_MODEL_PROVIDER,
+            actual_shell_type,
+            support_model,
+            config,
+        ):
+            return None
+
+        return self._create_codex_runtime_model()
+
+    def _create_codex_runtime_model(self) -> UnifiedModel:
+        """Create the runtime-only Codex model representation."""
+        return UnifiedModel(
+            name=CODEX_RUNTIME_MODEL_NAME,
+            model_type=ModelType.RUNTIME,
+            display_name=CODEX_RUNTIME_MODEL_DISPLAY_NAME,
+            provider=CODEX_RUNTIME_MODEL_PROVIDER,
+            model_id=CODEX_RUNTIME_MODEL_ID,
+            config=build_codex_runtime_model_config(),
+            namespace=CODEX_RUNTIME_MODEL_NAMESPACE,
+            model_category_type=CODEX_RUNTIME_MODEL_CATEGORY_TYPE,
+            model_group=CODEX_RUNTIME_MODEL_GROUP,
+            model_sub_group=CODEX_RUNTIME_MODEL_SUB_GROUP,
+        )
+
     def list_available_models(
         self,
         db: Session,
@@ -302,6 +451,7 @@ class ModelAggregationService:
         scope: str = "personal",
         group_name: Optional[str] = None,
         model_category_type: Optional[str] = None,  # New: filter by model category type
+        client_origin: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         List all available models for the current user with scope support.
@@ -310,6 +460,7 @@ class ModelAggregationService:
         1. User's own models (via kind_service) - marked with type='user'
         2. Public models (user_id=0 in kinds table) - marked with type='public'
         3. Group models (when scope includes groups) - marked with type='group'
+        4. Runtime-only models (when enabled for the requested client surface)
 
         Scope behavior:
         - scope='personal' (default): personal models + public models
@@ -326,11 +477,12 @@ class ModelAggregationService:
             scope: Query scope ('personal', 'group', or 'all')
             group_name: Group name (required when scope='group')
             model_category_type: Optional model category type filter (llm, tts, stt, embedding, rerank)
+            client_origin: Optional client surface requesting the list
 
         Returns:
             List of unified model dictionaries, each containing:
             - name: Model name
-            - type: 'public', 'user', or 'group' (identifies model source)
+            - type: Model source ('public', 'user', 'group', or 'runtime')
             - displayName: Human-readable name
             - provider: Model provider
             - modelId: Model ID
@@ -403,7 +555,10 @@ class ModelAggregationService:
                 info = self._extract_model_info_from_crd(model_data)
 
                 if shell_type and not self._is_model_compatible_with_shell(
-                    info["provider"], actual_shell_type, support_model
+                    info["provider"],
+                    actual_shell_type,
+                    support_model,
+                    info.get("config"),
                 ):
                     continue
 
@@ -429,6 +584,11 @@ class ModelAggregationService:
                     namespace=resource.namespace,
                     model_category_type=info.get("model_category_type", "llm"),
                     is_advanced=info.get("is_advanced", False),
+                    model_group=info.get("model_group"),
+                    model_sub_group=info.get("model_sub_group"),
+                    resource_user_id=resource.user_id,
+                    created_at=resource.created_at,
+                    updated_at=resource.updated_at,
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -450,7 +610,10 @@ class ModelAggregationService:
             public_model_category_type = model_dict.get("model_category_type", "llm")
 
             if shell_type and not self._is_model_compatible_with_shell(
-                provider, actual_shell_type, support_model
+                provider,
+                actual_shell_type,
+                support_model,
+                config,
             ):
                 continue
 
@@ -474,6 +637,13 @@ class ModelAggregationService:
                 namespace="default",
                 model_category_type=public_model_category_type,
                 is_advanced=model_dict.get("is_advanced", False),
+                model_group=model_dict.get("modelGroup")
+                or model_dict.get("model_group"),
+                model_sub_group=model_dict.get("modelSubGroup")
+                or model_dict.get("model_sub_group"),
+                resource_user_id=0,
+                created_at=model_dict.get("created_at"),
+                updated_at=model_dict.get("updated_at"),
             )
 
             # If name already exists as user model, we still add public model
@@ -487,6 +657,19 @@ class ModelAggregationService:
             result.append(unified)
             if model_name not in seen_names:
                 seen_names[model_name] = ModelType.PUBLIC
+
+        runtime_model = self._build_codex_runtime_model(
+            db=db,
+            current_user=current_user,
+            shell_type=shell_type,
+            actual_shell_type=actual_shell_type,
+            support_model=support_model,
+            scope=scope,
+            model_category_type=model_category_type,
+            client_origin=client_origin,
+        )
+        if runtime_model:
+            result.append(runtime_model)
 
         # Sort by name
         result.sort(key=lambda x: x.name)
@@ -531,6 +714,11 @@ class ModelAggregationService:
                     model_id=info["model_id"],
                     config=info["config"],
                     is_active=resource.is_active,
+                    model_group=info.get("model_group"),
+                    model_sub_group=info.get("model_sub_group"),
+                    resource_user_id=resource.user_id,
+                    created_at=resource.created_at,
+                    updated_at=resource.updated_at,
                 ).to_full_dict()
 
         elif model_type == ModelType.PUBLIC:
@@ -553,7 +741,20 @@ class ModelAggregationService:
                             "model_category_type", "llm"
                         ),
                         is_advanced=model_dict.get("is_advanced", False),
+                        model_group=model_dict.get("modelGroup")
+                        or model_dict.get("model_group"),
+                        model_sub_group=model_dict.get("modelSubGroup")
+                        or model_dict.get("model_sub_group"),
+                        resource_user_id=0,
+                        created_at=model_dict.get("created_at"),
+                        updated_at=model_dict.get("updated_at"),
                     ).to_full_dict()
+
+        elif model_type == ModelType.RUNTIME:
+            if name == CODEX_RUNTIME_MODEL_NAME and is_codex_runtime_model_enabled(
+                db, current_user
+            ):
+                return self._create_codex_runtime_model().to_full_dict()
 
         return None
 
@@ -576,7 +777,7 @@ class ModelAggregationService:
             db: Database session
             current_user: Current user
             name: Model name
-            model_type: Optional model type hint ('public' or 'user')
+            model_type: Optional model type hint ('public', 'user', 'group', or 'runtime')
 
         Returns:
             Model data dictionary with 'type' field, or None if not found

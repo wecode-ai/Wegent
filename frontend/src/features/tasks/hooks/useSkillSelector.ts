@@ -21,6 +21,10 @@ export interface SkillRef {
   is_public: boolean
 }
 
+export type AutoAvailableSkill = UnifiedSkill & {
+  availabilitySources: Array<'agent_builtin' | 'my_default'>
+}
+
 interface UseSkillSelectorOptions {
   /** Selected team for the current chat */
   team: Team | null
@@ -33,6 +37,10 @@ interface UseSkillSelectorOptions {
 interface UseSkillSelectorReturn {
   /** All available skills (from unified API) */
   availableSkills: UnifiedSkill[]
+  /** Skills that are automatically available from the agent or my defaults */
+  autoAvailableSkills: AutoAvailableSkill[]
+  /** Skills that can be selected for this message only */
+  temporarySkills: UnifiedSkill[]
   /** Team's configured skill names */
   teamSkillNames: string[]
   /** Team's preloaded skill names (auto-injected, to filter out for Chat Shell) */
@@ -103,6 +111,38 @@ export function useSkillSelector({
     return []
   }, [teamSkillsData])
 
+  const autoAvailableSkills = useMemo<AutoAvailableSkill[]>(() => {
+    const teamSkillSet = new Set(teamSkillNames)
+    const preloadedSkillSet = new Set(preloadedSkillNames)
+
+    return availableSkills
+      .map(skill => {
+        const availabilitySources: Array<'agent_builtin' | 'my_default'> = []
+        if (teamSkillSet.has(skill.name) || preloadedSkillSet.has(skill.name)) {
+          availabilitySources.push('agent_builtin')
+        }
+        if (skill.availability?.inMyDefault) {
+          availabilitySources.push('my_default')
+        }
+        return availabilitySources.length > 0
+          ? {
+              ...skill,
+              availabilitySources,
+            }
+          : null
+      })
+      .filter((skill): skill is AutoAvailableSkill => skill !== null)
+  }, [availableSkills, teamSkillNames, preloadedSkillNames])
+
+  const autoAvailableSkillNames = useMemo(
+    () => new Set(autoAvailableSkills.map(skill => skill.name)),
+    [autoAvailableSkills]
+  )
+
+  const temporarySkills = useMemo(() => {
+    return availableSkills.filter(skill => !autoAvailableSkillNames.has(skill.name))
+  }, [availableSkills, autoAvailableSkillNames])
+
   // Fetch available skills when enabled
   useEffect(() => {
     if (!enabled) {
@@ -161,6 +201,15 @@ export function useSkillSelector({
     }
   }, [team?.id, initialSelectedSkills])
 
+  useEffect(() => {
+    if (autoAvailableSkillNames.size === 0) return
+
+    setSelectedSkillNames(prev => {
+      const temporarySelection = prev.filter(name => !autoAvailableSkillNames.has(name))
+      return temporarySelection.length === prev.length ? prev : temporarySelection
+    })
+  }, [autoAvailableSkillNames])
+
   // Skill management callbacks
   const addSkill = useCallback((skillName: string) => {
     setSelectedSkillNames(prev => {
@@ -210,6 +259,8 @@ export function useSkillSelector({
 
   return {
     availableSkills,
+    autoAvailableSkills,
+    temporarySkills,
     teamSkillNames,
     preloadedSkillNames,
     selectedSkillNames,

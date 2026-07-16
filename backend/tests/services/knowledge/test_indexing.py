@@ -8,6 +8,65 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.knowledge.indexing import run_document_indexing
 
 
+def test_run_document_indexing_closes_owned_session_before_gateway_call() -> None:
+    # preparation_db is owned by run_document_indexing (own_session=True path)
+    preparation_db = MagicMock()
+    preparation_db.closed = False
+    preparation_db.query.return_value.filter.return_value.first.return_value = None
+
+    def close_preparation_db() -> None:
+        preparation_db.closed = True
+
+    preparation_db.close.side_effect = close_preparation_db
+
+    kb_index_info = SimpleNamespace(index_owner_user_id=3, summary_enabled=False)
+    gateway = MagicMock()
+
+    async def fake_index_document(runtime_spec: object, db: object = None) -> dict:
+        # The preparation session must already be closed when the gateway is called
+        assert preparation_db.closed is True
+        # Gateway owns any DB prefetch it needs, so indexing does not pass a live session.
+        assert db is None
+        return {"status": "success", "indexed_count": 1, "index_name": "idx"}
+
+    gateway.index_document.side_effect = fake_index_document
+
+    with (
+        patch(
+            "app.services.knowledge.indexing.SessionLocal",
+            return_value=preparation_db,
+        ) as mock_session_local,
+        patch(
+            "app.services.knowledge.indexing.resolve_kb_index_info",
+            return_value=kb_index_info,
+        ),
+        patch(
+            "app.services.knowledge.indexing.RagRuntimeResolver.build_index_runtime_spec",
+            return_value=object(),
+        ),
+        patch(
+            "app.services.knowledge.indexing.get_index_gateway",
+            return_value=gateway,
+        ),
+    ):
+        result = run_document_indexing(
+            knowledge_base_id="1",
+            attachment_id=2,
+            retriever_name="retriever-1",
+            retriever_namespace="default",
+            embedding_model_name="embedding-1",
+            embedding_model_namespace="default",
+            user_id=3,
+            user_name="tester",
+            document_id=None,
+            trigger_summary=False,
+        )
+
+    assert result["status"] == "success"
+    mock_session_local.assert_called_once()
+    preparation_db.close.assert_called_once()
+
+
 def test_run_document_indexing_propagates_gateway_skip_status() -> None:
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None
@@ -53,7 +112,7 @@ def test_run_document_indexing_propagates_gateway_skip_status() -> None:
 
     gateway.index_document.assert_awaited_once_with(
         mock_build_runtime_spec.return_value,
-        db=db,
+        db=None,
     )
     assert result == {
         "status": "skipped",

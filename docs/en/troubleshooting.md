@@ -1,3 +1,7 @@
+---
+sidebar_position: 7
+---
+
 # 🔧 Troubleshooting Guide
 
 This guide helps you diagnose and resolve common issues when using the Wegent platform.
@@ -383,7 +387,7 @@ curl -I http://localhost:8000/socket.io/
 **2. Verify JWT token**
 ```bash
 # Check if token is valid (in browser console)
-localStorage.getItem('token')
+localStorage.getItem('auth_token')
 
 # Token should be passed in Socket.IO auth
 ```
@@ -403,13 +407,17 @@ docker-compose exec redis redis-cli ping
 
 **5. Check frontend Socket.IO configuration**
 ```typescript
-// frontend/src/contexts/SocketContext.tsx
-// Verify connection parameters
+// packages/chat-core/src/socket/authenticatedSocketClient.ts
+// frontend and wework both connect through the shared SocketClient
 const socket = io(API_URL + '/chat', {
   path: '/socket.io',
   auth: { token },
-  transports: ['websocket', 'polling'],
-});
+  autoConnect: false,
+  reconnection: false,
+  transports: ['websocket'],
+  forceNew: true,
+  multiplex: false,
+})
 ```
 
 **6. Debug WebSocket in browser**
@@ -580,21 +588,20 @@ uv sync
 
 ```bash
 # 1. Clean cache
-npm cache clean --force
-rm -rf node_modules package-lock.json
+pnpm store prune
+rm -rf node_modules frontend/node_modules wework/node_modules pnpm-lock.yaml
 
-# 2. Use npm mirror
-npm config set registry https://registry.npmmirror.com
-npm install
+# 2. Use mirror registry
+pnpm config set registry https://registry.npmmirror.com
+pnpm install
 
-# 3. Use yarn
-npm install -g yarn
-yarn install
+# 3. Install from lockfile
+pnpm install --frozen-lockfile
 
 # 4. Downgrade Node.js version (if compatibility issue)
 nvm install 18
 nvm use 18
-npm install
+pnpm install
 ```
 
 ---

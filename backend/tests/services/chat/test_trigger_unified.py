@@ -7,12 +7,134 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from shared.models import ExecutionRequest
 from shared.models.knowledge import ChatContextsResult, KnowledgeBaseToolsResult
 
 
+def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
+    """Codex execution requests should carry explicit user runtime config status."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    request = ExecutionRequest(
+        model_config={
+            "model": "openai",
+            "api_format": "responses",
+            "model_id": "gpt-5.5",
+        }
+    )
+
+    def fake_get_execution_config(db, *, user_id, runtime, preferences=None):
+        assert user_id == 7
+        assert runtime == "codex"
+        assert preferences == {
+            "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}}
+        }
+        return {
+            "runtime": "codex",
+            "display_name": "Codex",
+            "use_user_config": True,
+            "use_proxy": True,
+            "configured": True,
+            "target_path": "~/.codex/auth.json",
+            "auth_json_sha256": "sha",
+            "proxy_configured": True,
+            "proxy_url": "http://127.0.0.1:7890",
+        }
+
+    monkeypatch.setattr(
+        trigger_unified.user_runtime_config_service,
+        "get_execution_config",
+        fake_get_execution_config,
+    )
+
+    trigger_unified._apply_user_runtime_config(
+        db=MagicMock(),
+        request=request,
+        user=SimpleNamespace(
+            id=7,
+            preferences={
+                "runtime_configs": {
+                    "codex": {"use_user_config": True, "use_proxy": True}
+                }
+            },
+        ),
+    )
+
+    assert request.model_config["runtime_config"] == {
+        "codex": {
+            "use_user_config": True,
+            "configured": True,
+            "target_path": "~/.codex/auth.json",
+            "auth_json_sha256": "sha",
+            "use_proxy": True,
+            "proxy_configured": True,
+        }
+    }
+    assert request.model_config["proxy"] == {
+        "url": "http://127.0.0.1:7890",
+    }
+
+
+def test_apply_user_runtime_config_skips_non_codex_models(monkeypatch):
+    """Non-Codex-compatible models should not query user runtime config."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    request = ExecutionRequest(
+        model_config={
+            "model": "openai",
+            "api_format": "chat/completions",
+            "model_id": "gpt-4.1",
+        }
+    )
+    get_execution_config = MagicMock()
+    monkeypatch.setattr(
+        trigger_unified.user_runtime_config_service,
+        "get_execution_config",
+        get_execution_config,
+    )
+
+    trigger_unified._apply_user_runtime_config(
+        db=MagicMock(),
+        request=request,
+        user=SimpleNamespace(id=7),
+    )
+
+    assert "runtime_config" not in request.model_config
+    get_execution_config.assert_not_called()
+
+
 @pytest.mark.unit
 class TestBuildExecutionRequestUserSubtaskId:
+    async def test_propagates_device_id_to_execution_request(self):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=mock_builder,
+            ):
+                task = MagicMock(id=1, json={})
+                assistant_subtask = MagicMock(id=2)
+                team = MagicMock()
+                user = MagicMock(id=7)
+
+                result = await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    device_id="device-1",
+                )
+
+        assert result.device_id == "device-1"
+
     async def test_propagates_user_subtask_id_to_execution_request(self):
         """Ensure user_subtask_id is always propagated for downstream RAG persistence."""
         from app.services.chat.trigger import unified as trigger_unified
@@ -64,6 +186,205 @@ class TestBuildExecutionRequestUserSubtaskId:
                     assert result.user_subtask_id == 123
                     mock_builder.build.assert_called_once()
                     mock_process_contexts.assert_awaited_once()
+
+    async def test_propagates_interactive_form_answer_to_execution_request(self):
+        """Deferred form answers must reach executors as structured data."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        payload = SimpleNamespace(
+            enable_web_search=False,
+            enable_clarification=False,
+            additional_skills=None,
+            interactive_form_answer=SimpleNamespace(
+                model_dump=lambda mode="json": {
+                    "type": "interactive_form_question",
+                    "tool_use_id": "tool-1",
+                    "answers": {"language": "python"},
+                    "message": "selected python",
+                }
+            ),
+            generate_params=None,
+        )
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                task = MagicMock()
+                task.id = 1
+                task.json = {}
+
+                assistant_subtask = MagicMock()
+                assistant_subtask.id = 2
+
+                team = MagicMock()
+                user = MagicMock()
+                user.id = 7
+
+                result = await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    payload=payload,
+                    user_subtask_id=None,
+                )
+
+                assert result.interactive_form_answer == {
+                    "type": "interactive_form_question",
+                    "tool_use_id": "tool-1",
+                    "answers": {"language": "python"},
+                    "message": "selected python",
+                }
+
+    async def test_frontend_payload_enables_web_runtime_guidance(self):
+        """Web chat requests should ask the request builder to add UI guidance."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        payload = SimpleNamespace(
+            enable_web_search=False,
+            enable_clarification=False,
+            additional_skills=None,
+            client_origin=CLIENT_ORIGIN_FRONTEND,
+        )
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                task = MagicMock()
+                task.id = 1
+                task.json = {}
+
+                assistant_subtask = MagicMock()
+                assistant_subtask.id = 2
+
+                team = MagicMock()
+                user = MagicMock()
+                user.id = 7
+
+                await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    payload=payload,
+                    user_subtask_id=None,
+                )
+
+        assert mock_builder.build.call_args.kwargs["web_runtime_guidance"] is True
+
+    async def test_payload_can_skip_unavailable_task_model_override(self):
+        """IM task continuation can fall back when a Wework runtime model is not a Model CRD."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        payload = SimpleNamespace(ignore_unavailable_task_model_override=True)
+
+        task = MagicMock()
+        task.id = 1
+        task.json = {
+            "metadata": {
+                "labels": {
+                    "modelId": "codex-gpt-5.5",
+                    "forceOverrideBotModel": "true",
+                }
+            }
+        }
+
+        assistant_subtask = MagicMock()
+        assistant_subtask.id = 2
+        team = MagicMock()
+        user = MagicMock()
+        user.id = 7
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch(
+                    "app.services.chat.config.model_resolver._find_model_with_namespace",
+                    return_value=(None, None),
+                ) as mock_find_model:
+                    await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="hello",
+                        payload=payload,
+                    )
+
+        mock_find_model.assert_called_once_with(mock_db, "codex-gpt-5.5", 7)
+        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
+        assert mock_builder.build.call_args.kwargs["force_override"] is False
+
+    async def test_runtime_task_model_override_uses_codex_runtime_config(self):
+        """Wework runtime model labels should execute through Codex auth config."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        task = MagicMock()
+        task.id = 1
+        task.json = {
+            "metadata": {
+                "labels": {
+                    "modelId": "codex-gpt-5.5",
+                    "forceOverrideBotModel": "true",
+                    "forceOverrideBotModelType": "runtime",
+                }
+            }
+        }
+        assistant_subtask = MagicMock()
+        assistant_subtask.id = 2
+        team = MagicMock()
+        user = MagicMock()
+        user.id = 7
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                with patch(
+                    "app.services.chat.config.model_resolver._find_model_with_namespace"
+                ) as mock_find_model:
+                    await trigger_unified.build_execution_request(
+                        task=task,
+                        assistant_subtask=assistant_subtask,
+                        team=team,
+                        user=user,
+                        message="hello",
+                        payload=SimpleNamespace(
+                            ignore_unavailable_task_model_override=True
+                        ),
+                    )
+
+        mock_find_model.assert_not_called()
+        assert mock_builder.build.call_args.kwargs["override_model_name"] is None
+        assert mock_builder.build.call_args.kwargs["force_override"] is False
+        assert mock_builder.build.call_args.kwargs["runtime_model_config"] == {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
 
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
@@ -420,6 +741,49 @@ class TestProcessContextsAttachments:
                 "subtask_id": 1642,
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_executor_context_processing_uses_attachment_metadata_only(self):
+        """Executor runtimes should not inline backend-parsed attachment content."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1233,
+            subtask_id=1643,
+            prompt="hello",
+            system_prompt="system",
+            model_config={},
+            bot=[{"shell_type": "ClaudeCode"}],
+        )
+
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="",
+            ),
+        )
+        prepare_mock = AsyncMock(return_value=ctx)
+
+        with patch(
+            "app.services.chat.preprocessing.prepare_contexts_for_chat",
+            new=prepare_mock,
+        ):
+            with patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[],
+            ):
+                await trigger_unified._process_contexts(
+                    db=MagicMock(),
+                    request=request,
+                    user_subtask_id=1642,
+                    user_id=2,
+                )
+
+        assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
 
     @pytest.mark.asyncio
     async def test_prioritizes_knowledge_skill_when_user_selected_kb_is_present(self):

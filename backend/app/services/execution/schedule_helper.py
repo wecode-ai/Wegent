@@ -22,6 +22,14 @@ from app.utils.prompt_utils import extract_display_prompt
 logger = logging.getLogger(__name__)
 
 
+def _extract_device_id_from_executor_name(executor_name: str | None) -> str | None:
+    """Extract a device ID from a device-mode executor name."""
+    if not executor_name or not executor_name.startswith("device-"):
+        return None
+    device_id = executor_name[len("device-") :].strip()
+    return device_id or None
+
+
 def schedule_dispatch(task_id: int) -> None:
     """Schedule async dispatch of a task from sync context.
 
@@ -30,7 +38,7 @@ def schedule_dispatch(task_id: int) -> None:
     the async dispatch operation.
 
     This replaces the former task_dispatcher.schedule_dispatch() method,
-    using HTTP+Callback mode via execution_dispatcher.
+    using execution_dispatcher to select the appropriate dispatch route.
 
     Args:
         task_id: Task ID to dispatch
@@ -87,6 +95,28 @@ def _run_in_new_loop(coro) -> Any:
 _thread_pool: ThreadPoolExecutor | None = None
 
 
+def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
+    """Resolve the user message that triggered a pending assistant subtask."""
+    from app.stores.tasks import subtask_store
+
+    assistant_prompt = extract_display_prompt(subtask.prompt) or ""
+    if assistant_prompt:
+        return assistant_prompt
+
+    if not subtask.parent_id:
+        return ""
+
+    user_subtask = subtask_store.get_user_by_task_message_id(
+        db,
+        task_id=subtask.task_id,
+        message_id=subtask.parent_id,
+    )
+    if not user_subtask:
+        return ""
+
+    return extract_display_prompt(user_subtask.prompt) or ""
+
+
 def _get_thread_pool() -> ThreadPoolExecutor:
     """Get or create the shared thread pool."""
     global _thread_pool
@@ -101,16 +131,16 @@ async def _dispatch_task_async(task_id: int) -> None:
     This function:
     1. Queries database for task, subtask, user, team info
     2. Builds ExecutionRequest using TaskRequestBuilder
-    3. Dispatches via HTTP+Callback mode
+    3. Dispatches through execution_dispatcher
 
     Args:
         task_id: Task ID to dispatch
     """
     from app.api.dependencies import get_db
-    from app.models.subtask import Subtask, SubtaskStatus
-    from app.models.task import TaskResource
+    from app.models.subtask import SubtaskStatus
     from app.schemas.kind import Task as TaskCRD
     from app.services.readers.kinds import KindType, kindReader
+    from app.stores.tasks import subtask_store, task_store
     from shared.models.db import User
 
     from .dispatcher import execution_dispatcher
@@ -119,29 +149,18 @@ async def _dispatch_task_async(task_id: int) -> None:
     db = next(get_db())
     try:
         # Query task
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-            )
-            .first()
-        )
+        task = task_store.get_by_id(db, task_id=task_id)
 
-        if not task:
+        if not task or task.kind != "Task":
             logger.error(f"[schedule_dispatch] Task {task_id} not found")
             return
 
         # Query PENDING subtasks for this task
-        subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task_id,
-                Subtask.status == SubtaskStatus.PENDING,
-            )
-            .all()
+        subtasks = subtask_store.list_by_task_status(
+            db,
+            task_id=task_id,
+            status=SubtaskStatus.PENDING,
         )
-
         if not subtasks:
             logger.debug(
                 f"[schedule_dispatch] No PENDING subtasks found for task {task_id}"
@@ -185,7 +204,7 @@ async def _dispatch_task_async(task_id: int) -> None:
             try:
                 # Extract original user text from stored prompt to prevent
                 # double-wrapping of already-formatted content arrays.
-                message = extract_display_prompt(subtask.prompt) or ""
+                message = _resolve_dispatch_message(db, subtask)
 
                 # Build ExecutionRequest
                 request = builder.build(
@@ -212,19 +231,35 @@ async def _dispatch_task_async(task_id: int) -> None:
                         logger.error(
                             f"[schedule_dispatch] Failed to recover executor for subtask {subtask.id}"
                         )
-                        subtask.status = SubtaskStatus.FAILED
-                        subtask.error_message = (
-                            "Failed to recover executor after Pod deletion"
+                        subtask_store.update_fields(
+                            db,
+                            subtask=subtask,
+                            status=SubtaskStatus.FAILED,
+                            error_message="Failed to recover executor after Pod deletion",
                         )
                         db.commit()
                         continue
 
                 # Update subtask status to RUNNING
-                subtask.status = SubtaskStatus.RUNNING
+                subtask_store.update_status(
+                    db,
+                    subtask=subtask,
+                    status=SubtaskStatus.RUNNING,
+                )
                 db.commit()
 
-                # Dispatch using HTTP+Callback mode
-                await execution_dispatcher.dispatch(request)
+                device_id = _extract_device_id_from_executor_name(subtask.executor_name)
+                logger.info(
+                    "[schedule_dispatch] Dispatching pending subtask: "
+                    "task_id=%s, subtask_id=%s, device_id=%s, executor=%s/%s",
+                    task_id,
+                    subtask.id,
+                    device_id,
+                    subtask.executor_namespace,
+                    subtask.executor_name,
+                )
+
+                await execution_dispatcher.dispatch(request, device_id=device_id)
 
                 logger.info(
                     f"[schedule_dispatch] Dispatched subtask {subtask.id} "
@@ -237,8 +272,12 @@ async def _dispatch_task_async(task_id: int) -> None:
                     exc_info=True,
                 )
                 # Mark subtask as FAILED
-                subtask.status = SubtaskStatus.FAILED
-                subtask.error_message = str(e)
+                subtask_store.update_fields(
+                    db,
+                    subtask=subtask,
+                    status=SubtaskStatus.FAILED,
+                    error_message=str(e),
+                )
                 db.commit()
 
     except Exception as e:
@@ -271,6 +310,8 @@ async def _recover_executor(
     Returns:
         True if recovery successful, False otherwise
     """
+    from app.stores.tasks import subtask_store
+
     from .recovery_service import recovery_service
 
     try:
@@ -282,10 +323,13 @@ async def _recover_executor(
         )
         if recovered_info:
             # Update subtask with new executor info
-            subtask.executor_name = recovered_info["executor_name"]
-            subtask.executor_namespace = recovered_info["executor_namespace"]
-            subtask.executor_deleted_at = False
-            db.add(subtask)
+            subtask_store.update_fields(
+                db,
+                subtask=subtask,
+                executor_name=recovered_info["executor_name"],
+                executor_namespace=recovered_info["executor_namespace"],
+                executor_deleted_at=False,
+            )
             db.commit()
             return True
         return False

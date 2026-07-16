@@ -16,8 +16,10 @@ from chat_shell.compression.strategies import (
     AttachmentTruncationStrategy,
     CompressionResult,
     HistoryTruncationStrategy,
+    ToolResultTruncationStrategy,
 )
 from chat_shell.compression.token_counter import TokenCounter
+from chat_shell.guard.tool_output import BYPASS_COMPACTION_FLAG
 
 
 def _assert_tool_call_groups_intact(messages):
@@ -116,6 +118,36 @@ class TestTokenCounter:
         assert not counter.is_over_limit(messages, 1000)
         assert counter.is_over_limit(messages, 1)
 
+    def test_count_text_with_special_token_literal(self):
+        """Text containing literal '<|endoftext|>' must not raise an error.
+
+        tiktoken treats '<|endoftext|>' as a special token and raises by default
+        when it appears as plain text.  disallowed_special=() disables this check
+        so that content fetched from external sources (e.g. the Qwen3 Embedding
+        paper) is counted without crashing the token counter.
+        """
+        counter = TokenCounter(model_id="gpt-4")
+        text = "Input format: {Instruction} {Query}<|endoftext|>"
+        count = counter.count_text(text)
+        assert count > 0
+
+    def test_count_messages_with_special_token_literal(self):
+        """Message history containing literal '<|endoftext|>' must not raise."""
+        counter = TokenCounter(model_id="gpt-4")
+        messages = [
+            {"role": "user", "content": "Tell me about Qwen3 Reranker."},
+            {
+                "role": "assistant",
+                "content": (
+                    "The input format is: {Instruction} {Query}<|endoftext|>\n"
+                    "This is used as a separator in the embedding model."
+                ),
+            },
+            {"role": "user", "content": "What loss function is used?"},
+        ]
+        count = counter.count_messages(messages)
+        assert count > 0
+
 
 class TestModelContextConfig:
     """Tests for model context configuration."""
@@ -128,14 +160,51 @@ class TestModelContextConfig:
             trigger_threshold=0.90,
             target_threshold=0.70,
         )
+        # reserved_output_tokens = min(clamp(200000 * 0.1, 16k, 48k), 8192) = 8192
         # available_tokens = 200000 - 8192 = 191808
-        # trigger_limit (effective_limit) = 191808 * 0.90 = 172627
-        expected = int((200000 - 8192) * 0.90)
+        reserved = config.reserved_output_tokens
+        assert reserved == 8192
+        available = 200000 - reserved
+        # trigger_limit (effective_limit) = 191808 * 0.90
+        expected = int(available * 0.90)
         assert config.effective_limit == expected
         assert config.trigger_limit == expected
-        # target_limit = 191808 * 0.70 = 134265
-        expected_target = int((200000 - 8192) * 0.70)
+        # target_limit = 191808 * 0.70
+        expected_target = int(available * 0.70)
         assert config.target_limit == expected_target
+
+    def test_reserved_output_uses_flat_buffer_when_model_cap_is_higher(self):
+        """Large output ceilings must not inflate the governance reserve."""
+        # Large window with a huge max output (e.g. reasoning model): reserve must
+        # follow the flat buffer (clamp(window * 0.1, 16k, 48k)), NOT 96k.
+        config = ModelContextConfig(context_window=256000, output_tokens=96000)
+        assert config.reserved_output_tokens == 25600
+        assert config.available_tokens == 230400
+        assert config.trigger_limit == int(230400 * 0.90)
+
+        # Ratio is capped at 48k for very large windows.
+        big = ModelContextConfig(context_window=1_000_000, output_tokens=100000)
+        assert big.reserved_output_tokens == 48000
+
+        # Small windows never reserve more than half the window.
+        small = ModelContextConfig(context_window=8000, output_tokens=4096)
+        assert small.reserved_output_tokens == 4000
+
+    def test_reserved_output_is_capped_by_model_output_tokens(self):
+        """Small model output caps should shrink the flat reserve."""
+        config = ModelContextConfig(context_window=256000, output_tokens=8192)
+        assert config.reserved_output_tokens == 8192
+        assert config.available_tokens == 256000 - 8192
+        assert config.trigger_limit == int((256000 - 8192) * 0.90)
+
+    def test_target_limit_stays_strictly_below_trigger_when_override_enabled(self):
+        """Auto-compact overrides must not let target land on the trigger boundary."""
+        config = ModelContextConfig(
+            context_window=256000,
+            output_tokens=96000,
+            auto_compact_token_limit=200000,
+        )
+        assert config.target_limit < config.trigger_limit
 
     def test_get_model_context_config_claude(self):
         """Test getting config for Claude model."""
@@ -190,6 +259,8 @@ class TestModelContextConfig:
         # Should use context_window from model_config and default output_tokens
         assert config.context_window == 300000
         assert config.output_tokens == 4096  # default fallback
+        assert config.output_tokens_cap_enabled is False
+        assert config.reserved_output_tokens == 30000
 
     def test_get_model_context_config_empty_model_config(self):
         """Test getting config with empty model_config falls back to built-in."""
@@ -198,6 +269,15 @@ class TestModelContextConfig:
         # Should fall back to built-in defaults for gpt-4o
         assert config.context_window == 128000
         assert config.output_tokens == 16384
+
+    def test_unknown_model_default_does_not_cap_reserve_by_fallback_output_tokens(self):
+        """Unknown-model fallback must keep the flat reserve instead of 4k."""
+        config = get_model_context_config("totally-unknown-model")
+
+        assert config.context_window == 128000
+        assert config.output_tokens == 4096
+        assert config.output_tokens_cap_enabled is False
+        assert config.reserved_output_tokens == 16000
 
 
 class TestCompressionConfig:
@@ -490,6 +570,81 @@ class TestAttachmentTruncationStrategy:
         # Both attachment messages should be shorter than original
         assert len(compressed[0]["content"]) < len(messages[0]["content"])
         assert len(compressed[2]["content"]) < len(messages[2]["content"])
+
+
+class TestToolResultTruncationStrategy:
+    """Tests for the tool-result truncation strategy.
+
+    Most coverage of this strategy lives in ``TestMessageCompressor`` (which
+    runs strategies through the orchestrator). This class focuses on the
+    interaction with the guard's compaction flag — once the guard's
+    ``ToolOutputGuardAdapter`` has produced a fixed-format compact string,
+    this strategy must NOT touch it (chopping at character boundaries would
+    leave a misleading ``total_tokens`` count and mix two truncation
+    notices). Re-compaction of those messages is owned by the guard's
+    stage-3 emergency pass.
+    """
+
+    def test_skips_messages_flagged_compacted(self):
+        from chat_shell.guard.tool_output import ToolOutputGuardAdapter
+        from chat_shell.guard.types import TruncationPolicy
+
+        counter = TokenCounter(model_id="gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=200),
+        )
+        # Build a real compact string the way stage 1 would.
+        compact = adapter.to_model_visible(
+            {"text": "log line\n" * 800, "tool_name": "shell"},
+            adapter.default_policy,
+        )
+        msg = {
+            "role": "tool",
+            "content": compact,
+            "additional_kwargs": {"compacted": True},
+        }
+
+        strategy = ToolResultTruncationStrategy()
+        config = CompressionConfig()
+        compressed, details = strategy.compress([msg], counter, 400, config)
+
+        # Strategy left the compact string untouched.
+        assert compressed[0]["content"] == compact
+        assert details["tool_results_truncated"] == 0
+        assert details["chars_removed"] == 0
+
+    def test_estimate_potential_skips_compacted_messages(self):
+        counter = TokenCounter(model_id="gpt-4")
+        compacted = {
+            "role": "tool",
+            "content": "[tool_output ...] big body " + ("x" * 5000),
+            "additional_kwargs": {"compacted": True},
+        }
+        plain = {"role": "tool", "content": "Y" * 5000}
+
+        strategy = ToolResultTruncationStrategy()
+        config = CompressionConfig()
+
+        only_compacted = strategy.estimate_potential([compacted], counter, config)
+        with_plain = strategy.estimate_potential([compacted, plain], counter, config)
+
+        # Compacted-only: nothing to compress.
+        assert only_compacted.total_compressible_tokens == 0
+        # Adding a non-compacted tool message creates real potential.
+        assert with_plain.total_compressible_tokens > 0
+
+    def test_still_compresses_non_compacted_tool_messages(self):
+        counter = TokenCounter(model_id="gpt-4")
+        plain = {"role": "tool", "content": "A" * 5000}
+
+        strategy = ToolResultTruncationStrategy()
+        config = CompressionConfig()
+        compressed, details = strategy.compress([plain], counter, 400, config)
+
+        assert compressed[0]["content"] != plain["content"]
+        assert details["tool_results_truncated"] == 1
+        assert details["chars_removed"] > 0
 
 
 class TestHistoryTruncationStrategy:
@@ -1016,3 +1171,61 @@ class TestMessageCompressor:
         compressed, _ = compressor._force_compression_to_target(messages, 10)
 
         _assert_tool_call_groups_intact(compressed)
+
+
+class TestBypassProtectedCompaction:
+    def test_history_truncation_skips_middle_bypass_protected_message(self):
+        strategy = HistoryTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(first_messages_to_keep=1, last_messages_to_keep=1)
+
+        messages = [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "older reply"},
+            {
+                "role": "tool",
+                "content": '{"mode":"direct_injection","injected_content":"x"}',
+                "additional_kwargs": {BYPASS_COMPACTION_FLAG: True},
+            },
+            {"role": "assistant", "content": "latest reply"},
+        ]
+
+        potential = strategy.estimate_potential(messages, counter, config)
+        assert potential.total_compressible_tokens == 0
+
+        compressed, details = strategy.compress(
+            messages,
+            counter,
+            tokens_to_reduce=100,
+            config=config,
+        )
+        assert compressed == messages
+        assert details["messages_removed"] == 0
+        assert details["bypass_protected"] is True
+
+    def test_tool_result_truncation_skips_bypass_protected_tool_message(self):
+        strategy = ToolResultTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig()
+
+        protected_tool = {
+            "role": "tool",
+            "content": "tool output " * 500,
+            "additional_kwargs": {BYPASS_COMPACTION_FLAG: True},
+        }
+        messages = [
+            {"role": "user", "content": "search"},
+            protected_tool,
+        ]
+
+        potential = strategy.estimate_potential(messages, counter, config)
+        assert potential.total_compressible_tokens == 0
+
+        compressed, details = strategy.compress(
+            messages,
+            counter,
+            tokens_to_reduce=100,
+            config=config,
+        )
+        assert compressed == messages
+        assert details["tool_results_truncated"] == 0

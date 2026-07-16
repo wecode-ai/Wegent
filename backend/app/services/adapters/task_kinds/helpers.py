@@ -10,22 +10,47 @@ including subtask creation and batch data fetching.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_, tuple_
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
+from app.models.subtask import Subtask
 from app.models.task import TaskResource
+from app.schemas.base_role import BaseRole
 from app.schemas.kind import Task, Team, Workspace
 from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.services.task_fork_history import task_fork_history_resolver
+from app.stores.tasks import WorkspaceRefLookup
+
+from .converters import (
+    get_task_execution_workspace_path,
+    get_task_execution_workspace_source,
+)
 
 logger = logging.getLogger(__name__)
+
+REPORTER_OR_HIGHER_ROLES = (
+    BaseRole.Owner.value,
+    BaseRole.Maintainer.value,
+    BaseRole.Developer.value,
+    BaseRole.Reporter.value,
+)
+
+
+def _team_ref_key(name: str, namespace: str, user_id: int | None = None) -> str:
+    if user_id is None:
+        return f"{name}:{namespace}"
+    return f"{name}:{namespace}:{user_id}"
 
 
 def create_subtasks(
@@ -71,90 +96,65 @@ def create_subtasks(
             detail="No valid bots found in team configuration, please check that the bots referenced by the team exist and are active",
         )
 
-    # For followup tasks: query existing subtasks and add one more
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task.id, Subtask.user_id == user_id)
-        .order_by(Subtask.message_id.desc())
-        .all()
-    )
-
-    # Get the next message_id for the new subtask
-    next_message_id = 1
-    parent_id = 0
-    if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
-
-    # Create USER role subtask based on task object
-    user_subtask = Subtask(
-        user_id=user_id,
+    existing_subtasks = [
+        item.subtask
+        for item in task_fork_history_resolver.resolve_for_task(
+            db,
+            task_id=task.id,
+            user_id=user_id,
+            current_task=task,
+        )
+    ]
+    next_message_id = task_fork_history_resolver.get_next_message_id(
+        db,
         task_id=task.id,
-        team_id=team.id,
-        title=f"{task_crd.spec.title} - User",
-        bot_ids=bot_ids,
-        role=SubtaskRole.USER,
-        executor_namespace="",
-        executor_name="",
-        prompt=user_prompt,
-        status=SubtaskStatus.COMPLETED,
-        progress=0,
-        message_id=next_message_id,
-        parent_id=parent_id,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
+        user_id=user_id,
+        current_task=task,
     )
-    db.add(user_subtask)
+    parent_id = next_message_id - 1 if next_message_id > 1 else 0
 
-    # Update id of next message and parent
-    if parent_id == 0:
-        parent_id = 1
-    next_message_id = next_message_id + 1
-
-    # Create ASSISTANT role subtask based on team workflow
     collaboration_model = team_crd.spec.collaborationModel
-
     if collaboration_model == "pipeline":
-        _create_pipeline_subtask(
+        assistant_title, assistant_bot_ids = _build_pipeline_assistant_subtask_plan(
             db,
             task,
             team,
             team_crd,
             task_crd,
-            user_id,
             existing_subtasks,
-            bot_ids,
-            next_message_id,
-            parent_id,
         )
     else:
-        _create_standard_subtask(
-            db,
-            task,
-            team,
+        assistant_title, assistant_bot_ids = _build_standard_assistant_subtask_plan(
             task_crd,
-            user_id,
-            existing_subtasks,
             bot_ids,
-            next_message_id,
-            parent_id,
         )
 
+    task_stores.subtask_store.create_user_and_assistant_subtasks(
+        db,
+        user_id=user_id,
+        task_id=task.id,
+        team_id=team.id,
+        title=f"{task_crd.spec.title} - User",
+        assistant_title=assistant_title,
+        bot_ids=assistant_bot_ids,
+        prompt=user_prompt,
+        user_message_id=next_message_id,
+        user_parent_id=parent_id,
+        assistant_message_id=next_message_id + 1,
+        assistant_parent_id=next_message_id,
+        progress=0,
+    )
 
-def _create_pipeline_subtask(
+
+def _build_pipeline_assistant_subtask_plan(
     db: Session,
     task: Kind,
     team: Kind,
     team_crd: Team,
     task_crd: Task,
-    user_id: int,
     existing_subtasks: List[Subtask],
-    bot_ids: List[int],
-    next_message_id: int,
-    parent_id: int,
-) -> None:
-    """Create subtask for pipeline collaboration model."""
+) -> tuple[str, List[int]]:
+    """Build assistant subtask title and bot IDs for pipeline collaboration."""
     # Pipeline mode: determine which bot to create subtask for
     # Use pipeline_stage_service to get current stage from task.spec.currentStage
     should_stay, current_stage_index = (
@@ -192,75 +192,15 @@ def _create_pipeline_subtask(
     if bot is None:
         raise Exception(f"Bot {target_member.botRef.name} not found in kinds table")
 
-    # Pipeline mode: all bots run in the same executor
-    # Get executor info from any existing assistant subtask
-    executor_name = ""
-    executor_namespace = ""
-    for s in existing_subtasks:
-        if s.role == SubtaskRole.ASSISTANT and s.executor_name:
-            executor_name = s.executor_name
-            executor_namespace = s.executor_namespace
-            break
-
-    subtask = Subtask(
-        user_id=user_id,
-        task_id=task.id,
-        team_id=team.id,
-        title=f"{task_crd.spec.title} - {bot.name}",
-        bot_ids=[bot.id],
-        role=SubtaskRole.ASSISTANT,
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
-        message_id=next_message_id,
-        parent_id=parent_id,
-        executor_name=executor_name,
-        executor_namespace=executor_namespace,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
-    )
-    db.add(subtask)
+    return f"{task_crd.spec.title} - {bot.name}", [bot.id]
 
 
-def _create_standard_subtask(
-    db: Session,
-    task: Kind,
-    team: Kind,
+def _build_standard_assistant_subtask_plan(
     task_crd: Task,
-    user_id: int,
-    existing_subtasks: List[Subtask],
     bot_ids: List[int],
-    next_message_id: int,
-    parent_id: int,
-) -> None:
-    """Create subtask for standard (non-pipeline) collaboration models."""
-    executor_name = ""
-    executor_namespace = ""
-    if existing_subtasks:
-        # Take executor_name and executor_namespace from the last existing subtask
-        executor_name = existing_subtasks[0].executor_name
-        executor_namespace = existing_subtasks[0].executor_namespace
-
-    assistant_subtask = Subtask(
-        user_id=user_id,
-        task_id=task.id,
-        team_id=team.id,
-        title=f"{task_crd.spec.title} - Assistant",
-        bot_ids=bot_ids,
-        role=SubtaskRole.ASSISTANT,
-        prompt="",
-        status=SubtaskStatus.PENDING,
-        progress=0,
-        message_id=next_message_id,
-        parent_id=parent_id,
-        executor_name=executor_name,
-        executor_namespace=executor_namespace,
-        error_message="",
-        completed_at=datetime.now(),
-        result=None,
-    )
-    db.add(assistant_subtask)
+) -> tuple[str, List[int]]:
+    """Build assistant subtask title and bot IDs for standard collaboration."""
+    return f"{task_crd.spec.title} - Assistant", bot_ids
 
 
 def get_tasks_related_data_batch(
@@ -283,6 +223,7 @@ def get_tasks_related_data_batch(
     # Extract workspace and team references from all tasks
     workspace_refs = set()
     team_refs = set()
+    device_ids = set()
     task_crd_map = {}
 
     for task in tasks:
@@ -298,13 +239,26 @@ def get_tasks_related_data_batch(
             )
 
         if hasattr(task_crd.spec, "teamRef") and task_crd.spec.teamRef:
-            team_refs.add((task_crd.spec.teamRef.name, task_crd.spec.teamRef.namespace))
+            team_refs.add(
+                (
+                    task_crd.spec.teamRef.name,
+                    task_crd.spec.teamRef.namespace,
+                    getattr(task_crd.spec.teamRef, "user_id", None),
+                )
+            )
+
+        device_id = getattr(task_crd.spec, "device_id", None)
+        if device_id:
+            device_ids.add(device_id)
 
     # Batch query workspaces
     workspace_data = _batch_query_workspaces(db, workspace_refs, user_id)
 
     # Batch query teams (including shared teams)
     team_data = _batch_query_teams(db, team_refs, user_id)
+
+    # Batch query device display names
+    device_data = _batch_query_devices(db, device_ids, user_id)
 
     # Get user info once
     user = userReader.get_by_id(db, user_id)
@@ -331,9 +285,22 @@ def get_tasks_related_data_batch(
         )
 
         # Get team data
-        team_key = f"{task_crd.spec.teamRef.name}:{task_crd.spec.teamRef.namespace}"
+        team_key = _team_ref_key(
+            task_crd.spec.teamRef.name,
+            task_crd.spec.teamRef.namespace,
+            getattr(task_crd.spec.teamRef, "user_id", None),
+        )
         task_team = team_data.get(team_key)
         team_id = task_team.id if task_team else None
+        team_name = task_team.name if task_team else task_crd.spec.teamRef.name
+        team_namespace = (
+            task_team.namespace if task_team else task_crd.spec.teamRef.namespace
+        )
+        team_display_name = _get_team_display_name(task_team)
+        team_icon = _get_team_icon(task_team)
+
+        device_id = getattr(task_crd.spec, "device_id", None)
+        device_name = device_data.get(device_id) if device_id else None
 
         # Parse timestamps
         created_at = None
@@ -356,6 +323,12 @@ def get_tasks_related_data_batch(
         result[str(task.id)] = {
             "workspace_data": task_workspace_data,
             "team_id": team_id,
+            "team_name": team_name,
+            "team_namespace": team_namespace,
+            "team_display_name": team_display_name,
+            "team_icon": team_icon,
+            "device_id": device_id,
+            "device_name": device_name,
             "user_name": user_name,
             "created_at": created_at or task.created_at,
             "updated_at": updated_at or task.updated_at,
@@ -368,6 +341,28 @@ def get_tasks_related_data_batch(
     return result
 
 
+def _get_team_display_name(team: Kind | None) -> str | None:
+    """Return a team's display name from CRD metadata if available."""
+    if not team or not team.json:
+        return None
+    try:
+        team_crd = Team.model_validate(team.json)
+        return team_crd.metadata.displayName
+    except Exception:
+        return team.json.get("metadata", {}).get("displayName")
+
+
+def _get_team_icon(team: Kind | None) -> str | None:
+    """Return a team's configured icon from CRD spec if available."""
+    if not team or not team.json:
+        return None
+    try:
+        team_crd = Team.model_validate(team.json)
+        return team_crd.spec.icon
+    except Exception:
+        return team.json.get("spec", {}).get("icon")
+
+
 def _batch_query_workspaces(
     db: Session, workspace_refs: set, user_id: int
 ) -> Dict[str, Dict[str, Any]]:
@@ -376,17 +371,12 @@ def _batch_query_workspaces(
     if not workspace_refs:
         return workspace_data
 
-    workspace_names, workspace_namespaces = zip(*workspace_refs)
-    workspaces = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Workspace",
-            TaskResource.name.in_(workspace_names),
-            TaskResource.namespace.in_(workspace_namespaces),
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .all()
+    workspaces = task_stores.task_store.list_workspaces_by_refs(
+        db,
+        refs=[
+            WorkspaceRefLookup(user_id=user_id, name=name, namespace=namespace)
+            for name, namespace in workspace_refs
+        ],
     )
 
     for workspace in workspaces:
@@ -423,59 +413,218 @@ def _batch_query_workspaces(
 
 def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, Kind]:
     """Batch query teams (including shared teams) and return data dict."""
-    team_data = {}
     if not team_refs:
+        return {}
+
+    exact_team_refs = {
+        (name, namespace, ref_user_id)
+        for name, namespace, ref_user_id in (
+            (*ref, None) if len(ref) == 2 else ref for ref in team_refs
+        )
+        if ref_user_id is not None
+    }
+    access_resolved_refs = {
+        (name, namespace)
+        for name, namespace, ref_user_id in (
+            (*ref, None) if len(ref) == 2 else ref for ref in team_refs
+        )
+        if ref_user_id is None
+    }
+
+    team_data: Dict[str, Kind] = {}
+    if exact_team_refs:
+        exact_teams = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                tuple_(Kind.name, Kind.namespace, Kind.user_id).in_(exact_team_refs),
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        for team in exact_teams:
+            team_data[_team_ref_key(team.name, team.namespace, team.user_id)] = team
+
+    if not access_resolved_refs:
         return team_data
 
-    team_names, team_namespaces = zip(*team_refs)
+    team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
+    approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
+    accessible_team_ids = _get_accessible_team_ids(
+        db, user_id, team_resource_type_variants, approved_status_variants
+    )
+    owner_filter = Kind.user_id.in_([user_id, 0])
+    access_filter = (
+        or_(owner_filter, Kind.id.in_(accessible_team_ids))
+        if accessible_team_ids
+        else owner_filter
+    )
+    accessible_teams = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Team",
+            tuple_(Kind.name, Kind.namespace).in_(access_resolved_refs),
+            Kind.is_active.is_(True),
+            access_filter,
+        )
+        .all()
+    )
 
-    # First query user's own teams
-    teams = (
+    team_priorities: Dict[str, int] = {}
+    for team in accessible_teams:
+        key = _team_ref_key(team.name, team.namespace)
+        priority = _get_team_scope_priority(team, user_id)
+        if key not in team_data or priority < team_priorities[key]:
+            team_data[key] = team
+            team_priorities[key] = priority
+
+    return team_data
+
+
+def _get_accessible_team_ids(
+    db: Session,
+    user_id: int,
+    team_resource_type_variants: List[str],
+    approved_status_variants: List[str],
+) -> set[int]:
+    """Return shared Team ids accessible to a user without SQL subqueries."""
+    team_ids = _get_direct_shared_team_ids(
+        db, user_id, team_resource_type_variants, approved_status_variants
+    )
+    namespace_ids = _get_user_accessible_namespace_ids(
+        db, user_id, approved_status_variants
+    )
+    if namespace_ids:
+        team_ids.update(
+            _get_namespace_granted_team_ids(
+                db,
+                namespace_ids,
+                team_resource_type_variants,
+                approved_status_variants,
+            )
+        )
+    return team_ids
+
+
+def _get_direct_shared_team_ids(
+    db: Session,
+    user_id: int,
+    team_resource_type_variants: List[str],
+    approved_status_variants: List[str],
+) -> set[int]:
+    """Return Team ids directly shared with the user."""
+    rows = (
+        db.query(ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type.in_(team_resource_type_variants),
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status.in_(approved_status_variants),
+        )
+        .all()
+    )
+    return {row.resource_id for row in rows}
+
+
+def _get_user_accessible_namespace_ids(
+    db: Session, user_id: int, approved_status_variants: List[str]
+) -> set[str]:
+    """Return namespace ids accessible through direct or parent membership."""
+    direct_namespaces = (
+        db.query(Namespace.id, Namespace.name)
+        .join(
+            ResourceMember,
+            and_(
+                ResourceMember.resource_type == "Namespace",
+                ResourceMember.resource_id == Namespace.id,
+            ),
+        )
+        .filter(
+            Namespace.is_active.is_(True),
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status.in_(approved_status_variants),
+            ResourceMember.role.in_(REPORTER_OR_HIGHER_ROLES),
+        )
+        .all()
+    )
+    namespace_ids = {str(row.id) for row in direct_namespaces}
+    parent_names = [row.name for row in direct_namespaces]
+    if not parent_names:
+        return namespace_ids
+
+    child_filters = [
+        Namespace.name.like(f"{_escape_sql_like(name)}/%", escape="\\")
+        for name in parent_names
+    ]
+    child_rows = (
+        db.query(Namespace.id)
+        .filter(Namespace.is_active.is_(True), or_(*child_filters))
+        .all()
+    )
+    namespace_ids.update(str(row.id) for row in child_rows)
+    return namespace_ids
+
+
+def _escape_sql_like(value: str) -> str:
+    """Escape SQL LIKE wildcard characters."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _get_namespace_granted_team_ids(
+    db: Session,
+    namespace_ids: set[str],
+    team_resource_type_variants: List[str],
+    approved_status_variants: List[str],
+) -> set[int]:
+    """Return Team ids granted to accessible namespaces."""
+    rows = (
+        db.query(ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type.in_(team_resource_type_variants),
+            ResourceMember.entity_type == "namespace",
+            ResourceMember.entity_id.in_(namespace_ids),
+            ResourceMember.status.in_(approved_status_variants),
+        )
+        .all()
+    )
+    return {row.resource_id for row in rows}
+
+
+def _get_team_scope_priority(team: Kind, user_id: int) -> int:
+    """Return lower priority for the preferred team scope."""
+    if team.user_id == user_id:
+        return 0
+    if team.user_id == 0:
+        return 2
+    return 1
+
+
+def _batch_query_devices(
+    db: Session, device_ids: set[str], user_id: int
+) -> Dict[str, str]:
+    """Batch query device display names by device ID."""
+    if not device_ids:
+        return {}
+
+    devices = (
         db.query(Kind)
         .filter(
             Kind.user_id == user_id,
-            Kind.kind == "Team",
-            Kind.name.in_(team_names),
-            Kind.namespace.in_(team_namespaces),
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.name.in_(device_ids),
             Kind.is_active.is_(True),
         )
         .all()
     )
 
-    for team in teams:
-        key = f"{team.name}:{team.namespace}"
-        team_data[key] = team
+    device_data = {}
+    for device in devices:
+        device_json = device.json or {}
+        device_data[device.name] = resolve_device_display_name(device_json, device.name)
 
-    # Then query shared teams for missing team refs
-    missing_team_refs = [
-        ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data
-    ]
-    if missing_team_refs:
-        # Get all shared team_ids for this user
-        from app.services.readers.shared_teams import sharedTeamReader
-
-        shared_team_ids = sharedTeamReader.get_shared_team_ids(db, user_id)
-
-        if shared_team_ids:
-            # Query teams from shared team ids
-            missing_team_names, missing_team_namespaces = zip(*missing_team_refs)
-            shared_team_kinds = (
-                db.query(Kind)
-                .filter(
-                    Kind.id.in_(shared_team_ids),
-                    Kind.kind == "Team",
-                    Kind.name.in_(missing_team_names),
-                    Kind.namespace.in_(missing_team_namespaces),
-                    Kind.is_active.is_(True),
-                )
-                .all()
-            )
-
-            for team in shared_team_kinds:
-                key = f"{team.name}:{team.namespace}"
-                team_data[key] = team
-
-    return team_data
+    return device_data
 
 
 def _add_group_chat_info(
@@ -507,11 +656,12 @@ def _add_group_chat_info(
     # Add is_group_chat to result
     for task_id_str, data in result.items():
         task_id = int(task_id_str)
-        # First check task JSON, fallback to member count.
-        # Use in-memory task map to avoid N+1 database lookups.
+        # Use the access store so sharded and legacy task metadata stay consistent.
         task = task_map.get(task_id)
-        task_json = task.json if task and task.json else {}
-        is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+        is_group_chat = task_stores.task_access_store.is_group_chat(db, task_id=task_id)
+        if task and not is_group_chat:
+            task_json = task.json if task.json else {}
+            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
         if not is_group_chat:
             is_group_chat = member_counts.get(task_id, 0) > 0
         data["is_group_chat"] = is_group_chat
@@ -557,12 +707,23 @@ def build_lite_task_list(
             and task_crd.metadata.labels.get("type")
             or "online"
         )
+        labels = task_crd.metadata.labels or {}
+        source_label = labels.get("source")
+        source = source_label if isinstance(source_label, str) else None
         status = task_crd.status.status if task_crd.status else "PENDING"
 
         created_at = task_related_data.get("created_at", task.created_at)
         updated_at = task_related_data.get("updated_at", task.updated_at)
         completed_at = task_related_data.get("completed_at")
         team_id = task_related_data.get("team_id")
+        team_name = task_related_data.get("team_name")
+        team_namespace = task_related_data.get("team_namespace")
+        team_display_name = task_related_data.get("team_display_name")
+        team_icon = task_related_data.get("team_icon")
+        device_id = task_related_data.get("device_id")
+        device_name = task_related_data.get("device_name")
+        execution_workspace_source = get_task_execution_workspace_source(task_crd)
+        execution_workspace_path = get_task_execution_workspace_path(task_crd)
         git_repo = workspace_data.get("git_repo")
         is_group_chat = task_related_data.get(
             "is_group_chat",
@@ -583,10 +744,21 @@ def build_lite_task_list(
                 "status": status,
                 "task_type": task_type,
                 "type": type_value,
+                "source": source,
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "completed_at": completed_at,
                 "team_id": team_id,
+                "team_name": team_name,
+                "team_namespace": team_namespace,
+                "team_display_name": team_display_name,
+                "team_icon": team_icon,
+                "project_id": task.project_id or 0,
+                "client_origin": task.client_origin,
+                "device_id": device_id,
+                "device_name": device_name,
+                "execution_workspace_source": execution_workspace_source,
+                "execution_workspace_path": execution_workspace_path,
                 "git_repo": git_repo,
                 "is_group_chat": is_group_chat,
                 "knowledge_base_id": knowledge_base_id,
@@ -594,3 +766,67 @@ def build_lite_task_list(
         )
 
     return result
+
+
+def build_lite_task_groups(
+    db: Session,
+    tasks: List[TaskResource],
+    user_id: int,
+) -> List[Dict[str, Any]]:
+    """Group the current lightweight task page by device or team."""
+    task_items = build_lite_task_list(db, tasks, user_id)
+    groups: Dict[str, Dict[str, Any]] = {}
+
+    for item in task_items:
+        device_id = item.get("device_id")
+        if device_id:
+            group_type = "device"
+            group_key = f"device:{device_id}"
+        else:
+            group_type = "team"
+            team_id = item.get("team_id")
+            team_name = item.get("team_name") or "unknown"
+            group_key = (
+                f"team:{team_id}" if team_id is not None else f"team:{team_name}"
+            )
+
+        if group_key not in groups:
+            groups[group_key] = _create_lite_task_group(
+                item, group_type=group_type, group_key=group_key
+            )
+
+        groups[group_key]["items"].append(item)
+
+    return list(groups.values())
+
+
+def _create_lite_task_group(
+    item: Dict[str, Any], *, group_type: str, group_key: str
+) -> Dict[str, Any]:
+    """Create group metadata from the first task item in that group."""
+    if group_type == "device":
+        return {
+            "group_type": group_type,
+            "group_key": group_key,
+            "team_id": None,
+            "team_name": None,
+            "team_namespace": None,
+            "team_display_name": None,
+            "team_icon": None,
+            "device_id": item.get("device_id"),
+            "device_name": item.get("device_name") or item.get("device_id"),
+            "items": [],
+        }
+
+    return {
+        "group_type": group_type,
+        "group_key": group_key,
+        "team_id": item.get("team_id"),
+        "team_name": item.get("team_name"),
+        "team_namespace": item.get("team_namespace"),
+        "team_display_name": item.get("team_display_name"),
+        "team_icon": item.get("team_icon"),
+        "device_id": None,
+        "device_name": None,
+        "items": [],
+    }

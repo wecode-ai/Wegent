@@ -70,7 +70,7 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:latest
+    image: ghcr.io/wecode-ai/wegent-backend:${WEGENT_IMAGE_TAG:-latest}
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-backend
     restart: always
@@ -87,6 +87,7 @@ services:
       LITELLM_LOCAL_MODEL_COST_MAP: "True"
       ENVIRONMENT: ${BACKEND_ENVIRONMENT:-development}
       DB_AUTO_MIGRATE: "${DB_AUTO_MIGRATE:-True}"
+      CHECK_SYSTEM_INITIALIZATION_STATUS: "${CHECK_SYSTEM_INITIALIZATION_STATUS:-True}"
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
       EXECUTOR_CANCEL_TASK_URL: ${EXECUTOR_CANCEL_TASK_URL:-http://executor_manager:8001/executor-manager/tasks/cancel}
       EXECUTOR_DELETE_TASK_URL: ${EXECUTOR_DELETE_TASK_URL:-http://executor_manager:8001/executor-manager/executor/delete}
@@ -109,8 +110,7 @@ services:
       # Chat Shell Configuration (uncomment to use HTTP mode)
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
-      # CHAT_SHELL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
-      # INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       # Internal URL for MCP and other internal service calls (use container name in Docker)
       BACKEND_INTERNAL_URL: http://backend:8000
       # Knowledge Runtime URL for RAG operations
@@ -137,7 +137,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:latest
+    image: ghcr.io/wecode-ai/wegent-web:${WEGENT_IMAGE_TAG:-latest}
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-frontend
     restart: always
@@ -147,7 +147,9 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       # API Configuration
       - RUNTIME_INTERNAL_API_URL=${RUNTIME_INTERNAL_API_URL:-http://backend:8000}
+      - RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-${WEGENT_SOCKET_URL:-http://localhost:8000}}
       - RUNTIME_SOCKET_DIRECT_URL=${WEGENT_SOCKET_URL:-http://localhost:8000}
+      - RUNTIME_WEWORK_CODE_URL=${RUNTIME_WEWORK_CODE_URL:-}
       # Feature Flags
       # - RUNTIME_ENABLE_CHAT_CONTEXT=false
       # - RUNTIME_LOGIN_MODE=all
@@ -162,14 +164,13 @@ services:
       # - RUNTIME_OTEL_ENABLED=false
       # - RUNTIME_OTEL_SERVICE_NAME=wegent-frontend
       # - RUNTIME_OTEL_COLLECTOR_ENDPOINT=http://localhost:4318
-    working_dir: /app
     depends_on:
       - backend
     networks:
       - wegent-network
 
   chat_shell:
-    image: ghcr.io/wecode-ai/wegent-chat-shell:latest
+    image: ghcr.io/wecode-ai/wegent-chat-shell:${WEGENT_IMAGE_TAG:-latest}
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-chat-shell
     restart: always
@@ -182,8 +183,9 @@ services:
       - CHAT_SHELL_MODE=${CHAT_SHELL_MODE:-http}
       - CHAT_SHELL_STORAGE_TYPE=${CHAT_SHELL_STORAGE_TYPE:-remote}
       - CHAT_SHELL_REMOTE_STORAGE_URL=${CHAT_SHELL_REMOTE_STORAGE_URL:-http://backend:8000/api/internal}
+      - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+      - CHAT_SHELL_INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       - EXECUTOR_MANAGER_URL=${EXECUTOR_MANAGER_URL:-http://executor_manager:8001}
-      # - CHAT_SHELL_REMOTE_STORAGE_TOKEN=${INTERNAL_SERVICE_TOKEN:-chat-shell-token}
       # OpenTelemetry Configuration (uncomment to enable)
       # - OTEL_ENABLED=true
       # - OTEL_SERVICE_NAME=wegent-chat-shell
@@ -202,7 +204,7 @@ services:
   executor_manager:
     # build:
     #   dockerfile: docker/executor_manager/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-executor-manager:latest
+    image: ghcr.io/wecode-ai/wegent-executor-manager:${WEGENT_IMAGE_TAG:-latest}
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -227,10 +229,11 @@ services:
       - TASK_API_DOMAIN=${TASK_API_DOMAIN:-http://backend:8000}
       - EXECUTOR_MANAGER_EXTERNAL_URL=${EXECUTOR_MANAGER_EXTERNAL_URL:-http://executor_manager:8001}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_PROTOCOL=${REDIS_PROTOCOL:-2}
       - MAX_CONCURRENT_TASKS=${EXECUTOR_MAX_CONCURRENT_TASKS:-30}
       - CALLBACK_HOST=${EXECUTOR_CALLBACK_HOST:-http://executor_manager:8001}
       - NETWORK=${EXECUTOR_NETWORK:-wegent-network}
-      - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-ghcr.io/wecode-ai/wegent-executor:latest}
+      - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-ghcr.io/wecode-ai/wegent-executor:${WEGENT_IMAGE_TAG:-latest}}
       - EXECUTOR_PORT_RANGE_MIN=${EXECUTOR_PORT_RANGE_MIN:-10001}
       - EXECUTOR_PORT_RANGE_MAX=${EXECUTOR_PORT_RANGE_MAX:-10100}
       - EXECUTOR_WORKSPACE=${EXECUTOR_WORKSPACE:-${HOME}/wecode-bot}
@@ -264,7 +267,7 @@ services:
       - wegent-network
 
   knowledge_runtime:
-    image: ghcr.io/wecode-ai/wegent-knowledge-runtime:latest
+    image: ghcr.io/wecode-ai/wegent-knowledge-runtime:${WEGENT_IMAGE_TAG:-latest}
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-knowledge-runtime
     restart: always
@@ -282,8 +285,8 @@ services:
       - LOG_FILE_ENABLED=${LOG_FILE_ENABLED:-true}
       - LOG_DIR=${LOG_DIR:-/app/logs}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Internal service token (uncomment to enable, must match Backend's INTERNAL_SERVICE_TOKEN)
-      # - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:-your-secure-token-here}
+      # Internal service token. Must match Backend's INTERNAL_SERVICE_TOKEN.
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
       # Database connection for config resolution (reference-mode)
       - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-task_user}:${MYSQL_PASSWORD:-task_password}@mysql:3306/${MYSQL_DATABASE:-task_manager}
       # OpenTelemetry Configuration (uncomment to enable)
@@ -302,6 +305,53 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  knowledge_doc_converter:
+    image: ghcr.io/wecode-ai/wegent-knowledge-doc-converter:${WEGENT_IMAGE_TAG:-latest}
+    pull_policy: ${DOCKER_PULL_POLICY:-always}
+    container_name: wegent-knowledge-doc-converter
+    restart: always
+    profiles:
+      - rag
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8000}
+      BACKEND_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env. Generate one with `openssl rand -hex 32`.}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/1}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MINERU_API_BASE_URL: ${MINERU_API_BASE_URL:-}
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_PARSE_METHOD: ${MINERU_PARSE_METHOD:-ocr}
+      MINERU_LANG_LIST: ${MINERU_LANG_LIST:-ch}
+      WORKER_CONVERSION_S3_ENABLED: ${WORKER_CONVERSION_S3_ENABLED:-false}
+      WORKER_CONVERSION_S3_ENDPOINT: ${WORKER_CONVERSION_S3_ENDPOINT:-}
+      WORKER_CONVERSION_S3_ACCESS_KEY: ${WORKER_CONVERSION_S3_ACCESS_KEY:-}
+      WORKER_CONVERSION_S3_SECRET_KEY: ${WORKER_CONVERSION_S3_SECRET_KEY:-}
+      WORKER_CONVERSION_S3_BUCKET_NAME: ${WORKER_CONVERSION_S3_BUCKET_NAME:-}
+      WORKER_CONVERSION_S3_REGION_NAME: ${WORKER_CONVERSION_S3_REGION_NAME:-us-east-1}
+      LOG_FILE_ENABLED: ${LOG_FILE_ENABLED:-true}
+      LOG_DIR: ${LOG_DIR:-/app/logs}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-false}
+      PROMETHEUS_PORT: ${PROMETHEUS_PORT:-9090}
+      PROMETHEUS_PATH: ${PROMETHEUS_PATH:-/metrics}
+      # Multimodal analysis (video/image → Gemini → Markdown). Off by default;
+      # set MULTIMODAL_ENABLED=true to opt the worker into the multimodal queue.
+      KNOWLEDGE_CONVERSION_QUEUE: ${KNOWLEDGE_CONVERSION_QUEUE:-knowledge_conversion}
+      CELERY_QUEUE: ${CELERY_QUEUE:-knowledge_conversion,knowledge_multimodal_conversion}
+      MULTIMODAL_ENABLED: ${MULTIMODAL_ENABLED:-false}
+      MULTIMODAL_QUEUE: ${MULTIMODAL_QUEUE:-knowledge_multimodal_conversion}
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:${PROMETHEUS_PORT:-9090}"
+    volumes:
+      - ./logs/knowledge_doc_converter:/app/logs
+    networks:
+      - wegent-network
 
 volumes:
   mysql_data:

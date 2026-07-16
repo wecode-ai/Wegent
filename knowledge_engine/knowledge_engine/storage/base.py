@@ -17,8 +17,13 @@ logger = logging.getLogger(__name__)
 
 from llama_index.core.schema import BaseNode
 
+from shared.models import RetrievalScope
+
 if TYPE_CHECKING:
     from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+
+RETRIEVAL_TEXT_METADATA_KEY = "retrieval_text"
+DISPLAY_TEXT_METADATA_KEY = "display_text"
 
 
 class BaseStorageBackend(ABC):
@@ -26,6 +31,7 @@ class BaseStorageBackend(ABC):
 
     # Subclasses should override this with their supported methods
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = []
+    supports_retrieval_scope: ClassVar[bool] = False
 
     # Index name prefix for different storage types (can be overridden)
     INDEX_PREFIX: ClassVar[str] = "index"
@@ -89,6 +95,44 @@ class BaseStorageBackend(ABC):
 
         # Fallback: return original content
         return raw_content
+
+    def get_node_embedding_text(self, node: BaseNode) -> str:
+        """Return the text that should be embedded for a node."""
+        retrieval_text = node.metadata.get(RETRIEVAL_TEXT_METADATA_KEY)
+        if isinstance(retrieval_text, str) and retrieval_text.strip():
+            return retrieval_text
+        return node.text or ""
+
+    def get_node_display_text(self, node: BaseNode) -> str:
+        """Return the text that should be shown to users and query callers."""
+        return self.get_display_text_from_metadata(
+            node.metadata,
+            fallback=node.text or "",
+        )
+
+    def get_display_text_from_metadata(
+        self,
+        metadata: Dict[str, Any] | None,
+        *,
+        fallback: str,
+    ) -> str:
+        """Resolve display text from metadata, falling back to stored text."""
+        if metadata:
+            display_text = metadata.get(DISPLAY_TEXT_METADATA_KEY)
+            if isinstance(display_text, str) and display_text.strip():
+                return display_text
+        return fallback
+
+    def prepare_nodes_for_embedding(self, nodes: List[BaseNode]) -> List[BaseNode]:
+        """Clone nodes with retrieval text while preserving display metadata."""
+        prepared_nodes: List[BaseNode] = []
+        for node in nodes:
+            embedding_text = self.get_node_embedding_text(node)
+            if embedding_text == (node.text or ""):
+                prepared_nodes.append(node)
+                continue
+            prepared_nodes.append(node.model_copy(update={"text": embedding_text}))
+        return prepared_nodes
 
     def _validate_prefix(self, mode: str) -> str:
         """
@@ -282,6 +326,7 @@ class BaseStorageBackend(ABC):
         query: str,
         embed_model,
         retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
@@ -299,6 +344,7 @@ class BaseStorageBackend(ABC):
                 - vector_weight: Optional, weight for vector search
                 - keyword_weight: Optional, weight for keyword search
             metadata_condition: Optional metadata filtering conditions
+            scope: Optional domain-level retrieval scope
             **kwargs: Additional parameters
 
         Returns:

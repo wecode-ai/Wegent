@@ -14,7 +14,11 @@ Uses unified block types from shared.models.blocks for consistency.
 import logging
 from typing import Any, Optional
 
+from app.services.chat.storage import session_manager
 from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
+from app.services.execution.interactive_form_render import (
+    build_interactive_form_render_payload,
+)
 from shared.models import EventType, ExecutionEvent
 from shared.models.blocks import BlockStatus, create_tool_block
 
@@ -87,10 +91,12 @@ class WebSocketResultEmitter(BaseResultEmitter):
         # Call corresponding WebSocket method based on event type
         if event.type == EventType.START.value:
             shell_type = event.data.get("shell_type", "Chat") if event.data else "Chat"
+            bot_name = event.data.get("bot_name") if event.data else None
             await webpage_ws_emitter.emit_chat_start(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
                 message_id=event.message_id,
+                bot_name=bot_name,
                 shell_type=shell_type,
             )
             # Also emit task:created event to update task list
@@ -109,15 +115,31 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 result=event.result,
                 block_id=block_id,
                 block_offset=block_offset,
+                message_id=event.message_id,
             )
 
         elif event.type == EventType.TOOL_START.value:
             # Emit chat:block_created event for tool start
             await self._emit_block_created(event, webpage_ws_emitter)
 
+        elif event.type == EventType.TOOL_ARGUMENT_DELTA.value:
+            await self._emit_tool_argument_delta(event, webpage_ws_emitter)
+
+        elif event.type == EventType.TOOL_ARGUMENT_DONE.value:
+            await self._emit_tool_argument_done(event, webpage_ws_emitter)
+
         elif event.type == EventType.TOOL_RESULT.value:
             # Emit chat:block_updated event for tool result
             await self._emit_block_updated(event, webpage_ws_emitter)
+
+        elif event.type == EventType.BLOCK_CREATED.value:
+            await self._emit_direct_block_created(event, webpage_ws_emitter)
+
+        elif event.type == EventType.BLOCK_UPDATED.value:
+            await self._emit_direct_block_updated(event, webpage_ws_emitter)
+
+        elif event.type == EventType.STATUS_UPDATED.value:
+            await self._emit_status_updated(event, webpage_ws_emitter)
 
         elif event.type == EventType.THINKING.value:
             # Emit reasoning content as a chat:chunk with reasoning_chunk in result
@@ -128,9 +150,11 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 content="",
                 offset=event.offset,
                 result={"reasoning_chunk": event.content},
+                message_id=event.message_id,
             )
 
         elif event.type == EventType.DONE.value:
+            await self._emit_result_guidance_blocks(event, webpage_ws_emitter)
             await webpage_ws_emitter.emit_chat_done(
                 task_id=event.task_id,
                 subtask_id=event.subtask_id,
@@ -224,6 +248,54 @@ class WebSocketResultEmitter(BaseResultEmitter):
             f"user_id={self.user_id}, task_id={self.task_id}, status={status}"
         )
 
+    async def _emit_status_updated(
+        self, event: ExecutionEvent, ws_emitter: WebPageSocketEmitter
+    ) -> None:
+        """Emit chat:status_updated and cache the latest snapshot."""
+        phase = event.data.get("phase") if event.data else None
+        context_metrics = event.data.get("context_metrics", {}) if event.data else {}
+        context_compaction = (
+            event.data.get("context_compaction") if event.data else None
+        )
+        if not phase or not isinstance(context_metrics, dict):
+            logger.debug(
+                "[WebSocketResultEmitter] Skipping invalid status update event: %s",
+                event.data,
+            )
+            return
+
+        try:
+            await session_manager.save_context_metrics(
+                event.subtask_id,
+                {
+                    "task_id": event.task_id,
+                    "subtask_id": event.subtask_id,
+                    "phase": phase,
+                    "context_metrics": context_metrics,
+                    "context_compaction": (
+                        context_compaction
+                        if isinstance(context_compaction, dict)
+                        else None
+                    ),
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
+                event.task_id,
+                event.subtask_id,
+                exc,
+            )
+        await ws_emitter.emit_chat_status_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            phase=phase,
+            context_metrics=context_metrics,
+            context_compaction=(
+                context_compaction if isinstance(context_compaction, dict) else None
+            ),
+        )
+
     async def _emit_block_created(self, event: ExecutionEvent, ws_emitter) -> None:
         """Emit chat:block_created event for tool start.
 
@@ -239,6 +311,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
             tool_input=event.tool_input or {},
             display_name=display_name,
         )
+        if event.data and event.data.get("argument_status") == "streaming":
+            block["status"] = "generating_arguments"
+            block["argument_status"] = "streaming"
 
         await ws_emitter.emit_block_created(
             task_id=event.task_id,
@@ -249,6 +324,99 @@ class WebSocketResultEmitter(BaseResultEmitter):
             f"[WebSocketResultEmitter] chat:block_created emitted: "
             f"task_id={event.task_id}, tool_name={event.tool_name}"
         )
+
+    async def _emit_tool_argument_delta(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit a partial tool argument update."""
+        await ws_emitter.emit_block_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            block_id=event.tool_use_id or "",
+            tool_input=event.tool_input,
+            status="generating_arguments",
+        )
+
+    async def _emit_tool_argument_done(self, event: ExecutionEvent, ws_emitter) -> None:
+        """Emit completion of tool argument generation."""
+        await ws_emitter.emit_block_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            block_id=event.tool_use_id or "",
+            tool_input=event.tool_input,
+            status=BlockStatus.PENDING.value,
+        )
+
+    async def _emit_direct_block_created(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit chat:block_created from an ExecutionEvent block payload."""
+        block = event.data.get("block") if event.data else None
+        if not isinstance(block, dict):
+            return
+        await ws_emitter.emit_block_created(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            block=block,
+        )
+        # Persist block to Redis so it survives page refresh and is included
+        # in the final subtask result via finalize_and_get_blocks().
+        import app.services.chat.storage as chat_storage
+
+        await chat_storage.session_manager.add_block(event.subtask_id, block)
+
+    async def _emit_direct_block_updated(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit chat:block_updated from an ExecutionEvent block update payload."""
+        block_id = event.data.get("block_id") if event.data else None
+        updates = event.data.get("updates") if event.data else None
+        if not block_id or not isinstance(updates, dict):
+            return
+
+        update_kwargs = {
+            "task_id": event.task_id,
+            "subtask_id": event.subtask_id,
+            "block_id": str(block_id),
+        }
+        for source_key, target_key in (
+            ("content", "content"),
+            ("tool_input", "tool_input"),
+            ("tool_output", "tool_output"),
+            ("status", "status"),
+        ):
+            if source_key in updates:
+                update_kwargs[target_key] = updates[source_key]
+        await ws_emitter.emit_block_updated(**update_kwargs)
+
+        import app.services.chat.storage as chat_storage
+
+        blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
+        existing_block = next(
+            (block for block in blocks if block.get("id") == str(block_id)),
+            None,
+        )
+        if existing_block is None:
+            return
+        existing_block.update(updates)
+        await chat_storage.session_manager.add_block(event.subtask_id, existing_block)
+
+    async def _emit_result_guidance_blocks(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit completed guidance blocks found in final result payload."""
+        if not isinstance(event.result, dict):
+            return
+        blocks = event.result.get("blocks") or []
+        if not isinstance(blocks, list):
+            return
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") == "guidance":
+                await ws_emitter.emit_block_created(
+                    task_id=event.task_id,
+                    subtask_id=event.subtask_id,
+                    block=block,
+                )
 
     async def _emit_block_updated(self, event: ExecutionEvent, ws_emitter) -> None:
         """Emit chat:block_updated event for tool result.
@@ -262,14 +430,19 @@ class WebSocketResultEmitter(BaseResultEmitter):
         if event.data and event.data.get("status") in ("error", "failed"):
             status = BlockStatus.ERROR
 
-        await ws_emitter.emit_block_updated(
-            task_id=event.task_id,
-            subtask_id=event.subtask_id,
-            block_id=event.tool_use_id or "",
-            tool_output=event.tool_output,
-            tool_input=event.tool_input,
-            status=status.value,
-        )
+        update_kwargs = {
+            "task_id": event.task_id,
+            "subtask_id": event.subtask_id,
+            "block_id": event.tool_use_id or "",
+            "tool_output": event.tool_output,
+            "tool_input": event.tool_input,
+            "status": status.value,
+        }
+        render_payload = build_interactive_form_render_payload(event)
+        if render_payload is not None:
+            update_kwargs["render_payload"] = render_payload
+
+        await ws_emitter.emit_block_updated(**update_kwargs)
         logger.debug(
             f"[WebSocketResultEmitter] chat:block_updated emitted: "
             f"task_id={event.task_id}, tool_use_id={event.tool_use_id}, status={status.value}"

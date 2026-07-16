@@ -92,6 +92,11 @@
     "levelOrganizationHint": "Organization: Company-level group visible to all users."
   },
   "groupMembers": {
+    "tabs": {
+      "members": "Users",
+      "authorizations": "Authorizations"
+    },
+    "addUserTab": "Add User",
     "selectUser": "Select user...",
     "selectMaintainer": "Select maintainer...",
     "username": "Username",
@@ -131,6 +136,8 @@
     "pendingChange": "Unsaved",
     "pendingChangesCount": "{{count}} change(s) pending",
     "visibleMembersCount": "Showing {{count}} member(s)",
+    "visibleAuthorizationsCount": "Showing {{count}} record(s)",
+    "unsavedChangesInMembersTab": "Unsaved changes in Members tab",
     "confirmDiscardRoleChanges": "You have unsaved role changes. Discard them?",
     "saveRoleChangesSuccess": "Saved {{count}} role change(s)",
     "noMembersFound": "No matching members found",

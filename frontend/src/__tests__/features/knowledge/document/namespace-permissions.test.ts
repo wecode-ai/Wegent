@@ -81,15 +81,17 @@ describe('namespace permissions', () => {
       ).toBe(true)
     })
 
-    it('allows developer to manage only their own namespace knowledge base', () => {
+    it('allows creator to manage their own namespace knowledge base even without manager role', () => {
       expect(
         canManageKnowledgeBase({
           currentUserId: 2,
-          namespaceRole: 'Developer',
+          namespaceRole: 'Reporter',
           knowledgeBase: { namespace: 'engineering', user_id: 2 },
         })
       ).toBe(true)
+    })
 
+    it('does not allow developer to manage namespace knowledge base created by others', () => {
       expect(
         canManageKnowledgeBase({
           currentUserId: 2,
@@ -194,7 +196,7 @@ describe('namespace permissions', () => {
       ).toBe(true)
     })
 
-    it('allows developer to manage only their own document', () => {
+    it('allows developer to manage accessible documents', () => {
       expect(
         canManageKnowledgeDocument({
           currentUserId: 2,
@@ -211,7 +213,7 @@ describe('namespace permissions', () => {
           knowledgeBase: { namespace: 'engineering', user_id: 1 },
           documentOwnerId: 1,
         })
-      ).toBe(false)
+      ).toBe(true)
     })
 
     it('allows knowledge-base manager when document owner is missing', () => {

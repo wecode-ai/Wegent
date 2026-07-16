@@ -14,27 +14,22 @@ to provide a unified access control system for all shareable resources.
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import (
     Column,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
-
-if TYPE_CHECKING:
-    from app.models.user import User
-
+from shared.models.db.types import big_integer_id_type
 
 # Define epoch time for default datetime values
 EPOCH_TIME = datetime(1970, 1, 1, 0, 0, 0)
@@ -80,23 +75,44 @@ class ResourceMember(Base):
         comment="Resource type: Team, Task, KnowledgeBase, Namespace",
     )
     resource_id = Column(
-        Integer,
+        big_integer_id_type(),
         nullable=False,
         comment="Resource ID",
     )
 
-    # Member info
-    user_id = Column(
-        Integer,
-        ForeignKey("users.id"),
+    # Entity info (polymorphic member identification)
+    # entity_type: "user" (default), "namespace"
+    # entity_id: user_id (for "user") or external identifier (e.g., department UUID)
+    entity_type = Column(
+        String(20),
         nullable=False,
-        index=True,
-        comment="Member user ID",
+        default="user",
+        server_default="user",
+        comment="Entity type: user, namespace",
+    )
+    entity_id = Column(
+        String(100),
+        nullable=False,
+        comment="Entity identifier: user_id for 'user', external ID for others",
     )
 
-    # Relationship to User
-    user: Mapped["User"] = relationship(
-        "User", foreign_keys=[user_id], back_populates="resource_members"
+    entity_display_name = Column(
+        String(100),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="Display name snapshot for entity-type members (group name, department name, etc.)",
+    )
+
+    # Backward compatibility: kept for old SQL queries
+    # For entity_type='user', auto-synced from entity_id via SQLAlchemy events
+    # For other entity types, defaults to 0
+    user_id = Column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)",
     )
 
     # Role-based permission
@@ -152,7 +168,7 @@ class ResourceMember(Base):
 
     # Task-specific field (only for Task type) - 0 means no copy made
     copied_resource_id = Column(
-        Integer,
+        big_integer_id_type(),
         nullable=False,
         default=0,
         server_default="0",
@@ -173,7 +189,11 @@ class ResourceMember(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "resource_type", "resource_id", "user_id", name="uq_resource_members"
+            "resource_type",
+            "resource_id",
+            "entity_type",
+            "entity_id",
+            name="uniq_resource_members_entity",
         ),
         Index("idx_resource_members_resource", "resource_type", "resource_id"),
         Index("idx_resource_members_status", "status"),
@@ -182,6 +202,13 @@ class ResourceMember(Base):
             "resource_type",
             "resource_id",
             "status",
+        ),
+        Index(
+            "idx_resource_members_entity_lookup",
+            "entity_type",
+            "entity_id",
+            "status",
+            "resource_type",
         ),
         {
             "sqlite_autoincrement": True,
@@ -193,6 +220,12 @@ class ResourceMember(Base):
     )
 
     def __repr__(self) -> str:
+        if self.entity_type and self.entity_type != "user":
+            return (
+                f"<ResourceMember(id={self.id}, resource_type={self.resource_type}, "
+                f"resource_id={self.resource_id}, entity_type={self.entity_type}, "
+                f"entity_id={self.entity_id}, status={self.status})>"
+            )
         return (
             f"<ResourceMember(id={self.id}, resource_type={self.resource_type}, "
             f"resource_id={self.resource_id}, user_id={self.user_id}, "
@@ -229,3 +262,95 @@ class ResourceMember(Base):
             role: The role to set (Owner, Maintainer, Developer, Reporter)
         """
         self.role = role
+
+    @classmethod
+    def create(
+        cls,
+        resource_type: str,
+        resource_id: int,
+        entity_type: str = "user",
+        entity_id: Optional[str] = None,
+        role: str = ResourceRole.Reporter.value,
+        status: str = MemberStatus.PENDING.value,
+        invited_by_user_id: int = 0,
+        share_link_id: int = 0,
+        reviewed_by_user_id: int = 0,
+        reviewed_at: Optional[datetime] = None,
+        copied_resource_id: int = 0,
+        entity_display_name: Optional[str] = None,
+        requested_at: Optional[datetime] = None,
+    ) -> "ResourceMember":
+        """Create a ResourceMember with consistent entity initialization.
+
+        Automatically syncs user_id from entity_id for user-type members.
+        Prefer this factory over direct constructor to ensure invariant
+        consistency regardless of SQLAlchemy event listener availability
+        (e.g., bulk_insert_mappings bypasses before_insert).
+        """
+        if not entity_id:
+            raise ValueError("entity_id is required")
+        if entity_type == "user":
+            try:
+                int(entity_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "entity_id must be an integer string for user-type members"
+                ) from exc
+
+        member = cls(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            role=role,
+            status=status,
+            invited_by_user_id=invited_by_user_id,
+            share_link_id=share_link_id,
+            reviewed_by_user_id=reviewed_by_user_id,
+            reviewed_at=reviewed_at or EPOCH_TIME,
+            copied_resource_id=copied_resource_id,
+            entity_display_name=entity_display_name,
+            requested_at=requested_at or datetime.utcnow(),
+        )
+        # Explicitly sync user_id so callers don't rely solely on event listeners
+        _sync_user_id_from_entity(member)
+        return member
+
+
+# SQLAlchemy event listeners to keep user_id in sync with entity_id for user-type members
+from sqlalchemy import event
+
+
+def _sync_user_id_from_entity(target: ResourceMember) -> None:
+    """Keep legacy user_id valid while entity_type/entity_id remain authoritative."""
+    if target.entity_type and target.entity_type == "user" and target.entity_id:
+        try:
+            target.user_id = int(target.entity_id)
+        except (ValueError, TypeError):
+            target.user_id = 0
+    elif (
+        target.resource_type in (ResourceType.TEAM.value, ResourceType.TEAM.name)
+        and target.entity_type == "namespace"
+    ):
+        target.user_id = (
+            target.user_id
+            or target.invited_by_user_id
+            or target.reviewed_by_user_id
+            or 0
+        )
+    else:
+        target.user_id = target.user_id or 0
+
+
+@event.listens_for(ResourceMember, "before_insert")
+def _resource_member_before_insert(
+    _mapper, _connection, target: ResourceMember
+) -> None:
+    _sync_user_id_from_entity(target)
+
+
+@event.listens_for(ResourceMember, "before_update")
+def _resource_member_before_update(
+    _mapper, _connection, target: ResourceMember
+) -> None:
+    _sync_user_id_from_entity(target)

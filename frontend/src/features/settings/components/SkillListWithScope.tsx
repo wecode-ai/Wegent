@@ -4,11 +4,13 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   fetchUnifiedSkillsList,
-  UnifiedSkill,
+  fetchMyDefaultSkillBindings,
+  type SkillBinding,
+  type UnifiedSkill,
   deleteSkill,
   downloadSkill,
   fetchSkillReferences,
@@ -18,6 +20,8 @@ import {
   ReferencedGhost,
   updateSkillFromGit,
   batchUpdateSkillsFromGit,
+  addSkillToMyDefault,
+  removeSkillFromMyDefault,
 } from '@/apis/skills'
 import { checkSkillMarketAvailable, SkillMarketAvailability } from '@/apis/skillMarket'
 import { getGroup } from '@/apis/groups'
@@ -26,6 +30,9 @@ import { canDelete } from '@/types/base-role'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { ResourceListItem } from '@/components/common/ResourceListItem'
+import { Switch } from '@/components/ui/switch'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,39 +47,63 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
-import {
-  Download,
-  Trash2,
-  Sparkles,
-  Globe,
-  Plus,
-  RefreshCw,
-  GitBranch,
-  Search,
-  ExternalLink,
-  Users,
-  Link2,
-} from 'lucide-react'
+import { Download, Trash2, Sparkles, Globe, RefreshCw, ExternalLink, Link2 } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
 import SkillSearchModal from './skills/SkillSearchModal'
 import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
+import { AutoEnabledSkillsSection } from './skills/AutoEnabledSkillsSection'
+import { AutoEnabledSkillSettingsView } from './skills/AutoEnabledSkillSettingsView'
 import { useUser } from '@/features/common/UserContext'
+import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
+import {
+  hasResourceCreateTargets,
+  ResourceCreateButton,
+  type ResourceCreateTarget,
+} from '@/features/resource-library/components/ResourceCreateButton'
+import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
+  sourceControls?: ReactNode
+  sortControls?: ReactNode
+  sourceFilter?: ManagedResourceSourceFilter
+  groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
-export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeProps) {
+export function SkillListWithScope({
+  scope,
+  selectedGroup,
+  sourceControls,
+  sortControls,
+  sourceFilter = 'all',
+  groups = [],
+  sortMode = 'default',
+}: SkillListWithScopeProps) {
   const { t } = useTranslation('common')
+  const { t: tSettingsBase } = useTranslation('settings')
+  const tSettings = useCallback(
+    (key: string, options?: Record<string, unknown>) => tSettingsBase(key, options),
+    [tSettingsBase]
+  )
   const { user } = useUser()
-  const [skills, setSkills] = useState<UnifiedSkill[]>([])
+  const [librarySkills, setLibrarySkills] = useState<UnifiedSkill[]>([])
+  const [allAvailableSkills, setAllAvailableSkills] = useState<UnifiedSkill[]>([])
+  const [autoEnabledBindings, setAutoEnabledBindings] = useState<SkillBinding[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -80,8 +111,12 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
   const [deleting, setDeleting] = useState(false)
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
   const [searchModalOpen, setSearchModalOpen] = useState(false)
+  const [addDefaultDialogOpen, setAddDefaultDialogOpen] = useState(false)
+  const [autoEnabledSettingsOpen, setAutoEnabledSettingsOpen] = useState(false)
+  const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
   const [currentGroup, setCurrentGroup] = useState<Group | null>(null)
   const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
+  const [updatingDefaultSkillId, setUpdatingDefaultSkillId] = useState<number | null>(null)
   const [updatingAllFromGit, setUpdatingAllFromGit] = useState(false)
   const [updateAllConfirmOpen, setUpdateAllConfirmOpen] = useState(false)
   const [updateAllProgress, setUpdateAllProgress] = useState<{
@@ -140,11 +175,21 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     try {
       setLoading(true)
       setError(null)
-      const data = await fetchUnifiedSkillsList({
+      const libraryParams = {
         scope: scope,
         groupName: selectedGroup || undefined,
-      })
-      setSkills(filterVisibleSkills(data))
+      }
+      const shouldReuseAllSkills = scope === 'all' && !selectedGroup
+      const [allSkillsData, bindingsData] = await Promise.all([
+        fetchUnifiedSkillsList({ scope: 'all' }),
+        fetchMyDefaultSkillBindings(),
+      ])
+      const librarySkillsData = shouldReuseAllSkills
+        ? allSkillsData
+        : await fetchUnifiedSkillsList(libraryParams)
+      setAutoEnabledBindings(bindingsData)
+      setAllAvailableSkills(filterVisibleSkills(allSkillsData))
+      setLibrarySkills(filterVisibleSkills(librarySkillsData))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills')
     } finally {
@@ -172,6 +217,121 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     if (user.role === 'admin') return true
 
     return false
+  }
+
+  const getSkillSourceLabel = (skill: UnifiedSkill): string => {
+    if (skill.is_public) return tSettings('skills.source.system')
+    if (skill.namespace && skill.namespace !== 'default') return tSettings('skills.source.group')
+    if (user && skill.user_id === user.id) return tSettings('skills.source.personal')
+    return tSettings('skills.source.library')
+  }
+
+  const isGroupSkill = useCallback(
+    (skill: UnifiedSkill) =>
+      !skill.is_public && Boolean(skill.namespace && skill.namespace !== 'default'),
+    []
+  )
+
+  const matchesSourceFilter = useCallback(
+    (skill: UnifiedSkill): boolean => {
+      if (sourceFilter === 'personal') {
+        return !skill.is_public && skill.namespace === 'default'
+      }
+      if (sourceFilter === 'group') {
+        return isGroupSkill(skill)
+      }
+      if (sourceFilter === 'system') {
+        return skill.is_public
+      }
+      return true
+    },
+    [isGroupSkill, sourceFilter]
+  )
+
+  const groupDisplayNames = useMemo(() => buildGroupDisplayNameMap(groups), [groups])
+
+  const getSkillSource = useCallback(
+    (skill: UnifiedSkill): ResourceLibrarySortSource => {
+      if (skill.is_public) return 'system'
+      if (isGroupSkill(skill)) return 'group'
+      return 'personal'
+    },
+    [isGroupSkill]
+  )
+
+  const sortedLibrarySkills = useMemo(() => {
+    const visibleSkills = librarySkills.filter(skill => {
+      if (!matchesSourceFilter(skill)) {
+        return false
+      }
+
+      if (scope === 'personal') {
+        return !skill.is_public
+      }
+
+      return true
+    })
+
+    return sortResourceLibraryItems(visibleSkills, {
+      sortMode,
+      groupDisplayNames,
+      getSource: getSkillSource,
+      getName: skill => skill.name,
+      getDisplayName: skill => skill.displayName,
+      getNamespace: skill => skill.namespace,
+      getCreatedAt: skill => skill.created_at,
+      getUpdatedAt: skill => skill.updated_at,
+      getStableId: skill => skill.id,
+    })
+  }, [librarySkills, matchesSourceFilter, scope, sortMode, groupDisplayNames, getSkillSource])
+
+  const updateSkillDefaultAvailability = (skillId: number, inMyDefault: boolean) => {
+    const updateSkill = (item: UnifiedSkill): UnifiedSkill =>
+      item.id === skillId
+        ? {
+            ...item,
+            availability: { ...(item.availability || {}), inMyDefault },
+          }
+        : item
+
+    setAllAvailableSkills(prev => prev.map(updateSkill))
+    setLibrarySkills(prev => prev.map(updateSkill))
+  }
+
+  const upsertAutoEnabledBinding = (binding: SkillBinding) => {
+    setAutoEnabledBindings(prev => {
+      const withoutCurrent = prev.filter(
+        item => item.skill_ref.skill_id !== binding.skill_ref.skill_id
+      )
+      return [...withoutCurrent, binding]
+    })
+  }
+
+  const removeAutoEnabledBinding = (skillId: number) => {
+    setAutoEnabledBindings(prev => prev.filter(item => item.skill_ref.skill_id !== skillId))
+  }
+
+  const handleToggleDefaultEnabledSkill = async (skill: UnifiedSkill) => {
+    setUpdatingDefaultSkillId(skill.id)
+    try {
+      if (skill.availability?.inMyDefault) {
+        await removeSkillFromMyDefault(skill.id)
+        toast.success(tSettings('skills.availability.removeSuccess'))
+        updateSkillDefaultAvailability(skill.id, false)
+        removeAutoEnabledBinding(skill.id)
+      } else {
+        const binding = await addSkillToMyDefault(skill.id)
+        toast.success(tSettings('skills.availability.addSuccess'))
+        updateSkillDefaultAvailability(skill.id, true)
+        upsertAutoEnabledBinding(binding)
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : tSettings('skills.availability.updateFailed')
+      )
+    } finally {
+      setUpdatingDefaultSkillId(null)
+    }
   }
 
   const handleDelete = async () => {
@@ -292,7 +452,7 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
 
   // Get git skills for update all
   const getGitSkills = () => {
-    return filteredSkills.filter(skill => !skill.is_public && skill.source?.type === 'git')
+    return sortedLibrarySkills.filter(skill => !skill.is_public && skill.source?.type === 'git')
   }
 
   // Open confirm dialog for update all
@@ -360,27 +520,10 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     }
   }
 
-  // Filter skills based on scope
-  const filteredSkills = skills.filter(skill => {
-    if (scope === 'personal') {
-      return !skill.is_public
-    }
-    // For 'all' scope, show all skills
-    return true
-  })
-
-  // Show prompt to select a group when in group scope but no group is selected
-  if (scope === 'group' && !selectedGroup) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
-        <Users className="w-12 h-12 mb-4 opacity-50" />
-        <p className="text-lg font-medium text-text-primary mb-2">
-          {t('skills.select_group_title')}
-        </p>
-        <p className="text-sm mb-4">{t('skills.select_group_description')}</p>
-      </div>
-    )
-  }
+  const defaultEnabledSkills = allAvailableSkills.filter(skill => skill.availability?.inMyDefault)
+  const defaultEnabledCandidates = allAvailableSkills.filter(
+    skill => !skill.availability?.inMyDefault
+  )
 
   if (loading) {
     return (
@@ -400,199 +543,302 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
 
   const handleUploadModalClose = (saved: boolean) => {
     setUploadModalOpen(false)
+    setCreateTarget({ scope: 'personal' })
     if (saved) {
       loadSkills()
     }
   }
 
+  const handleOpenUpload = (target: ResourceCreateTarget) => {
+    setCreateTarget(target)
+    setUploadModalOpen(true)
+  }
+
+  const handleOpenSearch = (target: ResourceCreateTarget) => {
+    setCreateTarget(target)
+    setSearchModalOpen(true)
+  }
+
   // Check if there are any git-imported skills
-  const hasGitSkills = filteredSkills.some(
+  const hasGitSkills = sortedLibrarySkills.some(
     skill => !skill.is_public && skill.source?.type === 'git'
   )
 
-  return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-text-primary">{t('skills.title')}</h2>
-          <p className="text-sm text-text-secondary">{t('skills.description')}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Go to Market button - only show if skill market is available and has URL */}
-          {skillMarketInfo.available && skillMarketInfo.marketUrl && (
-            <Button
-              onClick={() =>
-                window.open(skillMarketInfo.marketUrl, '_blank', 'noopener,noreferrer')
-              }
-              size="sm"
-            >
-              <ExternalLink className="w-4 h-4 mr-1" />
-              {t('settings:skills.go_to_market')}
-            </Button>
-          )}
-          {/* Search Skills button - only show if skill market is available */}
-          {skillMarketInfo.available && (
-            <Button onClick={() => setSearchModalOpen(true)} size="sm">
-              <Search className="w-4 h-4 mr-1" />
-              {t('settings:skills.search_skills')}
-            </Button>
-          )}
-          {/* Update All from Git button - only show if there are git-imported skills */}
-          {hasGitSkills && (
-            <Button
-              onClick={openUpdateAllConfirm}
-              size="sm"
-              variant="outline"
-              disabled={updatingAllFromGit}
-            >
-              <RefreshCw className={`w-4 h-4 mr-1 ${updatingAllFromGit ? 'animate-spin' : ''}`} />
-              {t('skills.update_all_from_git')}
-            </Button>
-          )}
-          <Button onClick={() => setUploadModalOpen(true)} size="sm">
-            <Plus className="w-4 h-4 mr-1" />
-            {t('skills.upload_skill')}
-          </Button>
-        </div>
-      </div>
-
-      {/* Skills list */}
-      {filteredSkills.length === 0 ? (
-        <div className="text-center py-12 text-text-secondary">
-          <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p>{t('skills.no_skills')}</p>
-          <p className="text-sm mt-2">{t('skills.no_skills_hint')}</p>
-          <Button onClick={() => setUploadModalOpen(true)} className="mt-4">
-            <Plus className="w-4 h-4 mr-1" />
-            {t('skills.upload_first_skill')}
-          </Button>
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {filteredSkills.map(skill => (
-            <div
-              key={`${skill.name}-${skill.is_public}`}
-              className="bg-surface border border-border rounded-lg p-4 hover:border-primary/50 transition-colors flex h-full flex-col"
-            >
-              {/* Skill header */}
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-medium text-text-primary">
-                    {skill.displayName || skill.name}
-                  </h3>
-                  {skill.is_public && (
-                    <Badge variant="secondary" className="text-xs">
-                      <Globe className="w-3 h-3 mr-1" />
-                      {t('skills.system_skill')}
-                    </Badge>
-                  )}
-                </div>
-                {skill.version && <span className="text-xs text-text-muted">v{skill.version}</span>}
-              </div>
-
-              {/* Description */}
-              <p className="text-sm text-text-secondary line-clamp-2 mb-3">{skill.description}</p>
-
-              {/* Tags */}
-              {skill.tags && skill.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-3">
-                  {skill.tags.slice(0, 3).map(tag => (
-                    <Badge key={tag} variant="info" className="text-xs">
-                      {tag}
-                    </Badge>
-                  ))}
-                  {skill.tags.length > 3 && (
-                    <Badge variant="info" className="text-xs">
-                      +{skill.tags.length - 3}
-                    </Badge>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-auto space-y-3 pt-3">
-                {/* Author */}
-                {skill.author && (
-                  <p className="text-xs text-text-muted">
-                    {t('skills.author')}: {skill.author}
-                  </p>
-                )}
-
-                {/* Git source info */}
-                {skill.source?.type === 'git' && skill.source.repo_url && (
-                  <div className="flex items-center gap-1.5">
-                    <GitBranch className="w-3 h-3 text-text-muted" />
-                    <span className="text-xs text-text-muted truncate max-w-[200px]">
-                      {skill.source.repo_url}
-                    </span>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex items-center gap-2 border-t border-border pt-2">
-                  {!skill.is_public && (
-                    <>
-                      {/* Update from Git button - only show for git-imported skills */}
-                      {skill.source?.type === 'git' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleUpdateFromGit(skill)}
-                          disabled={updatingFromGitId === skill.id}
-                          className="text-text-secondary hover:text-text-primary"
-                          title={t('skills.update_from_git')}
-                        >
-                          <RefreshCw
-                            className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
-                          />
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDownload(skill)}
-                        className="text-text-secondary hover:text-text-primary"
-                        data-testid={`download-skill-button-${skill.id}`}
-                      >
-                        <Download className="w-4 h-4" />
-                      </Button>
-                      {canDeleteSkill(skill) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleViewReferences(skill)}
-                          className="text-text-secondary hover:text-text-primary"
-                          title={t('skills.view_references')}
-                          data-testid={`view-skill-references-button-${skill.id}`}
-                        >
-                          <Link2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                      {/* Show delete button if user has permission */}
-                      {canDeleteSkill(skill) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openDeleteDialog(skill)}
-                          className="text-red-500 hover:text-red-600"
-                          data-testid={`delete-skill-button-${skill.id}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {skill.is_public && (
-                    <span className="text-xs text-text-muted italic">
-                      {t('skills.public_readonly')}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+  const libraryActions = (
+    <>
+      {/* Go to Market button - only show if skill market is available and has URL */}
+      {skillMarketInfo.available && skillMarketInfo.marketUrl && (
+        <Button
+          onClick={() => window.open(skillMarketInfo.marketUrl, '_blank', 'noopener,noreferrer')}
+          size="sm"
+        >
+          <ExternalLink className="w-4 h-4 mr-1" />
+          {tSettings('skills.go_to_market')}
+        </Button>
       )}
+      {/* Search Skills button - only show if skill market is available */}
+      {skillMarketInfo.available && (
+        <ResourceCreateButton
+          label={tSettings('skills.search_skills')}
+          scope={scope}
+          groupName={selectedGroup || undefined}
+          sourceFilter={sourceFilter}
+          groups={groups}
+          onCreate={handleOpenSearch}
+          data-testid="search-skill-button"
+        />
+      )}
+      {/* Update All from Git button - only show if there are git-imported skills */}
+      {hasGitSkills && (
+        <Button
+          onClick={openUpdateAllConfirm}
+          size="sm"
+          variant="outline"
+          disabled={updatingAllFromGit}
+        >
+          <RefreshCw className={`w-4 h-4 mr-1 ${updatingAllFromGit ? 'animate-spin' : ''}`} />
+          {t('skills.update_all_from_git')}
+        </Button>
+      )}
+      <ResourceCreateButton
+        label={t('skills.upload_skill')}
+        scope={scope}
+        groupName={selectedGroup || undefined}
+        sourceFilter={sourceFilter}
+        groups={groups}
+        onCreate={handleOpenUpload}
+        data-testid="upload-skill-button"
+      />
+    </>
+  )
+
+  const libraryFilters =
+    sourceControls || sortControls ? (
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        {sourceControls ? (
+          <div className="min-w-0" data-testid="skill-library-source-filter">
+            {sourceControls}
+          </div>
+        ) : null}
+        {sortControls}
+      </div>
+    ) : null
+
+  if (autoEnabledSettingsOpen) {
+    return (
+      <AutoEnabledSkillSettingsView
+        skills={defaultEnabledSkills}
+        bindings={autoEnabledBindings}
+        currentUserId={user?.id ?? null}
+        onBack={() => setAutoEnabledSettingsOpen(false)}
+        onBindingChange={upsertAutoEnabledBinding}
+        getSkillSourceLabel={getSkillSourceLabel}
+        isGroupSkill={isGroupSkill}
+      />
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <AutoEnabledSkillsSection
+        skills={defaultEnabledSkills}
+        getSkillSourceLabel={getSkillSourceLabel}
+        isGroupSkill={isGroupSkill}
+        onAdd={() => setAddDefaultDialogOpen(true)}
+        onOpenSettings={() => setAutoEnabledSettingsOpen(true)}
+        tSettings={tSettings}
+      />
+
+      <ResourceManagementLayout
+        title={tSettings('skills.libraryTitle')}
+        description={tSettings('skills.libraryDescription')}
+        actions={libraryActions}
+        filters={libraryFilters}
+        data-testid="skill-library-section"
+      >
+        {/* Skills list */}
+        {sortedLibrarySkills.length === 0 ? (
+          <div className="text-center py-12 text-text-secondary">
+            <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>{t('skills.no_skills')}</p>
+            <p className="text-sm mt-2">{t('skills.no_skills_hint')}</p>
+            {hasResourceCreateTargets({
+              scope,
+              groupName: selectedGroup || undefined,
+              sourceFilter,
+              groups,
+            }) && (
+              <div className="mt-4 flex justify-center">
+                <ResourceCreateButton
+                  label={t('skills.upload_first_skill')}
+                  scope={scope}
+                  groupName={selectedGroup || undefined}
+                  sourceFilter={sourceFilter}
+                  groups={groups}
+                  onCreate={handleOpenUpload}
+                  data-testid="upload-first-skill-button"
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3" data-testid="skill-library-list">
+            {sortedLibrarySkills.map(skill => (
+              <Card
+                key={skill.id}
+                className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"
+                data-testid={`skill-library-item-${skill.id}`}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <ResourceListItem
+                    name={skill.name}
+                    displayName={skill.displayName || skill.name}
+                    description={skill.description}
+                    icon={<Sparkles className="h-5 w-5 text-primary" aria-hidden />}
+                    tags={[
+                      {
+                        key: 'source',
+                        label: getSkillSourceLabel(skill),
+                        variant: skill.is_public
+                          ? 'info'
+                          : isGroupSkill(skill)
+                            ? 'success'
+                            : 'default',
+                      },
+                      ...(isGroupSkill(skill)
+                        ? [
+                            {
+                              key: 'namespace',
+                              label: skill.namespace,
+                              variant: 'info' as const,
+                            },
+                          ]
+                        : []),
+                      ...(skill.version
+                        ? [
+                            {
+                              key: 'version',
+                              label: `v${skill.version}`,
+                              variant: 'default' as const,
+                            },
+                          ]
+                        : []),
+                      ...(skill.source?.type === 'git'
+                        ? [
+                            {
+                              key: 'source-git',
+                              label: 'Git',
+                              variant: 'info' as const,
+                            },
+                          ]
+                        : []),
+                      ...(skill.availability?.inMyDefault
+                        ? [
+                            {
+                              key: 'default-enabled',
+                              label: tSettings('skills.availability.inMyDefault'),
+                              variant: 'success' as const,
+                            },
+                          ]
+                        : []),
+                      ...((skill.tags || []).slice(0, 3).map(tag => ({
+                        key: `tag-${tag}`,
+                        label: tag,
+                        variant: 'info' as const,
+                      })) || []),
+                      ...(skill.tags && skill.tags.length > 3
+                        ? [
+                            {
+                              key: 'tags-more',
+                              label: `+${skill.tags.length - 3}`,
+                              variant: 'info' as const,
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+
+                  <div className="flex flex-shrink-0 items-center gap-2 self-end sm:ml-3 sm:self-auto">
+                    <div className="flex h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3">
+                      <span className="text-xs font-medium text-text-secondary">
+                        {tSettings('skills.availability.inMyDefault')}
+                      </span>
+                      <Switch
+                        checked={Boolean(skill.availability?.inMyDefault)}
+                        onCheckedChange={() => handleToggleDefaultEnabledSkill(skill)}
+                        disabled={updatingDefaultSkillId === skill.id}
+                        aria-label={
+                          skill.availability?.inMyDefault
+                            ? tSettings('skills.availability.removeFromMyDefault')
+                            : tSettings('skills.availability.addToMyDefault')
+                        }
+                        data-testid={
+                          skill.availability?.inMyDefault
+                            ? `remove-skill-default-button-${skill.id}`
+                            : `add-skill-default-button-${skill.id}`
+                        }
+                      />
+                    </div>
+                    {!skill.is_public && (
+                      <>
+                        {skill.source?.type === 'git' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleUpdateFromGit(skill)}
+                            disabled={updatingFromGitId === skill.id}
+                            className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                            title={t('skills.update_from_git')}
+                          >
+                            <RefreshCw
+                              className={`w-4 h-4 ${updatingFromGitId === skill.id ? 'animate-spin' : ''}`}
+                            />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDownload(skill)}
+                          className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                          title={t('skills.download')}
+                          data-testid={`download-skill-button-${skill.id}`}
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
+                        {canDeleteSkill(skill) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleViewReferences(skill)}
+                            className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                            title={t('skills.view_references')}
+                            data-testid={`view-skill-references-button-${skill.id}`}
+                          >
+                            <Link2 className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {/* Show delete button if user has permission */}
+                        {canDeleteSkill(skill) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openDeleteDialog(skill)}
+                            className="h-8 w-8 text-red-500 hover:text-red-600"
+                            title={t('skills.delete')}
+                            data-testid={`delete-skill-button-${skill.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </ResourceManagementLayout>
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -613,26 +859,93 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
       </AlertDialog>
 
       {/* Upload Modal */}
-      {(() => {
-        const uploadNs = scope === 'group' && selectedGroup ? selectedGroup : 'default'
-        console.log(
-          `[SkillListWithScope] scope=${scope}, selectedGroup=${selectedGroup}, uploadNamespace=${uploadNs}`
-        )
-        return null
-      })()}
       <SkillUploadModal
         open={uploadModalOpen}
         onClose={handleUploadModalClose}
-        namespace={scope === 'group' && selectedGroup ? selectedGroup : 'default'}
+        namespace={createTarget.scope === 'group' ? createTarget.groupName : 'default'}
       />
 
       {/* Search Modal */}
       <SkillSearchModal
         open={searchModalOpen}
-        onClose={() => setSearchModalOpen(false)}
+        onClose={() => {
+          setSearchModalOpen(false)
+          setCreateTarget({ scope: 'personal' })
+        }}
         onSkillsChange={loadSkills}
-        namespace={scope === 'group' && selectedGroup ? selectedGroup : 'default'}
+        namespace={createTarget.scope === 'group' ? createTarget.groupName : 'default'}
       />
+
+      <Dialog open={addDefaultDialogOpen} onOpenChange={setAddDefaultDialogOpen}>
+        <DialogContent className="sm:max-w-[720px]">
+          <DialogHeader>
+            <DialogTitle>{tSettings('skills.defaultEnabled.addDialogTitle')}</DialogTitle>
+            <DialogDescription>
+              {tSettings('skills.defaultEnabled.addDialogDescription')}
+            </DialogDescription>
+          </DialogHeader>
+
+          {defaultEnabledCandidates.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border p-4 text-sm text-text-secondary">
+              {tSettings('skills.defaultEnabled.noAvailableToAdd')}
+            </div>
+          ) : (
+            <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              {defaultEnabledCandidates.map(skill => (
+                <div
+                  key={skill.id}
+                  className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-start sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-sm font-medium text-text-primary">
+                        {skill.displayName || skill.name}
+                      </h3>
+                      <Badge variant="secondary" className="text-xs">
+                        {skill.is_public && <Globe className="w-3 h-3 mr-1" />}
+                        {getSkillSourceLabel(skill)}
+                      </Badge>
+                      {isGroupSkill(skill) && (
+                        <Badge variant="info" className="text-xs">
+                          {skill.namespace}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs text-text-secondary">
+                      {skill.description}
+                    </p>
+                    {skill.namespace !== 'default' && (
+                      <p className="mt-2 text-xs text-text-muted">
+                        {tSettings('skills.availability.groupScopeHint')}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="h-11 min-w-[44px] flex-shrink-0 self-start sm:h-9"
+                    onClick={() => handleToggleDefaultEnabledSkill(skill)}
+                    disabled={updatingDefaultSkillId === skill.id}
+                    data-testid={`add-default-enabled-skill-button-${skill.id}`}
+                  >
+                    {tSettings('skills.availability.addToMyDefault')}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAddDefaultDialogOpen(false)}
+              data-testid="close-add-auto-enabled-skill-dialog-button"
+            >
+              {t('actions.close')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Reference Conflict Dialog */}
       {skillToDelete && (

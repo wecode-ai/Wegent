@@ -28,6 +28,7 @@ from app.services.adapters.shell_utils import (
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.skill_resolution import build_skill_ref_meta
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
@@ -399,18 +400,26 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     name: ref.model_dump() for name, ref in preload_skill_refs.items()
                 }
 
+        ghost_name = self._find_available_name(
+            db,
+            base_name=f"{obj_in.name}-ghost",
+            kind="Ghost",
+            user_id=user_id,
+            namespace=namespace,
+        )
+
         ghost_json = {
             "kind": "Ghost",
             "spec": ghost_spec,
             "status": {"state": "Available"},
-            "metadata": {"name": f"{obj_in.name}-ghost", "namespace": namespace},
+            "metadata": {"name": ghost_name, "namespace": namespace},
             "apiVersion": "agent.wecode.io/v1",
         }
 
         ghost = Kind(
             user_id=user_id,
             kind="Ghost",
-            name=f"{obj_in.name}-ghost",
+            name=ghost_name,
             namespace=namespace,
             json=ghost_json,
             is_active=True,
@@ -499,7 +508,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         bot_json = {
             "kind": "Bot",
             "spec": {
-                "ghostRef": {"name": f"{obj_in.name}-ghost", "namespace": namespace},
+                "ghostRef": {"name": ghost_name, "namespace": namespace},
                 "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
                 "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
             },
@@ -1911,11 +1920,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 f"[_get_skill_refs] Found {len(personal_skills)} personal skills: {[s.name for s in personal_skills]}"
             )
             for skill in personal_skills:
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=False,
-                )
+                skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
         # 2. Query group skills if namespace is not 'default'
@@ -1939,11 +1944,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             for skill in group_skills:
                 if skill.name not in remaining_names:
                     continue
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=False,
-                )
+                skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
         # 3. Query public/system skills (user_id=0)
@@ -1960,11 +1961,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 .all()
             )
             for skill in public_skills:
-                skill_refs[skill.name] = SkillRefMeta(
-                    skill_id=skill.id,
-                    namespace=skill.namespace,
-                    is_public=True,
-                )
+                skill_refs[skill.name] = SkillRefMeta(**build_skill_ref_meta(skill))
                 remaining_names.remove(skill.name)
 
         # Note: remaining_names at this point are skills that weren't found
@@ -2041,11 +2038,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         detail=f"Permission denied for skill '{skill_name}'",
                     )
 
-            resolved[skill_name] = SkillRefMeta(
-                skill_id=skill.id,
-                namespace=skill.namespace,
-                is_public=is_public,
-            )
+            resolved[skill_name] = SkillRefMeta(**build_skill_ref_meta(skill))
 
         if missing_names:
             fallback_refs = self._get_skill_refs(db, missing_names, user_id, namespace)
@@ -2058,21 +2051,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         return resolved
 
-    def find_available_bot_name(
+    def _find_available_name(
         self,
         db: Session,
         *,
         base_name: str,
+        kind: str,
         user_id: int,
         namespace: str = "default",
     ) -> str:
-        """Find an available bot name by appending (2), (3), etc. if needed."""
+        """Find an available name by appending (2), (3), etc. if needed."""
         is_group_namespace = namespace != "default"
         candidate = base_name
         counter = 2
         while True:
             query = db.query(Kind).filter(
-                Kind.kind == "Bot",
+                Kind.kind == kind,
                 Kind.name == candidate,
                 Kind.namespace == namespace,
                 Kind.is_active == True,

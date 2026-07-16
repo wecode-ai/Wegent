@@ -8,6 +8,18 @@
 class TestTaskServicesAPI:
     """Test cases for task services API endpoints."""
 
+    def test_task_archive_route_precedes_dynamic_task_create_route(self):
+        """Ensure POST /tasks/archive is not captured by POST /tasks/{task_id}."""
+        from app.api.endpoints.adapter.tasks import router
+
+        post_routes = [
+            route.path
+            for route in router.routes
+            if "POST" in getattr(route, "methods", set())
+        ]
+
+        assert post_routes.index("/archive") < post_routes.index("/{task_id}")
+
     def test_service_update_schema(self):
         """Test ServiceUpdate schema accepts all fields."""
         from app.schemas.service import ServiceUpdate

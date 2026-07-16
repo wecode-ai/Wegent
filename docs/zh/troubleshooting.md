@@ -1,3 +1,7 @@
+---
+sidebar_position: 7
+---
+
 # 🔧 故障排查指南
 
 本指南帮助您诊断和解决 Wegent 平台使用过程中遇到的常见问题。
@@ -419,7 +423,7 @@ curl -I http://localhost:8000/socket.io/
 **2. 验证 JWT Token**
 ```bash
 # 在浏览器控制台检查 token 是否有效
-localStorage.getItem('token')
+localStorage.getItem('auth_token')
 
 # Token 应该在 Socket.IO auth 中传递
 ```
@@ -439,13 +443,17 @@ docker-compose exec redis redis-cli ping
 
 **5. 检查前端 Socket.IO 配置**
 ```typescript
-// frontend/src/contexts/SocketContext.tsx
-// 验证连接参数
+// packages/chat-core/src/socket/authenticatedSocketClient.ts
+// frontend 和 wework 都通过共享 SocketClient 建立连接
 const socket = io(API_URL + '/chat', {
   path: '/socket.io',
   auth: { token },
-  transports: ['websocket', 'polling'],
-});
+  autoConnect: false,
+  reconnection: false,
+  transports: ['websocket'],
+  forceNew: true,
+  multiplex: false,
+})
 ```
 
 **6. 在浏览器中调试 WebSocket**
@@ -708,21 +716,20 @@ uv sync
 
 ```bash
 # 1. 清理缓存
-npm cache clean --force
-rm -rf node_modules package-lock.json
+pnpm store prune
+rm -rf node_modules frontend/node_modules wework/node_modules pnpm-lock.yaml
 
 # 2. 使用淘宝镜像
-npm config set registry https://registry.npmmirror.com
-npm install
+pnpm config set registry https://registry.npmmirror.com
+pnpm install
 
-# 3. 使用 yarn
-npm install -g yarn
-yarn install
+# 3. 使用锁文件安装
+pnpm install --frozen-lockfile
 
 # 4. 降低 Node.js 版本（如果兼容性问题）
 nvm install 18
 nvm use 18
-npm install
+pnpm install
 ```
 
 ### 问题 17: 热重载不工作
@@ -734,7 +741,7 @@ echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 
 # 重启开发服务器
-npm run dev
+pnpm --dir frontend run dev
 ```
 
 **后端热重载**:

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,10 +13,15 @@ from sqlalchemy.orm import Session
 from app.api.endpoints.admin import device_monitor
 from app.models.kind import Kind
 from app.models.user import User
+from app.services.device.admin_device_batch import AdminDeviceBatchOperationResult
 
 
 def _create_device_kind(
-    test_db: Session, user_id: int, device_id: str, name: str
+    test_db: Session,
+    user_id: int,
+    device_id: str,
+    name: str,
+    device_type: str = "local",
 ) -> Kind:
     device = Kind(
         user_id=user_id,
@@ -33,7 +39,7 @@ def _create_device_kind(
             "spec": {
                 "deviceId": device_id,
                 "displayName": name,
-                "deviceType": "local",
+                "deviceType": device_type,
                 "bindShell": "claudecode",
             },
             "status": {"state": "Available"},
@@ -171,3 +177,164 @@ def test_admin_device_monitor_matches_version_filter():
     assert device_monitor._matches_version_filter("1.6.4", version_filter) is True
     assert device_monitor._matches_version_filter("1.7.0", version_filter) is False
     assert device_monitor._matches_version_filter(None, version_filter) is False
+
+
+@pytest.mark.asyncio
+async def test_admin_device_monitor_restarts_all_cloud_devices(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+):
+    _create_device_kind(
+        test_db, test_user.id, "cloud-device-1", "Cloud One", device_type="cloud"
+    )
+    _create_device_kind(
+        test_db, test_user.id, "cloud-device-2", "Cloud Two", device_type="cloud"
+    )
+    _create_device_kind(test_db, test_user.id, "local-device", "Local")
+    restarted: list[tuple[int, str]] = []
+    scheduled = []
+
+    async def fake_restart(_db: Session, user_id: int, device_id: str):
+        restarted.append((user_id, device_id))
+        return AdminDeviceBatchOperationResult(
+            success=True,
+            message=f"Restart queued for {device_id}",
+        )
+
+    def capture_schedule(coro):
+        scheduled.append(coro)
+
+    device_monitor.admin_device_batch_manager._reset_for_tests()
+    with (
+        patch(
+            "app.services.device.admin_device_batch.restart_admin_device",
+            new=fake_restart,
+        ),
+        patch.object(
+            device_monitor.admin_device_batch_manager,
+            "_schedule",
+            new=capture_schedule,
+        ),
+    ):
+        response = await device_monitor.restart_all_cloud_devices(
+            db=test_db,
+            current_user=test_admin_user,
+        )
+        assert response.total == 2
+        assert response.status == "pending"
+        assert response.batch_id
+        assert restarted == []
+
+        await scheduled[0]
+        status_response = await device_monitor.get_device_batch_status(
+            batch_id=response.batch_id,
+            current_user=test_admin_user,
+        )
+
+    assert status_response.total == 2
+    assert status_response.triggered == 2
+    assert status_response.failed == 0
+    assert status_response.skipped == 0
+    assert status_response.status == "completed"
+    assert restarted == [
+        (test_user.id, "cloud-device-1"),
+        (test_user.id, "cloud-device-2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_admin_device_monitor_upgrades_only_eligible_local_devices(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+):
+    _create_device_kind(test_db, test_user.id, "local-ready", "Ready")
+    _create_device_kind(test_db, test_user.id, "local-old", "Old")
+    _create_device_kind(test_db, test_user.id, "local-offline", "Offline")
+    _create_device_kind(
+        test_db, test_user.id, "cloud-device", "Cloud", device_type="cloud"
+    )
+    ready_key = device_monitor.local_device_provider.generate_online_key(
+        test_user.id, "local-ready"
+    )
+    old_key = device_monitor.local_device_provider.generate_online_key(
+        test_user.id, "local-old"
+    )
+    offline_key = device_monitor.local_device_provider.generate_online_key(
+        test_user.id, "local-offline"
+    )
+    emitted: list[tuple[str, dict]] = []
+    scheduled = []
+
+    async def fake_emit(socket_id: str, params: dict) -> bool:
+        emitted.append((socket_id, params))
+        return True
+
+    def capture_schedule(coro):
+        scheduled.append(coro)
+
+    device_monitor.admin_device_batch_manager._reset_for_tests()
+    with (
+        patch(
+            "app.services.device.admin_device_batch.cache_manager.mget",
+            new=AsyncMock(
+                return_value={
+                    ready_key: {
+                        "status": "online",
+                        "socket_id": "socket-ready",
+                        "executor_version": "1.7.0",
+                        "running_task_ids": [],
+                    },
+                    old_key: {
+                        "status": "online",
+                        "socket_id": "socket-old",
+                        "executor_version": "1.6.4",
+                        "running_task_ids": [],
+                    },
+                    offline_key: None,
+                }
+            ),
+        ),
+        patch(
+            "app.services.device.admin_device_batch.get_device_namespace",
+            new=lambda: SimpleNamespace(emit_upgrade_command=fake_emit),
+        ),
+        patch.object(
+            device_monitor.admin_device_batch_manager,
+            "_schedule",
+            new=capture_schedule,
+        ),
+    ):
+        response = await device_monitor.upgrade_all_local_devices(
+            request=device_monitor.AdminDeviceBatchUpgradeRequest(),
+            db=test_db,
+            current_user=test_admin_user,
+        )
+        assert response.total == 3
+        assert response.status == "pending"
+        assert response.batch_id
+        assert emitted == []
+
+        await scheduled[0]
+        status_response = await device_monitor.get_device_batch_status(
+            batch_id=response.batch_id,
+            current_user=test_admin_user,
+        )
+
+    assert status_response.total == 3
+    assert status_response.triggered == 1
+    assert status_response.failed == 0
+    assert status_response.skipped == 2
+    assert status_response.status == "completed"
+    assert emitted == [
+        (
+            "socket-ready",
+            {
+                "force": False,
+                "auto_confirm": True,
+                "verbose": False,
+                "force_stop_tasks": False,
+            },
+        )
+    ]

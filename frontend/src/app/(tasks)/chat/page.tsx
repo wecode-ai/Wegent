@@ -17,7 +17,8 @@ import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 
 // Dynamic imports for mobile and desktop page components with code splitting
 const ChatPageDesktop = dynamic(
@@ -48,7 +49,7 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context
-  const { refreshTasks, selectedTaskDetail } = useTaskContext()
+  const { refreshTasks, selectedTaskDetail } = useTaskSession()
 
   // User state for git token check
   const { user } = useUser()
@@ -58,11 +59,10 @@ export default function ChatPage() {
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
-  const hasShareId = !!searchParams.get('share_id')
+  const hasShareId = !!getSearchParam(searchParams, 'share_id')
 
   // Check if a task is currently open
-  const taskId =
-    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+  const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
 
   // Redirect device tasks to /devices/chat page for proper layout
   useEffect(() => {
@@ -107,11 +107,7 @@ export default function ChatPage() {
         <DeviceParamSync />
       </Suspense>
       <Suspense>
-        <TeamShareHandler
-          teams={teams}
-          onTeamSelected={() => {}}
-          onRefreshTeams={handleRefreshTeams}
-        />
+        <TeamShareHandler teams={teams} onRefreshTeams={handleRefreshTeams} />
       </Suspense>
       <Suspense>
         <TaskShareHandler onTaskCopied={refreshTasks} />

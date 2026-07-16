@@ -53,17 +53,15 @@ export function canManageKnowledgeBase({
     return false
   }
 
-  if (knowledgeBase.namespace === 'default') {
-    return knowledgeBase.user_id === currentUserId || isManager(knowledgeRole)
-  }
-
-  if (isManager(namespaceRole) || isManager(knowledgeRole)) {
+  if (knowledgeBase.user_id === currentUserId) {
     return true
   }
 
-  return (
-    (isEditor(namespaceRole) || isEditor(knowledgeRole)) && knowledgeBase.user_id === currentUserId
-  )
+  if (knowledgeBase.namespace === 'default') {
+    return isManager(knowledgeRole)
+  }
+
+  return isManager(namespaceRole) || isManager(knowledgeRole)
 }
 
 export function canManageKnowledgeBaseDocuments({
@@ -88,35 +86,14 @@ export function canManageKnowledgeDocument({
   knowledgeBase,
   knowledgeRole,
   namespaceRole,
-  documentOwnerId,
+  documentOwnerId: _documentOwnerId,
 }: KnowledgeAccessOptions & { documentOwnerId: number | null | undefined }): boolean {
-  if (!currentUserId) {
-    return false
-  }
-
-  if (
-    canManageKnowledgeBase({
-      currentUserId,
-      knowledgeBase,
-      knowledgeRole,
-      namespaceRole,
-    })
-  ) {
-    return true
-  }
-
-  if (documentOwnerId == null) {
-    return false
-  }
-
-  return (
-    canManageKnowledgeBaseDocuments({
-      currentUserId,
-      knowledgeBase,
-      knowledgeRole,
-      namespaceRole,
-    }) && documentOwnerId === currentUserId
-  )
+  return canManageKnowledgeBaseDocuments({
+    currentUserId,
+    knowledgeBase,
+    knowledgeRole,
+    namespaceRole,
+  })
 }
 
 export function canManageKnowledgeBasePermissions({

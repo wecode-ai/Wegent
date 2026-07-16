@@ -33,6 +33,7 @@ import {
   modelApis,
   ModelCRD,
   ModelCategoryType,
+  ModelCapabilities,
   TTSConfig,
   STTConfig,
   EmbeddingConfig,
@@ -56,6 +57,8 @@ import {
 export interface ModelFormData {
   modelIdName: string
   displayName: string
+  modelGroup: string
+  modelSubGroup: string
   modelCategoryType: ModelCategoryType
   providerType: string
   modelId: string
@@ -85,12 +88,16 @@ export interface ModelFormData {
   videoSeed?: number
   videoCameraFixed?: boolean
   videoWatermark?: boolean
+  supportsImageInput?: boolean
+  supportsVideoInput?: boolean
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
 export interface ModelInitialData {
   name: string
   displayName?: string
+  modelGroup?: string
+  modelSubGroup?: string
   modelCategoryType?: ModelCategoryType
   providerType?: string
   modelId?: string
@@ -108,6 +115,7 @@ export interface ModelInitialData {
   videoConfig?: VideoGenerationConfig
   imageConfig?: import('@/apis/models').ImageGenerationConfig
   thinkingConfig?: Record<string, unknown>
+  modelCapabilities?: ModelCapabilities
 }
 
 /**
@@ -284,6 +292,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         ? {
             name: model.metadata.name,
             displayName: model.metadata.displayName,
+            modelGroup: model.spec.modelGroup,
+            modelSubGroup: model.spec.modelSubGroup,
             modelCategoryType: model.spec.modelType,
             providerType: model.spec.modelConfig?.env?.model,
             modelId: model.spec.modelConfig?.env?.model_id,
@@ -297,6 +307,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
+            modelCapabilities: model.spec.modelCapabilities,
+            videoConfig: model.spec.videoConfig,
+            imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
           }
         : null)
@@ -308,6 +321,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Form state
   const [modelIdName, setModelIdName] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [modelGroup, setModelGroup] = useState('')
+  const [modelSubGroup, setModelSubGroup] = useState('')
   const [modelCategoryType, setModelCategoryType] = useState<ModelCategoryType>('llm')
   const [providerType, setProviderType] = useState<string>('openai')
   const [modelId, setModelId] = useState('')
@@ -355,6 +370,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Image - use ImageConfigState from extracted component
   const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
 
+  // Multimodal capabilities (LLM models only)
+  const [supportsImageInput, setSupportsImageInput] = useState(false)
+  const [supportsVideoInput, setSupportsVideoInput] = useState(false)
+
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<string[]>([])
   const [capResolutions, setCapResolutions] = useState<string[]>([])
@@ -383,6 +402,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       if (effectiveInitialData) {
         setModelIdName(effectiveInitialData.name || '')
         setDisplayName(effectiveInitialData.displayName || '')
+        setModelGroup(effectiveInitialData.modelGroup || '')
+        setModelSubGroup(effectiveInitialData.modelSubGroup || '')
         // Set model category type
         const categoryType = effectiveInitialData.modelCategoryType || 'llm'
         setModelCategoryType(categoryType)
@@ -484,10 +505,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setThinkingConfigStr('')
         }
         setThinkingConfigError('')
+        // Load multimodal capabilities (LLM models)
+        setSupportsImageInput(effectiveInitialData.modelCapabilities?.supportsImage ?? false)
+        setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
       } else {
         // Reset for new model
         setModelIdName('')
         setDisplayName('')
+        setModelGroup('')
+        setModelSubGroup('')
         setModelCategoryType('llm')
         setProviderType('openai')
         setModelId('')
@@ -514,6 +540,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoWatermark(false)
         // Reset image-specific configs
         setImageConfig(getDefaultImageConfig())
+        // Reset multimodal capabilities
+        setSupportsImageInput(false)
+        setSupportsVideoInput(false)
         // Reset video capabilities
         setCapRatios([])
         setCapResolutions([])
@@ -1053,6 +1082,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const imageGenerationConfig =
         modelCategoryType === 'image' ? toImageGenerationConfig(imageConfig) : undefined
 
+      // Build multimodal capabilities (LLM models only). Only include declared
+      // capabilities so the field is absent when neither toggle is set.
+      const rawModelCapabilities: ModelCapabilities = {
+        ...(supportsImageInput && { supportsImage: true }),
+        ...(supportsVideoInput && { supportsVideo: true }),
+      }
+      const modelCapabilities: ModelCapabilities | undefined =
+        modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
+          ? rawModelCapabilities
+          : undefined
+
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
@@ -1104,12 +1144,15 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
+          ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
+          ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
           ...(ttsConfig && { ttsConfig }),
           ...(sttConfig && { sttConfig }),
           ...(embeddingConfig && { embeddingConfig }),
           ...(rerankConfig && { rerankConfig }),
           ...(videoConfig && { videoConfig }),
           ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
+          ...(modelCapabilities && { modelCapabilities }),
         },
         status: {
           state: 'Available',
@@ -1120,6 +1163,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const formData: ModelFormData = {
         modelIdName: modelIdName.trim(),
         displayName: displayName.trim(),
+        modelGroup: modelGroup.trim(),
+        modelSubGroup: modelSubGroup.trim(),
         modelCategoryType,
         providerType,
         modelId: finalModelId,
@@ -1155,6 +1200,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         videoSeed,
         videoCameraFixed,
         videoWatermark,
+        supportsImageInput,
+        supportsVideoInput,
       }
 
       // If custom onSave callback is provided, use it
@@ -1272,6 +1319,38 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 className="bg-base"
               />
               <p className="text-xs text-text-muted">{t('common:models.display_name_hint')}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="modelGroup" className="text-sm font-medium">
+                {t('common:models.model_group')}
+              </Label>
+              <Input
+                id="modelGroup"
+                data-testid="model-group-input"
+                value={modelGroup}
+                onChange={e => setModelGroup(e.target.value)}
+                placeholder={t('common:models.model_group_placeholder')}
+                className="bg-base"
+              />
+              <p className="text-xs text-text-muted">{t('common:models.model_group_hint')}</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="modelSubGroup" className="text-sm font-medium">
+                {t('common:models.model_sub_group')}
+              </Label>
+              <Input
+                id="modelSubGroup"
+                data-testid="model-sub-group-input"
+                value={modelSubGroup}
+                onChange={e => setModelSubGroup(e.target.value)}
+                placeholder={t('common:models.model_sub_group_placeholder')}
+                className="bg-base"
+              />
+              <p className="text-xs text-text-muted">{t('common:models.model_sub_group_hint')}</p>
             </div>
           </div>
 
@@ -1522,6 +1601,51 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               />
               {thinkingConfigError && <p className="text-xs text-error">{thinkingConfigError}</p>}
               <p className="text-xs text-text-muted">{t('common:models.thinking_config_hint')}</p>
+            </div>
+          )}
+
+          {/* Multimodal capabilities (LLM models only) */}
+          {modelCategoryType === 'llm' && (
+            <div className="space-y-3 rounded-lg bg-muted p-4">
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="supports_image_input"
+                  data-testid="supports-image-input-checkbox"
+                  checked={supportsImageInput}
+                  onCheckedChange={checked => setSupportsImageInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="supports_image_input"
+                    className="cursor-pointer text-sm font-medium"
+                  >
+                    {t('common:models.supports_image_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.supports_image_input_hint')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="supports_video_input"
+                  data-testid="supports-video-input-checkbox"
+                  checked={supportsVideoInput}
+                  onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="supports_video_input"
+                    className="cursor-pointer text-sm font-medium"
+                  >
+                    {t('common:models.supports_video_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.supports_video_input_hint')}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 

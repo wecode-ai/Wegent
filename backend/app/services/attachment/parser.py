@@ -6,8 +6,9 @@
 Document parser service for extracting text from various file formats.
 
 Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx),
-Excel (.xls, .xlsx, .csv), TXT, Markdown files, Images (.jpg, .jpeg, .png, .gif, .bmp, .webp),
-and any text-based files detected via MIME type analysis.
+Excel (.xls, .xlsx, .csv), XMind (.xmind), TXT, Markdown files,
+Images (.jpg, .jpeg, .png, .gif, .bmp, .webp), and any text-based files
+detected via MIME type analysis.
 
 Features smart truncation that preserves document structure:
 - Excel/CSV: Header + sample rows + ellipsis + tail rows
@@ -28,7 +29,7 @@ import io
 import logging
 import zipfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import chardet
 import magic
@@ -40,107 +41,20 @@ from app.services.attachment.smart_truncation import (
     SmartTruncationManager,
     TruncationType,
 )
+from shared.utils.image_preprocessor import (
+    MAX_MODEL_IMAGE_LONG_EDGE,
+    prepare_image_bytes_for_model,
+)
+from shared.utils.mime_types import TEXT_READABLE_MIME_TYPES, is_text_readable_mime
+from shared.utils.xmind_parser import XMindParseError, parse_xmind_to_markdown
+
+MAX_IMAGE_LONG_EDGE = MAX_MODEL_IMAGE_LONG_EDGE
+
+# Backwards-compatible alias: text-based MIME types now live in shared so the
+# backend parser and the chat_shell attachment preview share one definition.
+TEXT_MIME_TYPES = TEXT_READABLE_MIME_TYPES
 
 logger = logging.getLogger(__name__)
-
-
-# MIME types that are considered text-based files
-# These files can be parsed as plain text
-TEXT_MIME_TYPES: Set[str] = {
-    # text/* family
-    "text/plain",
-    "text/html",
-    "text/css",
-    "text/javascript",
-    "text/xml",
-    "text/csv",
-    "text/markdown",
-    "text/x-python",
-    "text/x-java",
-    "text/x-c",
-    "text/x-c++",
-    "text/x-ruby",
-    "text/x-perl",
-    "text/x-php",
-    "text/x-shellscript",
-    "text/x-script.python",
-    "text/x-go",
-    "text/x-rust",
-    "text/x-swift",
-    "text/x-kotlin",
-    "text/x-scala",
-    "text/x-typescript",
-    "text/x-coffeescript",
-    "text/x-lua",
-    "text/x-r",
-    "text/x-matlab",
-    "text/x-sql",
-    "text/x-yaml",
-    "text/x-toml",
-    "text/x-ini",
-    "text/x-properties",
-    "text/x-diff",
-    "text/x-patch",
-    "text/x-log",
-    "text/x-makefile",
-    "text/x-cmake",
-    "text/x-dockerfile",
-    "text/x-nginx-conf",
-    "text/x-apache-conf",
-    "text/x-systemd-unit",
-    "text/x-tex",
-    "text/x-latex",
-    "text/x-bibtex",
-    "text/x-rst",
-    "text/x-asciidoc",
-    "text/x-org",
-    "text/troff",
-    "text/rtf",
-    "text/calendar",
-    "text/vcard",
-    # application/* text-based types
-    "application/json",
-    "application/xml",
-    "application/javascript",
-    "application/x-javascript",
-    "application/ecmascript",
-    "application/x-sh",
-    "application/x-bash",
-    "application/x-csh",
-    "application/x-zsh",
-    "application/x-python",
-    "application/x-ruby",
-    "application/x-perl",
-    "application/x-php",
-    "application/sql",
-    "application/graphql",
-    "application/toml",
-    "application/x-yaml",
-    "application/yaml",
-    "application/x-httpd-php",
-    "application/x-typescript",
-    "application/typescript",
-    "application/x-tex",
-    "application/x-latex",
-    "application/x-troff",
-    "application/x-troff-man",
-    "application/x-ndjson",
-    "application/ld+json",
-    "application/manifest+json",
-    "application/schema+json",
-    "application/vnd.api+json",
-    "application/hal+json",
-    "application/problem+json",
-    "application/x-www-form-urlencoded",
-    "application/xhtml+xml",
-    "application/atom+xml",
-    "application/rss+xml",
-    "application/soap+xml",
-    "application/mathml+xml",
-    "application/xslt+xml",
-    "application/x-subrip",
-    "application/x-wine-extension-ini",
-}
 
 
 @dataclass
@@ -178,6 +92,7 @@ class ParseResult:
     text: str
     text_length: int
     image_base64: Optional[str] = None
+    image_mime_type: Optional[str] = None
     truncation_info: Optional[TruncationInfo] = None
 
 
@@ -208,6 +123,7 @@ class DocumentParser:
     - Word (.doc, .docx)
     - PowerPoint (.ppt, .pptx)
     - Excel (.xls, .xlsx, .csv)
+    - XMind (.xmind)
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
@@ -231,6 +147,7 @@ class DocumentParser:
         ".xls": "application/vnd.ms-excel",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".csv": "text/csv",
+        ".xmind": "application/vnd.xmind.workbook",
         ".txt": "text/plain",
         ".md": "text/markdown",
         ".jpg": "image/jpeg",
@@ -253,6 +170,7 @@ class DocumentParser:
         ".xls",
         ".xlsx",
         ".csv",
+        ".xmind",
         ".jpg",
         ".jpeg",
         ".png",
@@ -332,29 +250,16 @@ class DocumentParser:
         """
         Check if a MIME type represents a text-based file.
 
+        Delegates to the shared classification so the parser and the chat_shell
+        attachment preview stay consistent as file types are added.
+
         Args:
             mime_type: MIME type string to check, or None
 
         Returns:
             True if the MIME type is text-based, False otherwise
         """
-        if not mime_type:
-            return False
-
-        # Check if it starts with text/
-        if mime_type.startswith("text/"):
-            return True
-
-        # Check if it's in our whitelist of text-based application/* types
-        if mime_type in TEXT_MIME_TYPES:
-            return True
-
-        # Check for common text-based patterns
-        # Many text formats use +json, +xml suffixes
-        if mime_type.endswith("+json") or mime_type.endswith("+xml"):
-            return True
-
-        return False
+        return is_text_readable_mime(mime_type)
 
     @classmethod
     def is_supported_extension(cls, extension: str) -> bool:
@@ -458,6 +363,7 @@ class DocumentParser:
         These formats have dedicated parsers.
         """
         image_base64 = None
+        image_mime_type = None
         truncation_info = None
 
         if use_smart_truncation:
@@ -477,8 +383,12 @@ class DocumentParser:
                 )
             elif extension == ".csv":
                 text, truncation_info = self._parse_csv_smart(binary_data, max_length)
+            elif extension == ".xmind":
+                text, truncation_info = self._parse_xmind_smart(binary_data, max_length)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                text, image_base64 = self._parse_image(binary_data, extension)
+                text, image_base64, image_mime_type = self._parse_image(
+                    binary_data, extension
+                )
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
             else:
@@ -498,8 +408,12 @@ class DocumentParser:
                 text = self._parse_excel(binary_data, extension)
             elif extension == ".csv":
                 text = self._parse_csv(binary_data)
+            elif extension == ".xmind":
+                text = self._parse_xmind(binary_data)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                text, image_base64 = self._parse_image(binary_data, extension)
+                text, image_base64, image_mime_type = self._parse_image(
+                    binary_data, extension
+                )
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
             else:
@@ -526,6 +440,7 @@ class DocumentParser:
             text=text,
             text_length=len(text),
             image_base64=image_base64,
+            image_mime_type=image_mime_type,
             truncation_info=truncation_info,
         )
 
@@ -956,43 +871,64 @@ class DocumentParser:
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
-    def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str]:
+    def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str, str]:
         """
-        Parse image file and return metadata information with base64 encoding.
+        Parse image file and return metadata, base64 data, and actual MIME type.
+
+        Images are normalized through the shared model image preprocessor:
+        unsupported formats are converted, oversized dimensions are resized,
+        and animated GIFs are flattened to PNG only when re-encoding is needed.
 
         Returns:
-            Tuple of (metadata_text, base64_encoded_image)
+            Tuple of (metadata_text, base64_encoded_image, actual_mime_type)
         """
         try:
             from PIL import Image
 
-            image_file = io.BytesIO(binary_data)
-            img = Image.open(image_file)
+            ext = extension.lower()
+            with Image.open(io.BytesIO(binary_data)) as img:
+                original_width, original_height = img.size
+                mode = img.mode
+                format_name = img.format or extension[1:].upper()
 
-            # Extract image metadata
-            width, height = img.size
-            mode = img.mode
-            format_name = img.format or extension[1:].upper()
+                has_exif = False
+                try:
+                    if hasattr(img, "_getexif") and img._getexif():
+                        has_exif = True
+                except Exception:
+                    pass
 
-            # Build description
+                # Force full image load to validate pixel data (Image.open is lazy).
+                img.load()
+
+            prepared = prepare_image_bytes_for_model(
+                binary_data,
+                self.get_mime_type(ext),
+                max_long_edge=MAX_IMAGE_LONG_EDGE,
+            )
+            width, height = prepared.size or (original_width, original_height)
+
             text = f"[图片文件]\n"
             text += f"格式: {format_name}\n"
             text += f"尺寸: {width} x {height} 像素\n"
             text += f"颜色模式: {mode}\n"
             text += f"文件大小: {len(binary_data)} 字节"
+            if has_exif:
+                text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
 
-            # Try to extract EXIF data if available
-            if hasattr(img, "_getexif") and img._getexif():
-                text += "\n\n[EXIF 信息]"
-                exif_data = img._getexif()
-                if exif_data:
-                    # Just mention EXIF is available, don't extract all
-                    text += "\n包含 EXIF 元数据"
+            image_base64 = base64.b64encode(prepared.data).decode("utf-8")
+            actual_mime_type = prepared.mime_type
+            if prepared.resized:
+                logger.info(
+                    "Prepared %s image for model input: %sx%s -> %s, mime=%s",
+                    extension,
+                    original_width,
+                    original_height,
+                    prepared.size,
+                    prepared.mime_type,
+                )
 
-            # Encode image to base64 for vision models
-            image_base64 = base64.b64encode(binary_data).decode("utf-8")
-
-            return text, image_base64
+            return text, image_base64, actual_mime_type
 
         except Exception as e:
             logger.error(f"Error parsing image: {e}", exc_info=True)
@@ -1046,6 +982,17 @@ class DocumentParser:
             logger.error(f"Error parsing archive: {e}", exc_info=True)
             raise DocumentParseError(
                 f"Failed to parse archive: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_xmind(self, binary_data: bytes) -> str:
+        """Parse XMind mind-map topics into Markdown text."""
+        try:
+            return parse_xmind_to_markdown(binary_data)
+        except XMindParseError as e:
+            logger.error(f"Error parsing XMind file: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse XMind file: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
@@ -1463,8 +1410,19 @@ class DocumentParser:
         """
         # First decode the text
         text = self._parse_text(binary_data)
+        return self._truncate_text(text, max_length)
 
-        # Apply smart truncation
+    def _parse_xmind_smart(
+        self, binary_data: bytes, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """Parse XMind and apply Markdown-aware text truncation."""
+        text = self._parse_xmind(binary_data)
+        return self._truncate_text(text, max_length)
+
+    def _truncate_text(
+        self, text: str, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """Apply smart truncation to already-decoded text."""
         truncated_text, smart_info = self.truncation_manager.truncate_text(
             text, max_length
         )

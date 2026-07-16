@@ -9,6 +9,47 @@
   "documents": "文档",
   "document_count": "{{count}} 篇文档",
   "documents_count": "{{count}} 篇文档",
+  "picker": {
+    "columns": {
+      "sources": "一级分组",
+      "knowledgeBases": "二级分组"
+    },
+    "sources": {
+      "personal": "个人知识",
+      "group": "组知识",
+      "organization": "公司知识"
+    },
+    "scopes": {
+      "personal": "个人",
+      "organization": "组织"
+    },
+    "target": {
+      "knowledgeBase": "知识库",
+      "folder": "文件夹",
+      "document": "文档"
+    },
+    "count": {
+      "knowledgeBases": "{{count}} 个知识库",
+      "documents": "{{count}} 个文档"
+    },
+    "loading": "加载知识库中...",
+    "loadingDocuments": "加载文档中...",
+    "retry": "重试",
+    "empty": "暂无内容",
+    "emptyGroups": "暂无群组",
+    "emptyKnowledgeBases": "暂无知识库",
+    "emptyDocuments": "暂无文档",
+    "boundKnowledgeBases": "已绑定知识库",
+    "selectKnowledgeBase": "选择一个知识库查看文档",
+    "selectWholeKb": "选择知识库",
+    "selected": "已选择",
+    "selectedDocuments": "已选 {{count}} 个文档",
+    "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
+    "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
+    "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
+    "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
+    "previewUnavailable": "预览地址不可用"
+  },
   "modules": {
     "title": "我的知识",
     "code": "代码知识",
@@ -44,6 +85,12 @@
       "createdDesc": "点击上方按钮创建您的第一个知识库",
       "sharedDesc": "当其他用户分享知识库给您时，将显示在这里"
     },
+    "groupSections": {
+      "native": "创建",
+      "shared": "分享",
+      "noNative": "暂无群组知识库",
+      "noShared": "暂无分享的知识库"
+    },
     "tree": {
       "title": "知识库",
       "myKnowledge": "我的知识",
@@ -64,15 +111,15 @@
       "typeToSearch": "输入关键词搜索知识库",
       "favorites": "收藏",
       "recent": "最近",
-      "groups": "分组",
+      "groups": "组知识",
       "navigation": "导航",
       "all": "全部",
       "noGroups": "暂无分组",
       "noFavorites": "暂无收藏的知识库",
       "noRecent": "暂无最近访问记录",
       "clearRecent": "清除记录",
-      "personal": "个人",
-      "organization": "公司",
+      "personal": "个人知识",
+      "organization": "公司知识",
       "dingtalk": "钉钉文档",
       "groupSettings": "组设置",
       "justNow": "刚刚",
@@ -82,6 +129,7 @@
       "daysAgo": "{{count}}天前"
     },
     "allKnowledgeBases": "全部知识库",
+    "backToList": "返回知识库列表",
     "dingtalk": {
       "sync": "同步",
       "syncing": "同步中...",
@@ -103,16 +151,25 @@
       "columnSyncedAt": "同步时间",
       "columnActions": "操作",
       "openInDingtalk": "在钉钉中打开",
-      "lastModified": "最近修改"
+      "lastModified": "最近修改",
+      "myDocs": "我的文档",
+      "wikispace": "知识库",
+      "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
+      "wikispaceEmpty": "暂无知识库内容",
+      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
     },
     "groupFilter": {
       "all": "全部分组"
     },
     "table": {
       "name": "名称",
-      "group": "归属小组",
+      "group": "归属",
+      "belongsTo": "归属",
+      "from": "来自",
       "permission": "权限",
-      "lastAccess": "最近访问",
+      "createdAt": "创建时间",
+      "updatedAt": "更新时间",
       "actions": "操作",
       "edit": "编辑",
       "delete": "删除",
@@ -153,14 +210,12 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
-      "createNotebook": "创建笔记本",
-      "createClassic": "创建知识库",
       "createDesc": "创建您的第一个知识库",
-      "notebookDesc": "可直接在笔记本内上传文件并开启对话，最多支持50个文件",
-      "classicDesc": "上传文件后可被聊天引用，知识库内无文件数量限制",
-      "type": "知识库类型",
-      "typeNotebook": "笔记本",
-      "typeClassic": "知识库",
+      "notebookDesc": "默认进入笔记本视图，可选择文档并开启对话",
+      "classicDesc": "默认进入文档视图，适合浏览、上传和管理文档",
+      "type": "默认打开方式",
+      "typeNotebook": "笔记本视图",
+      "typeClassic": "文档视图",
       "edit": "编辑知识库",
       "delete": "删除知识库",
       "name": "知识库名称",
@@ -176,20 +231,49 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
-      "convertType": "转换类型",
-      "currentType": "当前类型",
-      "convertToNotebook": "转为笔记本",
-      "convertToClassic": "转为知识库",
-      "convertToNotebookDisabled": "文档数超过 50 个限制，无法转为笔记本模式",
-      "convertToClassicConfirm": "转换后将不再支持笔记本内直接对话功能，但文档数量将不受限制。确定转换吗？",
-      "convertToNotebookConfirm": "转换为笔记本后，可直接在知识库内上传文件并开启对话，但文档数量将限制为最多 50 个。确定转换吗？",
-      "convertSuccess": "知识库类型转换成功",
-      "convertFailed": "知识库类型转换失败",
-      "targetGroup": "归属分组",
+      "currentDefaultView": "当前默认打开方式",
+      "convertToNotebook": "默认打开笔记本视图",
+      "convertToClassic": "默认打开文档视图",
+      "changeDefaultView": "修改默认打开方式",
+      "changeDefaultViewConfirm": "仅修改下次打开知识库时默认进入的视图，不影响已有内容和权限。",
+      "defaultViewUpdateSuccess": "默认打开方式已更新",
+      "defaultViewUpdateFailed": "默认打开方式更新失败",
+      "targetGroup": "归属",
       "selectGroup": "选择分组"
     },
     "folder": {
-      "docCount": "{{count}} 个文档"
+      "folderType": "文件夹",
+      "expand": "展开文件夹",
+      "collapse": "收起文件夹",
+      "docCount": "{{count}} 个文档",
+      "create": "新建文件夹",
+      "createTitle": "新建文件夹",
+      "createPlaceholder": "输入文件夹名称",
+      "delete": "删除文件夹",
+      "deleteTitle": "删除文件夹",
+      "deleteConfirm": "确定要删除 \"{{name}}\" 及其所有子文件夹吗？其中的文档将移至根文件夹。",
+      "rename": "重命名文件夹",
+      "renameTitle": "重命名文件夹",
+      "renamePlaceholder": "输入新文件夹名称",
+      "moveDocument": "移动到文件夹",
+      "selectFolder": "选择目标文件夹",
+      "rootLevel": "根文件夹",
+      "createdToast": "文件夹 \"{{name}}\" 已创建",
+      "updatedToast": "文件夹 \"{{name}}\" 已更新",
+      "deletedToast": "文件夹已删除，{{count}} 个文档已移至根文件夹",
+      "createFailed": "创建文件夹失败",
+      "updateFailed": "更新文件夹失败",
+      "deleteFailed": "删除文件夹失败",
+      "moveDocumentFailed": "移动文档失败",
+      "depthExceeded": "文件夹层级不能超过 4 层",
+      "documentPlacementDepthExceeded": "文档只能放在第 4 层文件夹及以上位置",
+      "moveDocumentHint": "将文档 \"{{name}}\" 移动到：",
+      "current": "当前",
+      "batchMoveDocument": "批量移动文档",
+      "batchMoveDocumentHint": "将 {{count}} 个已选文档移动到：",
+      "batchMoveSuccess": "已成功移动 {{count}} 个文档",
+      "batchMoveFailed": "移动文档失败",
+      "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
     "document": {
       "title": "文档",
@@ -209,7 +293,11 @@
         "unavailable": "索引不可用",
         "unavailableHint": "AI 将使用其它工具浏览文档（效率略低于快速检索）",
         "indexing": "索引中",
-        "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态"
+        "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态",
+        "converting": "转换中",
+        "convertingHint": "文档正在转换为可检索的格式，可能需要几分钟。",
+        "pendingConversion": "待转换",
+        "pendingConversionHint": "文档正在等待转换为可检索的格式。"
       },
       "reindex": "重新索引",
       "index": "开始索引",
@@ -235,6 +323,7 @@
         "web": "网页"
       },
       "search": "搜索文档",
+      "searchInFolder": "在 {{folder}} 中搜索文档",
       "empty": "暂无文档",
       "emptyHint": "上传您的第一个文档开始使用",
       "noResults": "没有匹配的文档",
@@ -246,22 +335,60 @@
       "confirmDelete": "确定要删除这个文档吗？",
       "nameRequired": "请输入文档名称",
       "namePlaceholder": "输入文档名称",
+      "createFailed": "创建文档失败",
       "updateFailed": "更新文档失败",
+      "deleteFailed": "删除文档失败",
+      "batchDeleteFailed": "批量删除文档失败",
       "dropzone": "拖拽文件到此处或点击浏览",
       "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD 文件（最大 {{maxSize}}MB）",
       "uploading": "上传中...",
       "uploadSuccess": "文件上传成功",
       "batch": {
         "selected": "已选择 {{count}} 项",
+        "selectedWithFolders": "已选择 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
+        "selectedDocuments": "已选择 {{docCount}} 个文档",
+        "selectedFolders": "已选择 {{folderCount}} 个文件夹（含子文件夹）",
+        "selectedMixed": "已选择 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "selectAll": "选择所有",
+        "selectCurrentPage": "选择本页",
         "enable": "批量启用",
         "disable": "批量停用",
-        "delete": "批量删除"
+        "delete": "批量删除",
+        "move": "移动",
+        "transfer": "转移到知识库",
+        "folderScopeTransferOnly": "文件夹选择仅支持转移到知识库；移动或删除请只选择文档。",
+        "transferTitle": "转移到其他知识库",
+        "transferHint": "将 {{docCount}} 个文档和 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
+        "transferHintDocuments": "将 {{docCount}} 个文档转移到允许的目标知识库。",
+        "transferHintFolders": "将 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
+        "transferHintMixed": "将 {{folderCount}} 个文件夹和 {{docCount}} 个文档转移到允许的目标知识库，文件夹结构将被保留。",
+        "selectTargetKb": "选择目标知识库",
+        "targetKbRequired": "请选择目标知识库",
+        "transferring": "转移中...",
+        "transferringProgress": "正在转移 {{current}}/{{total}} 项...",
+        "transferSuccess": "已成功转移 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
+        "transferSuccessDocuments": "已成功转移 {{docCount}} 个文档",
+        "transferSuccessFolders": "已成功转移 {{folderCount}} 个文件夹",
+        "transferSuccessMixed": "已成功转移 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
+        "transferFailed": "转移失败",
+        "noOtherKbs": "没有符合转移规则的目标知识库",
+        "errors": {
+          "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
+          "SOURCE_KB_NOT_FOUND": "源知识库不存在",
+          "TARGET_KB_NOT_FOUND": "目标知识库不存在",
+          "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
+          "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
+          "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
+          "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
+        }
       },
       "detail": {
         "title": "文档详情",
         "backToList": "返回列表",
         "summary": "文档摘要",
+        "derivedSummary": "AI 摘要（基于解析内容）",
+        "refreshSummary": "刷新 AI 摘要",
         "status": "状态",
         "statusValues": {
           "pending": "待处理",
@@ -272,6 +399,8 @@
         "topics": "主题标签",
         "metaInfo": "元信息",
         "content": "文档内容",
+        "parsedContent": "解析内容",
+        "sourceFile": "原始文件",
         "truncated": "内容已截断",
         "copy": "复制",
         "copied": "已复制",
@@ -302,9 +431,24 @@
         "chunkTokens": "{{count}} tokens",
         "viewChunks": "查看分段",
         "splitterType": "分段类型",
-        "splitterSubtype": "分段子类型"
+        "splitterSubtype": "分段子类型",
+        "qaPairsDetected": "已识别 {{count}} 个问答对",
+        "contentUpdatedAt": "变更时间",
+        "sourcePreview": {
+          "loading": "正在加载原始文件...",
+          "download": "下载原文件",
+          "downloadFailed": "原文件下载失败",
+          "tooLargeTitle": "文件过大，暂不支持在线预览",
+          "tooLargeDescription": "文件大小为 {{size}}，超过当前在线预览上限 {{limit}}，请下载后查看。",
+          "fetchFailedTitle": "无法加载原始文件",
+          "fetchFailedDescription": "原始文件获取失败，请检查网络连接或访问权限后重试。",
+          "renderFailedTitle": "原始文件预览失败",
+          "renderFailedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试预览或下载原文件查看。"
+        }
       },
-      "downloadFailed": "下载文件失败"
+      "downloadFailed": "下载文件失败",
+      "fetchFailed": "获取文档失败",
+      "reanalyze": "修改提示词重新分析"
     },
     "upload": {
       "dropzoneHint": "一次最多选择 {{max}} 个文件",
@@ -330,7 +474,7 @@
       "textRequired": "请输入文本内容",
       "insert": "插入",
       "clickToRename": "点击修改文件名",
-      "unsupportedFileType": "暂不支持图片文件，后续版本将支持",
+      "unsupportedFileType": "多媒体文件需要在该知识库启用多模态分析后才能上传",
       "addTable": "添加数据表",
       "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
       "tableUrlHint": "请输入有效的多维表URL，确保链接可访问且有读取权限。目前支持钉钉多维表。",
@@ -360,7 +504,6 @@
         }
       },
       "documentCount": "文档数量",
-      "notebookLimitReached": "笔记本最多支持 50 个文件",
       "web": {
         "addWebPage": "添加网页",
         "orAddWebPage": "或输入网页地址",
@@ -384,7 +527,8 @@
         "refetchSuccess": "网页内容已更新",
         "refetchFailed": "重新抓取失败",
         "refetchConfirm": "确定要重新抓取此网页吗？系统将重新获取网页内容并更新文档。"
-      }
+      },
+      "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。"
     },
     "permission": {
       "noAccess": "您没有操作权限",
@@ -448,13 +592,32 @@
       "batchAddFailed": "添加失败",
       "invalidShareLink": "分享链接无效或已过期",
       "noLinkToCopy": "没有可复制的链接",
-      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制"
+      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制",
+      "authorization": "授权",
+      "individual": "个人",
+      "selectGroup": "选择群组",
+      "selectGroupPlaceholder": "请选择群组",
+      "searchGroupPlaceholder": "搜索群组...",
+      "noGroups": "暂无可用群组",
+      "namespaceMembers": "群组权限",
+      "addNamespace": "添加群组",
+      "noNamespacePermissions": "暂无群组权限",
+      "namespace": "群组"
     },
     "advancedSettings": {
       "title": "高级设置",
-      "collapsed": "点击展开高级设置",
       "expanded": "点击收起",
       "readOnly": "只读"
+    },
+    "formSections": {
+      "basic": "基础设置",
+      "summary": "摘要设置",
+      "guidedQuestions": "引导问题"
+    },
+    "ragConfigMode": {
+      "title": "RAG 检索",
+      "auto": "启用 RAG",
+      "disabled": "无 RAG"
     },
     "retrieval": {
       "retriever": "检索引擎",
@@ -551,6 +714,11 @@
       "description": "根据给定的查询文本测试知识的召回效果。",
       "sourceText": "源文本",
       "placeholder": "输入要测试的查询文本...",
+      "searchHints": "搜索提示（JSON）",
+      "searchHintsUseExample": "填入示例",
+      "searchHintsPlaceholder": "{\n  \"semantic_query\": \"对比抖音、小红书和夸克的搜索业务重要指标\",\n  \"keywords\": [\"抖音\", \"小红书\", \"夸克\"],\n  \"phrases\": [\"搜索业务\", \"重要指标\"]\n}",
+      "searchHintsHint": "可选实验字段。semantic_query 用于 dense 检索，keywords 和 phrases 用于 sparse 检索。",
+      "searchHintsInvalid": "搜索提示必须是合法的 JSON 对象。",
       "search": "测试",
       "results": "召回结果",
       "emptyHint": "召回测试结果将展示在这里",
@@ -590,7 +758,53 @@
       "confirm": "确认迁移",
       "sourceKnowledgeBase": "待迁移知识库",
       "success": "知识库迁移成功",
-      "failed": "知识库迁移失败"
+      "failed": "知识库迁移失败",
+      "errors": {
+        "KB_NOT_FOUND": "知识库不存在",
+        "KB_NOT_PERSONAL": "仅个人知识库可以迁移到群组",
+        "KB_NOT_CREATOR": "仅创建者可以迁移此知识库",
+        "KB_NO_GROUP_ACCESS": "您没有访问该群组的权限",
+        "KB_INSUFFICIENT_PERMISSION": "您需要目标群组的管理员或创建者权限才能迁移知识库",
+        "KB_DUPLICATE_NAME_IN_GROUP": "目标群组中已存在同名知识库",
+        "KB_MIGRATE_CONFLICT": "目标群组中已存在同名知识库"
+      }
+    },
+    "pagination": {
+      "totalCount": "共 {{count}} 条",
+      "pageSize": "每页",
+      "searchHint": "搜索和排序已应用到完整查询结果"
+    },
+    "multimodal": {
+      "enableLabel": "启用多模态分析",
+      "enableDescription": "开启后允许上传视频/图片文件，由 Gemini 分析并提取内容",
+      "selectModel": "多模态分析模型",
+      "modelRequired": "请选择用于多模态分析的模型",
+      "noMultimodalModel": "暂无支持多模态分析的模型",
+      "uploadDisabled": "该知识库未开启多模态分析",
+      "costHint": "多模态分析按所用模型计费，与摘要一致",
+      "videoPromptLabel": "视频分析提示词",
+      "imagePromptLabel": "图片分析提示词",
+      "promptPlaceholder": "请输入分析提示词...",
+      "loadingPrompt": "正在加载默认提示词...",
+      "videoPromptHint": "分析视频的方式。如包含 {{VIDEO_FILENAME}} 占位符，将替换为文件名。",
+      "imagePromptHint": "自定义分析图片的方式。",
+      "resetToDefault": "恢复默认",
+      "resetToInherited": "恢复继承",
+      "promptSource": {
+        "system": "系统默认",
+        "knowledge": "继承知识库",
+        "knowledgeDefault": "继承：系统默认",
+        "document": "文档自定义",
+        "customized": "已自定义"
+      },
+      "video": "视频",
+      "image": "图片",
+      "reanalyzeTitle": "修改提示词重新分析",
+      "reanalyzeDescription": "文档：{{name}}（{{type}}）。编辑下方提示词后，将基于原始文件重新分析。",
+      "reanalyze": "重新分析",
+      "reanalyzing": "重新分析中...",
+      "reanalyzeSuccess": "已开始重新分析",
+      "reanalyzeFailed": "重新分析失败"
     }
   },
   "add_repository": "添加仓库",
@@ -666,6 +880,18 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中...",
+    "summaryEdit": "编辑摘要",
+    "summaryEditTitle": "编辑知识库摘要",
+    "summaryEditDescription": "手动摘要会优先用于展示和对话上下文，自动摘要仍会继续更新。",
+    "summaryEditPlaceholder": "请输入知识库摘要",
+    "summaryEditSaved": "摘要已更新",
+    "summaryEditRequired": "请输入摘要内容",
+    "summaryEditTooLong": "摘要不能超过 500 个字符",
+    "summaryManualBadge": "手动摘要",
+    "summaryManualHint": "当前正在使用手动摘要",
+    "summaryReset": "恢复 AI 摘要",
+    "summaryResetting": "恢复中...",
+    "summaryResetDone": "已恢复为 AI 摘要",
     "guidedQuestions": {
       "hint": "试试这些问题："
     },

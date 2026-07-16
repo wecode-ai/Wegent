@@ -48,6 +48,7 @@ import { subscriptionApis } from '@/apis/subscription'
 import { userApis } from '@/apis/user'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
+import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import { useInboxContext } from '../contexts/inboxContext'
 
 type ProcessMode = 'subscription' | 'direct_agent'
@@ -233,7 +234,8 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
   // Build SearchableSelectItem list for team selector
   const teamSelectItems: SearchableSelectItem[] = useMemo(() => {
     return teams.map(team => {
-      const isSharedTeam = team.share_status === 2 && team.user?.user_name
+      const isNamespaceAuthorized = isNamespaceAuthorizedTeam(team)
+      const isSharedTeam = team.share_status === 2 && team.user?.user_name && !isNamespaceAuthorized
       const isGroupTeam = team.namespace && team.namespace !== 'default'
       return {
         value: String(team.id),
@@ -266,11 +268,21 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
                 {team.user?.user_name}
               </Tag>
             )}
+            {isNamespaceAuthorized && team.namespace && (
+              <Tag
+                className="ml-2 text-xs !m-0 flex-shrink-0 max-w-[160px] truncate"
+                variant="default"
+                style={sharedBadgeStyle}
+                title={t('common:teams.authorized_from_group', { group: team.namespace })}
+              >
+                {t('common:teams.authorized_from_group', { group: team.namespace })}
+              </Tag>
+            )}
           </div>
         ),
       }
     })
-  }, [teams, sharedBadgeStyle])
+  }, [teams, sharedBadgeStyle, t])
 
   const selectedTeam = useMemo(() => {
     return teams.find(team => String(team.id) === selectedTeamId) ?? null
@@ -328,7 +340,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             namespace: selectedModel.namespace || 'default',
             name: selectedModel.name,
           }
-          shouldForceOverrideBotModel = forceOverrideBotModel
+          shouldForceOverrideBotModel = true
         }
       }
     }

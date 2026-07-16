@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 💻 开发环境搭建
 
 本文档详细介绍如何在本地环境搭建 Wegent 开发环境。
@@ -11,7 +15,7 @@
 ### 必需软件
 
 - **Python 3.10+**: 后端服务、Executor 和 Executor Manager
-- **Node.js 18+**: 前端开发
+- **Node.js 20+**: 前端开发和测试
 - **MySQL 8.0+**: 数据库服务
 - **Redis 7+**: 缓存服务
 - **Docker & Docker Compose**: 容器化部署和开发
@@ -42,6 +46,7 @@ docker-compose up -d
 ```
 
 这将启动所有必需的服务:
+
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API 文档**: http://localhost:8000/api/docs
@@ -87,7 +92,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-> **注意**: 数据库表和初始数据会在后端服务首次启动时自动创建，无需手动执行SQL脚本。
+> **注意**: 数据库表和初始数据会在后端服务首次启动时自动创建，无需手动执行SQL脚本。初始化会创建 `admin` 管理员账号，但不会设置默认密码；首次访问登录页时必须先完成管理员密码设置流程。
 
 ---
 
@@ -152,9 +157,12 @@ cp .env.example .env
 # 主要配置项:
 # DATABASE_URL=mysql+pymysql://task_user:task_password@localhost:3306/task_manager
 # REDIS_URL=redis://127.0.0.1:6379/0
+# CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
 ```
+
+`CHECK_SYSTEM_INITIALIZATION_STATUS` 默认开启。开启时,后端启动会把首次管理员密码初始化状态加载到内存,登录页通过 `/users/me` 握手获取 `ADMIN_PASSWORD_SETUP_REQUIRED` 错误码。特殊部署需要跳过该检查时可设置为 `False`。
 
 #### 运行开发服务器
 
@@ -164,6 +172,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 访问 API 文档:
+
 - Swagger UI: http://localhost:8000/api/docs
 - ReDoc: http://localhost:8000/api/redoc
 
@@ -192,10 +201,10 @@ backend/
 #### 安装依赖
 
 ```bash
-cd frontend
+cd Wegent
 
-# 安装 npm 依赖
-npm install
+# 安装 pnpm workspace 依赖
+pnpm install
 ```
 
 #### 配置环境变量
@@ -208,19 +217,22 @@ cp .env.local.example .env.local
 # 主要配置项（运行时变量，可在不重新构建的情况下更改）:
 # RUNTIME_INTERNAL_API_URL=http://localhost:8000  # 服务端代理 URL
 # RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket 连接 URL
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # 可选：编码入口跳转到 Wework
+# RUNTIME_ENABLE_PROJECT_WORKSPACE=false          # 是否启用项目工作区 UI
+# RUNTIME_PROJECT_WORKSPACE_WHITELIST=admin       # 允许使用项目工作区的用户, 为空表示全部用户
 # 旧版（已弃用）: NEXT_PUBLIC_API_URL=http://localhost:8000
 # NEXT_PUBLIC_USE_MOCK_API=false
 # NEXT_PUBLIC_LOGIN_MODE=all
 # I18N_LNG=zh-CN
 ```
 
-> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 和 `RUNTIME_SOCKET_DIRECT_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。
+> **注意**: 前端现在使用 `RUNTIME_INTERNAL_API_URL` 和 `RUNTIME_SOCKET_DIRECT_URL` 替代 `NEXT_PUBLIC_API_URL`。运行时变量可以在不重新构建应用的情况下更改。`RUNTIME_WEWORK_CODE_URL` 为空时编码入口进入 `/chat?agent=code`；配置后菜单显示 **WeWork** 并跳转到该 URL。该变量不支持 `NEXT_PUBLIC_*` 回退。
 
 #### 运行开发服务器
 
 ```bash
 # 启动开发服务器
-npm run dev
+pnpm --dir frontend run dev
 ```
 
 访问应用: http://localhost:3000
@@ -229,17 +241,28 @@ npm run dev
 
 ```bash
 # 代码检查
-npm run lint
+pnpm --dir frontend run lint
 
 # 代码格式化
-npm run format
+pnpm --dir frontend run format
 
 # 生产构建
-npm run build
+pnpm --dir frontend run build
 
 # 运行生产版本
-npm run start
+pnpm --dir frontend run start
 ```
+
+#### Wework 与本地 Rust 构建缓存
+
+Wework macOS 开发脚本会让 Git worktree 按组件共享 Cargo target，因此切换 worktree 时可以直接复用已编译的依赖产物，而不必再次完整编译。Cargo 会为同一 target 目录协调并发访问，并在 fingerprint 变化时重新编译失效产物。首次运行 `pnpm --dir wework run dev:mac` 时，如果本机缺少 `sccache`，脚本会通过 Homebrew 自动安装，以进一步复用编译器缓存。
+
+- `pnpm --dir wework run dev:mac`、`pnpm --dir wework run build:mac`、开发模式 executor sidecar 和 `executor/local.sh build` 都使用 `$XDG_CACHE_HOME/wegent/cargo-target/<组件>`；未设置 `XDG_CACHE_HOME` 时使用 `~/.cache/wegent/cargo-target/...`。
+- 脚本检测到 `sccache` 后会自动设置 `RUSTC_WRAPPER` 和 `SCCACHE_BASEDIRS`，归一化不同 worktree 的源码及 target 绝对路径，并关闭与共享编译缓存不兼容的 Cargo incremental。
+- 如需指定其他 target 缓存根目录，设置 `WEGENT_CARGO_TARGET_ROOT=/path/to/cache`。
+- 如需使用仓库内 Cargo 默认的 `target/`，设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`。
+- 如需跳过自动安装并禁用 `sccache`，设置 `WEGENT_DISABLE_SCCACHE=1`。
+- 显式设置 `CARGO_TARGET_DIR` 或 `RUSTC_WRAPPER` 时，脚本会尊重该值。
 
 ---
 
@@ -322,16 +345,16 @@ pytest -m integration
 ### 前端测试
 
 ```bash
-cd frontend
+cd Wegent
 
 # 运行测试
-npm test
+pnpm --dir frontend test
 
 # 运行并监视更改
-npm run test:watch
+pnpm --dir frontend run test:watch
 
 # 生成覆盖率报告
-npm run test:coverage
+pnpm --dir frontend run test:coverage
 ```
 
 ### Executor 和 Shared 模块测试
@@ -353,6 +376,7 @@ pytest tests/ --cov=utils
 ### 完整测试指南
 
 详细的测试框架说明、最佳实践和 CI/CD 配置，请参阅：
+
 - 📖 [完整测试指南](./testing.md) - 测试框架文档、Fixtures、Mocking 策略等
 
 ---
@@ -370,6 +394,7 @@ uvicorn app.main:app --reload --log-level debug
 ### Frontend 调试
 
 在浏览器开发者工具中查看:
+
 - Console: JavaScript 错误和日志
 - Network: API 请求和响应
 - React DevTools: 组件状态和性能

@@ -12,7 +12,7 @@
 # Usage:
 #   git push                    (runs all checks)
 #   AI_VERIFIED=1 git push      (confirm docs checked and no updates needed)
-#   AI_PUSH_FULL_TESTS=1 git push  (also run full Python pytest suites)
+#   AI_PUSH_FULL_TESTS=1 git push  (also run full Python and Rust test suites)
 # =============================================================================
 
 # Don't exit on error - we want to run all checks and report at the end
@@ -35,7 +35,7 @@ NC='\033[0m' # No Color
 # frontend/.husky/pre-push so new-branch diffs can use the correct default branch.
 REMOTE_NAME="${1:-}"
 
-should_run_full_python_tests() {
+should_run_full_tests() {
     [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
 }
 
@@ -80,7 +80,7 @@ maybe_run_full_python_tests() {
     local log_file="$3"
     local failed_check_name="$4"
 
-    if ! should_run_full_python_tests; then
+    if ! should_run_full_tests; then
         echo -e "   ${YELLOW}↪ Pytest: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
         return 0
     fi
@@ -220,16 +220,18 @@ echo ""
 # Count by module
 BACKEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^backend/" 2>/dev/null || echo 0)
 FRONTEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^frontend/" 2>/dev/null || echo 0)
+WEWORK_COUNT=$(echo "$CHANGED_FILES" | grep -c "^wework/" 2>/dev/null || echo 0)
 EXECUTOR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor/" 2>/dev/null || echo 0)
 EXECUTOR_MGR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor_manager/" 2>/dev/null || echo 0)
 SHARED_COUNT=$(echo "$CHANGED_FILES" | grep -c "^shared/" 2>/dev/null || echo 0)
 KNOWLEDGE_ENGINE_COUNT=$(echo "$CHANGED_FILES" | grep -c "^knowledge_engine/" 2>/dev/null || echo 0)
 KNOWLEDGE_RUNTIME_COUNT=$(echo "$CHANGED_FILES" | grep -c "^knowledge_runtime/" 2>/dev/null || echo 0)
-OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/" 2>/dev/null || echo 0)
+OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|wework|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/" 2>/dev/null || echo 0)
 
 echo -e "   ${BLUE}Modules affected:${NC}"
 [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Backend: $BACKEND_COUNT file(s)"
 [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Frontend: $FRONTEND_COUNT file(s)"
+[ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Wework: $WEWORK_COUNT file(s)"
 [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor: $EXECUTOR_COUNT file(s)"
 [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor Manager: $EXECUTOR_MGR_COUNT file(s)"
 [ "$SHARED_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Shared: $SHARED_COUNT file(s)"
@@ -256,7 +258,7 @@ if [ -n "$BACKEND_MODELS" ]; then
 fi
 
 # Executor/Agent changed → Architecture and concepts docs
-EXECUTOR_CODE=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
+EXECUTOR_CODE=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.(py|rs|toml)$|^executor/Cargo\.lock$" || true)
 if [ -n "$EXECUTOR_CODE" ]; then
     DOC_REMINDERS+=("Executor changed → Check docs/*/concepts/architecture.md")
 fi
@@ -268,7 +270,7 @@ if [ -n "$CONFIG_FILES" ]; then
 fi
 
 # Any code change → Consider updating AGENTS.md and README
-ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/.*\.(py|ts|tsx)$" || true)
+ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|wework|executor|executor_manager|shared|knowledge_engine|knowledge_runtime)/.*\.(py|rs|ts|tsx)$" || true)
 if [ -n "$ANY_CODE" ]; then
     DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
 fi
@@ -301,17 +303,15 @@ CHECK_FAILED=0
 if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Frontend Checks:${NC}"
     
-    # Check if we're in the right directory and node_modules exists
-    if [ ! -d "frontend/node_modules" ]; then
+    # Check if workspace dependencies are installed.
+    if [ ! -d "node_modules" ] || [ ! -d "frontend/node_modules" ]; then
         echo -e "   ${YELLOW}⚠️ SKIP: node_modules not found${NC}"
-        echo -e "   ${YELLOW}   Run 'cd frontend && npm install' to install dependencies${NC}"
+        echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Frontend: node_modules not found, checks skipped")
     else
-        cd frontend
-        
         # ESLint (output to temp file to reduce memory usage)
         echo -e "   Running ESLint..."
-        npm run lint > "$TEMP_DIR/eslint.log" 2>&1
+        pnpm --filter wecode-ai-assistant lint > "$TEMP_DIR/eslint.log" 2>&1
         ESLINT_EXIT=$?
         if [ $ESLINT_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
@@ -322,10 +322,17 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/eslint.log")
         fi
         
-        # TypeScript type check (output to temp file to reduce memory usage)
+        # Regenerate Next.js route types before TypeScript validation. Generated
+        # files can otherwise retain imports for routes removed by a branch switch.
         echo -e "   Running TypeScript check..."
-        npx tsc --noEmit > "$TEMP_DIR/tsc.log" 2>&1
-        TSC_EXIT=$?
+        pnpm --filter wecode-ai-assistant exec next typegen > "$TEMP_DIR/tsc.log" 2>&1
+        TYPEGEN_EXIT=$?
+        if [ $TYPEGEN_EXIT -eq 0 ]; then
+            pnpm --filter wecode-ai-assistant exec tsc --noEmit >> "$TEMP_DIR/tsc.log" 2>&1
+            TSC_EXIT=$?
+        else
+            TSC_EXIT=$TYPEGEN_EXIT
+        fi
         if [ $TSC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
         else
@@ -337,9 +344,11 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         
         # Unit tests (output to temp file to reduce memory usage)
         echo -e "   Running unit tests..."
-        npm test -- --passWithNoTests > "$TEMP_DIR/test.log" 2>&1
+        pnpm --filter @wegent/chat-core test > "$TEMP_DIR/test.log" 2>&1
+        CORE_TEST_EXIT=$?
+        pnpm --filter wecode-ai-assistant run test --passWithNoTests >> "$TEMP_DIR/test.log" 2>&1
         TEST_EXIT=$?
-        if [ $TEST_EXIT -eq 0 ]; then
+        if [ $CORE_TEST_EXIT -eq 0 ] && [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
         else
             echo -e "   ${RED}❌ Unit Tests: FAILED${NC}"
@@ -352,7 +361,68 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         # Full build verification should be done in CI pipeline.
         
     fi
-    cd ..
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
+# Wework Checks (if wework files changed)
+# -----------------------------------------------------------------------------
+if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Wework Checks:${NC}"
+
+    # Check if workspace dependencies are installed.
+    if [ ! -d "node_modules" ] || [ ! -d "wework/node_modules" ]; then
+        echo -e "   ${YELLOW}⚠️ SKIP: node_modules not found${NC}"
+        echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
+        WARNINGS+=("Wework: node_modules not found, checks skipped")
+    else
+        echo -e "   Running ESLint, TypeScript, and unit tests in parallel..."
+
+        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
+        ESLINT_PID=$!
+
+        pnpm --filter wework typecheck > "$TEMP_DIR/wework_tsc.log" 2>&1 &
+        TSC_PID=$!
+
+        pnpm --filter wework test > "$TEMP_DIR/wework_test.log" 2>&1 &
+        TEST_PID=$!
+
+        wait "$ESLINT_PID"
+        ESLINT_EXIT=$?
+
+        wait "$TSC_PID"
+        TSC_EXIT=$?
+
+        wait "$TEST_PID"
+        TEST_EXIT=$?
+
+        if [ $ESLINT_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ ESLint: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Wework ESLint")
+            FAILED_LOGS+=("$TEMP_DIR/wework_eslint.log")
+        fi
+
+        if [ $TSC_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ TypeScript: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Wework TypeScript")
+            FAILED_LOGS+=("$TEMP_DIR/wework_tsc.log")
+        fi
+
+        if [ $TEST_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ Unit Tests: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Wework Unit Tests")
+            FAILED_LOGS+=("$TEMP_DIR/wework_test.log")
+        fi
+    fi
     echo ""
 fi
 
@@ -365,18 +435,18 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     cd backend
     
     # Check if virtual environment or Python packages are available
-    if ! command -v black &> /dev/null && [ ! -f "venv/bin/black" ]; then
+    if ! command -v black &> /dev/null && [ ! -f "venv/bin/black" ] && [ ! -f ".venv/bin/black" ]; then
         echo -e "   ${YELLOW}⚠️ SKIP: black not found${NC}"
         echo -e "   ${YELLOW}   Run 'pip install black isort pytest' to install dependencies${NC}"
         WARNINGS+=("Backend: black not found, format checks skipped")
         
         # Still try to run other checks if available
         # isort check
-        if ! command -v isort &> /dev/null; then
+        if ! command -v isort &> /dev/null && [ ! -f "venv/bin/isort" ] && [ ! -f ".venv/bin/isort" ]; then
             echo -e "   ${YELLOW}⚠️ SKIP: isort not found${NC}"
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
         fi
-        
+
         maybe_run_full_python_tests \
             "Backend" \
             "pytest tests/ --tb=short -q" \
@@ -422,7 +492,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         fi
         
         # isort check
-        if ! command -v isort &> /dev/null; then
+        if ! command -v isort &> /dev/null && [ ! -f "venv/bin/isort" ] && [ ! -f ".venv/bin/isort" ]; then
             echo -e "   ${YELLOW}⚠️ SKIP: isort not found${NC}"
             echo -e "   ${YELLOW}   Run 'pip install isort' to install dependencies${NC}"
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
@@ -466,8 +536,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_CHECKS+=("Backend Syntax")
             FAILED_LOGS+=("$TEMP_DIR/syntax.log")
         fi
-        cd ..
     fi
+    cd ..
     echo ""
 fi
 
@@ -579,28 +649,59 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     
     cd executor
     
-    if ! command -v uv &> /dev/null; then
-        echo -e "   ${YELLOW}⚠️ SKIP: uv not found${NC}"
-        echo -e "   ${YELLOW}   Install uv to run Python pre-push checks${NC}"
-        WARNINGS+=("Executor: uv not found, Python checks skipped")
+    if ! command -v cargo &> /dev/null; then
+        echo -e "   ${YELLOW}⚠️ SKIP: cargo not found${NC}"
+        echo -e "   ${YELLOW}   Install Rust to run executor pre-push checks${NC}"
+        WARNINGS+=("Executor: cargo not found, Rust checks skipped")
+    elif [ ! -d "tests" ]; then
+        echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
+        WARNINGS+=("Executor: tests directory not found")
     else
-        if [ -d "tests" ]; then
-            maybe_run_full_python_tests \
-                "Executor" \
-                "uv run pytest tests/ --tb=short -q" \
-                "$TEMP_DIR/executor_pytest.log" \
-                "Executor Pytest"
-            run_changed_python_syntax_check \
-                "Executor" \
-                "$PROJECT_ROOT/executor" \
-                "^executor/.*\\.py$" \
-                "$TEMP_DIR/executor_syntax.log"
+        echo -e "   Running cargo fmt --check..."
+        if cargo fmt --check > "$TEMP_DIR/executor_fmt.log" 2>&1; then
+            echo -e "   ${GREEN}✅ cargo fmt: PASSED${NC}"
         else
-            echo -e "   ${YELLOW}⚠️ SKIP: tests directory not found${NC}"
-            WARNINGS+=("Executor: tests directory not found")
+            echo -e "   ${RED}❌ cargo fmt: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor cargo fmt")
+            FAILED_LOGS+=("$TEMP_DIR/executor_fmt.log")
+        fi
+
+        echo -e "   Running cargo test --all-features --lib..."
+        if cargo test --all-features --lib > "$TEMP_DIR/executor_test.log" 2>&1; then
+            echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ cargo test: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor cargo test")
+            FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
+        fi
+
+        if should_run_full_tests; then
+            echo -e "   Running full cargo test --all-features..."
+            if cargo test --all-features > "$TEMP_DIR/executor_full_test.log" 2>&1; then
+                echo -e "   ${GREEN}✅ full cargo test: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ full cargo test: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Executor full cargo test")
+                FAILED_LOGS+=("$TEMP_DIR/executor_full_test.log")
+            fi
+        else
+            echo -e "   ${YELLOW}↪ Full cargo test: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
+        fi
+
+        echo -e "   Running cargo clippy..."
+        if cargo clippy --all-targets --all-features -- -D warnings > "$TEMP_DIR/executor_clippy.log" 2>&1; then
+            echo -e "   ${GREEN}✅ cargo clippy: PASSED${NC}"
+        else
+            echo -e "   ${RED}❌ cargo clippy: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor cargo clippy")
+            FAILED_LOGS+=("$TEMP_DIR/executor_clippy.log")
         fi
     fi
-    
+
     cd ..
     echo ""
 fi

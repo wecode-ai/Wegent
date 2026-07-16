@@ -21,6 +21,7 @@ IS_SOURCE_BUILD="${WEGENT_SOURCE_BUILD:-}"
 NO_PROMPT="${WEGENT_NO_PROMPT:-0}"
 VERBOSE="${WEGENT_VERBOSE:-0}"
 DRY_RUN="${WEGENT_DRY_RUN:-0}"
+IMAGE_TAG="${WEGENT_IMAGE_TAG:-latest}"
 SHOW_HELP=0
 
 # Access URL (set during configuration, used in completion message)
@@ -31,9 +32,22 @@ SOCKET_URL="http://localhost:8000"
 COMPOSE_URL="https://raw.githubusercontent.com/wecode-ai/Wegent/main/docker-compose.yml"
 
 # Standalone mode configuration (uses docker run, no compose needed)
-STANDALONE_IMAGE="${WEGENT_STANDALONE_IMAGE:-ghcr.io/wecode-ai/wegent-standalone:latest}"
+STANDALONE_IMAGE_OVERRIDE="${WEGENT_STANDALONE_IMAGE:-}"
+STANDALONE_IMAGE="${STANDALONE_IMAGE_OVERRIDE:-ghcr.io/wecode-ai/wegent-standalone:${IMAGE_TAG}}"
 STANDALONE_CONTAINER_NAME="wegent-standalone"
 STANDALONE_VOLUME_NAME="wegent-data"
+STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"
+STANDALONE_EXECUTOR_MODE="${WEGENT_STANDALONE_EXECUTOR_MODE:-}"
+WEGENT_BIN_DIR="${WEGENT_BIN_DIR:-$HOME/.local/bin}"
+STANDALONE_STATE_DIR="${WEGENT_STANDALONE_STATE_DIR:-$HOME/.wegent/standalone}"
+STANDALONE_STATE_FILE="${WEGENT_STANDALONE_STATE_FILE:-$STANDALONE_STATE_DIR/config.env}"
+STANDALONE_COMMAND_NAME="${WEGENT_STANDALONE_COMMAND_NAME:-wegent-standalone}"
+STANDALONE_COMMAND_PATH="${WEGENT_STANDALONE_COMMAND_PATH:-$WEGENT_BIN_DIR/$STANDALONE_COMMAND_NAME}"
+HOST_EXECUTOR_INSTALL_URL="${WEGENT_HOST_EXECUTOR_INSTALL_URL:-https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh}"
+HOST_EXECUTOR_BINARY="${WEGENT_HOST_EXECUTOR_BINARY:-$HOME/.wegent-executor/bin/wegent-executor}"
+HOST_EXECUTOR_HOME="${WEGENT_HOST_EXECUTOR_HOME:-$HOME/.wegent-executor}"
+HOST_EXECUTOR_PID_FILE="${HOST_EXECUTOR_HOME}/wegent-executor.pid"
+HOST_EXECUTOR_LOG_FILE="${HOST_EXECUTOR_HOME}/logs/executor.log"
 
 # Temporary files cleanup
 TMPFILES=()
@@ -110,6 +124,9 @@ Usage:
 Options:
   --standalone          Install in standalone mode (single container, recommended)
   --standard            Install in standard mode (multi-container with MySQL)
+  --executor-mode MODE  Standalone executor mode: container, host, or hybrid
+  --image-tag TAG       Use Wegent application images with this tag (default: latest)
+  --edge                Shortcut for --image-tag edge
   --no-prompt           Disable interactive prompts (for CI/automation)
   --dry-run             Print what would happen without making changes
   --verbose             Enable verbose output
@@ -122,7 +139,11 @@ Environment variables:
   WEGENT_NO_PROMPT      Set to '1' to disable prompts
   WEGENT_VERBOSE        Set to '1' for verbose output
   WEGENT_DRY_RUN        Set to '1' for dry run
+  WEGENT_IMAGE_TAG      Wegent application image tag (default: latest)
   WEGENT_STANDALONE_IMAGE  Custom standalone image (default: ghcr.io/wecode-ai/wegent-standalone:latest)
+  WEGENT_STANDALONE_EXECUTOR_MODE  Set standalone executor mode: container, host, or hybrid
+  WEGENT_BIN_DIR        Directory for the standalone management command (default: ~/.local/bin)
+  WEGENT_STANDALONE_STATE_FILE  State file used by the management command
 
 Examples:
   # Interactive installation (recommended)
@@ -130,6 +151,12 @@ Examples:
 
   # Non-interactive standalone installation
   curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --no-prompt
+
+  # Install and start edge images for testing
+  curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --edge
+
+  # Start an existing standalone install later
+  ~/.local/bin/wegent-standalone start
 
   # Install to specific directory
   WEGENT_INSTALL_DIR=/opt/wegent curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash
@@ -149,6 +176,26 @@ parse_args() {
                 ;;
             --standard)
                 DEPLOY_MODE="standard"
+                shift
+                ;;
+            --executor-mode)
+                if [[ $# -lt 2 ]]; then
+                    ui_error "--executor-mode requires a value: container, host, or hybrid"
+                    exit 1
+                fi
+                STANDALONE_EXECUTOR_MODE="$2"
+                shift 2
+                ;;
+            --image-tag)
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    ui_error "--image-tag requires a value"
+                    exit 1
+                fi
+                IMAGE_TAG="$2"
+                shift 2
+                ;;
+            --edge)
+                IMAGE_TAG="edge"
                 shift
                 ;;
             --no-prompt)
@@ -172,6 +219,34 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+is_valid_image_tag() {
+    [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]
+}
+
+resolve_image_config() {
+    if [[ -z "$IMAGE_TAG" ]]; then
+        ui_error "Image tag cannot be empty"
+        exit 1
+    fi
+    if ! is_valid_image_tag "$IMAGE_TAG"; then
+        ui_error "Invalid image tag: $IMAGE_TAG"
+        ui_info "Use a Docker tag such as 'latest', 'edge', or 'v1.2.3'."
+        exit 1
+    fi
+
+    export WEGENT_IMAGE_TAG="$IMAGE_TAG"
+
+    if [[ -n "${WEGENT_STANDALONE_IMAGE:-}" ]]; then
+        STANDALONE_IMAGE_OVERRIDE="$WEGENT_STANDALONE_IMAGE"
+    fi
+
+    if [[ -n "$STANDALONE_IMAGE_OVERRIDE" ]]; then
+        STANDALONE_IMAGE="$STANDALONE_IMAGE_OVERRIDE"
+    else
+        STANDALONE_IMAGE="ghcr.io/wecode-ai/wegent-standalone:${IMAGE_TAG}"
+    fi
 }
 
 # ============================================================================
@@ -232,6 +307,112 @@ is_promptable() {
 
 command_exists() {
     command -v "$1" &> /dev/null
+}
+
+read_env_value() {
+    local key="$1"
+    local env_file="$2"
+
+    if [[ ! -f "$env_file" ]]; then
+        return
+    fi
+
+    awk -F= -v target="$key" '
+        $1 == target {
+            sub(/^[^=]*=/, "")
+            print
+            exit
+        }
+    ' "$env_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^["'"'"']//;s/["'"'"']$//'
+}
+
+generate_internal_service_token() {
+    if command_exists openssl; then
+        openssl rand -hex 32
+        return
+    fi
+
+    if command_exists python3; then
+        python3 - <<'PY'
+import secrets
+
+print(secrets.token_hex(32))
+PY
+        return
+    fi
+
+    echo ""
+}
+
+persist_internal_service_token() {
+    local token="$1"
+    local env_file=".env"
+    local temp_file
+    temp_file="$(mktempfile)"
+
+    if [[ -f "$env_file" ]]; then
+        grep -v "^INTERNAL_SERVICE_TOKEN=" "$env_file" > "$temp_file" || true
+    else
+        cat > "$temp_file" <<EOF
+# Wegent Configuration
+# Generated by install.sh on $(date)
+EOF
+    fi
+
+    cat >> "$temp_file" <<EOF
+
+# Internal service authentication token shared by Wegent services.
+# Generated automatically by install.sh.
+INTERNAL_SERVICE_TOKEN=${token}
+EOF
+
+    mv "$temp_file" "$env_file"
+}
+
+persist_standard_image_tag() {
+    local env_file=".env"
+    local temp_file
+    temp_file="$(mktempfile)"
+
+    if [[ -f "$env_file" ]]; then
+        grep -v "^WEGENT_IMAGE_TAG=" "$env_file" > "$temp_file" || true
+    else
+        cat > "$temp_file" <<EOF
+# Wegent Configuration
+# Generated by install.sh on $(date)
+EOF
+    fi
+
+    cat >> "$temp_file" <<EOF
+
+# Wegent application image tag used by docker compose.
+WEGENT_IMAGE_TAG=${IMAGE_TAG}
+EOF
+
+    mv "$temp_file" "$env_file"
+}
+
+ensure_internal_service_token() {
+    local existing_token
+    existing_token="$(read_env_value "INTERNAL_SERVICE_TOKEN" ".env")"
+
+    if [[ -n "$existing_token" ]]; then
+        export INTERNAL_SERVICE_TOKEN="$existing_token"
+        return
+    fi
+
+    local token="${INTERNAL_SERVICE_TOKEN:-}"
+    if [[ -z "$token" ]]; then
+        token="$(generate_internal_service_token)"
+        if [[ -z "$token" ]]; then
+            ui_error "Unable to generate INTERNAL_SERVICE_TOKEN. Install openssl or python3, or set INTERNAL_SERVICE_TOKEN manually."
+            exit 1
+        fi
+        ui_success "Generated INTERNAL_SERVICE_TOKEN and saved it to .env"
+    fi
+
+    export INTERNAL_SERVICE_TOKEN="$token"
+    persist_internal_service_token "$token"
 }
 
 run_quiet_step() {
@@ -734,6 +915,713 @@ select_deploy_mode() {
     esac
 }
 
+is_valid_standalone_executor_mode() {
+    case "$1" in
+        container|host|hybrid)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+default_standalone_executor_mode() {
+    if [[ "$NO_PROMPT" == "1" ]]; then
+        echo "container"
+        return
+    fi
+
+    if [[ "$OS" == "macos" ]]; then
+        echo "host"
+        return
+    fi
+
+    echo "container"
+}
+
+shell_quote() {
+    printf "%q" "$1"
+}
+
+read_persisted_standalone_executor_mode() {
+    if [[ ! -f "$STANDALONE_STATE_FILE" ]]; then
+        return
+    fi
+
+    local persisted_mode
+    persisted_mode="$(
+        awk -F= '$1 == "STANDALONE_EXECUTOR_MODE" { print $2; exit }' \
+            "$STANDALONE_STATE_FILE" \
+        | tr -d "'\"[:space:]"
+    )"
+
+    if is_valid_standalone_executor_mode "$persisted_mode"; then
+        echo "$persisted_mode"
+    fi
+}
+
+select_standalone_executor_mode() {
+    if [[ "$DEPLOY_MODE" != "standalone" ]]; then
+        if [[ -n "$STANDALONE_EXECUTOR_MODE" ]]; then
+            ui_warn "--executor-mode applies only to standalone mode; ignoring '$STANDALONE_EXECUTOR_MODE'"
+        fi
+        return
+    fi
+
+    if [[ -z "$STANDALONE_EXECUTOR_MODE" && -n "${WEGENT_STANDALONE_EXECUTOR_MODE:-}" ]]; then
+        STANDALONE_EXECUTOR_MODE="$WEGENT_STANDALONE_EXECUTOR_MODE"
+    fi
+
+    if [[ -n "$STANDALONE_EXECUTOR_MODE" ]]; then
+        if ! is_valid_standalone_executor_mode "$STANDALONE_EXECUTOR_MODE"; then
+            ui_error "Invalid standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+            ui_info "Accepted values: container, host, hybrid"
+            return 1
+        fi
+        ui_success "Using standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+        return
+    fi
+
+    if [[ -z "$STANDALONE_EXECUTOR_MODE" ]]; then
+        local persisted_mode
+        persisted_mode="$(read_persisted_standalone_executor_mode)"
+        if [[ -n "$persisted_mode" ]]; then
+            STANDALONE_EXECUTOR_MODE="$persisted_mode"
+            ui_success "Using previously selected standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+            return
+        fi
+    fi
+
+    if ! is_promptable; then
+        STANDALONE_EXECUTOR_MODE="container"
+        ui_info "Non-interactive mode, using standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+        return
+    fi
+
+    local default_mode
+    default_mode="$(default_standalone_executor_mode)"
+
+    echo ""
+    echo -e "${YELLOW}Select standalone executor mode:${NC}"
+    echo -e "  ${GREEN}[1]${NC} Host executor ${MUTED}(recommended on macOS)${NC}"
+    echo -e "      Runs coding agents on this machine; required for macOS system commands"
+    echo ""
+    echo -e "  ${BLUE}[2]${NC} Container executor"
+    echo -e "      Current standalone behavior; everything runs inside Docker"
+    echo ""
+    echo -e "  ${CYAN}[3]${NC} Hybrid"
+    echo -e "      Start both container and host executors"
+    echo ""
+
+    local default_choice="2"
+    if [[ "$default_mode" == "host" ]]; then
+        default_choice="1"
+    elif [[ "$default_mode" == "hybrid" ]]; then
+        default_choice="3"
+    fi
+
+    printf "Choose [1/2/3] (default: %s): " "$default_choice"
+    local executor_choice
+    read -r executor_choice < /dev/tty
+    executor_choice="${executor_choice:-$default_choice}"
+
+    case "$executor_choice" in
+        1)
+            STANDALONE_EXECUTOR_MODE="host"
+            ;;
+        3)
+            STANDALONE_EXECUTOR_MODE="hybrid"
+            ;;
+        *)
+            STANDALONE_EXECUTOR_MODE="container"
+            ;;
+    esac
+
+    ui_success "Selected standalone executor mode: $STANDALONE_EXECUTOR_MODE"
+}
+
+standalone_container_executor_enabled() {
+    case "$STANDALONE_EXECUTOR_MODE" in
+        host)
+            echo "false"
+            ;;
+        container|hybrid)
+            echo "true"
+            ;;
+        *)
+            echo "true"
+            ;;
+    esac
+}
+
+current_standalone_container_executor_enabled() {
+    local value
+    value="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+        "$STANDALONE_CONTAINER_NAME" 2>/dev/null \
+        | awk -F= '$1 == "STANDALONE_EXECUTOR_ENABLED" { print $2; exit }' \
+        || true)"
+
+    if [[ -z "$value" ]]; then
+        echo "true"
+        return
+    fi
+
+    echo "$value"
+}
+
+current_standalone_container_image() {
+    docker inspect --format '{{.Config.Image}}' \
+        "$STANDALONE_CONTAINER_NAME" 2>/dev/null \
+        || true
+}
+
+remove_existing_standalone_container() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would remove existing container: ${STANDALONE_CONTAINER_NAME}"
+        return
+    fi
+
+    ui_info "Removing existing container..."
+    docker rm -f "${STANDALONE_CONTAINER_NAME}"
+    ui_success "Container removed"
+}
+
+needs_host_executor() {
+    [[ "$DEPLOY_MODE" == "standalone" ]] || return 1
+    [[ "$STANDALONE_EXECUTOR_MODE" == "host" || "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]
+}
+
+install_host_executor_from_release() {
+    ui_section "Installing Host Executor"
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would download and run: ${HOST_EXECUTOR_INSTALL_URL}"
+        return
+    fi
+
+    ui_info "Downloading executor release installer..."
+    if ! curl -fsSL "$HOST_EXECUTOR_INSTALL_URL" | bash; then
+        ui_error "Failed to install host executor from release"
+        ui_info "Retry manually:"
+        ui_info "  curl -fsSL ${HOST_EXECUTOR_INSTALL_URL} | bash"
+        return 1
+    fi
+}
+
+read_standalone_executor_token() {
+    docker exec "$STANDALONE_CONTAINER_NAME" sh -lc \
+        'cd /app/backend && python -m app.scripts.ensure_standalone_executor_token'
+}
+
+redact_token() {
+    local token="$1"
+    if [[ ${#token} -le 10 ]]; then
+        echo "redacted"
+        return
+    fi
+    printf '%s...\n' "${token:0:10}"
+}
+
+host_executor_device_name() {
+    local os_label="Host"
+    case "$OS" in
+        macos)
+            os_label="macOS"
+            ;;
+        linux)
+            os_label="Linux"
+            ;;
+    esac
+
+    printf '%s-%s\n' "$(hostname)" "$os_label"
+}
+
+configure_host_executor() {
+    local token="$1"
+    local config_path="${HOST_EXECUTOR_HOME}/device-config.json"
+
+    mkdir -p "$HOST_EXECUTOR_HOME"
+    umask 077
+    cat > "$config_path" <<EOF
+{
+  "mode": "local",
+  "device_type": "local",
+  "bind_shell": "claudecode",
+  "device_id": "",
+  "device_name": "$(host_executor_device_name)",
+  "capabilities": [],
+  "max_concurrent_tasks": 5,
+  "connection": {
+    "backend_url": "http://127.0.0.1:3000",
+    "auth_token": "$token"
+  },
+  "logging": {
+    "level": "info",
+    "max_size_mb": 10,
+    "backup_count": 5
+  },
+  "update": {
+    "registry": "",
+    "registry_token": ""
+  }
+}
+EOF
+    chmod 600 "$config_path"
+    ui_success "Host executor configured at ${config_path}"
+}
+
+stop_host_executor_if_running() {
+    if [[ ! -f "$HOST_EXECUTOR_PID_FILE" ]]; then
+        return
+    fi
+
+    local pid
+    pid="$(cat "$HOST_EXECUTOR_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+        ui_info "Stopping existing host executor (PID: $pid)"
+        kill "$pid" >/dev/null 2>&1 || true
+        for _ in {1..20}; do
+            if ! kill -0 "$pid" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+    fi
+    rm -f "$HOST_EXECUTOR_PID_FILE"
+}
+
+start_host_executor() {
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would start host executor: ${HOST_EXECUTOR_BINARY}"
+        return
+    fi
+
+    if [[ ! -x "$HOST_EXECUTOR_BINARY" ]]; then
+        ui_error "Host executor binary is missing or not executable: ${HOST_EXECUTOR_BINARY}"
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$HOST_EXECUTOR_LOG_FILE")"
+    stop_host_executor_if_running
+
+    ui_info "Starting host executor..."
+    WEGENT_EXECUTOR_HOME="$HOST_EXECUTOR_HOME" \
+        WEGENT_EXECUTOR_LOG_FILE="$HOST_EXECUTOR_LOG_FILE" \
+        LOCAL_WORKSPACE_ROOT="${HOST_EXECUTOR_HOME}/workspace" \
+        nohup "$HOST_EXECUTOR_BINARY" >/dev/null 2>&1 &
+    echo $! > "$HOST_EXECUTOR_PID_FILE"
+    sleep 1
+
+    if ! kill -0 "$(cat "$HOST_EXECUTOR_PID_FILE")" >/dev/null 2>&1; then
+        ui_error "Host executor failed to start"
+        ui_info "Recent log:"
+        tail -n 80 "$HOST_EXECUTOR_LOG_FILE" || true
+        return 1
+    fi
+
+    ui_success "Host executor started with PID $(cat "$HOST_EXECUTOR_PID_FILE")"
+}
+
+setup_host_executor_if_needed() {
+    if ! needs_host_executor; then
+        return
+    fi
+
+    install_host_executor_from_release
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        return
+    fi
+
+    local token
+    if ! token="$(read_standalone_executor_token)"; then
+        ui_error "Failed to read standalone executor token"
+        ui_info "Check container logs: docker logs ${STANDALONE_CONTAINER_NAME}"
+        return 1
+    fi
+
+    if [[ -z "$token" ]]; then
+        ui_error "Standalone executor token is empty"
+        ui_info "Check container logs: docker logs ${STANDALONE_CONTAINER_NAME}"
+        return 1
+    fi
+
+    ui_info "Using standalone executor token: $(redact_token "$token")"
+    configure_host_executor "$token"
+    start_host_executor
+}
+
+write_standalone_state() {
+    [[ "$DEPLOY_MODE" == "standalone" ]] || return
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would write standalone state: ${STANDALONE_STATE_FILE}"
+        return
+    fi
+
+    mkdir -p "$(dirname "$STANDALONE_STATE_FILE")"
+    umask 077
+    {
+        echo "# Generated by the Wegent installer. Edit with care."
+        printf 'STANDALONE_EXECUTOR_MODE=%s\n' "$(shell_quote "$STANDALONE_EXECUTOR_MODE")"
+        printf 'STANDALONE_IMAGE=%s\n' "$(shell_quote "$STANDALONE_IMAGE")"
+        printf 'STANDALONE_CONTAINER_NAME=%s\n' "$(shell_quote "$STANDALONE_CONTAINER_NAME")"
+        printf 'STANDALONE_VOLUME_NAME=%s\n' "$(shell_quote "$STANDALONE_VOLUME_NAME")"
+        printf 'STANDALONE_WORKSPACE_VOLUME_NAME=%s\n' "$(shell_quote "$STANDALONE_WORKSPACE_VOLUME_NAME")"
+        printf 'ACCESS_HOST=%s\n' "$(shell_quote "$ACCESS_HOST")"
+        printf 'HOST_EXECUTOR_INSTALL_URL=%s\n' "$(shell_quote "$HOST_EXECUTOR_INSTALL_URL")"
+        printf 'HOST_EXECUTOR_HOME=%s\n' "$(shell_quote "$HOST_EXECUTOR_HOME")"
+        printf 'HOST_EXECUTOR_BINARY=%s\n' "$(shell_quote "$HOST_EXECUTOR_BINARY")"
+        printf 'HOST_EXECUTOR_PID_FILE=%s\n' "$(shell_quote "$HOST_EXECUTOR_PID_FILE")"
+        printf 'HOST_EXECUTOR_LOG_FILE=%s\n' "$(shell_quote "$HOST_EXECUTOR_LOG_FILE")"
+    } > "$STANDALONE_STATE_FILE"
+    chmod 600 "$STANDALONE_STATE_FILE"
+    ui_success "Standalone state saved to ${STANDALONE_STATE_FILE}"
+}
+
+install_standalone_command() {
+    [[ "$DEPLOY_MODE" == "standalone" ]] || return
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[DRY RUN] Would install management command: ${STANDALONE_COMMAND_PATH}"
+        return
+    fi
+
+    mkdir -p "$(dirname "$STANDALONE_COMMAND_PATH")"
+
+    local default_state_file
+    default_state_file="$(shell_quote "$STANDALONE_STATE_FILE")"
+
+    cat > "$STANDALONE_COMMAND_PATH" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEFAULT_STATE_FILE=${default_state_file}
+STATE_FILE="\${WEGENT_STANDALONE_STATE_FILE:-\$DEFAULT_STATE_FILE}"
+
+if [[ ! -f "\$STATE_FILE" ]]; then
+    echo "Standalone state file not found: \$STATE_FILE" >&2
+    echo "Run the Wegent installer once to initialize standalone mode." >&2
+    exit 1
+fi
+
+# shellcheck source=/dev/null
+source "\$STATE_FILE"
+
+: "\${STANDALONE_EXECUTOR_MODE:=container}"
+: "\${STANDALONE_IMAGE:=ghcr.io/wecode-ai/wegent-standalone:latest}"
+: "\${STANDALONE_CONTAINER_NAME:=wegent-standalone}"
+: "\${STANDALONE_VOLUME_NAME:=wegent-data}"
+: "\${STANDALONE_WORKSPACE_VOLUME_NAME:=wegent-workspace}"
+: "\${ACCESS_HOST:=localhost}"
+: "\${HOST_EXECUTOR_INSTALL_URL:=https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_install.sh}"
+: "\${HOST_EXECUTOR_HOME:=\$HOME/.wegent-executor}"
+: "\${HOST_EXECUTOR_BINARY:=\$HOST_EXECUTOR_HOME/bin/wegent-executor}"
+: "\${HOST_EXECUTOR_PID_FILE:=\$HOST_EXECUTOR_HOME/wegent-executor.pid}"
+: "\${HOST_EXECUTOR_LOG_FILE:=\$HOST_EXECUTOR_HOME/logs/executor.log}"
+
+container_executor_enabled() {
+    case "\$STANDALONE_EXECUTOR_MODE" in
+        host) echo "false" ;;
+        *) echo "true" ;;
+    esac
+}
+
+needs_host_executor() {
+    [[ "\$STANDALONE_EXECUTOR_MODE" == "host" || "\$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]
+}
+
+container_exists() {
+    docker ps -a --format '{{.Names}}' | grep -q "^\${STANDALONE_CONTAINER_NAME}\$"
+}
+
+container_running() {
+    docker ps --format '{{.Names}}' | grep -q "^\${STANDALONE_CONTAINER_NAME}\$"
+}
+
+current_container_executor_enabled() {
+    local value
+    value="\$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "\$STANDALONE_CONTAINER_NAME" 2>/dev/null \\
+        | awk -F= '\$1 == "STANDALONE_EXECUTOR_ENABLED" { print \$2; exit }' || true)"
+    if [[ -z "\$value" ]]; then
+        echo "true"
+    else
+        echo "\$value"
+    fi
+}
+
+current_container_image() {
+    docker inspect --format '{{.Config.Image}}' "\$STANDALONE_CONTAINER_NAME" 2>/dev/null || true
+}
+
+run_new_container() {
+    docker pull "\$STANDALONE_IMAGE" || true
+    docker run -d \\
+        --name "\$STANDALONE_CONTAINER_NAME" \\
+        --restart unless-stopped \\
+        -p 3000:3000 \\
+        -v "\$STANDALONE_VOLUME_NAME:/app/data" \\
+        -v "\$STANDALONE_WORKSPACE_VOLUME_NAME:/workspace" \\
+        -e "RUNTIME_SOCKET_DIRECT_URL=http://\${ACCESS_HOST}:3000" \\
+        -e "RUNTIME_PUBLIC_API_URL=http://\${ACCESS_HOST}:3000/api" \\
+        -e "RUNTIME_WEWORK_CODE_URL=http://\${ACCESS_HOST}:3000/wework" \\
+        -e "WEWORK_PUBLIC_APP_BASE_PATH=/wework" \\
+        -e "WEWORK_PUBLIC_API_URL=/wework/api" \\
+        -e "WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io" \\
+        -e "STANDALONE_EXECUTOR_ENABLED=\$(container_executor_enabled)" \\
+        -e "LITELLM_LOCAL_MODEL_COST_MAP=True" \\
+        "\$STANDALONE_IMAGE" >/dev/null
+}
+
+wait_for_http() {
+    local url="\$1"
+    local max_wait="\${2:-120}"
+    local elapsed=0
+    while [[ "\$elapsed" -lt "\$max_wait" ]]; do
+        if curl -fsS "\$url" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 2
+        elapsed=\$((elapsed + 2))
+    done
+    return 1
+}
+
+start_container() {
+    if container_exists; then
+        local current desired current_image
+        current="\$(current_container_executor_enabled)"
+        desired="\$(container_executor_enabled)"
+        current_image="\$(current_container_image)"
+        if [[ -n "\$current_image" && "\$current_image" != "\$STANDALONE_IMAGE" ]]; then
+            echo "Recreating container to apply image '\$STANDALONE_IMAGE'..."
+            docker rm -f "\$STANDALONE_CONTAINER_NAME" >/dev/null
+            run_new_container
+        elif [[ "\$current" != "\$desired" ]]; then
+            echo "Recreating container to apply executor mode '\$STANDALONE_EXECUTOR_MODE'..."
+            docker rm -f "\$STANDALONE_CONTAINER_NAME" >/dev/null
+            run_new_container
+        elif container_running; then
+            echo "Container is already running."
+        else
+            echo "Starting existing container..."
+            docker start "\$STANDALONE_CONTAINER_NAME" >/dev/null
+        fi
+    else
+        echo "Creating standalone container..."
+        docker volume create "\$STANDALONE_VOLUME_NAME" >/dev/null
+        docker volume create "\$STANDALONE_WORKSPACE_VOLUME_NAME" >/dev/null
+        run_new_container
+    fi
+}
+
+read_standalone_executor_token() {
+    docker exec "\$STANDALONE_CONTAINER_NAME" sh -lc \\
+        'cd /app/backend && python -m app.scripts.ensure_standalone_executor_token'
+}
+
+host_executor_device_name() {
+    local os_label="Host"
+    case "\$(uname -s 2>/dev/null || true)" in
+        Darwin) os_label="macOS" ;;
+        Linux) os_label="Linux" ;;
+    esac
+    printf '%s-%s\\n' "\$(hostname)" "\$os_label"
+}
+
+configure_host_executor() {
+    local token="\$1"
+    local config_path="\$HOST_EXECUTOR_HOME/device-config.json"
+    mkdir -p "\$HOST_EXECUTOR_HOME" "\$HOST_EXECUTOR_HOME/logs" "\$HOST_EXECUTOR_HOME/workspace"
+    umask 077
+    cat > "\$config_path" <<JSON
+{
+  "mode": "local",
+  "device_type": "local",
+  "bind_shell": "claudecode",
+  "device_id": "",
+  "device_name": "\$(host_executor_device_name)",
+  "capabilities": [],
+  "max_concurrent_tasks": 5,
+  "connection": {
+    "backend_url": "http://127.0.0.1:3000",
+    "auth_token": "\$token"
+  },
+  "logging": {
+    "level": "info",
+    "max_size_mb": 10,
+    "backup_count": 5
+  },
+  "update": {
+    "registry": "",
+    "registry_token": ""
+  }
+}
+JSON
+    chmod 600 "\$config_path"
+}
+
+install_host_executor_if_missing() {
+    if [[ -x "\$HOST_EXECUTOR_BINARY" ]]; then
+        return
+    fi
+    echo "Installing host executor..."
+    curl -fsSL "\$HOST_EXECUTOR_INSTALL_URL" | bash
+}
+
+stop_host_executor() {
+    if [[ ! -f "\$HOST_EXECUTOR_PID_FILE" ]]; then
+        return
+    fi
+    local pid
+    pid="\$(cat "\$HOST_EXECUTOR_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "\$pid" ]] && kill -0 "\$pid" >/dev/null 2>&1; then
+        echo "Stopping host executor (PID: \$pid)..."
+        kill "\$pid" >/dev/null 2>&1 || true
+        for _ in {1..20}; do
+            if ! kill -0 "\$pid" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+    fi
+    rm -f "\$HOST_EXECUTOR_PID_FILE"
+}
+
+start_host_executor() {
+    install_host_executor_if_missing
+    local token
+    token="\$(read_standalone_executor_token)"
+    if [[ -z "\$token" ]]; then
+        echo "Standalone executor token is empty." >&2
+        exit 1
+    fi
+    configure_host_executor "\$token"
+    mkdir -p "\$(dirname "\$HOST_EXECUTOR_LOG_FILE")"
+    stop_host_executor
+    echo "Starting host executor..."
+    WEGENT_EXECUTOR_HOME="\$HOST_EXECUTOR_HOME" \\
+        WEGENT_EXECUTOR_LOG_FILE="\$HOST_EXECUTOR_LOG_FILE" \\
+        LOCAL_WORKSPACE_ROOT="\$HOST_EXECUTOR_HOME/workspace" \\
+        nohup "\$HOST_EXECUTOR_BINARY" >/dev/null 2>&1 < /dev/null &
+    echo \$! > "\$HOST_EXECUTOR_PID_FILE"
+    sleep 1
+    if ! kill -0 "\$(cat "\$HOST_EXECUTOR_PID_FILE")" >/dev/null 2>&1; then
+        echo "Host executor failed to start. Recent log:" >&2
+        tail -n 80 "\$HOST_EXECUTOR_LOG_FILE" >&2 || true
+        exit 1
+    fi
+}
+
+start_all() {
+    start_container
+    wait_for_http "http://127.0.0.1:3000/health" 120 || {
+        echo "Wegent container did not become healthy in time." >&2
+        exit 1
+    }
+    if needs_host_executor; then
+        start_host_executor
+    fi
+    echo "Wegent standalone is running: http://\${ACCESS_HOST}:3000"
+}
+
+stop_all() {
+    if needs_host_executor; then
+        stop_host_executor
+    fi
+    if container_exists; then
+        docker stop "\$STANDALONE_CONTAINER_NAME" >/dev/null
+    fi
+}
+
+status_all() {
+    echo "Mode: \$STANDALONE_EXECUTOR_MODE"
+    if container_running; then
+        echo "Container: running (\$STANDALONE_CONTAINER_NAME)"
+    elif container_exists; then
+        echo "Container: stopped (\$STANDALONE_CONTAINER_NAME)"
+    else
+        echo "Container: missing (\$STANDALONE_CONTAINER_NAME)"
+    fi
+    if [[ -f "\$HOST_EXECUTOR_PID_FILE" ]]; then
+        local pid
+        pid="\$(cat "\$HOST_EXECUTOR_PID_FILE" 2>/dev/null || true)"
+        if [[ -n "\$pid" ]] && kill -0 "\$pid" >/dev/null 2>&1; then
+            echo "Host executor: running (PID: \$pid)"
+        else
+            echo "Host executor: stopped"
+        fi
+    else
+        echo "Host executor: stopped"
+    fi
+}
+
+print_help() {
+    cat <<HELP
+Usage: ${STANDALONE_COMMAND_NAME} [start|stop|restart|status|logs|update|help]
+
+Commands:
+  start     Start the standalone container and host executor when configured
+  stop      Stop the host executor and standalone container
+  restart   Restart both parts according to the saved executor mode
+  status    Show container and host executor status
+  logs      Follow container logs; use "logs host" for host executor logs
+  update    Pull the image, recreate the container, then start
+HELP
+}
+
+case "\${1:-start}" in
+    start)
+        start_all
+        ;;
+    stop)
+        stop_all
+        ;;
+    restart)
+        stop_all
+        start_all
+        ;;
+    status)
+        status_all
+        ;;
+    logs)
+        if [[ "\${2:-}" == "host" ]]; then
+            tail -f "\$HOST_EXECUTOR_LOG_FILE"
+        else
+            docker logs -f "\$STANDALONE_CONTAINER_NAME"
+        fi
+        ;;
+    update)
+        docker pull "\$STANDALONE_IMAGE"
+        if container_exists; then
+            docker rm -f "\$STANDALONE_CONTAINER_NAME" >/dev/null
+        fi
+        start_all
+        ;;
+    help|--help|-h)
+        print_help
+        ;;
+    *)
+        print_help
+        exit 1
+        ;;
+esac
+EOF
+
+    chmod +x "$STANDALONE_COMMAND_PATH"
+    ui_success "Standalone command installed: ${STANDALONE_COMMAND_PATH}"
+
+    case ":$PATH:" in
+        *":$(dirname "$STANDALONE_COMMAND_PATH"):"*)
+            ;;
+        *)
+            ui_warn "$(dirname "$STANDALONE_COMMAND_PATH") is not in PATH"
+            ui_info "Run with full path: ${STANDALONE_COMMAND_PATH}"
+            ;;
+    esac
+}
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -834,9 +1722,13 @@ configure_environment() {
 # This is read by the frontend at runtime via /runtime-config API
 RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}
 EOF
+            ensure_internal_service_token
+            persist_standard_image_tag
             ui_success "Configuration saved to .env"
         else
-            ui_success "Found existing .env file, skipping configuration"
+            ensure_internal_service_token
+            persist_standard_image_tag
+            ui_success "Found existing .env file, configuration ready"
         fi
     else
         ui_success "Standalone mode: configuration will be passed via docker run"
@@ -918,7 +1810,48 @@ start_standalone_service() {
         # Check if it's running
         if docker ps --format '{{.Names}}' | grep -q "^${STANDALONE_CONTAINER_NAME}$"; then
             ui_info "Container is already running"
-            if is_promptable; then
+            local current_executor_enabled
+            local desired_executor_enabled
+            local current_image
+            current_executor_enabled="$(current_standalone_container_executor_enabled)"
+            desired_executor_enabled="$(standalone_container_executor_enabled)"
+            current_image="$(current_standalone_container_image)"
+
+            if [[ -n "$current_image" && "$current_image" != "$STANDALONE_IMAGE" ]]; then
+                ui_warn "Selected image changes container image from ${current_image} to ${STANDALONE_IMAGE}"
+                if is_promptable; then
+                    echo ""
+                    echo -e "${YELLOW}Recreate the container to apply image '${STANDALONE_IMAGE}'?${NC}"
+                    echo -e "  ${GREEN}[1]${NC} Recreate container ${MUTED}(data volumes are preserved)${NC}"
+                    echo -e "  ${YELLOW}[2]${NC} Keep existing container"
+                    printf "Choose [1/2] (default: 1): "
+                    read -r recreate_choice < /dev/tty
+
+                    if [[ "$recreate_choice" == "2" ]]; then
+                        ui_success "Keeping existing container"
+                        return
+                    fi
+                fi
+
+                remove_existing_standalone_container
+            elif [[ "$current_executor_enabled" != "$desired_executor_enabled" ]]; then
+                ui_warn "Selected executor mode changes container executor setting from ${current_executor_enabled} to ${desired_executor_enabled}"
+                if is_promptable; then
+                    echo ""
+                    echo -e "${YELLOW}Recreate the container to apply executor mode '${STANDALONE_EXECUTOR_MODE}'?${NC}"
+                    echo -e "  ${GREEN}[1]${NC} Recreate container ${MUTED}(data volumes are preserved)${NC}"
+                    echo -e "  ${YELLOW}[2]${NC} Keep existing container"
+                    printf "Choose [1/2] (default: 1): "
+                    read -r recreate_choice < /dev/tty
+
+                    if [[ "$recreate_choice" == "2" ]]; then
+                        ui_success "Keeping existing container"
+                        return
+                    fi
+                fi
+
+                remove_existing_standalone_container
+            elif is_promptable; then
                 echo ""
                 echo -e "${YELLOW}What would you like to do?${NC}"
                 echo -e "  ${GREEN}[1]${NC} Keep running (do nothing)"
@@ -935,9 +1868,7 @@ start_standalone_service() {
                         return
                         ;;
                     3)
-                        ui_info "Removing existing container..."
-                        docker rm -f "${STANDALONE_CONTAINER_NAME}"
-                        ui_success "Container removed"
+                        remove_existing_standalone_container
                         ;;
                     *)
                         ui_success "Keeping existing container"
@@ -949,18 +1880,40 @@ start_standalone_service() {
                 return
             fi
         else
-            ui_info "Container exists but is not running, removing..."
-            docker rm "${STANDALONE_CONTAINER_NAME}"
-            ui_success "Container removed"
+            local current_executor_enabled
+            local desired_executor_enabled
+            local current_image
+            current_executor_enabled="$(current_standalone_container_executor_enabled)"
+            desired_executor_enabled="$(standalone_container_executor_enabled)"
+            current_image="$(current_standalone_container_image)"
+
+            if [[ -n "$current_image" && "$current_image" != "$STANDALONE_IMAGE" ]]; then
+                ui_warn "Selected image changes container image from ${current_image} to ${STANDALONE_IMAGE}"
+                ui_info "Container must be recreated to apply image '${STANDALONE_IMAGE}'"
+                remove_existing_standalone_container
+            elif [[ "$current_executor_enabled" == "$desired_executor_enabled" ]]; then
+                ui_info "Starting existing container..."
+                if [[ "$DRY_RUN" == "1" ]]; then
+                    ui_info "[DRY RUN] Would run: docker start ${STANDALONE_CONTAINER_NAME}"
+                else
+                    docker start "${STANDALONE_CONTAINER_NAME}" >/dev/null
+                fi
+                ui_success "Container started"
+                return
+            fi
+
+            ui_warn "Selected executor mode changes container executor setting from ${current_executor_enabled} to ${desired_executor_enabled}"
+            ui_info "Container must be recreated to apply executor mode '${STANDALONE_EXECUTOR_MODE}'"
+            remove_existing_standalone_container
         fi
     fi
 
-    # Pull the latest image
+    # Pull the selected image
     ui_info "Pulling Wegent standalone image..."
     if [[ "$DRY_RUN" == "1" ]]; then
         ui_info "[DRY RUN] Would run: docker pull ${STANDALONE_IMAGE}"
     else
-        if ! run_quiet_step "Pulling image" docker pull "${STANDALONE_IMAGE}"; then
+        if ! docker pull "${STANDALONE_IMAGE}"; then
             ui_warn "Failed to pull image, will try to use local image if available"
         fi
     fi
@@ -976,14 +1929,31 @@ start_standalone_service() {
         ui_success "Data volume already exists"
     fi
 
+    # Create workspace volume if it doesn't exist
+    if ! docker volume ls --format '{{.Name}}' | grep -q "^${STANDALONE_WORKSPACE_VOLUME_NAME}$"; then
+        ui_info "Creating workspace volume..."
+        if [[ "$DRY_RUN" != "1" ]]; then
+            docker volume create "${STANDALONE_WORKSPACE_VOLUME_NAME}"
+        fi
+        ui_success "Workspace volume created"
+    else
+        ui_success "Workspace volume already exists"
+    fi
+
     # Build docker run command
     local docker_run_cmd="docker run -d"
     docker_run_cmd+=" --name ${STANDALONE_CONTAINER_NAME}"
     docker_run_cmd+=" --restart unless-stopped"
     docker_run_cmd+=" -p 3000:3000"
-    docker_run_cmd+=" -p 8000:8000"
     docker_run_cmd+=" -v ${STANDALONE_VOLUME_NAME}:/app/data"
-    docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL}"
+    docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"
+    docker_run_cmd+=" -e RUNTIME_SOCKET_DIRECT_URL=http://${ACCESS_HOST}:3000"
+    docker_run_cmd+=" -e RUNTIME_PUBLIC_API_URL=http://${ACCESS_HOST}:3000/api"
+    docker_run_cmd+=" -e RUNTIME_WEWORK_CODE_URL=http://${ACCESS_HOST}:3000/wework"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_APP_BASE_PATH=/wework"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_API_URL=/wework/api"
+    docker_run_cmd+=" -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io"
+    docker_run_cmd+=" -e STANDALONE_EXECUTOR_ENABLED=$(standalone_container_executor_enabled)"
     docker_run_cmd+=" -e LITELLM_LOCAL_MODEL_COST_MAP=True"
     docker_run_cmd+=" ${STANDALONE_IMAGE}"
 
@@ -1010,20 +1980,21 @@ start_standalone_service() {
 
 wait_for_standalone_service() {
     local max_wait=120
-    local health_url="http://localhost:8000/health"
+    local health_url="http://localhost:3000/health"
+    local wework_url="http://localhost:3000/wework/"
 
     echo ""
-    ui_info "Waiting for services to be ready (this may take 30-60 seconds)..."
+    ui_info "Waiting for services to be ready (this may take 30-90 seconds)..."
     echo ""
 
     # Phase 1: Wait for container to be running
-    echo -ne "  ${MUTED}[1/3]${NC} Starting container..."
+    echo -ne "  ${MUTED}[1/4]${NC} Starting container..."
     local phase1_max=30
     local phase1_elapsed=0
 
     while [[ $phase1_elapsed -lt $phase1_max ]]; do
         if docker ps --format '{{.Names}}' | grep -q "^${STANDALONE_CONTAINER_NAME}$"; then
-            echo -e "\r  ${GREEN}✓${NC} [1/3] Container started                      "
+            echo -e "\r  ${GREEN}✓${NC} [1/4] Container started                      "
             break
         fi
         sleep 2
@@ -1031,27 +2002,25 @@ wait_for_standalone_service() {
         local dots=$(( (phase1_elapsed / 2) % 4 ))
         local dot_str=""
         for ((i=0; i<dots; i++)); do dot_str+="."; done
-        echo -ne "\r  ${MUTED}[1/3]${NC} Starting container${dot_str}   "
+        echo -ne "\r  ${MUTED}[1/4]${NC} Starting container${dot_str}   "
     done
 
     if [[ $phase1_elapsed -ge $phase1_max ]]; then
-        echo -e "\r  ${YELLOW}!${NC} [1/3] Container starting (continuing...)     "
+        echo -e "\r  ${YELLOW}!${NC} [1/4] Container starting (continuing...)     "
     fi
 
     # Phase 2: Database initialization
-    echo -e "  ${GREEN}✓${NC} [2/3] Database initialized (SQLite + Redis)  "
+    echo -e "  ${GREEN}✓${NC} [2/4] Database initialized (SQLite + Redis)  "
 
     # Phase 3: Wait for health endpoint
-    echo -ne "  ${MUTED}[3/3]${NC} Checking service health..."
+    echo -ne "  ${MUTED}[3/4]${NC} Checking backend health..."
     local phase3_max=60
     local phase3_elapsed=0
 
     while [[ $phase3_elapsed -lt $phase3_max ]]; do
         if curl -fsSL --connect-timeout 2 --max-time 5 "$health_url" >/dev/null 2>&1; then
-            echo -e "\r  ${GREEN}✓${NC} [3/3] Service health check passed            "
-            echo ""
-            ui_success "All services are ready!"
-            return 0
+            echo -e "\r  ${GREEN}✓${NC} [3/4] Backend health check passed            "
+            break
         fi
 
         sleep 3
@@ -1059,10 +2028,40 @@ wait_for_standalone_service() {
         local dots=$(( (phase3_elapsed / 3) % 4 ))
         local dot_str=""
         for ((i=0; i<dots; i++)); do dot_str+="."; done
-        echo -ne "\r  ${MUTED}[3/3]${NC} Checking service health${dot_str}   "
+        echo -ne "\r  ${MUTED}[3/4]${NC} Checking backend health${dot_str}   "
     done
 
-    echo -e "\r  ${YELLOW}!${NC} [3/3] Health check pending                   "
+    if [[ $phase3_elapsed -ge $phase3_max ]]; then
+        echo -e "\r  ${YELLOW}!${NC} [3/4] Backend health check pending          "
+        echo ""
+        ui_warn "Services may not be fully ready yet (timeout after ${max_wait}s)"
+        ui_info "The services are still starting in the background."
+        ui_info "You can check the status with: docker logs ${STANDALONE_CONTAINER_NAME}"
+        return 0
+    fi
+
+    # Phase 4: Wait for Wework endpoint
+    echo -ne "  ${MUTED}[4/4]${NC} Checking Wework..."
+    local phase4_max=60
+    local phase4_elapsed=0
+
+    while [[ $phase4_elapsed -lt $phase4_max ]]; do
+        if curl -fsSL --connect-timeout 2 --max-time 5 "$wework_url" >/dev/null 2>&1; then
+            echo -e "\r  ${GREEN}✓${NC} [4/4] Wework is ready                    "
+            echo ""
+            ui_success "All services are ready!"
+            return 0
+        fi
+
+        sleep 3
+        phase4_elapsed=$((phase4_elapsed + 3))
+        local dots=$(( (phase4_elapsed / 3) % 4 ))
+        local dot_str=""
+        for ((i=0; i<dots; i++)); do dot_str+="."; done
+        echo -ne "\r  ${MUTED}[4/4]${NC} Checking Wework${dot_str}   "
+    done
+
+    echo -e "\r  ${YELLOW}!${NC} [4/4] Wework or terminal check pending        "
     echo ""
     ui_warn "Services may not be fully ready yet (timeout after ${max_wait}s)"
     ui_info "The services are still starting in the background."
@@ -1166,14 +2165,27 @@ print_completion() {
     echo -e "${GREEN}${BOLD}========================================${NC}"
     echo ""
     echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000${NC} in your browser"
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        echo -e "  Open ${BLUE}${BOLD}http://${ACCESS_HOST}:3000/wework${NC} for Wework"
+    fi
     echo ""
     ui_kv "Deployment mode" "$DEPLOY_MODE"
     ui_kv "Access URL" "http://${ACCESS_HOST}:3000"
 
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        ui_kv "Image tag" "$IMAGE_TAG"
+        ui_kv "Wework URL" "http://${ACCESS_HOST}:3000/wework"
+        ui_kv "Terminal access" "Wework workspace terminal"
+        ui_kv "Executor mode" "$STANDALONE_EXECUTOR_MODE"
+        if [[ "$STANDALONE_EXECUTOR_MODE" == "host" || "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]; then
+            ui_kv "Host executor" "$HOST_EXECUTOR_BINARY"
+        fi
+        ui_kv "Management command" "$STANDALONE_COMMAND_PATH"
         ui_kv "Container name" "$STANDALONE_CONTAINER_NAME"
         ui_kv "Data volume" "$STANDALONE_VOLUME_NAME"
+        ui_kv "Workspace volume" "$STANDALONE_WORKSPACE_VOLUME_NAME"
     else
+        ui_kv "Image tag" "$IMAGE_TAG"
         ui_kv "Installation directory" "$(pwd)"
         if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
             ui_kv "Build mode" "source"
@@ -1185,26 +2197,29 @@ print_completion() {
     echo ""
 
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        echo -e "  ${MUTED}# Show status${NC}"
+        echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} status${NC}"
+        echo ""
         echo -e "  ${MUTED}# View logs${NC}"
-        echo -e "  ${YELLOW}docker logs -f ${STANDALONE_CONTAINER_NAME}${NC}"
+        echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} logs${NC}"
+        if [[ "$STANDALONE_EXECUTOR_MODE" == "host" || "$STANDALONE_EXECUTOR_MODE" == "hybrid" ]]; then
+            echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} logs host${NC}"
+        fi
         echo ""
         echo -e "  ${MUTED}# Stop service${NC}"
-        echo -e "  ${YELLOW}docker stop ${STANDALONE_CONTAINER_NAME}${NC}"
+        echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} stop${NC}"
         echo ""
         echo -e "  ${MUTED}# Start service${NC}"
-        echo -e "  ${YELLOW}docker start ${STANDALONE_CONTAINER_NAME}${NC}"
+        echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} start${NC}"
         echo ""
         echo -e "  ${MUTED}# Restart service${NC}"
-        echo -e "  ${YELLOW}docker restart ${STANDALONE_CONTAINER_NAME}${NC}"
+        echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} restart${NC}"
         echo ""
         echo -e "  ${MUTED}# Remove container (data is preserved in volume)${NC}"
         echo -e "  ${YELLOW}docker rm -f ${STANDALONE_CONTAINER_NAME}${NC}"
         echo ""
-        echo -e "  ${MUTED}# Update to latest version${NC}"
-        echo -e "  ${YELLOW}docker pull ${STANDALONE_IMAGE} && docker rm -f ${STANDALONE_CONTAINER_NAME} && \\"
-        echo -e "  docker run -d --name ${STANDALONE_CONTAINER_NAME} --restart unless-stopped \\"
-        echo -e "    -p 3000:3000 -p 8000:8000 -v ${STANDALONE_VOLUME_NAME}:/app/data \\"
-        echo -e "    -e RUNTIME_SOCKET_DIRECT_URL=${SOCKET_URL} ${STANDALONE_IMAGE}${NC}"
+        echo -e "  ${MUTED}# Update selected image${NC}"
+        echo -e "  ${YELLOW}${STANDALONE_COMMAND_PATH} update${NC}"
     else
         local compose_args=""
         if [[ "$IS_SOURCE_BUILD" == "1" ]]; then
@@ -1252,6 +2267,8 @@ main() {
         exit 0
     fi
 
+    resolve_image_config
+
     print_banner
 
     # Detect OS
@@ -1260,8 +2277,14 @@ main() {
         ui_error "Unsupported operating system"
         echo "This installer supports macOS and Linux."
         echo "For Windows, please use Docker Desktop and run:"
-        echo "  docker run -d --name wegent-standalone -p 3000:3000 -p 8000:8000 \\"
-        echo "    -v wegent-data:/app/data ghcr.io/wecode-ai/wegent-standalone:latest"
+        echo "  docker run -d --name wegent-standalone \\"
+        echo "    -p 3000:3000 \\"
+        echo "    -v wegent-data:/app/data -v wegent-workspace:/workspace \\"
+        echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \\"
+        echo "    -e RUNTIME_WEWORK_CODE_URL=http://localhost:3000/wework \\"
+        echo "    -e WEWORK_PUBLIC_APP_BASE_PATH=/wework -e WEWORK_PUBLIC_API_URL=/wework/api \\"
+        echo "    -e WEWORK_PUBLIC_SOCKET_PATH=/wework/socket.io \\"
+        echo "    ghcr.io/wecode-ai/wegent-standalone:latest"
         exit 1
     fi
     ui_success "Detected: $OS ($ARCH)"
@@ -1294,18 +2317,26 @@ main() {
         ui_kv "Deploy mode" "${DEPLOY_MODE:-auto}"
         ui_kv "Install directory" "$(pwd)"
         ui_kv "Source build" "$IS_SOURCE_BUILD"
+        ui_kv "Image tag" "$IMAGE_TAG"
+        ui_kv "Standalone image" "$STANDALONE_IMAGE"
         ui_kv "Dry run" "$DRY_RUN"
     fi
 
     # Main installation steps
     # Step 2: Select deployment mode (before ensure_docker so we know if compose is needed)
     select_deploy_mode
+    select_standalone_executor_mode
     
     # Step 1: Ensure Docker is available
     ensure_docker
     
     # Step 3: Configure environment
     configure_environment
+
+    if [[ "$DEPLOY_MODE" == "standalone" ]]; then
+        write_standalone_state
+        install_standalone_command
+    fi
 
     # Step 4: Start services based on mode
     if [[ "$DEPLOY_MODE" == "standalone" ]]; then
@@ -1314,6 +2345,9 @@ main() {
         # Wait for services to be ready
         if [[ "$DRY_RUN" != "1" ]]; then
             wait_for_standalone_service
+            setup_host_executor_if_needed
+        else
+            setup_host_executor_if_needed
         fi
     else
         ui_section "[4/4] Starting Wegent (Standard)"

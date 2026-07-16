@@ -13,6 +13,7 @@ import type {
   Attachment,
   SubtaskContextBrief,
   TaskType,
+  InteractiveFormAnswerPayload,
 } from '@/types/api'
 import {
   Bot,
@@ -33,7 +34,6 @@ import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
 import ClarificationForm from '../clarification/ClarificationForm'
-import { AskUserForm } from '../clarification'
 import FinalPromptMessage from './FinalPromptMessage'
 import { parseMarkdownFinalPrompt } from './finalPromptParser'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -48,16 +48,18 @@ import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
 import VideoConfigBadge from './VideoConfigBadge'
 import { getMessageBubbleClassNames } from './messageBubbleStyles'
-import type { ClarificationData, ClarificationAnswer, AskUserFormData } from '@/types/api'
-import type { SourceReference, GeminiAnnotation } from '@/types/socket'
+import type { ClarificationData, ClarificationAnswer } from '@/types/api'
+import type { SourceReference, GeminiAnnotation, RetrievalSummaryPayload } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
-import type { MessageBlock } from './thinking/types'
+import { isTextBlock, isThinkingBlock } from './thinking/types'
+import type { MessageBlock, ThinkingBlock, ThinkingStep } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
+import { getTeamDisplayName } from '@/utils/team'
 import { ErrorCard } from './ErrorCard'
 export interface Message {
   type: 'user' | 'ai'
@@ -66,16 +68,7 @@ export interface Message {
   botName?: string
   subtaskStatus?: string
   subtaskId?: number
-  thinking?: Array<{
-    title: string
-    next_action: string
-    details?: Record<string, unknown>
-    action?: string
-    result?: string
-    reasoning?: string
-    confidence?: number
-    value?: unknown
-  }> | null
+  thinking?: ThinkingStep[] | null
   /** Full result data from backend (for code executor with workbench, or chat with shell_type) */
   result?: {
     value?: string
@@ -83,6 +76,7 @@ export interface Message {
     workbench?: Record<string, unknown>
     shell_type?: string // Shell type (Chat, ClaudeCode, Agno, etc.)
     sources?: SourceReference[] // RAG knowledge base sources
+    retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
     annotations?: GeminiAnnotation[] // Gemini Deep Research grounding annotations
@@ -159,10 +153,19 @@ export interface MessageBubbleProps {
   t: (key: string) => string
   /** Whether to show waiting indicator (streaming but no content yet) */
   isWaiting?: boolean
+  /** Optional override for the in-message waiting indicator text */
+  waitingMessage?: string
   /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
-  onSendMessage?: (content: string) => void
+  onSendMessage?: (
+    content: string,
+    options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+  ) => void
   /** Callback when user submits an ask_user_question form - sends the pre-formatted answer as a new conversation message */
-  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
+  onAskUserSubmit?: (
+    toolUseId: string,
+    formattedMessage: string,
+    answer: InteractiveFormAnswerPayload
+  ) => void
   /** Callback when user selects text in AI message (optional) - receives selected text */
   onTextSelect?: (selectedText: string) => void
   /** Paragraph-level action configuration - shows action button on hover for each paragraph in AI messages */
@@ -218,120 +221,6 @@ export interface MessageBubbleProps {
   taskType?: TaskType
   /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
   onForwardClick?: (subtaskId: number) => void
-}
-
-const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'string') {
-    const lower = value.toLowerCase()
-    if (lower === 'true') return true
-    if (lower === 'false') return false
-  }
-  return defaultValue
-}
-
-const normalizeInteractiveQuestions = (rawQuestions: unknown): AskUserFormData['questions'] => {
-  if (!Array.isArray(rawQuestions)) return []
-
-  return rawQuestions
-    .filter(
-      question =>
-        question &&
-        typeof question === 'object' &&
-        typeof (question as Record<string, unknown>).question === 'string' &&
-        ((question as Record<string, unknown>).question as string).trim().length > 0
-    )
-    .map(question => {
-      const item = question as Record<string, unknown>
-      const hasOptions = Array.isArray(item.options) && item.options.length > 0
-      return {
-        id: (item.id as string) || '',
-        question: (item.question as string) || '',
-        input_type: hasOptions ? 'choice' : 'text',
-        options: hasOptions
-          ? (item.options as Array<Record<string, unknown>>).map(option => ({
-              label: (option.label as string) || '',
-              value: (option.value as string) || '',
-              recommended: parseBoolean(option.recommended, false),
-            }))
-          : null,
-        multi_select: parseBoolean(item.multi_select, false),
-        required: parseBoolean(item.required, true),
-        default: Array.isArray(item.default) ? (item.default as string[]) : null,
-        placeholder: typeof item.placeholder === 'string' ? item.placeholder : null,
-      }
-    })
-}
-
-const extractInteractiveFormDataFromThinking = (
-  thinking: Message['thinking'],
-  taskId: number,
-  subtaskId: number
-): AskUserFormData | null => {
-  if (!thinking || thinking.length === 0) return null
-
-  for (const step of [...thinking].reverse()) {
-    const stepToolUseId =
-      'tool_use_id' in step && typeof step.tool_use_id === 'string' ? step.tool_use_id : undefined
-    const details = step.details as Record<string, unknown> | undefined
-    if (!details) continue
-
-    const directToolName =
-      (details.tool_name as string | undefined) || (details.name as string | undefined)
-    const directInput =
-      details.input && typeof details.input === 'object'
-        ? (details.input as Record<string, unknown>)
-        : null
-
-    if (directToolName?.includes('interactive_form_question') && directInput) {
-      const questions = normalizeInteractiveQuestions(directInput.questions)
-      if (questions.length > 0) {
-        return {
-          type: 'interactive_form_question',
-          ask_id:
-            (directInput.ask_id as string) || stepToolUseId || step.title || `ask_${subtaskId}`,
-          tool_use_id: stepToolUseId || null,
-          task_id: taskId,
-          subtask_id: subtaskId,
-          questions,
-        }
-      }
-    }
-
-    const message = details.message as Record<string, unknown> | undefined
-    const content = Array.isArray(message?.content) ? message.content : null
-    if (!content) continue
-
-    for (const item of [...content].reverse()) {
-      if (!item || typeof item !== 'object') continue
-      const toolItem = item as Record<string, unknown>
-      const itemName = toolItem.name as string | undefined
-      const itemInput =
-        toolItem.input && typeof toolItem.input === 'object'
-          ? (toolItem.input as Record<string, unknown>)
-          : null
-
-      if (!itemName?.includes('interactive_form_question') || !itemInput) continue
-
-      const questions = normalizeInteractiveQuestions(itemInput.questions)
-      if (questions.length === 0) continue
-
-      return {
-        type: 'interactive_form_question',
-        ask_id:
-          (itemInput.ask_id as string) ||
-          (toolItem.id as string) ||
-          stepToolUseId ||
-          `ask_${subtaskId}`,
-        tool_use_id: (toolItem.id as string) || stepToolUseId || null,
-        task_id: taskId,
-        subtask_id: subtaskId,
-        questions,
-      }
-    }
-  }
-
-  return null
 }
 
 // Component for rendering a paragraph with hover action button
@@ -448,16 +337,18 @@ function canShowReEdit(
   return isCompleted && isNotRunning
 }
 
-function getCopyableContent(rawContent: string): string {
-  const content = (rawContent ?? '').trim()
-  if (!content) return ''
-
-  if (!content.includes('${$$}$')) {
-    return content
-  }
-
-  const [, result] = content.split('${$$}$')
-  return (result || '').trim()
+/**
+ * Extract copyable text content from message blocks.
+ * When a message uses the blocks-based rendering (MixedContentView),
+ * msg.content only holds the last streamed text block's content.
+ * The full content is stored across all TextBlock entries in msg.result.blocks.
+ */
+function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
+  return blocks
+    .filter(isTextBlock)
+    .map(b => b.content)
+    .join('\n\n')
+    .trim()
 }
 
 const MessageBubble = memo(
@@ -471,6 +362,7 @@ const MessageBubble = memo(
     theme,
     t,
     isWaiting,
+    waitingMessage,
     onSendMessage,
     onAskUserSubmit,
     onTextSelect,
@@ -525,16 +417,30 @@ const MessageBubble = memo(
     // Default to true for user messages if isCurrentUserMessage is not provided
     const shouldAlignRight = isUserTypeMessage && (isCurrentUserMessage ?? true)
 
-    const { baseClasses: bubbleBaseClasses, typeClasses: bubbleTypeClasses } =
+    const { baseClasses: defaultBubbleBaseClasses, typeClasses: defaultBubbleTypeClasses } =
       getMessageBubbleClassNames(isUserTypeMessage)
+    const bubbleBaseClasses = isEditing
+      ? 'relative w-full overflow-visible text-text-primary'
+      : defaultBubbleBaseClasses
+    const bubbleTypeClasses = isEditing ? '' : defaultBubbleTypeClasses
 
     const formatTimestamp = (timestamp: number | undefined) => {
       return formatDateTime(timestamp)
     }
 
     const timestampLabel = formatTimestamp(msg.timestamp)
-    const headerIcon = isUserTypeMessage ? null : msg.botName ===
-      t('chat:correction.result_title') ? (
+    const correctionResultTitle = t('chat:correction.result_title')
+    const isCorrectionResultMessage = !isUserTypeMessage && msg.botName === correctionResultTitle
+    const agentDisplayName = selectedTeam ? getTeamDisplayName(selectedTeam) : undefined
+    const botDisplayName = msg.botName?.trim()
+    const selectedTeamBotCount = selectedTeam?.bots?.length ?? 0
+    const shouldShowBotName =
+      selectedTeamBotCount > 1 && Boolean(botDisplayName) && botDisplayName !== agentDisplayName
+    const messageHeaderLabel =
+      shouldShowBotName && agentDisplayName
+        ? `${agentDisplayName} · ${botDisplayName}`
+        : agentDisplayName || botDisplayName || t('messages.bot') || 'Bot'
+    const headerIcon = isUserTypeMessage ? null : isCorrectionResultMessage ? (
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width="24"
@@ -554,7 +460,11 @@ const MessageBubble = memo(
     ) : (
       <Bot className="w-4 h-4" data-testid="ai-message-icon" />
     )
-    const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot'
+    const headerLabel = isUserTypeMessage
+      ? ''
+      : isCorrectionResultMessage
+        ? msg.botName || correctionResultTitle
+        : messageHeaderLabel
 
     // Determine if message is currently streaming (to disable URL metadata fetching)
     // During streaming, we show simple links to avoid excessive API calls
@@ -565,23 +475,11 @@ const MessageBubble = memo(
       isWaiting ||
       msg.isWaiting
 
-    const recoveredAskUserFormData = React.useMemo(
-      () =>
-        extractInteractiveFormDataFromThinking(
-          msg.thinking ?? null,
-          selectedTaskDetail?.id || 0,
-          msg.subtaskId || 0
-        ),
-      [msg.thinking, selectedTaskDetail?.id, msg.subtaskId]
-    )
-
     // Check if message contains special format (clarification or final prompt)
     // This is used to determine whether to use MixedContentView or renderMessageBody
     // We check this early to avoid duplicate parsing in the render logic
     const hasSpecialFormat = React.useMemo(() => {
       if (!msg.content || msg.type === 'user') return false
-
-      if (recoveredAskUserFormData) return false
 
       // If there are tool blocks, always use MixedContentView to render them
       if (
@@ -605,7 +503,46 @@ const MessageBubble = memo(
         content.toLowerCase().includes('prompt')
 
       return hasClarificationMarker || hasFinalPromptMarker
-    }, [msg.content, msg.type, msg.result?.blocks, recoveredAskUserFormData])
+    }, [msg.content, msg.type, msg.result?.blocks])
+
+    const inlineThinkingBlocks = React.useMemo(
+      () =>
+        msg.result?.blocks?.filter(
+          (block): block is ThinkingBlock => isThinkingBlock(block) && Boolean(block.content.trim())
+        ) ?? [],
+      [msg.result?.blocks]
+    )
+    const inlineThinkingContent = React.useMemo(
+      () => inlineThinkingBlocks.map(block => block.content.trim()).join('\n\n'),
+      [inlineThinkingBlocks]
+    )
+    const mixedContentBlocks = React.useMemo(
+      () => msg.result?.blocks?.filter(block => block.type !== 'thinking') ?? [],
+      [msg.result?.blocks]
+    )
+    const hasToolBlocks = React.useMemo(
+      () => msg.result?.blocks?.some(block => block.type === 'tool') ?? false,
+      [msg.result?.blocks]
+    )
+    const hasThinkingToolSteps = React.useMemo(
+      () =>
+        msg.thinking?.some(
+          step => step.details?.type === 'tool_use' || step.details?.type === 'tool_result'
+        ) ?? false,
+      [msg.thinking]
+    )
+    const explicitReasoningContent =
+      msg.reasoningContent || msg.result?.reasoning_content || inlineThinkingContent
+    const waitingReasoningContent =
+      !explicitReasoningContent && !isUserTypeMessage && (isWaiting || msg.isWaiting)
+        ? waitingMessage || t('tasks:streaming_wait.thinking') || '正在思考'
+        : ''
+    const displayReasoningContent = explicitReasoningContent || waitingReasoningContent
+    const isUsingReasoningWaitDisplay = Boolean(waitingReasoningContent)
+    const isDisplayReasoningStreaming =
+      Boolean(msg.isReasoningStreaming) ||
+      inlineThinkingBlocks.some(block => block.status === 'streaming') ||
+      isUsingReasoningWaitDisplay
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
@@ -844,7 +781,10 @@ const MessageBubble = memo(
           <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
             {markdownContent}
           </CollapsibleMessage>
-          <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+          <SourceReferences
+            sources={msg.sources || msg.result?.sources || []}
+            retrievalSummary={msg.result?.retrieval_summary}
+          />
           <GeminiAnnotations annotations={msg.result?.annotations || []} />
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
@@ -1296,65 +1236,6 @@ const MessageBubble = memo(
           }
         }
         const markdownClarification = parseMarkdownClarification(contentToParse)
-        if (recoveredAskUserFormData && markdownClarification) {
-          const { prefixText, suffixText } = markdownClarification
-          return (
-            <div className="space-y-4">
-              {prefixText && (
-                <EnhancedMarkdown
-                  source={prefixText}
-                  theme={theme}
-                  components={{
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      )
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null
-                      return <SmartImage src={src} alt={alt} />
-                    },
-                  }}
-                />
-              )}
-              <AskUserForm
-                data={recoveredAskUserFormData}
-                taskId={selectedTaskDetail?.id || 0}
-                currentMessageIndex={messageIndex}
-                onSubmit={onAskUserSubmit}
-              />
-              {suffixText && (
-                <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                  <EnhancedMarkdown
-                    source={suffixText}
-                    theme={theme}
-                    components={{
-                      a: ({ href, children }) => {
-                        if (!href) {
-                          return <span>{children}</span>
-                        }
-                        return (
-                          <SmartLink href={href} disabled={isStreaming}>
-                            {children}
-                          </SmartLink>
-                        )
-                      },
-                      img: ({ src, alt }) => {
-                        if (!src || typeof src !== 'string') return null
-                        return <SmartImage src={src} alt={alt} />
-                      },
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        }
         if (markdownClarification) {
           const { data, prefixText, suffixText } = markdownClarification
           return (
@@ -1532,17 +1413,18 @@ const MessageBubble = memo(
                 </div>
               )}
               {/* Show reasoning display for DeepSeek R1 and similar models */}
-              {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
+              {!isUserTypeMessage && displayReasoningContent && (
                 <ReasoningDisplay
-                  reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-                  isStreaming={!!msg.isReasoningStreaming}
+                  reasoningContent={displayReasoningContent}
+                  isStreaming={isDisplayReasoningStreaming}
                 />
               )}
-              {/* Show tool blocks for messages with thinking but no blocks */}
+              {/* Show tool blocks from thinking unless block rendering already includes tools */}
               {!isUserTypeMessage &&
                 msg.thinking &&
                 msg.thinking.length > 0 &&
-                (!msg.result?.blocks || msg.result.blocks.length === 0) && (
+                (!msg.result?.blocks || msg.result.blocks.length === 0 || hasThinkingToolSteps) &&
+                !hasToolBlocks && (
                   <ThinkingDisplay
                     thinking={msg.thinking}
                     taskStatus={msg.subtaskStatus}
@@ -1594,7 +1476,9 @@ const MessageBubble = memo(
               />
               {/* Show waiting indicator when streaming but no content yet */}
               {isWaiting || msg.isWaiting ? (
-                <StreamingWaitIndicator isWaiting={true} />
+                isUsingReasoningWaitDisplay ? null : (
+                  <StreamingWaitIndicator isWaiting={true} message={waitingMessage} />
+                )
               ) : isEditing && isUserTypeMessage && onEditSave && onEditCancel ? (
                 /* Show inline edit component when editing a user message */
                 <InlineMessageEdit
@@ -1608,7 +1492,7 @@ const MessageBubble = memo(
                   {/* MixedContentView handles both streaming and completed states, including tool blocks */}
                   {!isUserTypeMessage &&
                   msg.result?.blocks &&
-                  msg.result.blocks.length > 0 &&
+                  mixedContentBlocks.length > 0 &&
                   // IMPORTANT: If content contains clarification or final prompt format,
                   // use renderMessageBody instead to properly render the interactive form.
                   // hasSpecialFormat is a quick check using keyword detection.
@@ -1620,20 +1504,24 @@ const MessageBubble = memo(
                         content={msg.recoveredContent || msg.content || ''}
                         taskStatus={msg.subtaskStatus}
                         theme={theme}
-                        blocks={msg.result.blocks}
+                        blocks={mixedContentBlocks}
                         annotations={msg.result?.annotations}
+                        processingMessage={waitingMessage}
                         onUseAsReference={onUseAsReference}
                         taskId={selectedTaskDetail?.id}
                         subtaskId={msg.subtaskId}
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
                       />
-                      <SourceReferences sources={msg.sources || msg.result?.sources || []} />
+                      <SourceReferences
+                        sources={msg.sources || msg.result?.sources || []}
+                        retrievalSummary={msg.result?.retrieval_summary}
+                      />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
-                          contentToCopy={getCopyableContent(msg.content || '')}
+                          contentToCopy={getCopyableContentFromBlocks(msg.result?.blocks ?? [])}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                           tools={[
                             {
@@ -1641,9 +1529,12 @@ const MessageBubble = memo(
                               title: t('messages.download') || 'Download',
                               icon: <Download className="h-4 w-4 text-text-muted" />,
                               onClick: () => {
-                                const blob = new Blob([getCopyableContent(msg.content || '')], {
-                                  type: 'text/plain;charset=utf-8',
-                                })
+                                const blob = new Blob(
+                                  [getCopyableContentFromBlocks(msg.result?.blocks ?? [])],
+                                  {
+                                    type: 'text/plain;charset=utf-8',
+                                  }
+                                )
                                 const url = URL.createObjectURL(blob)
                                 const a = document.createElement('a')
                                 a.href = url
@@ -1806,6 +1697,7 @@ const MessageBubble = memo(
 
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
+      prevProps.msg.botName === nextProps.msg.botName &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
       prevProps.msg.subtaskId === nextProps.msg.subtaskId &&
       prevProps.msg.timestamp === nextProps.msg.timestamp &&
@@ -1815,6 +1707,7 @@ const MessageBubble = memo(
       prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
       prevProps.msg.result === nextProps.msg.result &&
       prevProps.isWaiting === nextProps.isWaiting &&
+      prevProps.waitingMessage === nextProps.waitingMessage &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
       prevProps.paragraphAction === nextProps.paragraphAction &&
@@ -1835,7 +1728,10 @@ const MessageBubble = memo(
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
       prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
-      prevProps.taskType === nextProps.taskType
+      prevProps.taskType === nextProps.taskType &&
+      prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
+      prevProps.selectedTeam?.displayName === nextProps.selectedTeam?.displayName &&
+      (prevProps.selectedTeam?.bots?.length ?? 0) === (nextProps.selectedTeam?.bots?.length ?? 0)
 
     return shouldSkipRender
   }

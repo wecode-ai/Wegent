@@ -7,9 +7,8 @@
 /**
  * Socket.IO Context Provider
  *
- * Manages Socket.IO connection at the application level.
- * Provides connection state and socket instance to child components.
- * Auto-connects when user is authenticated.
+ * React wrapper around the shared SocketClient.
+ * Keeps frontend-specific auth handling and business event helpers out of the connection layer.
  */
 
 import React, {
@@ -19,11 +18,13 @@ import React, {
   useState,
   useCallback,
   useRef,
+  useMemo,
   ReactNode,
 } from 'react'
-import { io, Socket } from 'socket.io-client'
+import { createAuthenticatedSocketClient, type SocketClientSocket } from '@wegent/chat-core'
 import { getToken, removeToken } from '@/apis/user'
 import {
+  ClientEvents,
   ServerEvents,
   ClientSkillEvents,
   ChatStartPayload,
@@ -31,11 +32,17 @@ import {
   ChatDonePayload,
   ChatErrorPayload,
   ChatCancelledPayload,
+  ChatStatusUpdatedPayload,
   ChatMessagePayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
   ChatSendPayload,
   ChatSendAck,
+  ChatGuidePayload,
+  ChatGuideAck,
+  ChatGuidanceQueuedPayload,
+  ChatGuidanceAppliedPayload,
+  ChatGuidanceExpiredPayload,
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
@@ -48,13 +55,11 @@ import {
   CorrectionDonePayload,
   CorrectionErrorPayload,
   BackgroundExecutionUpdatePayload,
-  AuthErrorPayload,
 } from '@/types/socket'
 
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 import { paths } from '@/config/paths'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
-import { taskStateManager } from '@/features/tasks/state'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -62,8 +67,8 @@ const SOCKETIO_PATH = '/socket.io'
 export type ReconnectCallback = () => void
 
 interface SocketContextType {
-  /** Socket.IO instance */
-  socket: Socket | null
+  /** Stable Socket.IO connection facade */
+  socket: SocketClientSocket | null
   /** Whether connected to server */
   isConnected: boolean
   /** Connection error if any */
@@ -74,6 +79,8 @@ interface SocketContextType {
   connect: (token: string) => void
   /** Disconnect from server */
   disconnect: () => void
+  /** Ensure a disconnected or stale Socket.IO session starts a fresh connection attempt */
+  ensureConnected: () => void
   /**
    * Join a task room.
    * @param taskId - Task ID to join
@@ -95,6 +102,7 @@ interface SocketContextType {
       started_at?: string
       last_activity_at?: string
     }
+    status_updated?: ChatStatusUpdatedPayload
     /** Subtasks data for immediate message sync (same format as task detail API) */
     subtasks?: Array<Record<string, unknown>>
     error?: string
@@ -103,6 +111,8 @@ interface SocketContextType {
   leaveTask: (taskId: number) => void
   /** Send a chat message via WebSocket */
   sendChatMessage: (payload: ChatSendPayload) => Promise<ChatSendAck>
+  /** Send Chat Shell guidance via WebSocket */
+  sendChatGuidance: (payload: ChatGuidePayload) => Promise<ChatGuideAck>
   /** Cancel a chat stream via WebSocket */
   cancelChatStream: (
     subtaskId: number,
@@ -142,12 +152,19 @@ export interface ChatEventHandlers {
   onChatDone?: (data: ChatDonePayload) => void
   onChatError?: (data: ChatErrorPayload) => void
   onChatCancelled?: (data: ChatCancelledPayload) => void
+  onChatStatusUpdated?: (data: ChatStatusUpdatedPayload) => void
   /** Handler for chat:message event (other users' messages in group chat) */
   onChatMessage?: (data: ChatMessagePayload) => void
   /** Handler for chat:block_created event (new block added) */
   onBlockCreated?: (data: ChatBlockCreatedPayload) => void
   /** Handler for chat:block_updated event (block content/status updated) */
   onBlockUpdated?: (data: ChatBlockUpdatedPayload) => void
+  /** Handler for chat:guidance_queued event */
+  onGuidanceQueued?: (data: ChatGuidanceQueuedPayload) => void
+  /** Handler for chat:guidance_applied event */
+  onGuidanceApplied?: (data: ChatGuidanceAppliedPayload) => void
+  /** Handler for chat:guidance_expired event */
+  onGuidanceExpired?: (data: ChatGuidanceExpiredPayload) => void
 }
 
 /** Task event handlers for task list updates */
@@ -181,180 +198,109 @@ export interface BackgroundExecutionEventHandlers {
 
 const SocketContext = createContext<SocketContextType | undefined>(undefined)
 
+type SocketEventHandler = (...args: never[]) => void
+type SocketHandlerEntry = readonly [event: string, handler: SocketEventHandler | undefined]
+
+function socketHandler<TArgs extends unknown[]>(
+  event: string,
+  handler: ((...args: TArgs) => void) | undefined
+): SocketHandlerEntry {
+  return [event, handler as unknown as SocketEventHandler | undefined]
+}
+
+function registerSocketHandlers(
+  socket: SocketClientSocket,
+  entries: SocketHandlerEntry[]
+): () => void {
+  entries.forEach(([event, handler]) => {
+    if (handler) {
+      socket.on(event, handler)
+    }
+  })
+
+  return () => {
+    entries.forEach(([event, handler]) => {
+      if (handler) {
+        socket.off(event, handler)
+      }
+    })
+  }
+}
+
+function cacheChatStatusSnapshot(
+  cache: React.MutableRefObject<Record<number, ChatStatusUpdatedPayload>>,
+  payload: ChatStatusUpdatedPayload
+): void {
+  cache.current[payload.task_id] = payload
+}
+
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const [socket, setSocket] = useState<Socket | null>(null)
+  const [socket, setSocket] = useState<SocketClientSocket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionError, setConnectionError] = useState<Error | null>(null)
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
 
   // Track current joined tasks
   const joinedTasksRef = useRef<Set<number>>(new Set())
-  // Use ref for socket to avoid dependency issues in connect callback
-  const socketRef = useRef<Socket | null>(null)
-  // Store reconnect callbacks - single source of truth for reconnection events
-  const reconnectCallbacksRef = useRef<Set<ReconnectCallback>>(new Set())
+  const latestChatStatusRef = useRef<Record<number, ChatStatusUpdatedPayload>>({})
+  const handleAuthError = useCallback((_error: unknown) => {
+    removeToken()
 
-  /**
-   * Internal function to create socket connection
-   */
-  const createSocketConnection = useCallback((token: string, socketUrl: string) => {
-    // Create new socket connection
-    // Transport strategy:
-    // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
-    // 2. If WebSocket fails (e.g., load balancer doesn't support it), fall back to polling
-    // Note: Polling requires sticky sessions in load-balanced environments
-    const newSocket = io(socketUrl + '/chat', {
-      path: SOCKETIO_PATH,
-      auth: { token },
-      autoConnect: true,
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      // Try websocket first, then fall back to polling if websocket fails
-      // This handles cases where load balancer doesn't support WebSocket upgrade
-      transports: ['websocket', 'polling'],
-      // Increase timeout for mobile networks which may have higher latency
-      timeout: 20000,
-      // Force new connection to avoid stale connections on mobile
-      forceNew: false,
-      // Disable automatic upgrade from polling to websocket
-      // This prevents "Invalid transport" errors when switching transports
-      upgrade: true,
-    })
+    const loginPath = paths.auth.login.getHref()
+    if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+      const currentPath = window.location.pathname + window.location.search
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
+      window.location.href = loginPath
+    }
+  }, [])
 
-    // Store in ref immediately
-    socketRef.current = newSocket
-
-    // Connection event handlers
-    newSocket.on('connect', () => {
-      setIsConnected(true)
-      setConnectionError(null)
-      setReconnectAttempts(0)
-    })
-
-    newSocket.on('disconnect', (_: string) => {
-      setIsConnected(false)
-      // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
-    })
-
-    newSocket.io.on('reconnect_attempt', (attempt: number) => {
-      setReconnectAttempts(attempt)
-    })
-
-    newSocket.io.on('reconnect', (_attempt: number) => {
-      setIsConnected(true)
-      setConnectionError(null)
-      setReconnectAttempts(0)
-
-      // Trigger recovery for all active tasks via TaskStateManager
-      // This handles message state recovery after WebSocket reconnection
-      if (taskStateManager.isInitialized()) {
-        taskStateManager.recoverAll().catch(err => {
-          console.error('[Socket.IO] Error recovering tasks after reconnect:', err)
-        })
-      }
-
-      // Notify all registered reconnect callbacks
-      // This is the single source of truth for reconnection events
-      reconnectCallbacksRef.current.forEach(callback => {
-        try {
-          callback()
-        } catch (err) {
-          console.error('[Socket.IO] Error in reconnect callback:', err)
-        }
-      })
-    })
-
-    newSocket.io.on('reconnect_error', (error: Error) => {
-      console.error('[Socket.IO] Reconnect error:', error)
-      setConnectionError(error)
-    })
-
-    // Handle authentication errors (token expired during session)
-    newSocket.on(ServerEvents.AUTH_ERROR, (_: AuthErrorPayload) => {
-      // Remove token and redirect to login
-      removeToken()
-      newSocket.disconnect()
-
-      const loginPath = paths.auth.login.getHref()
-      if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
-        // Save current path for redirect after login
-        const currentPath = window.location.pathname + window.location.search
-        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
-        window.location.href = loginPath
-      }
-    })
-
-    // Handle connect_error for initial connection auth failures
-    newSocket.on('connect_error', (error: Error) => {
-      console.error('[Socket.IO] Connection error:', error)
-      setConnectionError(error)
-      setIsConnected(false)
-
-      // Check if error message indicates auth failure
-      // Use specific auth-related error patterns to avoid false positives
-      const errorMsg = error.message?.toLowerCase() || ''
-      const isAuthError =
-        errorMsg.includes('expired') ||
-        errorMsg.includes('unauthorized') ||
-        errorMsg.includes('jwt') ||
-        errorMsg.includes('authentication')
-
-      if (isAuthError) {
-        removeToken()
-
-        const loginPath = paths.auth.login.getHref()
-        if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
-          // Save current path for redirect after login (consistent with AUTH_ERROR handler)
-          const currentPath = window.location.pathname + window.location.search
-          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, currentPath)
-          window.location.href = loginPath
-        }
-      }
-    })
-
-    setSocket(newSocket)
-  }, []) // No dependencies - use refs instead
-
-  /**
-   * Connect to Socket.IO server
-   * Fetches runtime config first to allow runtime URL changes
-   */
-  const connect = useCallback(
-    (token: string) => {
-      // Check if already connected using ref
-      if (socketRef.current?.connected) {
-        return
-      }
-
-      // Disconnect existing socket if any
-      if (socketRef.current) {
-        socketRef.current.disconnect()
-        socketRef.current = null
-      }
-
-      // Fetch runtime config then connect
-      // This allows RUNTIME_SOCKET_DIRECT_URL to be changed without rebuilding
-      fetchRuntimeConfig().then(config => {
-        const socketUrl = config.socketDirectUrl || getSocketUrl()
-        createSocketConnection(token, socketUrl)
-      })
-    },
-    [createSocketConnection]
+  const socketClient = useMemo(
+    () =>
+      createAuthenticatedSocketClient({
+        socketBaseUrl: async () => {
+          const config = await fetchRuntimeConfig()
+          return config.socketDirectUrl || getSocketUrl()
+        },
+        getToken,
+        namespace: '/chat',
+        path: SOCKETIO_PATH,
+        authErrorEvent: ServerEvents.AUTH_ERROR,
+        onAuthError: handleAuthError,
+        logger: console,
+      }),
+    [handleAuthError]
   )
+
+  useEffect(() => {
+    return socketClient.subscribe(state => {
+      setSocket(state.socket ? socketClient.socket : null)
+      setIsConnected(state.isConnected)
+      setConnectionError(state.connectionError)
+      setReconnectAttempts(state.reconnectAttempts)
+      if (!state.isConnected) {
+        joinedTasksRef.current.clear()
+      }
+    })
+  }, [socketClient])
+
+  const connect = useCallback(
+    (token: string, notifyReconnectOnConnect = false) => {
+      void socketClient.connect(token, notifyReconnectOnConnect)
+    },
+    [socketClient]
+  )
+
+  const ensureConnected = useCallback(() => {
+    void socketClient.ensureConnected()
+  }, [socketClient])
 
   /**
    * Disconnect from server
    */
   const disconnect = useCallback(() => {
-    if (socket) {
-      socket.disconnect()
-      setSocket(null)
-      setIsConnected(false)
-      joinedTasksRef.current.clear()
-    }
-  }, [socket])
+    joinedTasksRef.current.clear()
+    socketClient.disconnect()
+  }, [socketClient])
 
   /**
    * Join a task room
@@ -379,14 +325,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         started_at?: string
         last_activity_at?: string
       }
+      status_updated?: ChatStatusUpdatedPayload
       subtasks?: Array<Record<string, unknown>>
       error?: string
     }> => {
       const { forceRefresh = false, afterMessageId } = options || {}
 
-      // Use socketRef for reliable access (socket state may be stale)
-      const currentSocket = socketRef.current
-      if (!currentSocket?.connected) {
+      const currentSocket = socketClient.socket
+      if (!currentSocket.connected) {
         return { error: 'Not connected' }
       }
 
@@ -423,6 +369,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               started_at?: string
               last_activity_at?: string
             }
+            status_updated?: ChatStatusUpdatedPayload
             subtasks?: Array<Record<string, unknown>>
             error?: string
           }) => {
@@ -458,6 +405,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
               })
             }
 
+            if (response.status_updated) {
+              cacheChatStatusSnapshot(latestChatStatusRef, response.status_updated)
+            }
+
             // If there was an error, remove from the set so it can be retried
             if (response.error) {
               joinedTasksRef.current.delete(taskId)
@@ -467,44 +418,67 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         )
       })
     },
-    [] // No dependencies - use socketRef for stable reference
+    [socketClient]
   )
 
   /**
    * Leave a task room
    */
-  const leaveTask = useCallback((taskId: number) => {
-    // Use socketRef for reliable access (socket state may be stale)
-    const currentSocket = socketRef.current
-    if (currentSocket?.connected) {
-      currentSocket.emit('task:leave', { task_id: taskId })
-      joinedTasksRef.current.delete(taskId)
-    }
-  }, []) // No dependencies - use socketRef for stable reference
+  const leaveTask = useCallback(
+    (taskId: number) => {
+      const currentSocket = socketClient.socket
+      if (currentSocket.connected) {
+        currentSocket.emit('task:leave', { task_id: taskId })
+        joinedTasksRef.current.delete(taskId)
+      }
+    },
+    [socketClient]
+  )
 
   /**
    * Send a chat message via WebSocket
    */
   const sendChatMessage = useCallback(
     async (payload: ChatSendPayload): Promise<ChatSendAck> => {
-      // Use socketRef for reliable access (socket state may be stale)
-      const currentSocket = socketRef.current
+      const currentSocket = socketClient.socket
 
-      if (!currentSocket?.connected) {
+      if (!currentSocket.connected) {
         console.error('[Socket.IO] sendChatMessage failed: not connected', {
-          hasSocket: !!currentSocket,
-          isConnected: currentSocket?.connected,
+          isConnected: currentSocket.connected,
         })
         return { error: 'Not connected to server' }
       }
 
       return new Promise(resolve => {
-        currentSocket.emit('chat:send', payload, (response: ChatSendAck) => {
+        currentSocket.emit(ClientEvents.CHAT_SEND, payload, (response: ChatSendAck) => {
           resolve(response)
         })
       })
     },
-    [] // No dependencies - use socketRef
+    [socketClient]
+  )
+
+  /**
+   * Send Chat Shell guidance via WebSocket
+   */
+  const sendChatGuidance = useCallback(
+    async (payload: ChatGuidePayload): Promise<ChatGuideAck> => {
+      const currentSocket = socketClient.socket
+
+      if (!currentSocket.connected) {
+        console.error('[Socket.IO] sendChatGuidance failed: not connected', {
+          isConnected: currentSocket.connected,
+        })
+        return { success: false, error: 'Not connected to server' }
+      }
+
+      return new Promise(resolve => {
+        currentSocket.emit(ClientEvents.CHAT_GUIDE, payload, (response: ChatGuideAck) => {
+          resolve(response)
+        })
+      })
+    },
+    [socketClient]
   )
 
   /**
@@ -516,26 +490,20 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       partialContent?: string,
       shellType?: string
     ): Promise<{ success: boolean; error?: string }> => {
-      if (!socket?.connected) {
+      const currentSocket = socketClient.socket
+      if (!currentSocket.connected) {
         console.error('[Socket.IO] cancelChatStream failed - not connected')
         return { success: false, error: 'Not connected to server' }
       }
 
-      return new Promise(resolve => {
-        socket.emit(
-          'chat:cancel',
-          {
-            subtask_id: subtaskId,
-            partial_content: partialContent,
-            shell_type: shellType,
-          },
-          (response: { success?: boolean; error?: string }) => {
-            resolve({ success: response.success ?? true, error: response.error })
-          }
-        )
+      currentSocket.emit('chat:cancel', {
+        subtask_id: subtaskId,
+        partial_content: partialContent,
+        shell_type: shellType,
       })
+      return { success: true }
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -543,13 +511,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const closeTaskSession = useCallback(
     async (taskId: number): Promise<{ success: boolean; error?: string }> => {
-      if (!socket?.connected) {
+      const currentSocket = socketClient.socket
+      if (!currentSocket.connected) {
         console.error('[Socket.IO] closeTaskSession failed - not connected')
         return { success: false, error: 'Not connected to server' }
       }
 
       return new Promise(resolve => {
-        socket.emit(
+        currentSocket.emit(
           'task:close-session',
           { task_id: taskId },
           (response: { success?: boolean; error?: string }) => {
@@ -558,7 +527,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         )
       })
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -572,7 +541,8 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       modelType?: string,
       forceOverride: boolean = false
     ): Promise<{ success: boolean; error?: string }> => {
-      if (!socket?.connected) {
+      const currentSocket = socketClient.socket
+      if (!currentSocket.connected) {
         console.error('[Socket.IO] retryMessage failed - not connected')
         return { success: false, error: 'Not connected to server' }
       }
@@ -586,7 +556,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       return new Promise(resolve => {
-        socket.emit(
+        currentSocket.emit(
           'chat:retry',
           payload,
           (response: { success?: boolean; error?: string } | undefined) => {
@@ -608,7 +578,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         )
       })
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -617,43 +587,37 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const registerChatHandlers = useCallback(
     (handlers: ChatEventHandlers): (() => void) => {
-      if (!socket) {
-        return () => {}
+      const wrappedStatusUpdated = handlers.onChatStatusUpdated
+        ? (payload: ChatStatusUpdatedPayload) => {
+            cacheChatStatusSnapshot(latestChatStatusRef, payload)
+            handlers.onChatStatusUpdated?.(payload)
+          }
+        : undefined
+
+      const cleanup = registerSocketHandlers(socketClient.socket, [
+        socketHandler(ServerEvents.CHAT_START, handlers.onChatStart),
+        socketHandler(ServerEvents.CHAT_CHUNK, handlers.onChatChunk),
+        socketHandler(ServerEvents.CHAT_DONE, handlers.onChatDone),
+        socketHandler(ServerEvents.CHAT_ERROR, handlers.onChatError),
+        socketHandler(ServerEvents.CHAT_CANCELLED, handlers.onChatCancelled),
+        socketHandler(ServerEvents.CHAT_STATUS_UPDATED, wrappedStatusUpdated),
+        socketHandler(ServerEvents.CHAT_MESSAGE, handlers.onChatMessage),
+        socketHandler(ServerEvents.CHAT_BLOCK_CREATED, handlers.onBlockCreated),
+        socketHandler(ServerEvents.CHAT_BLOCK_UPDATED, handlers.onBlockUpdated),
+        socketHandler(ServerEvents.CHAT_GUIDANCE_QUEUED, handlers.onGuidanceQueued),
+        socketHandler(ServerEvents.CHAT_GUIDANCE_APPLIED, handlers.onGuidanceApplied),
+        socketHandler(ServerEvents.CHAT_GUIDANCE_EXPIRED, handlers.onGuidanceExpired),
+      ])
+
+      if (wrappedStatusUpdated) {
+        Object.values(latestChatStatusRef.current).forEach(snapshot => {
+          wrappedStatusUpdated(snapshot)
+        })
       }
 
-      const {
-        onChatStart,
-        onChatChunk,
-        onChatDone,
-        onChatError,
-        onChatCancelled,
-        onChatMessage,
-        onBlockCreated,
-        onBlockUpdated,
-      } = handlers
-
-      if (onChatStart) socket.on(ServerEvents.CHAT_START, onChatStart)
-      if (onChatChunk) socket.on(ServerEvents.CHAT_CHUNK, onChatChunk)
-      if (onChatDone) socket.on(ServerEvents.CHAT_DONE, onChatDone)
-      if (onChatError) socket.on(ServerEvents.CHAT_ERROR, onChatError)
-      if (onChatCancelled) socket.on(ServerEvents.CHAT_CANCELLED, onChatCancelled)
-      if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage)
-      if (onBlockCreated) socket.on(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
-      if (onBlockUpdated) socket.on(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
-
-      // Return cleanup function
-      return () => {
-        if (onChatStart) socket.off(ServerEvents.CHAT_START, onChatStart)
-        if (onChatChunk) socket.off(ServerEvents.CHAT_CHUNK, onChatChunk)
-        if (onChatDone) socket.off(ServerEvents.CHAT_DONE, onChatDone)
-        if (onChatError) socket.off(ServerEvents.CHAT_ERROR, onChatError)
-        if (onChatCancelled) socket.off(ServerEvents.CHAT_CANCELLED, onChatCancelled)
-        if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage)
-        if (onBlockCreated) socket.off(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
-        if (onBlockUpdated) socket.off(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
-      }
+      return cleanup
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -662,26 +626,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const registerTaskHandlers = useCallback(
     (handlers: TaskEventHandlers): (() => void) => {
-      if (!socket) {
-        return () => {}
-      }
-
-      const { onTaskCreated, onTaskInvited, onTaskStatus, onTaskAppUpdate } = handlers
-
-      if (onTaskCreated) socket.on(ServerEvents.TASK_CREATED, onTaskCreated)
-      if (onTaskInvited) socket.on(ServerEvents.TASK_INVITED, onTaskInvited)
-      if (onTaskStatus) socket.on(ServerEvents.TASK_STATUS, onTaskStatus)
-      if (onTaskAppUpdate) socket.on(ServerEvents.TASK_APP_UPDATE, onTaskAppUpdate)
-
-      // Return cleanup function
-      return () => {
-        if (onTaskCreated) socket.off(ServerEvents.TASK_CREATED, onTaskCreated)
-        if (onTaskInvited) socket.off(ServerEvents.TASK_INVITED, onTaskInvited)
-        if (onTaskStatus) socket.off(ServerEvents.TASK_STATUS, onTaskStatus)
-        if (onTaskAppUpdate) socket.off(ServerEvents.TASK_APP_UPDATE, onTaskAppUpdate)
-      }
+      return registerSocketHandlers(socketClient.socket, [
+        socketHandler(ServerEvents.TASK_CREATED, handlers.onTaskCreated),
+        socketHandler(ServerEvents.TASK_INVITED, handlers.onTaskInvited),
+        socketHandler(ServerEvents.TASK_STATUS, handlers.onTaskStatus),
+        socketHandler(ServerEvents.TASK_APP_UPDATE, handlers.onTaskAppUpdate),
+      ])
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -690,34 +642,15 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const registerCorrectionHandlers = useCallback(
     (handlers: CorrectionEventHandlers): (() => void) => {
-      if (!socket) {
-        return () => {}
-      }
-
-      const {
-        onCorrectionStart,
-        onCorrectionProgress,
-        onCorrectionChunk,
-        onCorrectionDone,
-        onCorrectionError,
-      } = handlers
-
-      if (onCorrectionStart) socket.on(ServerEvents.CORRECTION_START, onCorrectionStart)
-      if (onCorrectionProgress) socket.on(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress)
-      if (onCorrectionChunk) socket.on(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk)
-      if (onCorrectionDone) socket.on(ServerEvents.CORRECTION_DONE, onCorrectionDone)
-      if (onCorrectionError) socket.on(ServerEvents.CORRECTION_ERROR, onCorrectionError)
-
-      // Return cleanup function
-      return () => {
-        if (onCorrectionStart) socket.off(ServerEvents.CORRECTION_START, onCorrectionStart)
-        if (onCorrectionProgress) socket.off(ServerEvents.CORRECTION_PROGRESS, onCorrectionProgress)
-        if (onCorrectionChunk) socket.off(ServerEvents.CORRECTION_CHUNK, onCorrectionChunk)
-        if (onCorrectionDone) socket.off(ServerEvents.CORRECTION_DONE, onCorrectionDone)
-        if (onCorrectionError) socket.off(ServerEvents.CORRECTION_ERROR, onCorrectionError)
-      }
+      return registerSocketHandlers(socketClient.socket, [
+        socketHandler(ServerEvents.CORRECTION_START, handlers.onCorrectionStart),
+        socketHandler(ServerEvents.CORRECTION_PROGRESS, handlers.onCorrectionProgress),
+        socketHandler(ServerEvents.CORRECTION_CHUNK, handlers.onCorrectionChunk),
+        socketHandler(ServerEvents.CORRECTION_DONE, handlers.onCorrectionDone),
+        socketHandler(ServerEvents.CORRECTION_ERROR, handlers.onCorrectionError),
+      ])
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -726,20 +659,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const registerSkillHandlers = useCallback(
     (handlers: SkillEventHandlers): (() => void) => {
-      if (!socket) {
-        return () => {}
-      }
-
-      const { onSkillRequest } = handlers
-
-      if (onSkillRequest) socket.on(ServerEvents.SKILL_REQUEST, onSkillRequest)
-
-      // Return cleanup function
-      return () => {
-        if (onSkillRequest) socket.off(ServerEvents.SKILL_REQUEST, onSkillRequest)
-      }
+      return registerSocketHandlers(socketClient.socket, [
+        socketHandler(ServerEvents.SKILL_REQUEST, handlers.onSkillRequest),
+      ])
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -747,16 +671,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const sendSkillResponse = useCallback(
     (payload: SkillResponsePayload): void => {
-      const currentSocket = socketRef.current
+      const currentSocket = socketClient.socket
 
-      if (!currentSocket?.connected) {
+      if (!currentSocket.connected) {
         console.error('[Socket.IO] sendSkillResponse failed: not connected')
         return
       }
 
       currentSocket.emit(ClientSkillEvents.SKILL_RESPONSE, payload)
     },
-    [] // No dependencies - use socketRef
+    [socketClient]
   )
   /**
    * Register background execution event handlers for subscription execution updates
@@ -764,22 +688,14 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    */
   const registerBackgroundExecutionHandlers = useCallback(
     (handlers: BackgroundExecutionEventHandlers): (() => void) => {
-      if (!socket) {
-        return () => {}
-      }
-
-      const { onBackgroundExecutionUpdate } = handlers
-
-      if (onBackgroundExecutionUpdate)
-        socket.on(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
-
-      // Return cleanup function
-      return () => {
-        if (onBackgroundExecutionUpdate)
-          socket.off(ServerEvents.BACKGROUND_EXECUTION_UPDATE, onBackgroundExecutionUpdate)
-      }
+      return registerSocketHandlers(socketClient.socket, [
+        socketHandler(
+          ServerEvents.BACKGROUND_EXECUTION_UPDATE,
+          handlers.onBackgroundExecutionUpdate
+        ),
+      ])
     },
-    [socket]
+    [socketClient]
   )
 
   /**
@@ -787,12 +703,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * This is the single source of truth for reconnection events in the app.
    * Returns a cleanup function to unregister the callback.
    */
-  const onReconnect = useCallback((callback: ReconnectCallback): (() => void) => {
-    reconnectCallbacksRef.current.add(callback)
-    return () => {
-      reconnectCallbacksRef.current.delete(callback)
-    }
-  }, [])
+  const onReconnect = useCallback(
+    (callback: ReconnectCallback): (() => void) => socketClient.onReconnect(callback),
+    [socketClient]
+  )
 
   // Auto-connect when component mounts if token is available
   useEffect(() => {
@@ -801,8 +715,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    // Check if already connected
-    if (socketRef.current?.connected) {
+    if (socketClient.socket.connected) {
       return
     }
 
@@ -812,7 +725,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     } else {
       console.error('[Socket.IO] No token found, skipping auto-connect')
     }
-  }, [connect])
+  }, [connect, socketClient])
 
   // Listen for token changes (login/logout) - works across tabs
   // Also poll for token changes in current tab since storage event doesn't fire for same-tab changes
@@ -839,11 +752,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (socket) {
-        socket.disconnect()
-      }
+      socketClient.dispose()
     }
-  }, [socket])
+  }, [socketClient])
 
   return (
     <SocketContext.Provider
@@ -854,9 +765,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         reconnectAttempts,
         connect,
         disconnect,
+        ensureConnected,
         joinTask,
         leaveTask,
         sendChatMessage,
+        sendChatGuidance,
         cancelChatStream,
         closeTaskSession,
         retryMessage,

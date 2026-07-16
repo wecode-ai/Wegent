@@ -30,7 +30,6 @@ from shared.telemetry.decorators import (
 )
 
 from .agents import LangGraphAgentBuilder
-from .compression import MessageCompressor
 from .messages import MessageConverter
 from .models import LangChainModelFactory
 from .tools import ToolRegistry
@@ -60,6 +59,8 @@ class AgentConfig:
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
     skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
+    pre_model_hook: Callable[[dict[str, Any]], Any] | None = None
+    on_model_usage: Callable[..., Any] | None = None
 
 
 class ChatAgent:
@@ -172,6 +173,8 @@ class ChatAgent:
             tool_registry=tool_registry,
             max_iterations=config.max_iterations,
             enable_checkpointing=self.enable_checkpointing,
+            pre_model_hook=config.pre_model_hook,
+            on_model_usage=config.on_model_usage,
         )
         add_span_event("langgraph_agent_builder_created")
         return builder
@@ -362,6 +365,7 @@ class ChatAgent:
         model_id: str | None = None,
         inject_datetime: bool | None = None,
         dynamic_context: str | None = None,
+        model_config: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Build messages for agent execution.
 
@@ -411,33 +415,50 @@ class ChatAgent:
             dynamic_context=dynamic_context,
         )
 
-        # Apply message compression if enabled and model_id is provided.
-        # Compression runs BEFORE cache breakpoints so that strategies
-        # don't need to be aware of Anthropic cache_control metadata.
-        compression_enabled = getattr(settings, "MESSAGE_COMPRESSION_ENABLED", True)
-        if model_id and compression_enabled:
-            # Pass model_config to compressor for context window configuration
-            model_config_for_compression = config.model_config if config else None
-            compressor = MessageCompressor(
-                model_id,
-                model_config=model_config_for_compression,
-            )
-            result = compressor.compress_if_needed(messages)
+        # Phase 2 note: budget enforcement (compression, source-level
+        # truncation, emergency fallback) is owned by UnifiedContextGuard
+        # registered as the LangGraph pre_model_hook. build_messages only
+        # assembles. The hook fires before every model call (turn start +
+        # every follow-up) so both pre-turn and mid-turn budgets share the
+        # same accounting and policy.
 
-            if result.was_compressed:
-                logger.info(
-                    "[ChatAgent] Messages compressed: %d -> %d tokens (saved %d), "
-                    "strategies: %s",
-                    result.original_tokens,
-                    result.compressed_tokens,
-                    result.tokens_saved,
-                    ", ".join(result.strategies_applied),
-                )
-                messages = result.messages
+        # Bound the inline attachment preview to a token budget. This is content
+        # normalization (a fixed-size preview, like the legacy char cap), not
+        # budget enforcement: the full content stays reachable via the sandbox
+        # file / read_attachment. Runs on the assembled layout so the current
+        # turn and replayed history are treated identically. The budget is
+        # capped relative to the model window so a small-context model is not
+        # swamped by the preview: min(window * 50%, configured limit).
+        from chat_shell.compression.config import get_model_context_config
+        from chat_shell.compression.token_counter import TokenCounter
+        from chat_shell.core.config import settings
+        from chat_shell.messages.attachment_preview import apply_attachment_preview
 
-        # Apply Anthropic explicit cache breakpoints AFTER compression.
-        # This ensures breakpoints are placed on the final message layout
-        # and compression strategies don't strip or corrupt them.
+        # Fall back to the AgentConfig's model_config (the canonical CRD source)
+        # so the CRD-provided context_window is honored even if the explicit
+        # model_config arg is omitted.
+        effective_model_config = model_config or (
+            config.model_config if config else None
+        )
+        effective_model_id = model_id or (
+            effective_model_config.get("model_id", "") if effective_model_config else ""
+        )
+        context_window = get_model_context_config(
+            effective_model_id, model_config=effective_model_config
+        ).context_window
+        preview_limit = min(
+            context_window // 2, settings.ATTACHMENT_PREVIEW_TOKEN_LIMIT
+        )
+        messages = apply_attachment_preview(
+            messages,
+            token_counter=TokenCounter(model_name=effective_model_id),
+            limit=preview_limit,
+        )
+
+        # Apply Anthropic explicit cache breakpoints on the assembled layout
+        # so breakpoints land on the final structure. The guard never edits
+        # this layout in place; it produces state updates the LangGraph
+        # reducer applies, leaving cache markers on unaffected messages.
         if self._needs_explicit_cache_breakpoints(config):
             MessageConverter.apply_cache_breakpoints(
                 messages,

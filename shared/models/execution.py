@@ -20,8 +20,9 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from dacite import Config, from_dict
+from pydantic import StrictBool
 
-from .knowledge import KnowledgeBaseToolAccessMode
+from .knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 
 class EventType(str, Enum):
@@ -37,7 +38,12 @@ class EventType(str, Enum):
     THINKING = "thinking"
     TOOL = "tool"  # Generic tool event (for tool callbacks)
     TOOL_START = "tool_start"
+    TOOL_ARGUMENT_DELTA = "tool_argument_delta"
+    TOOL_ARGUMENT_DONE = "tool_argument_done"
     TOOL_RESULT = "tool_result"
+    BLOCK_CREATED = "block_created"
+    BLOCK_UPDATED = "block_updated"
+    STATUS_UPDATED = "status_updated"
     PROGRESS = "progress"
     DONE = "done"
     ERROR = "error"
@@ -95,6 +101,7 @@ class ExecutionRequest:
     enable_web_search: bool = False
     enable_clarification: bool = False
     enable_deep_thinking: bool = True
+    enable_tool_output_guard: bool = True
     search_engine: Optional[str] = None  # From ChatRequest
 
     # === Skill Configuration ===
@@ -120,12 +127,20 @@ class ExecutionRequest:
     # === Knowledge Base Configuration ===
     knowledge_base_ids: Optional[list] = None
     document_ids: Optional[list] = None
+    knowledge_base_scopes: list[KnowledgeBaseScope] = field(default_factory=list)
+    external_knowledge_refs: Optional[list[dict]] = None
     table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)
+    project_id: Optional[int] = None
+    standalone_chat_workspace: bool = False
+    workspace_source: Optional[str] = None
+    project_workspace_path: Optional[str] = None
+    execution_target_type: Optional[str] = None
+    device_id: Optional[str] = None
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None
@@ -144,6 +159,8 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
+    fork_runtime: Optional[dict] = None
+    inherited_sessions: list[dict] = field(default_factory=list)
     collaboration_model: str = "single"
     mode: Optional[str] = (
         None  # From Task: Collaboration mode (e.g., "coordinate", "collaborate")
@@ -153,6 +170,7 @@ class ExecutionRequest:
     # === Context Data (from ChatRequest) ===
     contexts: list = field(default_factory=list)
     history: list = field(default_factory=list)
+    interactive_form_answer: Optional[dict] = None
 
     # === Authentication ===
     auth_token: str = ""
@@ -176,6 +194,7 @@ class ExecutionRequest:
     status: Optional[str] = None
     progress: Optional[int] = None
     type: Optional[str] = None  # Task type: "online" or "offline"
+    task_mode: Optional[str] = None  # Task mode label: "chat", "code", etc.
 
     # === Executor Information (from Task) ===
     executor_name: Optional[str] = None
@@ -196,7 +215,9 @@ class ExecutionRequest:
     )
 
     # === Workspace Recovery ===
-    skip_git_clone: bool = False  # Skip git clone for workspace recovery from archive
+    skip_git_clone: StrictBool = (
+        False  # Skip git clone for workspace recovery from archive
+    )
 
     # === Timestamps (from Task) ===
     created_at: Optional[str] = None  # ISO format datetime
@@ -313,6 +334,8 @@ class ExecutionEvent:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionEvent":
         """Create from dict - automatically deserializes."""
+        import json as _json
+
         # Handle EventType enum conversion
         if "type" in data:
             type_value = data.get("type", "chunk")
@@ -324,6 +347,19 @@ class ExecutionEvent:
                     EventType(type_value)
                 except ValueError:
                     data = {**data, "type": "chunk"}
+
+        # Handle tool_input type coercion: Redis pub/sub roundtrip may
+        # serialize dict as JSON string; dacite rejects str for Optional[dict].
+        tool_input = data.get("tool_input")
+        if isinstance(tool_input, str):
+            try:
+                parsed = _json.loads(tool_input)
+                data = {
+                    **data,
+                    "tool_input": parsed if isinstance(parsed, dict) else None,
+                }
+            except (ValueError, TypeError):
+                data = {**data, "tool_input": None}
 
         return from_dict(
             data_class=cls,

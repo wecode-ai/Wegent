@@ -16,12 +16,35 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type DocumentIndexStatus = 'not_indexed' | 'queued' | 'indexing' | 'success' | 'failed'
+export type DocumentIndexStatus =
+  | 'not_indexed'
+  | 'queued'
+  | 'pending_conversion'
+  | 'converting'
+  | 'indexing'
+  | 'success'
+  | 'failed'
 
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
 // Retrieval Config types
 export interface RetrievalConfig {
+  retriever_name: string
+  retriever_namespace?: string
+  embedding_config: {
+    model_name: string
+    model_namespace?: string
+  }
+  retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
+  top_k?: number
+  score_threshold?: number
+  hybrid_weights?: {
+    vector_weight: number
+    keyword_weight: number
+  }
+}
+
+export interface RetrievalConfigDraft {
   retriever_name?: string
   retriever_namespace?: string
   embedding_config?: {
@@ -272,13 +295,17 @@ export function normalizeSplitterConfigForDisplay(
 export interface SummaryModelRef {
   name: string
   namespace: string
-  type: 'public' | 'user' | 'group'
+  type: 'public' | 'user' | 'group' | 'runtime'
 }
 
-// Knowledge Base Type
-// - notebook: Three-column layout with chat area and document panel (new style)
-// - classic: Document list only without chat functionality (legacy style)
+// Knowledge Base Type.
+// This field is persisted as spec.kbType and now represents the default
+// opening view, not a resource capability boundary.
+// - notebook: default to Notebook workspace view
+// - classic: default to document management view
 export type KnowledgeBaseType = 'notebook' | 'classic'
+export type KnowledgeView = 'documents' | 'notebook'
+export type RagConfigMode = 'auto' | 'disabled'
 
 // Knowledge Base types
 export interface KnowledgeBase {
@@ -293,7 +320,7 @@ export interface KnowledgeBase {
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
-  /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
+  /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
@@ -301,18 +328,35 @@ export interface KnowledgeBase {
   max_calls_per_conversation: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check: number
+  /** Whether multimodal (video/image) uploads + Gemini analysis are enabled for this KB */
+  multimodal_analysis_enabled?: boolean
+  /** Model reference for multimodal analysis (must support multimodal analysis) */
+  multimodal_analysis_model_ref?: SummaryModelRef | null
+  /** Custom video analysis prompt; null/undefined = use system default */
+  multimodal_analysis_video_prompt?: string | null
+  /** Custom image analysis prompt; null/undefined = use system default */
+  multimodal_analysis_image_prompt?: string | null
   created_at: string
   updated_at: string
+}
+
+/** Initial member to add when creating a knowledge base */
+export interface InitialMember {
+  entity_type: string
+  entity_id: string
+  role: MemberRole
+  entity_display_name?: string
 }
 
 export interface KnowledgeBaseCreate {
   name: string
   description?: string
   namespace?: string
-  retrieval_config?: Partial<RetrievalConfig>
+  retrieval_config?: RetrievalConfigDraft
+  rag_config_mode?: RagConfigMode
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
-  /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
+  /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
@@ -320,6 +364,16 @@ export interface KnowledgeBaseCreate {
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check?: number
+  /** Initial members (users and groups) to add after creation */
+  members?: InitialMember[]
+  /** Enable multimodal (video/image) uploads + Gemini analysis */
+  multimodal_analysis_enabled?: boolean
+  /** Model reference for multimodal analysis (must support multimodal analysis) */
+  multimodal_analysis_model_ref?: SummaryModelRef | null
+  /** Custom video analysis prompt; null/empty = use system default */
+  multimodal_analysis_video_prompt?: string | null
+  /** Custom image analysis prompt; null/empty = use system default */
+  multimodal_analysis_image_prompt?: string | null
 }
 
 export interface RetrievalConfigUpdate {
@@ -344,6 +398,14 @@ export interface KnowledgeBaseUpdate {
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check?: number
+  /** Enable multimodal (video/image) uploads + Gemini analysis */
+  multimodal_analysis_enabled?: boolean
+  /** Model reference for multimodal analysis (must support multimodal analysis) */
+  multimodal_analysis_model_ref?: SummaryModelRef | null
+  /** Custom video analysis prompt; null/empty = use system default */
+  multimodal_analysis_video_prompt?: string | null
+  /** Custom image analysis prompt; null/empty = use system default */
+  multimodal_analysis_image_prompt?: string | null
 }
 
 export interface KnowledgeBaseListResponse {
@@ -368,6 +430,7 @@ export interface KnowledgeDocument {
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
+  folder_id: number // 0 = root level
   created_at: string
   updated_at: string
 }
@@ -377,9 +440,12 @@ export interface KnowledgeDocumentCreate {
   name: string
   file_extension: string
   file_size: number
+  folder_id?: number // 0 = root level
   splitter_config?: Partial<SplitterConfig>
   source_type?: DocumentSourceType
   source_config?: Record<string, unknown>
+  /** Per-document multimodal analysis prompt override; null/undefined = inherit KB default */
+  multimodal_analysis_prompt?: string | null
 }
 
 export interface KnowledgeDocumentUpdate {
@@ -390,6 +456,10 @@ export interface KnowledgeDocumentUpdate {
 
 export interface KnowledgeDocumentListResponse {
   total: number
+  returned_count: number
+  limit: number | null
+  offset: number
+  has_more: boolean
   items: KnowledgeDocument[]
 }
 
@@ -453,6 +523,7 @@ export interface DocumentSummary {
 export interface KnowledgeBaseSummary {
   short_summary?: string
   long_summary?: string
+  manual_long_summary?: string | null
   topics?: string[]
   meta_info?: {
     document_count?: number
@@ -463,6 +534,11 @@ export interface KnowledgeBaseSummary {
   error?: string
   updated_at?: string
   last_summary_doc_count?: number
+  manual_updated_at?: string | null
+  manual_updated_by?: {
+    id: number
+    name: string
+  } | null
 }
 
 export interface KnowledgeBaseSummaryResponse {
@@ -530,6 +606,7 @@ export interface ChunkListResponse {
   items: ChunkItem[]
   splitter_type?: string
   splitter_subtype?: string
+  qa_pair_count: number
 }
 
 // ============== Permission Types ==============
@@ -580,8 +657,16 @@ export interface PermissionUpdateRequest {
 }
 
 // Batch permission add types
+export interface BatchPermissionMember {
+  user_id: number
+  role: MemberRole
+  entity_type?: string
+  entity_id?: string
+  entity_display_name?: string
+}
+
 export interface BatchPermissionAddRequest {
-  members: { user_id: number; role: MemberRole }[]
+  members: BatchPermissionMember[]
 }
 
 export interface BatchPermissionAddResponse {
@@ -592,13 +677,19 @@ export interface BatchPermissionAddResponse {
 // Permission User Info types
 export interface PermissionUserInfo {
   id: number
-  user_id: number
-  username: string
+  user_id?: number | null
+  display_name: string
   email?: string
   role: MemberRole
   requested_at: string
   reviewed_at?: string
   reviewed_by?: number
+  /** Entity type: 'user' (default), 'namespace' */
+  entity_type?: string
+  /** Entity identifier */
+  entity_id?: string
+  /** Permission source: 'direct', 'entity_permission', 'share_link' */
+  source_type?: string
 }
 
 export interface PendingPermissionInfo {
@@ -725,6 +816,13 @@ export interface PersonalKnowledgeBaseGroup {
 /** Group type for knowledge base categorization */
 export type KnowledgeGroupType = 'personal' | 'personal-shared' | 'group' | 'organization'
 
+/** Group info for a knowledge base (for display purposes) */
+export interface KbGroupInfo {
+  groupId: string
+  groupName: string
+  groupType: KnowledgeGroupType
+}
+
 /** Knowledge base with group info for all-grouped response */
 export interface KnowledgeBaseWithGroupInfo {
   id: number
@@ -744,6 +842,16 @@ export interface KnowledgeBaseWithGroupInfo {
   group_type: KnowledgeGroupType
   /** Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | null */
   my_role?: MemberRole | null
+  /** Source group name for entity-authorized shared KBs */
+  source_group?: string | null
+  /** Share source user name for shared KBs */
+  shared_from?: string | null
+  /** Multiple share source user names for multi-source shared KBs in All mode */
+  shared_from_users?: string[]
+  /** Share via entity type: 'user', 'namespace', or other registered types */
+  shared_via?: string
+  /** Knowledge base creator's user name for display fallback */
+  owner_name?: string
 }
 
 /** Personal knowledge bases in all-grouped response */
@@ -786,4 +894,37 @@ export interface AllGroupedKnowledgeResponse {
   groups: AllGroupedTeamGroup[]
   organization: AllGroupedOrganization
   summary: AllGroupedSummary
+}
+
+// ============== Knowledge Folder Types ==============
+
+/** Knowledge folder node in the folder tree */
+export interface KnowledgeFolder {
+  id: number
+  kind_id: number
+  parent_id: number // 0 = root level
+  name: string
+  children: KnowledgeFolder[]
+  document_count: number
+  direct_document_count?: number
+  total_document_count?: number
+  created_at: string
+  updated_at: string
+}
+
+/** Request to create a new folder */
+export interface KnowledgeFolderCreate {
+  name: string
+  parent_id?: number // 0 = root level
+}
+
+/** Request to update a folder */
+export interface KnowledgeFolderUpdate {
+  name?: string
+  parent_id?: number // 0 = root level, undefined = no change
+}
+
+/** Request to move a document to a folder */
+export interface DocumentMoveRequest {
+  folder_id: number // 0 = root level
 }

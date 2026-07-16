@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # OpenAPI v1/responses API
 
 This document describes the OpenAPI v1/responses endpoint, which provides an OpenAI Responses API compatible interface for interacting with Wegent agents (Teams).
@@ -45,6 +49,7 @@ POST /api/v1/responses
 | `input` | string \| array | Yes | User input prompt or conversation history |
 | `stream` | boolean | No | Enable streaming output (default: `false`) |
 | `previous_response_id` | string | No | Previous response ID for follow-up conversations |
+| `reasoning` | object | No | Model reasoning configuration with `effort` and optional `summary` fields |
 | `tools` | array | No | Wegent custom tools configuration |
 
 #### Model Format
@@ -80,6 +85,21 @@ The `input` field supports two formats:
 }
 ```
 
+#### Reasoning Configuration
+
+`reasoning.effort` accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`. Availability depends on the selected model; clients should use the capability list returned by the model runtime instead of constructing unsupported levels.
+
+`reasoning.summary` accepts `auto`, `concise`, or `detailed`.
+
+```json
+{
+  "reasoning": {
+    "effort": "ultra",
+    "summary": "auto"
+  }
+}
+```
+
 #### Tools Configuration
 
 The `tools` array enables additional server-side capabilities:
@@ -98,6 +118,7 @@ The `tools` array enables additional server-side capabilities:
 | `wegent_code_bot` | Enable code task with git repository (for Executor-based Teams) |
 | `mcp` | Add custom MCP servers |
 | `skill` | Preload specific skills |
+| `knowledge_base` | Let a Chat Shell agent use selected knowledge bases, optionally scoped to folders or documents |
 
 **Code Bot Configuration (for code tasks):**
 ```json
@@ -146,6 +167,54 @@ The `tools` array enables additional server-side capabilities:
   ]
 }
 ```
+
+**Knowledge Base Configuration:**
+
+Use `knowledge_base_names` for whole-knowledge-base access:
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_names": ["default#Product Docs"]
+    }
+  ]
+}
+```
+
+Use `knowledge_base_refs` when access must be scoped to folders or documents:
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_refs": [
+        {
+          "name": "default#Product Docs",
+          "folder_ids": [10],
+          "document_ids": [101],
+          "include_subfolders": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+Scope rules:
+
+- When both `folder_ids` and `document_ids` are provided, the scope is their union.
+- `folder_ids: [0]` means documents directly under the knowledge-base root. It does not mean whole-knowledge-base access.
+- For whole-knowledge-base access, omit both `folder_ids` and `document_ids`.
+- `folder_ids: []` and `document_ids: []` are invalid.
+- `knowledge_base_refs` and `knowledge_base_names` are mutually exclusive.
+- Top-level `folder_ids` / `document_ids` are only a single-KB compatibility form. Multi-KB scoped requests must use `knowledge_base_refs`.
+
+The scope is an access boundary. When a folder or document scope is enabled, `knowledge_base_search`, `kb_ls`, and `kb_head` can only search, list, or read documents inside that scope. Out-of-scope document reads return `document_scope_violation`.
+
+When a request includes `previous_response_id` and does not provide a new `knowledge_base` tool, the system inherits the previously bound knowledge-base scope for that task and re-resolves folder membership for the current turn. Passing a new `knowledge_base` tool explicitly replaces the previous scope.
 
 #### Response Behavior
 
@@ -308,11 +377,19 @@ When `stream=true` is set (Chat Shell type only), the API returns Server-Sent Ev
 | `response.output_item.added` | New output item (message) added |
 | `response.content_part.added` | New content part added to message |
 | `response.output_text.delta` | Text chunk received |
+| `response.reasoning_summary_part.added` | New reasoning summary output item added |
+| `response.reasoning_summary_text.delta` | Reasoning summary text chunk received |
 | `response.output_text.done` | Text output completed |
 | `response.content_part.done` | Content part completed |
 | `response.output_item.done` | Output item completed |
 | `response.completed` | Response fully completed |
 | `response.failed` | Response failed with error |
+
+### Reasoning Output Order
+
+When deep thinking is enabled or the model returns reasoning summaries, the stream may contain multiple independent `reasoning` output items. Tool calls or regular text output close the current reasoning block; later reasoning content creates a new `reasoning` output item.
+
+The final `response.completed.response.output` preserves the chronological order of these items, for example `reasoning -> shell_call -> reasoning -> message`. Clients should render the `output` array in order and should not merge multiple `reasoning` items into one block.
 
 ### Example SSE Stream
 

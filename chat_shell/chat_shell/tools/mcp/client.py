@@ -282,7 +282,10 @@ class MCPClient:
             return
 
         add_span_event("creating_multi_server_client")
-        self._client = MultiServerMCPClient(connections=self.connections)
+        self._client = MultiServerMCPClient(
+            connections=self.connections,
+            tool_name_prefix=True,
+        )
 
         # Load tools from each server individually to handle failures gracefully
         # This avoids the issue where one failing server causes all tools to fail

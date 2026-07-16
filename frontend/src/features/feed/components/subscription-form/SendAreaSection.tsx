@@ -8,18 +8,8 @@
  * Task Settings Section - Execution target, prompt input with agent, model, and skill selectors
  */
 
-import { useCallback, useRef, useState } from 'react'
-import {
-  Brain,
-  ChevronDown,
-  Database,
-  Settings,
-  Sparkles,
-  Users,
-  X,
-  Check,
-  Variable,
-} from 'lucide-react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { ChevronDown, Database, Settings, Sparkles, Users, X, Variable } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -35,24 +25,29 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+  type SpecialModelOption,
+} from '@/components/model-select/ModelCascadeSelect'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
 import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
 import { RichKnowledgeBaseSelector } from '../RichKnowledgeBaseSelector'
 import { CollapsibleSection } from '@/components/common/CollapsibleSection'
-import type { SendAreaSectionProps, SubscriptionModel } from './types'
+import type { SendAreaSectionProps } from './types'
 import type { DeviceInfo } from '@/apis/devices'
 import type { SubscriptionExecutionTargetType } from '@/types/subscription'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
+import { getSubscriptionTeamDisplayName } from './team-selection'
 
-const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
-  [...devices].sort((left, right) => {
+type SubscriptionDeviceType = Extract<DeviceInfo['device_type'], SubscriptionExecutionTargetType>
+type SubscriptionDeviceInfo = DeviceInfo & { device_type: SubscriptionDeviceType }
+
+function isSubscriptionDevice(device: DeviceInfo): device is SubscriptionDeviceInfo {
+  return device.device_type === 'local' || device.device_type === 'cloud'
+}
+
+const sortDevicesForSelection = (devices: DeviceInfo[]): SubscriptionDeviceInfo[] =>
+  devices.filter(isSubscriptionDevice).sort((left, right) => {
     if (left.device_type !== right.device_type) {
       return left.device_type === 'local' ? -1 : 1
     }
@@ -61,11 +56,6 @@ const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
     }
     return left.name.localeCompare(right.name)
   })
-
-const getPreferredDevice = (devices: DeviceInfo[]): DeviceInfo | null => {
-  const sortedDevices = sortDevicesForSelection(devices)
-  return sortedDevices[0] || null
-}
 
 export function SendAreaSection({
   executionTarget,
@@ -100,8 +90,6 @@ export function SendAreaSection({
 }: SendAreaSectionProps) {
   const { t } = useTranslation('feed')
   const promptTemplateRef = useRef<HTMLTextAreaElement>(null)
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
-  const [modelSearchValue, setModelSearchValue] = useState('')
   const [variablesPopoverOpen, setVariablesPopoverOpen] = useState(false)
 
   // Build prompt variables list based on trigger type
@@ -171,7 +159,10 @@ export function SendAreaSection({
     [setTeamId]
   )
 
-  const selectableDevices = sortDevicesForSelection(availableDevices)
+  const selectableDevices = useMemo(
+    () => sortDevicesForSelection(availableDevices),
+    [availableDevices]
+  )
   const hasSelectableDevices = selectableDevices.length > 0
 
   const handleExecutionTargetTypeChange = useCallback(
@@ -181,7 +172,7 @@ export function SendAreaSection({
         return
       }
 
-      const preferredDevice = getPreferredDevice(availableDevices)
+      const preferredDevice = selectableDevices[0] || null
       if (!preferredDevice) {
         setExecutionTarget({ type: 'local' })
         return
@@ -192,12 +183,12 @@ export function SendAreaSection({
         device_id: preferredDevice.device_id,
       })
     },
-    [availableDevices, setExecutionTarget]
+    [selectableDevices, setExecutionTarget]
   )
 
   const handleExecutionTargetDeviceChange = useCallback(
     (deviceId: string) => {
-      const selectedDevice = availableDevices.find(device => device.device_id === deviceId)
+      const selectedDevice = selectableDevices.find(device => device.device_id === deviceId)
       if (!selectedDevice) return
 
       setExecutionTarget({
@@ -205,22 +196,36 @@ export function SendAreaSection({
         device_id: selectedDevice.device_id,
       })
     },
-    [availableDevices, setExecutionTarget]
+    [selectableDevices, setExecutionTarget]
   )
 
   // Filter models based on search and compatibility
   const compatibleModels = compatibleProvider
-    ? models.filter(model => model.provider === compatibleProvider)
+    ? models.filter(model => compatibleProvider.includes(model.provider as CompatibleProvider))
     : models
 
-  const filteredModels = compatibleModels.filter(model => {
-    const searchLower = modelSearchValue.toLowerCase()
-    return (
-      model.name.toLowerCase().includes(searchLower) ||
-      (model.displayName && model.displayName.toLowerCase().includes(searchLower)) ||
-      (model.provider && model.provider.toLowerCase().includes(searchLower))
-    )
-  })
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+  const defaultModelOption: SpecialModelOption[] = useMemo(
+    () => [
+      {
+        key: '__default__',
+        label: t('use_default_model'),
+      },
+    ],
+    [t]
+  )
 
   return (
     <CollapsibleSection
@@ -364,7 +369,7 @@ export function SendAreaSection({
               <SelectContent>
                 {teams.map(team => (
                   <SelectItem key={team.id} value={team.id.toString()}>
-                    {team.name}
+                    {getSubscriptionTeamDisplayName(team)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -374,92 +379,37 @@ export function SendAreaSection({
           {/* Model Selection */}
           <div className="space-y-1.5">
             <Label className="text-xs text-text-muted">{t('select_model_label') || '模型'}</Label>
-            <Popover open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={modelSelectorOpen}
-                  className="h-9 w-full justify-between border-border/50"
-                  disabled={modelsLoading}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Brain className="h-4 w-4 text-text-muted shrink-0" />
-                    {modelsLoading ? (
-                      <span className="text-text-muted">{t('common:loading')}</span>
-                    ) : selectedModel ? (
-                      <span className="truncate">
-                        {selectedModel.displayName || selectedModel.name}
-                      </span>
-                    ) : (
-                      <span className="text-text-muted">{t('select_model_placeholder')}</span>
-                    )}
-                  </div>
-                  <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className={cn(
-                  'w-[400px] p-0',
-                  'max-h-[var(--radix-popover-content-available-height,360px)]',
-                  'flex flex-col overflow-hidden'
-                )}
-                align="start"
-              >
-                <Command className="flex flex-col flex-1 min-h-0">
-                  <CommandInput
-                    placeholder={t('search_model')}
-                    value={modelSearchValue}
-                    onValueChange={setModelSearchValue}
-                  />
-                  <CommandList
-                    className="min-h-[36px] max-h-[240px] overflow-y-auto flex-1"
-                    onWheel={event => {
-                      event.stopPropagation()
-                    }}
-                  >
-                    <CommandEmpty>{t('no_model_found')}</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value="__clear__"
-                        onSelect={() => {
-                          setSelectedModel(null)
-                          setModelSelectorOpen(false)
-                          setModelSearchValue('')
-                        }}
-                      >
-                        <span className="text-text-muted">{t('use_default_model')}</span>
-                      </CommandItem>
-                      {filteredModels.map((model: SubscriptionModel) => (
-                        <CommandItem
-                          key={model.name}
-                          value={model.name}
-                          onSelect={() => {
-                            setSelectedModel(model)
-                            setModelSelectorOpen(false)
-                            setModelSearchValue('')
-                          }}
-                        >
-                          <div className="flex flex-col">
-                            <span
-                              className={cn(selectedModel?.name === model.name && 'font-medium')}
-                            >
-                              {model.displayName || model.name}
-                            </span>
-                            <span className="text-xs text-text-muted">
-                              {model.provider} · {model.modelId}
-                            </span>
-                          </div>
-                          {selectedModel?.name === model.name && (
-                            <Check className="ml-auto h-4 w-4" />
-                          )}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <GroupedModelSelect
+              models={compatibleModels}
+              selectedModel={selectedModel}
+              selectedSpecialKey={selectedModel ? null : '__default__'}
+              specialOptions={defaultModelOption}
+              labels={cascadeLabels}
+              onSelectModel={setSelectedModel}
+              onSelectSpecialOption={() => setSelectedModel(null)}
+              placeholder={modelsLoading ? t('common:loading') : t('select_model_placeholder')}
+              disabled={modelsLoading}
+              dataTestId="subscription-model-select"
+              triggerClassName="h-9 border-border/50"
+              getModelKey={model => `${model.type || ''}-${model.name}`}
+              renderModelBadges={model =>
+                model.type ? (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                    {model.type}
+                  </span>
+                ) : null
+              }
+              renderModelMeta={model =>
+                model.provider || model.modelId ? (
+                  <span className="block truncate text-xs text-text-muted">
+                    {[model.provider, model.modelId].filter(Boolean).join(' · ')}
+                  </span>
+                ) : null
+              }
+            />
+            {modelRequired && !selectedModel && (
+              <p className="text-xs text-destructive">{t('select_model_required')}</p>
+            )}
           </div>
         </div>
 

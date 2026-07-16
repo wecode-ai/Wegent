@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.subtask import Subtask
 from app.models.subtask_context import ContextType
 from app.models.task import TaskResource
 from app.models.user import User
@@ -42,6 +41,7 @@ from app.services.auth.task_token import extract_token_from_header, verify_task_
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
 from app.services.shared_task import shared_task_service
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -140,16 +140,11 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
     has_access = context.user_id == current_user.id
 
     if not has_access:
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-        from app.models.subtask import Subtask
-        from app.models.task import TaskResource
-
         task_id = None
 
         if context.subtask_id > 0:
             # Linked attachment: find task via subtask
-            subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=context.subtask_id)
             if subtask:
                 task_id = subtask.task_id
         else:
@@ -168,14 +163,12 @@ def _ensure_attachment_access(db: Session, context, current_user: User) -> None:
                 # kb_access is None: not a KB attachment, try task-based fallback
                 # This handles executor-uploaded files that weren't linked
                 # to a subtask at upload time (legacy data).
-                subtask = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.user_id == context.user_id,
-                    )
-                    .order_by(Subtask.id.desc())
-                    .first()
+                subtasks = subtask_store.list_by_user(
+                    db,
+                    user_id=context.user_id,
+                    limit=1,
                 )
+                subtask = subtasks[0] if subtasks else None
                 if subtask:
                     task_id = subtask.task_id
 
@@ -190,19 +183,10 @@ def _check_task_access(db: Session, task_id: int, user_id: int) -> bool:
     """Check if a user has access to a task (as owner or member)."""
     from app.models.resource_member import MemberStatus, ResourceMember
     from app.models.share_link import ResourceType
-    from app.models.task import TaskResource
 
     # Check if user is the task owner
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == task_id,
-            TaskResource.kind == "Task",
-            TaskResource.user_id == user_id,
-        )
-        .first()
-    )
-    if task:
+    task = task_store.get_by_id(db, task_id=task_id)
+    if task and task.kind == "Task" and task.user_id == user_id:
         return True
 
     # Check if user is a task member
@@ -211,7 +195,8 @@ def _check_task_access(db: Session, task_id: int, user_id: int) -> bool:
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
-            ResourceMember.user_id == user_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED,
         )
         .first()
@@ -301,7 +286,7 @@ def _validate_share_token_access(
             )
             return False
 
-    subtask = db.query(Subtask).filter(Subtask.id == context.subtask_id).first()
+    subtask = subtask_store.get_by_id(db, subtask_id=context.subtask_id)
     if not subtask:
         return False
 
@@ -310,15 +295,11 @@ def _validate_share_token_access(
         return False
 
     # Verify the task owner matches the user_id in the token
-    task = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == share_info.task_id,
-            TaskResource.user_id == share_info.user_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .first()
+    task = task_store.get_owned_task_by_state(
+        db,
+        task_id=share_info.task_id,
+        user_id=share_info.user_id,
+        state=TaskResource.STATE_ACTIVE,
     )
     if not task:
         return False
@@ -342,6 +323,7 @@ async def upload_attachment(
     - Word (.doc, .docx)
     - PowerPoint (.ppt, .pptx)
     - Excel (.xls, .xlsx, .csv)
+    - XMind (.xmind)
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
@@ -772,7 +754,7 @@ async def get_attachment_by_subtask(
     # Verify access: uploader, task owner, or task member
     has_access = context.user_id == current_user.id
     if not has_access:
-        subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
         if subtask:
             has_access = _check_task_access(db, subtask.task_id, current_user.id)
 
@@ -806,7 +788,7 @@ async def get_all_task_attachments(
         List of attachment details for all subtasks of the task
     """
     # Verify task exists and user has access
-    task = db.query(TaskResource).filter(TaskResource.id == task_id).first()
+    task = task_store.get_by_id(db, task_id=task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -820,7 +802,8 @@ async def get_all_task_attachments(
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
-            ResourceMember.user_id == current_user.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(current_user.id),
             ResourceMember.status == MemberStatus.APPROVED,
         )
         .first()

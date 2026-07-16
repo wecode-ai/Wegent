@@ -11,17 +11,31 @@ export interface UnifiedShell {
   name: string
   type: ShellTypeEnum // 'public', 'user', or 'group' - identifies shell source
   displayName?: string | null
-  shellType: string // Agent type: 'ClaudeCode' | 'Agno' | 'Dify'
+  shellType: string // Agent type, e.g. 'Chat', 'ClaudeCode', 'Agno', or 'Dify'
   baseImage?: string | null
   baseShellRef?: string | null
   supportModel?: string[] | null
   executionType?: 'local_engine' | 'external_api' | null // Shell execution type
   namespace?: string // Resource namespace (group name or 'default')
   requiresWorkspace?: boolean // Whether this shell requires a workspace (default: true for local_engine)
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface UnifiedShellListResponse {
   data: UnifiedShell[]
+}
+
+const HIDDEN_SHELL_TYPES = new Set(['Agno'])
+
+export function isSelectableShell(shell: Pick<UnifiedShell, 'shellType'>): boolean {
+  return !HIDDEN_SHELL_TYPES.has(shell.shellType)
+}
+
+export function filterSelectableShells<T extends Pick<UnifiedShell, 'shellType'>>(
+  shells: T[]
+): T[] {
+  return shells.filter(isSelectableShell)
 }
 
 export interface ShellCreateRequest {
@@ -89,7 +103,7 @@ export const shellApis = {
    *
    * Each shell includes a 'type' field ('public', 'user', or 'group') to identify its source.
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    */
   async getUnifiedShells(
     scope?: 'personal' | 'group' | 'all',
@@ -180,7 +194,7 @@ export const shellApis = {
    */
   async getLocalEngineShells(): Promise<UnifiedShell[]> {
     const response = await this.getUnifiedShells()
-    return (response.data || []).filter(
+    return filterSelectableShells(response.data || []).filter(
       shell => shell.type === 'public' && shell.executionType === 'local_engine'
     )
   },

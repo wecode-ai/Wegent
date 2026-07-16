@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import CustomHTTPException
@@ -145,7 +146,8 @@ def create_group(
     owner_member = ResourceMember(
         resource_type=NAMESPACE_RESOURCE_TYPE,
         resource_id=new_group.id,
-        user_id=owner_user_id,
+        entity_type="user",
+        entity_id=str(owner_user_id),
         role=GroupRole.Owner.value,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=owner_user_id,  # Self-invited
@@ -252,6 +254,68 @@ def list_user_groups(
         result.append(group_response)
 
     return result
+
+
+def search_groups(
+    db: Session,
+    q: str,
+    skip: int = 0,
+    limit: int = 20,
+    user_id: int | None = None,
+    user_role: str | None = None,
+) -> tuple[list[GroupResponse], int]:
+    """
+    Search groups by name or display_name with level='group' filter.
+
+    Args:
+        db: Database session
+        q: Search query string
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        user_id: Current user ID (optional — filters to user's groups if provided)
+        user_role: Current user role (optional)
+    Returns:
+        Tuple of (list of GroupResponse objects, total count)
+    """
+    query = db.query(Namespace).filter(
+        Namespace.is_active.is_(True),
+        Namespace.level == GroupLevel.group.value,
+    )
+
+    if q:
+        search_pattern = f"%{q}%"
+        query = query.filter(
+            or_(
+                Namespace.name.ilike(search_pattern),
+                Namespace.display_name.ilike(search_pattern),
+            )
+        )
+
+    # Filter to groups where user is a member
+    if user_id is not None:
+        member_data = get_user_groups_with_roles(db, user_id)
+        group_names = [name for name, _ in member_data]
+        if not group_names:
+            return [], 0
+        query = query.filter(Namespace.name.in_(group_names))
+
+    total = query.count()
+    groups = query.order_by(Namespace.created_at.desc()).offset(skip).limit(limit).all()
+
+    # Get member counts and user's role map
+    member_counts = {}
+    role_map = {name: role for name, role in member_data} if user_id is not None else {}
+    for group in groups:
+        member_counts[group.name] = get_group_member_count(db, group.name)
+
+    result = []
+    for group in groups:
+        group_response = GroupResponse.model_validate(group)
+        group_response.member_count = member_counts.get(group.name, 0)
+        group_response.my_role = role_map.get(group.name)
+        result.append(group_response)
+
+    return result, total
 
 
 def update_group(
@@ -772,7 +836,8 @@ def update_member_roles_batch(
         .filter(
             ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
             ResourceMember.resource_id == namespace_id,
-            ResourceMember.user_id.in_(user_ids),
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id.in_([str(uid) for uid in user_ids]),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .all()
@@ -899,8 +964,10 @@ def transfer_ownership(
             detail="Only the current owner can transfer ownership",
         )
 
-    # Check new owner is at least a Maintainer
-    new_owner_role = get_user_role_in_group(db, new_owner_user_id, group_name)
+    # Check new owner is at least a Maintainer (including entity-derived roles)
+    from app.services.group_permission import get_effective_role_in_group
+
+    new_owner_role = get_effective_role_in_group(db, new_owner_user_id, group_name)
     if new_owner_role not in [GroupRole.Owner, GroupRole.Maintainer]:
         raise HTTPException(
             status_code=400,
@@ -916,12 +983,24 @@ def transfer_ownership(
     group.owner_user_id = new_owner_user_id
 
     # Update member roles
-    # Update member roles
     if current_owner_member:
         current_owner_member.role = GroupRole.Maintainer.value
 
     if new_owner_member:
         new_owner_member.role = GroupRole.Owner.value
+    else:
+        # Entity members cannot directly become owner; create a user record
+        new_owner_member = ResourceMember.create(
+            resource_type=NAMESPACE_RESOURCE_TYPE,
+            resource_id=group.id,
+            entity_type="user",
+            entity_id=str(new_owner_user_id),
+            role=GroupRole.Owner.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=current_owner_user_id,
+        )
+        db.add(new_owner_member)
+
     db.commit()
     db.refresh(group)
 
@@ -986,7 +1065,8 @@ def invite_all_users(
             new_member = ResourceMember(
                 resource_type=NAMESPACE_RESOURCE_TYPE,
                 resource_id=group.id,
-                user_id=user.id,
+                entity_type="user",
+                entity_id=str(user.id),
                 role=GroupRole.Reporter.value,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=invited_by_user_id,
@@ -1017,6 +1097,74 @@ def invite_all_users(
             "updated_at": member.updated_at,
         }
         result.append(GroupMemberResponse(**response_data))
+
+    return result
+
+
+def get_child_groups(
+    db: Session,
+    parent_name: str,
+    user_id: int,
+    user_role: str | None = None,
+) -> list[GroupResponse]:
+    """
+    Get all subgroups under the given parent group.
+
+    Args:
+        db: Database session
+        parent_name: Parent group name
+        user_id: Current user ID for permission filtering
+        user_role: User's system role ('admin' or 'user')
+
+    Returns:
+        List of GroupResponse for child groups the user can access
+    """
+    # Query all active subgroups with explicit LIKE escape for safety
+    escaped_name = (
+        parent_name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    subgroups = (
+        db.query(Namespace)
+        .filter(
+            Namespace.name.like(f"{escaped_name}/%", escape="\\"),
+            Namespace.is_active.is_(True),
+        )
+        .order_by(Namespace.name.asc())
+        .all()
+    )
+
+    if not subgroups:
+        return []
+
+    # Get user's role in each subgroup for permission filtering
+    from app.services.group_member_helper import get_user_groups_with_roles
+
+    member_data = get_user_groups_with_roles(db, user_id)
+    user_group_roles = {name: role for name, role in member_data}
+
+    if user_role == "admin":
+        organization_groups = (
+            db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active.is_(True),
+            )
+            .all()
+        )
+        for (group_name,) in organization_groups:
+            user_group_roles[group_name] = GroupRole.Owner.value
+
+    result = []
+    for group in subgroups:
+        # Only include groups where user has access
+        group_access_role = user_group_roles.get(group.name)
+        if group_access_role is None:
+            continue
+
+        group_response = GroupResponse.model_validate(group)
+        group_response.my_role = group_access_role
+        group_response.member_count = get_group_member_count(db, group.name)
+        result.append(group_response)
 
     return result
 

@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+
 # ============================================================
 # Event Names
 # ============================================================
@@ -26,6 +28,7 @@ class ClientEvents:
     CHAT_CANCEL = "chat:cancel"
     CHAT_RESUME = "chat:resume"
     CHAT_RETRY = "chat:retry"
+    CHAT_GUIDE = "chat:guide"
 
     # Task room events
     TASK_JOIN = "task:join"
@@ -51,10 +54,14 @@ class ServerEvents:
     CHAT_DONE = "chat:done"
     CHAT_ERROR = "chat:error"
     CHAT_CANCELLED = "chat:cancelled"
+    CHAT_STATUS_UPDATED = "chat:status_updated"
 
     # Block events for mixed content rendering (to task room)
     CHAT_BLOCK_CREATED = "chat:block_created"
     CHAT_BLOCK_UPDATED = "chat:block_updated"
+    CHAT_GUIDANCE_QUEUED = "chat:guidance_queued"
+    CHAT_GUIDANCE_APPLIED = "chat:guidance_applied"
+    CHAT_GUIDANCE_EXPIRED = "chat:guidance_expired"
 
     # Non-streaming messages (to task room, exclude sender)
     CHAT_MESSAGE = "chat:message"
@@ -129,6 +136,59 @@ class GenerateParams(BaseModel):
     duration: Optional[int] = Field(None, description="Duration in seconds")
 
 
+class ChatExecutionWorkspacePayload(BaseModel):
+    """Workspace execution intent for chat:send."""
+
+    source: Literal["git_worktree"] = Field(
+        ..., description="Execution workspace source"
+    )
+    branch: Optional[str] = Field(
+        None, description="Optional source branch used to create the worktree"
+    )
+
+
+class ChatExecutionPayload(BaseModel):
+    """Execution options for chat:send."""
+
+    workspace: Optional[ChatExecutionWorkspacePayload] = Field(
+        None, description="Workspace execution options"
+    )
+
+
+class InteractiveFormAnswerPayload(BaseModel):
+    """Structured answer for a deferred interactive_form_question tool call."""
+
+    type: Literal["interactive_form_question"] = Field(
+        "interactive_form_question",
+        description="Interactive form answer type",
+    )
+    tool_use_id: str = Field(
+        ...,
+        description="Deferred tool call ID for the rendered form",
+    )
+    task_id: Optional[int] = Field(None, description="Task ID for the rendered form")
+    subtask_id: Optional[int] = Field(
+        None,
+        description="Assistant subtask ID that rendered the form",
+    )
+    answers: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Normalized answer values keyed by question ID",
+    )
+    success: bool = Field(
+        True,
+        description="Whether the user submitted the form successfully.",
+    )
+    status: Literal["answered", "cancelled"] = Field(
+        "answered",
+        description="Answer status for the deferred form tool result.",
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable formatted answer message",
+    )
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -160,6 +220,10 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
+    model_options: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Model selection options, such as reasoning or speed.",
+    )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )
@@ -189,9 +253,27 @@ class ChatSendPayload(BaseModel):
         None,
         description="Local device ID for task execution (if None, use cloud executor)",
     )
+    # Project association
+    project_id: Optional[int] = Field(
+        None,
+        description="Project ID to associate this task with",
+    )
+    client_origin: str = Field(
+        CLIENT_ORIGIN_FRONTEND,
+        description="Client surface that owns this task",
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
+    )
     # Video generation parameters (user-selected at generation time)
     generate_params: Optional[GenerateParams] = Field(
         None, description="Video generation params from user selection"
+    )
+    interactive_form_answer: Optional[InteractiveFormAnswerPayload] = Field(
+        None,
+        description="Answer payload for a deferred interactive_form_question tool call",
+    )
+    execution: Optional[ChatExecutionPayload] = Field(
+        None,
+        description="Execution options for new tasks",
     )
 
 
@@ -232,6 +314,18 @@ class ChatRetryPayload(BaseModel):
     use_model_override: bool = Field(
         False,
         description="If true, use force_override_bot_model; if false, use bot's default model",
+    )
+
+
+class ChatGuidePayload(BaseModel):
+    """Payload for chat:guide event."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Active assistant subtask ID")
+    team_id: int = Field(..., description="Team ID")
+    message: str = Field(..., min_length=1, description="Guidance message")
+    client_guidance_id: Optional[str] = Field(
+        None, description="Client-generated guidance ID for correlation"
     )
 
 
@@ -276,7 +370,19 @@ class SourceReference(BaseModel):
 
     index: int = Field(..., description="Source index number (e.g., 1, 2, 3)")
     title: str = Field(..., description="Document title/filename")
-    kb_id: int = Field(..., description="Knowledge base ID")
+    kb_id: Optional[int] = Field(None, description="Knowledge base ID")
+    source_id: Optional[str] = Field(None, description="Provider-specific source ID")
+    source_type: Optional[str] = Field(None, description="Provider source type")
+    source_uri: Optional[str] = Field(None, description="Provider source URI")
+    source_name: Optional[str] = Field(None, description="Provider source name")
+
+
+class RetrievalSummaryPayload(BaseModel):
+    """Aggregated retrieval coverage summary for a response."""
+
+    searched_source_ids: List[str] = Field(default_factory=list)
+    ignored_source_ids: List[str] = Field(default_factory=list)
+    source_statuses: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ChatChunkPayload(BaseModel):
@@ -304,6 +410,9 @@ class ChatDonePayload(BaseModel):
     task_id: Optional[int] = None  # Add task_id for group chat members
     sources: Optional[List[SourceReference]] = Field(
         None, description="Knowledge base source references (for RAG citations)"
+    )
+    retrieval_summary: Optional[RetrievalSummaryPayload] = Field(
+        None, description="Aggregated retrieval coverage summary"
     )
 
 
@@ -363,6 +472,35 @@ class ChatSystemPayload(BaseModel):
     type: str
     content: str
     data: Optional[Dict[str, Any]] = None
+
+
+class ChatGuidanceQueuedPayload(BaseModel):
+    """Payload for chat:guidance_queued event."""
+
+    task_id: int
+    subtask_id: int
+    team_id: int
+    user_id: int
+    guidance_id: str
+    message: str
+    created_at: str
+
+
+class ChatGuidanceAppliedPayload(BaseModel):
+    """Payload for chat:guidance_applied event."""
+
+    task_id: int
+    subtask_id: int
+    guidance_id: str
+    applied_at: str
+
+
+class ChatGuidanceExpiredPayload(BaseModel):
+    """Payload for chat:guidance_expired event."""
+
+    task_id: int
+    subtask_id: int
+    guidance_ids: List[str]
 
 
 class TaskCreatedPayload(BaseModel):
@@ -625,12 +763,22 @@ class ChatSendAck(BaseModel):
     )
 
 
+class ChatGuideAck(BaseModel):
+    """ACK response for chat:guide event."""
+
+    guidance_id: Optional[str] = None
+    error: Optional[str] = None
+
+
 class TaskJoinAck(BaseModel):
     """ACK response for task:join event."""
 
     streaming: Optional[Dict[str, Any]] = None
     subtasks: Optional[List[Dict[str, Any]]] = Field(
         None, description="Subtasks data for immediate message sync"
+    )
+    status_updated: Optional[Dict[str, Any]] = Field(
+        None, description="Latest cached chat:status_updated snapshot"
     )
     error: Optional[str] = None
 

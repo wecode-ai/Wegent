@@ -43,9 +43,14 @@ export interface SkillSelectorPopoverRef {
   getButtonElement: () => HTMLElement | null
 }
 
+interface AutoAvailableSkill {
+  skill: UnifiedSkill
+  sources: Array<'agent_builtin' | 'my_default'>
+}
+
 interface GroupedSkill {
   skill: UnifiedSkill
-  group: 'team' | 'personal' | 'group' | 'public'
+  group: 'personal' | 'group' | 'public'
 }
 
 /**
@@ -84,28 +89,42 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
       getButtonElement: () => buttonRef.current,
     }))
 
-    // Group and filter skills
-    const groupedSkills = useMemo<GroupedSkill[]>(() => {
-      // For Chat Shell, filter out preloaded skills (they're auto-injected)
-      const filteredSkills = isChatShell
-        ? skills.filter(skill => !preloadedSkillNames.includes(skill.name))
-        : skills
-
-      // Create a set of team skill names for fast lookup
+    const autoAvailableSkills = useMemo<AutoAvailableSkill[]>(() => {
       const teamSkillSet = new Set(teamSkillNames)
+      const preloadedSkillSet = new Set(preloadedSkillNames)
+
+      return skills
+        .map(skill => {
+          const sources: Array<'agent_builtin' | 'my_default'> = []
+          if (teamSkillSet.has(skill.name) || preloadedSkillSet.has(skill.name)) {
+            sources.push('agent_builtin')
+          }
+          if (skill.availability?.inMyDefault) {
+            sources.push('my_default')
+          }
+          return sources.length > 0 ? { skill, sources } : null
+        })
+        .filter((item): item is AutoAvailableSkill => item !== null)
+    }, [skills, teamSkillNames, preloadedSkillNames])
+
+    // Group and filter temporary skills
+    const groupedSkills = useMemo<GroupedSkill[]>(() => {
+      const autoSkillNames = new Set(autoAvailableSkills.map(item => item.skill.name))
+      const filteredSkills = skills.filter(skill => {
+        if (autoSkillNames.has(skill.name)) return false
+        if (isChatShell && preloadedSkillNames.includes(skill.name)) return false
+        return true
+      })
 
       // Group skills
       const grouped: GroupedSkill[] = []
-      const teamSkills: GroupedSkill[] = []
       const personalSkills: GroupedSkill[] = []
       // Use Map to group skills by namespace for proper ordering
       const groupSkillsByNamespace: Map<string, GroupedSkill[]> = new Map()
       const publicSkills: GroupedSkill[] = []
 
       for (const skill of filteredSkills) {
-        if (teamSkillSet.has(skill.name)) {
-          teamSkills.push({ skill, group: 'team' })
-        } else if (skill.is_public) {
+        if (skill.is_public) {
           publicSkills.push({ skill, group: 'public' })
         } else if (skill.namespace && skill.namespace !== 'default') {
           // Group skills: namespace is not 'default' and not public
@@ -128,10 +147,10 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
         groupSkills.push(...groupSkillsByNamespace.get(namespace)!)
       }
 
-      // Sort: Team -> Personal -> Group (by namespace) -> Public
-      grouped.push(...teamSkills, ...personalSkills, ...groupSkills, ...publicSkills)
+      // Sort: Personal -> Group (by namespace) -> Public
+      grouped.push(...personalSkills, ...groupSkills, ...publicSkills)
       return grouped
-    }, [skills, teamSkillNames, preloadedSkillNames, isChatShell])
+    }, [skills, autoAvailableSkills, preloadedSkillNames, isChatShell])
 
     // Filter by search query
     const filteredSkills = useMemo(() => {
@@ -148,11 +167,23 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
       })
     }, [groupedSkills, searchQuery])
 
+    const filteredAutoAvailableSkills = useMemo(() => {
+      if (!searchQuery.trim()) {
+        return autoAvailableSkills
+      }
+
+      const lowerQuery = searchQuery.toLowerCase()
+      return autoAvailableSkills.filter(({ skill }) => {
+        const nameMatch = skill.name.toLowerCase().includes(lowerQuery)
+        const displayNameMatch = skill.displayName?.toLowerCase().includes(lowerQuery)
+        const descriptionMatch = skill.description?.toLowerCase().includes(lowerQuery)
+        return nameMatch || displayNameMatch || descriptionMatch
+      })
+    }, [autoAvailableSkills, searchQuery])
+
     // Get section header for a group
-    const getSectionHeader = (group: 'team' | 'personal' | 'group' | 'public') => {
+    const getSectionHeader = (group: 'personal' | 'group' | 'public') => {
       switch (group) {
-        case 'team':
-          return t('common:skillSelector.team_skills_section')
         case 'personal':
           return t('common:skillSelector.personal_skills_section')
         case 'group':
@@ -163,10 +194,8 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
     }
 
     // Get icon for a group
-    const getGroupIcon = (group: 'team' | 'personal' | 'group' | 'public') => {
+    const getGroupIcon = (group: 'personal' | 'group' | 'public') => {
       switch (group) {
-        case 'team':
-          return <Zap className="h-3 w-3" />
         case 'personal':
           return <User className="h-3 w-3" />
         case 'group':
@@ -177,12 +206,12 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
     }
 
     const selectedCount = selectedSkillNames.length
-    const hasSkills = groupedSkills.length > 0
+    const hasSkills = groupedSkills.length > 0 || autoAvailableSkills.length > 0
 
     // Render grouped skills with section headers
     // For group skills, we need to track namespace changes to show group name
     const renderSkillsList = () => {
-      if (filteredSkills.length === 0) {
+      if (filteredSkills.length === 0 && filteredAutoAvailableSkills.length === 0) {
         return (
           <div className="py-4 text-center text-sm text-text-muted">
             {searchQuery
@@ -192,9 +221,76 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
         )
       }
 
-      let currentGroup: 'team' | 'personal' | 'group' | 'public' | null = null
+      let currentGroup: 'personal' | 'group' | 'public' | null = null
       let currentNamespace: string | null = null
       const elements: React.ReactNode[] = []
+
+      elements.push(
+        <div
+          key="auto-available-header"
+          className="px-2 py-1.5 text-xs text-text-muted font-medium flex items-center gap-1.5 border-t border-border first:border-t-0 mt-1 first:mt-0"
+        >
+          <Zap className="h-3 w-3" />
+          {t('common:skillSelector.autoAvailable')}
+        </div>
+      )
+
+      if (filteredAutoAvailableSkills.length === 0) {
+        elements.push(
+          <div key="auto-available-empty" className="px-2 py-2 text-xs text-text-muted">
+            {t('common:skillSelector.emptyAutoAvailable')}
+          </div>
+        )
+      }
+
+      for (const { skill, sources } of filteredAutoAvailableSkills) {
+        elements.push(
+          <div key={`auto-${skill.id}`} className="flex items-center gap-2 px-2 py-2 rounded-md">
+            <div className="w-4 h-4 rounded border border-border bg-muted flex items-center justify-center flex-shrink-0 opacity-70">
+              <Check className="h-3 w-3 text-text-muted" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm truncate text-text-primary">
+                {skill.displayName || skill.name}
+              </div>
+              {skill.description && (
+                <div className="text-xs text-text-muted truncate">{skill.description}</div>
+              )}
+              <div className="mt-1 flex flex-wrap gap-1">
+                {sources.includes('agent_builtin') && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {t('common:skillSelector.agentBuiltin')}
+                  </Badge>
+                )}
+                {sources.includes('my_default') && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    {t('common:skillSelector.myDefault')}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      elements.push(
+        <div
+          key="temporary-header"
+          className="px-2 py-1.5 text-xs text-text-muted font-medium flex items-center gap-1.5 border-t border-border mt-1"
+        >
+          <Check className="h-3 w-3" />
+          {t('common:skillSelector.temporaryUse')}
+        </div>
+      )
+
+      if (filteredSkills.length === 0) {
+        elements.push(
+          <div key="temporary-empty" className="px-2 py-2 text-xs text-text-muted">
+            {t('common:skillSelector.no_available_skills')}
+          </div>
+        )
+        return elements
+      }
 
       for (const { skill, group } of filteredSkills) {
         // Add section header when group changes
@@ -229,7 +325,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
 
         elements.push(
           <div
-            key={skill.name}
+            key={skill.id}
             className={`flex items-center gap-2 px-2 py-2 rounded-md transition-colors ${
               readOnly ? 'cursor-default' : 'cursor-pointer'
             } ${isSelected ? 'bg-primary/10' : readOnly ? '' : 'hover:bg-muted'}`}
@@ -302,20 +398,16 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
         <div className="flex-1 overflow-y-auto custom-scrollbar">{renderSkillsList()}</div>
 
         <div className="px-2 pt-2 border-t border-border mt-2 flex items-center justify-between gap-2">
-          <span className="text-xs text-text-muted">
-            {isChatShell
-              ? t('common:skillSelector.preload_hint')
-              : t('common:skillSelector.download_hint')}
-          </span>
+          <span className="text-xs text-text-muted">{t('common:skillSelector.temporaryUse')}</span>
           <Button
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-xs text-text-muted hover:text-text-primary"
             asChild
           >
-            <Link href="/settings?section=personal&tab=personal-skills">
+            <Link href="/resource-library?tab=mine&type=skill&scope=personal">
               <Settings className="h-3 w-3 mr-1" />
-              {t('common:skillSelector.manage_skills')}
+              {t('common:skillSelector.manageDefault')}
             </Link>
           </Button>
         </div>

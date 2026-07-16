@@ -6,11 +6,14 @@
 Pydantic schemas for knowledge base and document management.
 """
 
+import logging
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.schemas.base_role import BaseRole
 
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
@@ -20,10 +23,20 @@ from app.schemas.kind import (
     RetrieverRef,
     SummaryModelRef,
 )
+from app.schemas.knowledge_multimodal import (
+    DocumentReindexRequest,
+    MultimodalAnalysisFieldsMixin,
+    MultimodalAnalysisResponseFieldsMixin,
+    MultimodalDocumentPromptMixin,
+    multimodal_response_kwargs,
+)
+from app.schemas.knowledge_search import KnowledgeSearchRequest
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
 from app.services.knowledge.splitter_config import normalize_splitter_config
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentStatus(str, Enum):
@@ -48,6 +61,8 @@ class DocumentIndexStatus(str, Enum):
 
     NOT_INDEXED = "not_indexed"
     QUEUED = "queued"
+    PENDING_CONVERSION = "pending_conversion"
+    CONVERTING = "converting"
     INDEXING = "indexing"
     SUCCESS = "success"
     FAILED = "failed"
@@ -67,7 +82,49 @@ class ResourceScope(str, Enum):
 # are imported from app.schemas.kind to maintain single source of truth
 
 
-class KnowledgeBaseCreate(BaseModel):
+class InitialMemberCreate(BaseModel):
+    """Schema for an initial member when creating a knowledge base."""
+
+    entity_type: str = Field(
+        default="user",
+        description="Entity type: 'user', 'namespace', or other registered types",
+    )
+    entity_id: str = Field(
+        ...,
+        min_length=1,
+        description="Entity identifier (user ID or namespace ID)",
+    )
+    role: BaseRole = Field(
+        default=BaseRole.Reporter,
+        description="Member role: Maintainer, Developer, Reporter, RestrictedAnalyst",
+    )
+    entity_display_name: Optional[str] = Field(
+        default=None,
+        description="Display name snapshot for the entity (e.g., department name, group display name)",
+    )
+
+
+class RetrievalConfigCreate(BaseModel):
+    """Partial retrieval configuration accepted during knowledge base creation."""
+
+    retriever_name: Optional[str] = Field(None, description="Retriever name")
+    retriever_namespace: str = Field("default", description="Retriever namespace")
+    embedding_config: Optional[EmbeddingModelRef] = Field(
+        None, description="Embedding model configuration"
+    )
+    retrieval_mode: str = Field(
+        "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
+    )
+    top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
+    score_threshold: float = Field(
+        0.5, ge=0.0, le=1.0, description="Minimum score threshold"
+    )
+    hybrid_weights: Optional[HybridWeights] = Field(
+        None, description="Hybrid search weights"
+    )
+
+
+class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     """Schema for creating a knowledge base."""
 
     name: str = Field(..., min_length=1, max_length=100)
@@ -75,10 +132,14 @@ class KnowledgeBaseCreate(BaseModel):
     namespace: str = Field(default="default", max_length=255)
     kb_type: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
-    retrieval_config: Optional[RetrievalConfig] = Field(
+    retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
+    )
+    rag_config_mode: Literal["auto", "disabled"] = Field(
+        "auto",
+        description="RAG configuration mode: auto-fill or disabled",
     )
     summary_enabled: bool = Field(
         default=False,
@@ -92,6 +153,10 @@ class KnowledgeBaseCreate(BaseModel):
         None,
         max_length=3,
         description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
+    members: Optional[List[InitialMemberCreate]] = Field(
+        None,
+        description="Initial members to add to the knowledge base after creation",
     )
 
     @field_validator("guided_questions")
@@ -128,7 +193,7 @@ class RetrievalConfigUpdate(BaseModel):
     )
 
 
-class KnowledgeBaseUpdate(BaseModel):
+class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     """Schema for updating a knowledge base."""
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -195,16 +260,16 @@ class KnowledgeBaseUpdate(BaseModel):
 
 
 class KnowledgeBaseTypeUpdate(BaseModel):
-    """Schema for updating knowledge base type (notebook <-> classic conversion)."""
+    """Schema for updating the default opening view."""
 
     kb_type: str = Field(
         ...,
         pattern="^(notebook|classic)$",
-        description="New knowledge base type: 'notebook' or 'classic'",
+        description="New default opening view: 'notebook' or 'classic'",
     )
 
 
-class KnowledgeBaseResponse(BaseModel):
+class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     """Schema for knowledge base response."""
 
     id: int
@@ -214,7 +279,7 @@ class KnowledgeBaseResponse(BaseModel):
     namespace: str
     kb_type: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     document_count: int
     is_active: bool
@@ -244,6 +309,27 @@ class KnowledgeBaseResponse(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
+    @staticmethod
+    def _normalize_retrieval_config_for_response(
+        config: Optional[Any], knowledge_base_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Drop historical incomplete retrieval configs before response validation."""
+        if not isinstance(config, dict):
+            return None
+
+        embedding_config = config.get("embedding_config") or {}
+        if not isinstance(embedding_config, dict):
+            embedding_config = {}
+
+        if config.get("retriever_name") and embedding_config.get("model_name"):
+            return config
+
+        logger.warning(
+            "Dropping incomplete retrievalConfig from knowledge base response: kb_id=%s",
+            knowledge_base_id,
+        )
+        return None
 
     @classmethod
     def from_kind(cls, kind, document_count: int = 0):
@@ -287,7 +373,9 @@ class KnowledgeBaseResponse(BaseModel):
             namespace=kind.namespace,
             kb_type=kb_type,
             document_count=document_count,
-            retrieval_config=spec.get("retrievalConfig"),
+            retrieval_config=cls._normalize_retrieval_config_for_response(
+                spec.get("retrievalConfig"), kind.id
+            ),
             summary_enabled=spec.get("summaryEnabled", False),
             summary_model_ref=summary_model_ref,
             summary=summary,
@@ -297,6 +385,7 @@ class KnowledgeBaseResponse(BaseModel):
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
+            **multimodal_response_kwargs(spec),
         )
 
     class Config:
@@ -307,6 +396,10 @@ class KnowledgeBaseListResponse(BaseModel):
     """Schema for knowledge base list response."""
 
     total: int
+    returned_count: int = 0
+    limit: int | None = None
+    offset: int = 0
+    has_more: bool = False
     items: list[KnowledgeBaseResponse]
 
 
@@ -314,7 +407,7 @@ class KnowledgeBaseListResponse(BaseModel):
 # Note: SplitterConfig is imported from app.schemas.rag to use unified splitter configuration
 
 
-class KnowledgeDocumentCreate(BaseModel):
+class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     """Schema for creating a knowledge document."""
 
     attachment_id: Optional[int] = Field(
@@ -324,6 +417,11 @@ class KnowledgeDocumentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     file_extension: str = Field(..., max_length=50)
     file_size: int = Field(default=0, ge=0)
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID (0 = root level)",
+    )
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
     source_config: dict = Field(
@@ -360,6 +458,7 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
@@ -401,7 +500,143 @@ class KnowledgeDocumentListResponse(BaseModel):
     """Schema for knowledge document list response."""
 
     total: int
+    returned_count: int = 0
+    limit: int | None = None
+    offset: int = 0
+    has_more: bool = False
     items: list[KnowledgeDocumentResponse]
+
+
+class KnowledgeDocumentSortField(str, Enum):
+    """Supported sort fields for document list queries."""
+
+    NAME = "name"
+    SIZE = "size"
+    CREATED_AT = "createdAt"
+    UPDATED_AT = "updatedAt"
+
+
+class SortOrder(str, Enum):
+    """Supported sort order values."""
+
+    ASC = "asc"
+    DESC = "desc"
+
+
+# ============== Knowledge Folder Schemas ==============
+
+
+class KnowledgeFolderCreate(BaseModel):
+    """Schema for creating a knowledge folder."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: int = Field(
+        default=0, ge=0, description="Parent folder ID (0 = root level)"
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Reject names that are empty or consist only of whitespace."""
+        if not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip()
+
+
+class KnowledgeFolderUpdate(BaseModel):
+    """Schema for updating a knowledge folder."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    parent_id: Optional[int] = Field(
+        None,
+        ge=0,
+        description="New parent folder ID (0 = root level, None = no change)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Reject names that are empty or consist only of whitespace."""
+        if v is not None and not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip() if v is not None else v
+
+
+class KnowledgeFolderCreateOpen(BaseModel):
+    """Schema for creating a knowledge folder through open APIs."""
+
+    knowledge_base_id: int = Field(..., ge=1)
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: int = Field(
+        default=0, ge=0, description="Parent folder ID (0 = root level)"
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Reject names that are empty or consist only of whitespace."""
+        if not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip()
+
+
+class KnowledgeFolderUpdateOpen(BaseModel):
+    """Schema for updating a knowledge folder through open APIs."""
+
+    knowledge_base_id: int = Field(..., ge=1)
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    parent_id: Optional[int] = Field(
+        None,
+        ge=0,
+        description="New parent folder ID (0 = root level, None = no change)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Reject names that are empty or consist only of whitespace."""
+        if v is not None and not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip() if v is not None else v
+
+
+class KnowledgeFolderResponse(BaseModel):
+    """Schema for knowledge folder response with nested children."""
+
+    id: int
+    kind_id: int
+    parent_id: int = Field(..., description="Parent folder ID (0 = root level)")
+    name: str
+    children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
+    document_count: int = Field(
+        default=0, description="Number of documents in this folder"
+    )
+    direct_document_count: int = Field(
+        default=0, description="Number of documents directly in this folder"
+    )
+    total_document_count: int = Field(
+        default=0, description="Number of documents in this folder subtree"
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentMoveRequest(BaseModel):
+    """Schema for moving a document to a different folder."""
+
+    folder_id: int = Field(..., ge=0, description="Target folder ID (0 = root level)")
+
+
+class BatchDocumentMoveRequest(BaseModel):
+    """Schema for moving multiple documents to a folder."""
+
+    document_ids: list[int] = Field(
+        ..., min_length=1, description="List of document IDs to move"
+    )
+    folder_id: int = Field(..., ge=0, description="Target folder ID (0 = root level)")
 
 
 # ============== Batch Operation Schemas ==============
@@ -479,6 +714,31 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
     my_role: Optional[str] = Field(
         None,
         description="Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | None",
+    )
+    # Source group for entity-authorized shared KBs
+    source_group: Optional[str] = Field(
+        None,
+        description="Source group name for entity-authorized shared KBs, e.g., '来自 XX 群组'",
+    )
+    # Share source user name for shared KBs
+    shared_from: Optional[str] = Field(
+        None,
+        description="Share source user name for shared KBs",
+    )
+    # Multiple share source user names for multi-source shared KBs in All mode
+    shared_from_users: Optional[list[str]] = Field(
+        None,
+        description="Multiple share source user names for multi-source shared KBs in All mode",
+    )
+    # Share via entity type: 'user', 'namespace', or other registered entity types
+    shared_via: Optional[str] = Field(
+        None,
+        description="Share via entity type: 'user', 'namespace', or other registered entity types",
+    )
+    # Knowledge base creator name for display fallback
+    owner_name: Optional[str] = Field(
+        None,
+        description="Knowledge base creator's user name",
     )
 
 
@@ -659,6 +919,11 @@ class ChunkMetadata(BaseModel):
         None,
         description="Optional parser subtype resolved during format enhancement",
     )
+    qa_pair_count: int = Field(
+        0,
+        ge=0,
+        description="Number of detected Q/A pairs when Q/A unitization is used",
+    )
     created_at: str = Field(..., description="Chunk creation timestamp (ISO format)")
 
 
@@ -687,6 +952,11 @@ class ChunkListResponse(BaseModel):
     splitter_subtype: Optional[str] = Field(
         None,
         description="Optional parser subtype resolved during format enhancement",
+    )
+    qa_pair_count: int = Field(
+        0,
+        ge=0,
+        description="Number of detected Q/A pairs when Q/A unitization is used",
     )
 
 
@@ -746,6 +1016,41 @@ class KnowledgeBaseMigrateResponse(BaseModel):
     new_namespace: str = Field(..., description="New namespace after migration")
 
 
+# ============== Document Transfer Schemas ==============
+
+
+class TransferDocumentsRequest(BaseModel):
+    """Schema for transferring documents/folders to another knowledge base."""
+
+    document_ids: list[int] = Field(
+        default_factory=list, description="List of document IDs to transfer"
+    )
+    folder_ids: list[int] = Field(
+        default_factory=list,
+        description="List of folder IDs to transfer with their contents",
+    )
+    target_kb_id: int = Field(..., description="Target knowledge base ID")
+
+
+class TransferDocumentsResponse(BaseModel):
+    """Schema for document transfer response."""
+
+    success: bool = Field(..., description="Whether transfer succeeded")
+    message: str = Field(..., description="Transfer result message")
+    transferred_document_count: int = Field(
+        ..., description="Number of documents transferred"
+    )
+    transferred_folder_count: int = Field(
+        ..., description="Number of folders transferred"
+    )
+    deleted_folder_count: int = Field(
+        default=0,
+        description="Number of empty folders deleted from source KB after transfer",
+    )
+    source_kb_id: int = Field(..., description="Source knowledge base ID")
+    target_kb_id: int = Field(..., description="Target knowledge base ID")
+
+
 # ============== v1 API Schemas ==============
 
 # Maximum allowed binary size for base64-encoded file uploads (10 MiB)
@@ -798,6 +1103,7 @@ class KnowledgeDocumentCreateV1(BaseModel):
         description="Attachment context ID (required for source_type='attachment')",
     )
     # common optional
+    folder_id: int = Field(0, ge=0, description="Target folder ID (0 = root level)")
     splitter_config: Optional[SplitterConfig] = Field(
         None,
         description="Custom text splitter configuration",
@@ -810,51 +1116,3 @@ class DocumentContentUpdateResponse(BaseModel):
     success: bool = Field(..., description="Whether the update succeeded")
     document_id: int = Field(..., description="ID of the updated document")
     message: str = Field(..., description="Human-readable result message")
-
-
-class KnowledgeSearchRequest(BaseModel):
-    """Request schema for v1 knowledge base search endpoint.
-
-    Resolves retriever and embedding model automatically from KB config,
-    so callers only need to specify what to search, not how.
-    """
-
-    knowledge_base_id: int = Field(..., description="Knowledge base ID to search in")
-    query: str = Field(
-        ..., min_length=1, max_length=2000, description="Search query text"
-    )
-    top_k: int = Field(5, ge=1, le=100, description="Number of results to return")
-    score_threshold: float = Field(
-        0.7, ge=0.0, le=1.0, description="Minimum similarity score threshold"
-    )
-    route_mode: str = Field(
-        "auto",
-        description="Retrieval mode: 'auto', 'direct_injection', or 'rag_retrieval'",
-    )
-    context_window: int = Field(
-        128000,
-        ge=1,
-        description="Context window size for direct injection mode",
-    )
-    used_context_tokens: int = Field(
-        0,
-        ge=0,
-        description="Already used context tokens",
-    )
-    reserved_output_tokens: int = Field(
-        4096,
-        ge=0,
-        description="Reserved output tokens",
-    )
-    context_buffer_ratio: float = Field(
-        0.1,
-        ge=0.0,
-        le=1.0,
-        description="Context buffer ratio for safety margin",
-    )
-    max_direct_chunks: int = Field(
-        500,
-        ge=1,
-        le=10000,
-        description="Maximum chunks for direct injection",
-    )

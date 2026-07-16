@@ -11,6 +11,12 @@ jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
 }))
 
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: jest.fn(),
+  }),
+}))
+
 jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
   __esModule: true,
   default: () => <div data-testid="chat-context-input" />,
@@ -60,7 +66,7 @@ jest.mock('@/features/tasks/components/message/LoadingDots', () => ({
   default: () => <div data-testid="loading-dots" />,
 }))
 
-jest.mock('@/features/tasks/components/params/QuotaUsage', () => ({
+jest.mock('@/features/tasks/components/input/ChatToolbarStatus', () => ({
   __esModule: true,
   default: () => <div data-testid="quota-usage" />,
 }))
@@ -111,17 +117,15 @@ function createProps(taskType: ChatInputControlsProps['taskType']): ChatInputCon
     },
     onFileSelect: jest.fn(),
     onAttachmentRemove: jest.fn(),
-    isLoading: false,
     isStreaming: false,
     isStopping: false,
     hasMessages: false,
     shouldCollapseSelectors: false,
-    shouldHideQuotaUsage: true,
+    shouldHideToolbarStatus: true,
     shouldHideChatInput: false,
     isModelSelectionRequired: false,
     isAttachmentReadyToSend: true,
     taskInputMessage: 'hello',
-    isSubtaskStreaming: false,
     onStopStream: jest.fn(),
     onSendMessage: jest.fn(),
   }

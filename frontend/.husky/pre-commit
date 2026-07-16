@@ -49,8 +49,7 @@ format_python_module() {
 
   # Prefer already-installed formatter binaries to avoid uv environment
   # resolution during git hooks. Fall back to uv only when needed.
-  if [ -n "$BLACK_CMD" ]; then
-    echo "$ABSOLUTE_FILES" | xargs "$BLACK_CMD" 2>/dev/null
+  if [ -n "$BLACK_CMD" ] && echo "$ABSOLUTE_FILES" | xargs "$BLACK_CMD" 2>/dev/null; then
     echo "    ✅ Black formatting applied for $MODULE_NAME"
   elif uv run black --version >/dev/null 2>&1; then
     echo "$ABSOLUTE_FILES" | xargs uv run black 2>/dev/null
@@ -59,8 +58,7 @@ format_python_module() {
     echo "    ⚠️ Black not available for $MODULE_NAME. Skipping."
   fi
 
-  if [ -n "$ISORT_CMD" ]; then
-    echo "$ABSOLUTE_FILES" | xargs "$ISORT_CMD" 2>/dev/null
+  if [ -n "$ISORT_CMD" ] && echo "$ABSOLUTE_FILES" | xargs "$ISORT_CMD" 2>/dev/null; then
     echo "    ✅ isort formatting applied for $MODULE_NAME"
   elif uv run isort --version >/dev/null 2>&1; then
     echo "$ABSOLUTE_FILES" | xargs uv run isort 2>/dev/null
@@ -207,6 +205,22 @@ if [ -n "$FRONTEND_FILES" ]; then
      echo "❌ Translation check failed. Please resolve before committing."
      exit 1
   fi
+fi
+
+# =============================================================================
+# Wework Code Formatting Check (lint-staged)
+# =============================================================================
+
+WEWORK_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '^wework/' || true)
+
+if [ -n "$WEWORK_FILES" ]; then
+  echo "🦀 Running wework pre-commit checks..."
+
+  cd "$PROJECT_ROOT/wework" || exit 1
+  npx lint-staged
+  cd "$PROJECT_ROOT" || exit 1
+
+  echo "✅ Wework pre-commit checks passed"
 fi
 
 # =============================================================================

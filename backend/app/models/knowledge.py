@@ -27,6 +27,7 @@ from sqlalchemy import (
     TypeDecorator,
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -53,6 +54,8 @@ class DocumentIndexStatus(str, PyEnum):
 
     NOT_INDEXED = "not_indexed"
     QUEUED = "queued"
+    PENDING_CONVERSION = "pending_conversion"
+    CONVERTING = "converting"
     INDEXING = "indexing"
     SUCCESS = "success"
     FAILED = "failed"
@@ -128,6 +131,40 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
+
+    # --- Helper properties for converted attachment reference ---
+
+    @property
+    def converted_attachment_id(self) -> int | None:
+        """Get the converted attachment ID from source_config.
+
+        Returns the SubtaskContext ID that stores the converted Markdown content,
+        or None if no conversion has been performed for this document.
+        """
+        cfg = self.source_config or {}
+        val = cfg.get("converted_attachment_id")
+        return int(val) if val is not None else None
+
+    @converted_attachment_id.setter
+    def converted_attachment_id(self, value: int | None) -> None:
+        """Set or clear the converted attachment ID in source_config.
+
+        Args:
+            value: SubtaskContext ID for the converted attachment, or None to clear.
+        """
+        if self.source_config is None:
+            self.source_config = {}
+        if value is not None:
+            self.source_config["converted_attachment_id"] = value
+        else:
+            self.source_config.pop("converted_attachment_id", None)
+        # SQLAlchemy JSON column mutation is not auto-detected;
+        # must explicitly flag it as modified for the ORM to flush the change.
+        flag_modified(self, "source_config")
+
+    # References knowledge_folders.id, 0 = root level (no FK constraint,
+    # referential integrity managed at the application layer)
+    folder_id = Column(Integer, nullable=False, default=0, index=True)
     summary = Column(JSON, nullable=True)  # Document summary information (JSON)
     chunks = Column(
         JSON, nullable=True
@@ -153,5 +190,39 @@ class KnowledgeDocument(Base):
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",
             "comment": "Knowledge document table for file metadata",
+        },
+    )
+
+
+class KnowledgeFolder(Base):
+    """
+    Knowledge folder model for multi-level document organization.
+
+    Folders form a tree structure within a knowledge base via parent_id.
+    parent_id = 0 means the folder is at root level.
+    """
+
+    __tablename__ = "knowledge_folders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # References kinds.id (Kind='KnowledgeBase') without FK constraint
+    kind_id = Column(Integer, nullable=False, index=True)
+    # Self-referencing parent folder, 0 = root level
+    parent_id = Column(Integer, nullable=False, default=0)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(
+        DateTime, nullable=False, default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        # Index for querying child folders under a parent within a knowledge base
+        Index("ix_knowledge_folders_parent", "kind_id", "parent_id"),
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "Knowledge base folder hierarchy for multi-level document organization",
         },
     )

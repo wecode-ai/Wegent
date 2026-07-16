@@ -5,17 +5,17 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { UserGroupIcon } from '@heroicons/react/24/outline'
 import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
-import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
+import { TaskSidebar } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { Team } from '@/types/api'
+import type { Team, TaskType } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useDevices } from '@/contexts/DeviceContext'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -26,9 +26,26 @@ import { useToast } from '@/hooks/use-toast'
 import { canEditTeam } from '@/utils/team-permissions'
 import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
-import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 import type { BaseRole } from '@/types/base-role'
-import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
+
+const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
+  ssr: false,
+})
+
+const TeamEditDialog = dynamic(() => import('@/features/settings/components/TeamEditDialog'), {
+  ssr: false,
+})
+
+const CreateGroupChatDialog = dynamic(
+  () =>
+    import('@/features/tasks/components/group-chat/CreateGroupChatDialog').then(mod => ({
+      default: mod.CreateGroupChatDialog,
+    })),
+  { ssr: false }
+)
 
 /**
  * Mobile-specific implementation of Chat Page
@@ -48,41 +65,27 @@ export function ChatPageMobile() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const { refreshTasks, selectedTask, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
+    useTaskSession()
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
-
-  // Determine taskType based on device selection
-  // When a device is selected, use 'task' mode (same as /devices/chat)
-  // Otherwise, use 'chat' mode
-  const taskType = selectedDeviceId ? 'task' : 'chat'
-
-  // Compute disabled reason for device mode
-  const disabledReason =
-    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
-      ? t('devices:device_offline_cannot_send')
-      : undefined
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const { clearAllStreams: _clearAllStreams } = useChatStreamContext()
 
   // User state for git token check
   const { user } = useUser()
@@ -92,12 +95,37 @@ export function ChatPageMobile() {
 
   // Check for share_id in URL
   const searchParams = useSearchParams()
-  const _hasShareId = !!searchParams.get('share_id')
+  const _hasShareId = !!getSearchParam(searchParams, 'share_id')
+  const hasWeworkCodeUrl = getRuntimeConfigSync().weworkCodeUrl.trim().length > 0
+  const isCodeAgentMode = getSearchParam(searchParams, 'agent') === 'code'
+  const isCodeTaskOpen = selectedTaskDetail?.task_type === 'code'
 
   // Check if a task is currently open (support multiple parameter formats)
-  const taskId =
-    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId')
+  const taskId = getFirstSearchParam(searchParams, ['task_id', 'taskid', 'taskId'])
   const hasOpenTask = !!taskId
+
+  const taskType: TaskType =
+    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+      ? 'task'
+      : isCodeAgentMode || isCodeTaskOpen
+        ? 'code'
+        : 'chat'
+  const teamModeFilter: 'chat' | 'code' | 'task' | 'all' =
+    selectedDeviceId || selectedTaskDetail?.task_type === 'task'
+      ? 'task'
+      : isCodeAgentMode || isCodeTaskOpen
+        ? 'code'
+        : hasWeworkCodeUrl
+          ? 'all'
+          : 'chat'
+  const showRepositorySelector =
+    !selectedDeviceId && selectedTaskDetail?.task_type !== 'task' && teamModeFilter !== 'chat'
+
+  // Compute disabled reason for device mode
+  const disabledReason =
+    selectedDeviceId && (!selectedDevice || selectedDevice.status === 'offline')
+      ? t('devices:device_offline_cannot_send')
+      : undefined
 
   // Redirect device tasks to /devices/chat page for proper layout
   useEffect(() => {
@@ -200,7 +228,7 @@ export function ChatPageMobile() {
     deps: teamEditDeps,
     onTeamUpdated: useCallback(() => {
       refreshTasks()
-      refreshSelectedTaskDetail(false)
+      void refreshSelectedTaskDetail()
     }, [refreshTasks, refreshSelectedTaskDetail]),
   })
 
@@ -263,11 +291,19 @@ export function ChatPageMobile() {
               variant="outline"
               size="sm"
               onClick={() => setIsCreateGroupChatOpen(true)}
-              className="gap-1 h-11 min-w-[44px] pl-2 pr-3 rounded-[7px] text-sm"
+              className="h-8 w-8 p-0 rounded-[7px]"
             >
-              <UserGroupIcon className="h-4 w-4" />
+              <UserGroupIcon className="h-3.5 w-3.5" />
               <span className="sr-only">{t('groupChat.create.button')}</span>
             </Button>
+          )}
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+              refreshKey={selectedTaskDetail?.updated_at}
+              display="icon"
+            />
           )}
           {shareButton}
           <ThemeToggle />
@@ -277,8 +313,9 @@ export function ChatPageMobile() {
           teams={teams}
           isTeamsLoading={isTeamsLoading}
           selectedTeamForNewTask={_selectedTeamForNewTask}
-          showRepositorySelector={false}
+          showRepositorySelector={showRepositorySelector}
           taskType={taskType}
+          teamModeFilter={teamModeFilter}
           onShareButtonRender={handleShareButtonRender}
           onRefreshTeams={handleRefreshTeams}
           disabledReason={disabledReason}
@@ -286,14 +323,21 @@ export function ChatPageMobile() {
         />
       </div>
       {/* Create Group Chat Dialog */}
-      <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
+      {isCreateGroupChatOpen && (
+        <CreateGroupChatDialog
+          open={isCreateGroupChatOpen}
+          onOpenChange={setIsCreateGroupChatOpen}
+        />
+      )}
       {/* Search Dialog - rendered at page level for global shortcut support */}
-      <SearchDialog
-        open={isSearchDialogOpen}
-        onOpenChange={setIsSearchDialogOpen}
-        shortcutDisplayText={shortcutDisplayText}
-        pageType="chat"
-      />
+      {isSearchDialogOpen && (
+        <SearchDialog
+          open={isSearchDialogOpen}
+          onOpenChange={setIsSearchDialogOpen}
+          shortcutDisplayText={shortcutDisplayText}
+          pageType="chat"
+        />
+      )}
     </div>
   )
 }

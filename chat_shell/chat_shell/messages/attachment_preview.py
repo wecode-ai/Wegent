@@ -1,0 +1,321 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Token-bounded preview for inline ``<attachment>`` blocks.
+
+Attachment extracted-text is injected inline in the user message as its own text
+block (alongside the question / images / knowledge-base block). Carrying the
+full text every turn is wasteful, and summary-compact would otherwise fold or
+crudely truncate the whole user message. This pass bounds the inline copy to a
+fixed token budget, leaving the full content reachable via the sandbox file
+(text) or the ``read_attachment`` tool (binary).
+
+Design (all attachments share one ``<attachment>`` block):
+
+* **Shared budget** across all attachments in the block (avoids N×budget blowups
+  with many attachments), configurable via ``ATTACHMENT_PREVIEW_TOKEN_LIMIT``.
+  The bound applies to the budget split across bodies; every header is always
+  kept (for read_attachment discoverability), so the inherent floor is the sum
+  of header lines. When bodies can't all fit, the smallest get 0 budget and
+  render header-only rather than each leaking a token past the bound.
+* **Per-segment head/tail**: the shared body budget is split across attachment
+  segments so every attachment keeps both a head and a tail, each truncated with
+  the same logic as tool outputs (:func:`guard.tool_output._truncate_body`).
+* **Every header preserved + annotated**: each ``[Attachment: … | ID: n | …]``
+  header is kept and gets ``| Chars | Tokens | Truncated: yes|no`` appended, so
+  the model always sees the size and whether the inline copy is partial. The
+  annotation is deterministic, so it stays prefix-cache stable across turns.
+  When more than one attachment is present, a consolidated id list is prepended.
+* **Type-aware hint**: a truncated segment also gets a pointer to the full
+  content (text → sandbox file, binary → ``read_attachment``); a non-truncated
+  segment needs none (its full text is already inline).
+
+The pass is origin-agnostic: it runs after message assembly and treats the
+current turn and replayed history identically.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from typing import Any
+
+from chat_shell.compression.token_counter import TokenCounter
+from chat_shell.guard.tool_output import _truncate_body
+from chat_shell.guard.traces import record_protection_trace
+from chat_shell.guard.types import TruncationPolicy
+from shared.utils.mime_types import is_text_readable_mime
+
+_ATTACHMENT_BLOCK = re.compile(r"<attachment>(.*?)</attachment>", re.DOTALL)
+
+# Matches the shared attachment/image header start and captures its id. The
+# header is a single line produced by shared.utils.attachment_block; the
+# ``| ID: <n> |`` segment is distinctive enough to anchor on.
+_SEGMENT_HEADER = re.compile(r"\[(?:Image )?Attachment: [^\n]*? \| ID: (\d+) \|")
+_HEADER_TYPE = re.compile(r"\| Type: ([^|\]]+)")
+_HEADER_PATH = re.compile(r"File Path[^:]*: ([^\]]+)")
+
+
+def _full_content_hint(header: str, attachment_id: str) -> str:
+    """Type-aware pointer to the full content when a segment is truncated.
+
+    Both branches point at the full content without locking the model into a
+    single action. Text files: the original sits in the sandbox and can be read
+    or grep/searched with file tools. Binary docs (pdf/office/xmind/...): the
+    bytes aren't plain text, so the model can page the parsed text via
+    read_attachment OR open the sandbox file with a suitable tool. The
+    text/binary split uses the shared MIME classification so it stays consistent
+    with the backend parser as file types are added.
+    """
+    type_match = _HEADER_TYPE.search(header)
+    mime = type_match.group(1).strip().lower() if type_match else ""
+    if is_text_readable_mime(mime):
+        path_match = _HEADER_PATH.search(header)
+        if path_match:
+            # Encourage targeted access (grep/search), not just reading the whole
+            # file — the full text may be large, and it's a normal sandbox file.
+            return (
+                f"\n[Preview truncated. Full file in the sandbox at "
+                f"{path_match.group(1).strip()} — read or grep/search it with "
+                f"your file tools to get the rest.]"
+            )
+    return (
+        f"\n[Preview truncated. Get the rest via "
+        f"read_attachment(attachment_id={attachment_id}) for the parsed text, or "
+        f"open the sandbox file (path in the header above) with a suitable tool.]"
+    )
+
+
+def _split_header_body(segment: str) -> tuple[str, str]:
+    """Split an attachment segment into its first (header) line and the rest."""
+    newline = segment.find("\n")
+    if newline == -1:
+        return segment, ""
+    return segment[:newline], segment[newline + 1 :]
+
+
+def _annotate_header(header: str, *, chars: int, tokens: int, truncated: bool) -> str:
+    """Append size / truncation fields to an attachment header line.
+
+    Adds ``| Chars: N | Tokens: M | Truncated: yes|no`` inside the trailing
+    ``]`` so the model always sees how large the attachment is and whether the
+    inline copy is partial.
+    """
+    suffix = f" | Chars: {chars} | Tokens: {tokens} | Truncated: {'yes' if truncated else 'no'}"
+    if header.endswith("]"):
+        return header[:-1] + suffix + "]"
+    return header + suffix
+
+
+def _preview_attachment_body(
+    body: str, total_limit: int, counter: TokenCounter
+) -> tuple[str, int, int, int]:
+    """Bound a single ``<attachment>`` block body to *total_limit* tokens.
+
+    Splits the body into per-attachment segments, annotates each header with
+    size / truncation fields, preserves every header, and distributes the
+    remaining budget across segment bodies (each head/tail truncated). Falls
+    back to a whole-body head/tail when no headers are found.
+
+    Returns ``(rendered_body, truncated_segments, before_tokens, after_tokens)``
+    where the token figures cover only segments that were actually truncated.
+    """
+    matches = list(_SEGMENT_HEADER.finditer(body))
+    if not matches:
+        # No recognizable headers (legacy/malformed) — bound the whole body.
+        before = counter.count_text(body)
+        if before <= total_limit:
+            return body, 0, 0, 0
+        rendered, _t, _tr, _f = _truncate_body(
+            body, TruncationPolicy(kind="tokens", limit=total_limit), counter
+        )
+        return rendered, 1, before, counter.count_text(rendered)
+
+    preamble = body[: matches[0].start()]
+    segments: list[str] = []
+    ids: list[str] = []
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        segments.append(body[match.start() : end])
+        ids.append(match.group(1))
+
+    # Consolidate ids up front when multiple attachments share the block, so
+    # every read_attachment id is discoverable even after heavy truncation.
+    # Per-segment hints (below) carry the type-aware "how to get the rest".
+    id_line = ""
+    if len(ids) > 1:
+        id_line = "[Attachment IDs in this message: " + ", ".join(ids) + "]\n"
+
+    # Reserve budget for the id line and every header (always kept), then
+    # distribute the remainder across segment bodies.
+    reserved = counter.count_text(preamble) + counter.count_text(id_line)
+    headers_and_bodies: list[tuple[str, str]] = [
+        _split_header_body(seg) for seg in segments
+    ]
+    reserved += sum(counter.count_text(header) for header, _ in headers_and_bodies)
+    body_budget = max(0, total_limit - reserved)
+
+    body_sizes = [counter.count_text(seg_body) for _, seg_body in headers_and_bodies]
+    allocations = _allocate_budget(body_sizes, body_budget)
+
+    rebuilt: list[str] = []
+    truncated_segments = 0
+    before_tokens = 0
+    after_tokens = 0
+    for (header, seg_body), alloc, attachment_id, orig_tokens in zip(
+        headers_and_bodies, allocations, ids, body_sizes, strict=True
+    ):
+        if not seg_body:
+            rebuilt.append(header)  # image header etc. — no body to bound
+            continue
+        if alloc <= 0:
+            # Budget exhausted (many attachments): keep only the annotated header
+            # + hint so growth is bounded to the header cost, instead of letting
+            # _truncate_body emit its two truncation markers per segment.
+            rendered = ""
+            truncated = True
+        else:
+            rendered, _t, truncated, _f = _truncate_body(
+                seg_body, TruncationPolicy(kind="tokens", limit=alloc), counter
+            )
+        annotated = _annotate_header(
+            header, chars=len(seg_body), tokens=orig_tokens, truncated=truncated
+        )
+        hint = _full_content_hint(header, attachment_id) if truncated else ""
+        body_part = f"\n{rendered}" if rendered else ""
+        rebuilt.append(f"{annotated}{body_part}{hint}")
+        if truncated:
+            truncated_segments += 1
+            before_tokens += orig_tokens
+            after_tokens += counter.count_text(rendered)
+
+    return (
+        preamble + id_line + "".join(rebuilt),
+        truncated_segments,
+        before_tokens,
+        after_tokens,
+    )
+
+
+def _allocate_budget(sizes: list[int], budget: int) -> list[int]:
+    """Water-fill *budget* across segment bodies of the given *sizes*.
+
+    Segments that fit their fair share keep their full size and return the
+    leftover to the pool; the fair share is recomputed for the remaining
+    (larger) segments so big attachments absorb the freed budget instead of
+    being over-truncated while small ones waste their allocation. Result sums to
+    **at most** *budget* — allocations are not floored, so when the budget is
+    exhausted (many attachments) a segment may get 0 and render header-only,
+    rather than each segment leaking a minimum token past the bound.
+    """
+    allocations = [0] * len(sizes)
+    remaining_budget = budget
+    # Smallest first: a segment that fits its share frees budget for the rest.
+    for rank, idx in enumerate(sorted(range(len(sizes)), key=lambda i: sizes[i])):
+        share = remaining_budget // (len(sizes) - rank)
+        take = min(sizes[idx], share)
+        allocations[idx] = take
+        remaining_budget = max(0, remaining_budget - take)
+    return allocations
+
+
+def _preview_text(
+    text: str, total_limit: int, counter: TokenCounter
+) -> tuple[str, int, int, int]:
+    """Annotate/bound every ``<attachment>`` block found in *text*.
+
+    Returns ``(new_text, truncated_segments, before_tokens, after_tokens)``.
+    """
+    if "<attachment>" not in text:
+        return text, 0, 0, 0
+
+    pieces: list[str] = []
+    last = 0
+    truncated_segments = 0
+    before_tokens = 0
+    after_tokens = 0
+    for match in _ATTACHMENT_BLOCK.finditer(text):
+        pieces.append(text[last : match.start()])
+        rendered, n_truncated, before, after = _preview_attachment_body(
+            match.group(1), total_limit, counter
+        )
+        pieces.append(f"<attachment>{rendered}</attachment>")
+        last = match.end()
+        truncated_segments += n_truncated
+        before_tokens += before
+        after_tokens += after
+    pieces.append(text[last:])
+    return "".join(pieces), truncated_segments, before_tokens, after_tokens
+
+
+def apply_attachment_preview(
+    messages: list[dict[str, Any]],
+    *,
+    token_counter: TokenCounter,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return *messages* with every inline ``<attachment>`` body token-bounded.
+
+    Input dicts are not mutated; only messages that actually carry an attachment
+    block are copied and rewritten.
+    """
+    if limit <= 0:
+        return messages
+
+    started = time.perf_counter()
+    saw_attachment = False
+    truncated_segments = 0
+    before_tokens = 0
+    after_tokens = 0
+
+    def _preview_block_text(text: str) -> str:
+        nonlocal saw_attachment, truncated_segments, before_tokens, after_tokens
+        if "<attachment>" not in text:
+            return text
+        saw_attachment = True
+        new_text, n_truncated, before, after = _preview_text(text, limit, token_counter)
+        truncated_segments += n_truncated
+        before_tokens += before
+        after_tokens += after
+        return new_text
+
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+
+        if isinstance(content, str):
+            new_content = _preview_block_text(content)
+            if new_content != content:
+                message = {**message, "content": new_content}
+
+        elif isinstance(content, list):
+            new_blocks: list[Any] = []
+            changed = False
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "text"
+                    and isinstance(block.get("text"), str)
+                ):
+                    new_text = _preview_block_text(block["text"])
+                    if new_text != block["text"]:
+                        block = {**block, "text": new_text}
+                        changed = True
+                new_blocks.append(block)
+            if changed:
+                message = {**message, "content": new_blocks}
+
+        result.append(message)
+
+    if saw_attachment:
+        record_protection_trace(
+            "attachment_preview",
+            "applied" if truncated_segments else "noop",
+            duration_ms=(time.perf_counter() - started) * 1000,
+            before_tokens=before_tokens if truncated_segments else None,
+            after_tokens=after_tokens if truncated_segments else None,
+            attachment_segments_truncated=truncated_segments,
+        )
+
+    return result

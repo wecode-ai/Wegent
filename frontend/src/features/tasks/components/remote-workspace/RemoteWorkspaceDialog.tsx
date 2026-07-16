@@ -11,6 +11,7 @@ import { getToken } from '@/apis/user'
 import { type RemoteWorkspaceTreeEntry, remoteWorkspaceApis } from '@/apis/remoteWorkspace'
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -18,17 +19,20 @@ import {
 } from '@/components/ui/dialog'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
+import { X } from 'lucide-react'
 
 import { RemoteWorkspaceDialogDesktop } from './RemoteWorkspaceDialogDesktop'
 import { RemoteWorkspaceDialogMobile } from './RemoteWorkspaceDialogMobile'
 import { type RemoteWorkspaceDirectoryCache } from './RemoteWorkspaceDirectoryTree'
 import {
   buildBreadcrumbSegments,
+  createStoredZip,
   getParentPath,
   normalizeWorkspacePathInput,
   resolvePreviewKind,
   sortTreeEntries,
   type SortOption,
+  type ZipFileInput,
 } from './remote-workspace-utils'
 
 type RemoteWorkspaceDialogProps = {
@@ -67,8 +71,8 @@ export function RemoteWorkspaceDialog({
 
   // Blob for file preview (to support authenticated file access)
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
-  const [_isPreviewLoading, setIsPreviewLoading] = useState(false)
-  const [_previewError, setPreviewError] = useState<string | null>(null)
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   const expandPathToDirectory = useCallback(
     (path: string) => {
@@ -155,7 +159,7 @@ export function RemoteWorkspaceDialog({
         // Create temporary link and trigger download
         const link = document.createElement('a')
         link.href = blobUrl
-        link.download = entry.name
+        link.download = entry.is_directory ? `${entry.name}.zip` : entry.name
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)
@@ -167,6 +171,64 @@ export function RemoteWorkspaceDialog({
       }
     },
     [taskId]
+  )
+
+  const handleDownloadFiles = useCallback(
+    async (entries: RemoteWorkspaceTreeEntry[]) => {
+      if (entries.length === 0) {
+        return
+      }
+      if (entries.length === 1) {
+        await handleDownloadFile(entries[0])
+        return
+      }
+
+      try {
+        const token = getToken()
+        const fileEntries = entries.filter(entry => !entry.is_directory)
+        const directoryEntries = entries.filter(entry => entry.is_directory)
+
+        for (const entry of directoryEntries) {
+          await handleDownloadFile(entry)
+        }
+
+        if (fileEntries.length === 0) {
+          return
+        }
+
+        const zipFiles: ZipFileInput[] = []
+
+        for (const entry of fileEntries) {
+          const url = remoteWorkspaceApis.getFileUrl(taskId, entry.path, 'attachment')
+          const response = await fetch(url, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
+
+          if (!response.ok) {
+            throw new Error('fetch failed')
+          }
+
+          zipFiles.push({
+            name: entry.path.startsWith(`${rootPath}/`)
+              ? entry.path.slice(rootPath.length + 1)
+              : entry.name,
+            data: new Uint8Array(await response.arrayBuffer()),
+          })
+        }
+
+        const blobUrl = URL.createObjectURL(createStoredZip(zipFiles))
+        const link = document.createElement('a')
+        link.href = blobUrl
+        link.download = 'task-files.zip'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(blobUrl)
+      } catch {
+        // Error handling - could add toast notification here
+      }
+    },
+    [handleDownloadFile, rootPath, taskId]
   )
 
   useEffect(() => {
@@ -239,14 +301,6 @@ export function RemoteWorkspaceDialog({
     return resolvePreviewKind(previewEntry.name)
   }, [previewEntry])
 
-  const inlineUrl = useMemo(() => {
-    if (!previewEntry) {
-      return ''
-    }
-
-    return remoteWorkspaceApis.getFileUrl(taskId, previewEntry.path, 'inline')
-  }, [previewEntry, taskId])
-
   const downloadUrl = useMemo(() => {
     if (!previewEntry) {
       return ''
@@ -263,13 +317,20 @@ export function RemoteWorkspaceDialog({
 
   // Effect to load blob for previews
   useEffect(() => {
-    if (!isPreviewDialogOpen || !previewEntry) {
+    const shouldLoadPreviewBlob = isPreviewDialogOpen || isMobile
+
+    if (!shouldLoadPreviewBlob || !previewEntry) {
       setPreviewBlob(null)
+      setIsPreviewLoading(false)
+      setPreviewError(null)
       return
     }
 
     // Load blob for all previewable types (image, pdf, excel, text)
     if (previewKind === 'unsupported' || previewKind === 'none') {
+      setPreviewBlob(null)
+      setIsPreviewLoading(false)
+      setPreviewError(null)
       return
     }
 
@@ -303,12 +364,23 @@ export function RemoteWorkspaceDialog({
     return () => {
       setPreviewBlob(null)
     }
-  }, [isPreviewDialogOpen, previewEntry, previewKind, taskId, t])
+  }, [isMobile, isPreviewDialogOpen, previewEntry, previewKind, taskId, t])
 
-  const canGoParent = Boolean(getParentPath(rootPath, currentPath))
+  const parentPath = getParentPath(rootPath, currentPath)
+  const canGoParent = Boolean(parentPath)
   const breadcrumbs = useMemo(
     () => buildBreadcrumbSegments(rootPath, currentPath),
     [currentPath, rootPath]
+  )
+  const currentDirectoryEntry = useMemo<RemoteWorkspaceTreeEntry>(
+    () => ({
+      name: currentPath.split('/').filter(Boolean).at(-1) || 'workspace',
+      path: currentPath,
+      is_directory: true,
+      size: 0,
+      modified_at: null,
+    }),
+    [currentPath]
   )
 
   useEffect(() => {
@@ -350,9 +422,17 @@ export function RemoteWorkspaceDialog({
     [navigateToDirectory]
   )
 
-  const handleSelectEntry = useCallback((entry: RemoteWorkspaceTreeEntry) => {
-    setSelectedPaths([entry.path])
-  }, [])
+  const handleSelectEntry = useCallback(
+    (entry: RemoteWorkspaceTreeEntry) => {
+      if (entry.is_directory) {
+        navigateToDirectory(entry.path)
+        return
+      }
+
+      setSelectedPaths([entry.path])
+    },
+    [navigateToDirectory]
+  )
 
   const handleOpenEntryDesktop = useCallback(
     (entry: RemoteWorkspaceTreeEntry) => {
@@ -398,6 +478,10 @@ export function RemoteWorkspaceDialog({
 
   const handleToggleEntrySelection = useCallback(
     (entry: RemoteWorkspaceTreeEntry, checked: boolean) => {
+      if (entry.is_directory) {
+        return
+      }
+
       setSelectedPaths(previous => {
         if (checked) {
           if (previous.includes(entry.path)) {
@@ -419,7 +503,7 @@ export function RemoteWorkspaceDialog({
         return
       }
 
-      setSelectedPaths(visibleEntries.map(entry => entry.path))
+      setSelectedPaths(visibleEntries.filter(entry => !entry.is_directory).map(entry => entry.path))
     },
     [visibleEntries]
   )
@@ -483,7 +567,18 @@ export function RemoteWorkspaceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!flex !h-[85vh] !w-[96vw] !max-w-[1680px] !flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent
+        className="!flex !h-[85vh] !w-[96vw] !max-w-[1680px] !flex-col p-0 gap-0 overflow-hidden"
+        hideCloseButton
+        preventEscapeClose={isPreviewDialogOpen}
+        preventOutsideClick={isPreviewDialogOpen}
+      >
+        {!isPreviewDialogOpen && (
+          <DialogClose className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </DialogClose>
+        )}
         <DialogHeader className="shrink-0 px-6 py-4 border-b border-border">
           <DialogTitle>{t('remote_workspace.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t('remote_workspace.title')}</DialogDescription>
@@ -499,7 +594,9 @@ export function RemoteWorkspaceDialog({
             selectedPaths={selectedPathSet}
             selectedEntries={selectedEntries}
             previewKind={previewKind}
-            inlineUrl={inlineUrl}
+            previewBlob={previewBlob}
+            isPreviewLoading={isPreviewLoading}
+            previewError={previewError}
             searchKeyword={searchKeyword}
             sortOption={sortOption}
             canGoParent={canGoParent}
@@ -519,7 +616,6 @@ export function RemoteWorkspaceDialog({
             }
             onSearchChange={setSearchKeyword}
             onSortChange={setSortOption}
-            onToggleEntrySelection={handleToggleEntrySelection}
             onOpenEntry={handleOpenEntryMobile}
           />
         ) : (
@@ -527,6 +623,7 @@ export function RemoteWorkspaceDialog({
             t={t}
             rootPath={rootPath}
             currentPath={currentPath}
+            currentDirectoryEntry={currentDirectoryEntry}
             breadcrumbs={breadcrumbs}
             directoryCache={directoryCache}
             expandedDirectoryPaths={expandedDirectoryPaths}
@@ -544,9 +641,9 @@ export function RemoteWorkspaceDialog({
             pathInputError={pathInputError}
             isPathEditing={isPathEditing}
             canGoParent={canGoParent}
-            canDownloadPreview={canDownloadPreview}
             isPreviewDialogOpen={isPreviewDialogOpen}
             onDownload={handleDownloadFile}
+            onDownloadSelected={handleDownloadFiles}
             onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
             onRefresh={() =>

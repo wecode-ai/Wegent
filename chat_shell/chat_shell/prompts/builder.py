@@ -8,7 +8,7 @@ Clarification Mode Prompt.
 This module contains the system prompt for smart follow-up questions mode.
 When enabled, the AI will ask targeted clarification questions before proceeding.
 
-Also contains the Deep Thinking Mode prompt for search tool usage guidance.
+Also keeps legacy Deep Thinking prompt helpers for compatibility.
 """
 
 CLARIFICATION_PROMPT = """
@@ -160,30 +160,32 @@ def append_clarification_prompt(system_prompt: str, enable_clarification: bool) 
     return system_prompt
 
 
-# Deep Thinking Mode Prompt
+# Legacy Deep Thinking Mode Prompt
 DEEP_THINKING_PROMPT = ""
 
 
 def get_deep_thinking_prompt() -> str:
     """
-    Get the deep thinking mode prompt.
+    Get the legacy deep thinking mode prompt.
 
     Returns:
-        The deep thinking prompt string to append to system prompt.
+        The legacy deep thinking prompt string. This is intentionally empty:
+        deep thinking is now controlled through model reasoning settings and
+        request-time context instead of extra system prompt text.
     """
     return DEEP_THINKING_PROMPT
 
 
 def append_deep_thinking_prompt(system_prompt: str, enable_deep_thinking: bool) -> str:
     """
-    Append deep thinking prompt to system prompt if enabled.
+    Append the legacy deep thinking prompt to system prompt if enabled.
 
     Args:
         system_prompt: The original system prompt.
         enable_deep_thinking: Whether deep thinking mode is enabled.
 
     Returns:
-        The system prompt with deep thinking instructions appended if enabled.
+        The system prompt unchanged unless a legacy prompt is configured.
     """
     if enable_deep_thinking:
         return system_prompt + DEEP_THINKING_PROMPT
@@ -227,7 +229,8 @@ def build_system_prompt(
         1. Base prompt (caller should wrap Ghost systemPrompt in <base_prompt> tags if needed)
         2. Clarification mode instructions (if enabled) - now guides AI to use interactive_form_question tool
         3. Deep thinking mode instructions (if enabled)
-        4. Skill prompts (injected dynamically by LoadSkillTool via prompt_modifier)
+        4. Skill prompts are not added here; LoadSkillTool injects them dynamically
+           via prompt_modifier as separate model-call context.
     """
     system_prompt = base_prompt
 
@@ -238,7 +241,8 @@ def build_system_prompt(
     if enable_clarification:
         system_prompt = append_clarification_prompt(system_prompt, True)
 
-    # Append deep thinking mode instructions if enabled
+    # Deep thinking no longer injects legacy prompt text, but keep this call
+    # for compatibility if a deployment overrides DEEP_THINKING_PROMPT.
     if enable_deep_thinking:
         system_prompt = append_deep_thinking_prompt(system_prompt, True)
 
@@ -246,5 +250,6 @@ def build_system_prompt(
     # via the prompt_modifier mechanism in LangGraphAgentBuilder. This ensures that:
     # 1. Available Skills and Loaded Skill Instructions are in the same <skill> block
     # 2. The skill prompt is always up-to-date with the current loaded skills state
+    # 3. The base system prompt remains stable for prompt caching
 
     return system_prompt

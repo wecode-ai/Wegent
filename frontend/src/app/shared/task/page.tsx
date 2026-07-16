@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, Suspense } from 'react'
+import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -14,12 +15,16 @@ import { LogIn } from 'lucide-react'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
-import { MessageBubble, type Message } from '@/features/tasks/components/message'
+import type { Message } from '@/features/tasks/components/message'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
 import { detectInAppBrowser } from '@/utils/browserDetection'
 import '@/features/common/scrollbar.css'
+
+const MessageBubble = dynamic(() => import('@/features/tasks/components/message/MessageBubble'), {
+  ssr: false,
+})
 
 /**
  * Public shared task page - no authentication required
@@ -143,6 +148,23 @@ function SharedTaskContent() {
         mime_type: ctx.mime_type,
         // Knowledge base fields
         document_count: ctx.document_count,
+        // External knowledge fields
+        external_provider: ctx.external_provider ?? undefined,
+        external_mode: ctx.external_mode ?? undefined,
+        external_id: ctx.external_id ?? undefined,
+        external_scope: ctx.external_scope ?? undefined,
+        external_target_type: ctx.external_target_type ?? undefined,
+        external_node_id: ctx.external_node_id ?? undefined,
+        external_document_id: ctx.external_document_id ?? undefined,
+        external_parent_id: ctx.external_parent_id ?? undefined,
+        // Table fields
+        document_id: ctx.document_id,
+        source_config: ctx.source_config,
+        // External web content fields
+        video_count: ctx.video_count,
+        site: ctx.site,
+        source_url: ctx.source_url,
+        cover_url: ctx.cover_url,
       })) || []
 
     // For user messages, use prompt

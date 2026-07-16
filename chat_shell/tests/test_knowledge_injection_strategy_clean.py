@@ -243,6 +243,31 @@ class TestKnowledgeBaseToolClean:
         # Should return same instance on subsequent access
         assert tool.injection_strategy is strategy
 
+    def test_check_call_limits_uses_available_input_budget(self):
+        """Token warning/reject should use usable input budget, not full context."""
+        tool = KnowledgeBaseTool()
+        tool.context_window = 10000
+        tool.max_output_tokens = 4000
+        tool.current_messages = []
+        tool._call_count = 6
+        tool._accumulated_tokens = 5500
+
+        allowed, reason, warning_level = tool._check_call_limits("test query")
+
+        assert allowed is False
+        assert reason == "token_limit_exceeded"
+        assert warning_level is None
+
+    def test_reserved_output_tokens_align_with_context_governance_budget(self):
+        """KB runtime reserve should follow the shared governance budget."""
+        tool = KnowledgeBaseTool()
+        tool.model_id = "o1"
+        tool.context_window = 200000
+        tool.max_output_tokens = 96000
+
+        assert tool._get_reserved_output_tokens() == 20000
+        assert tool._get_effective_input_budget() == 180000
+
     @pytest.mark.asyncio
     async def test_arun_with_no_knowledge_bases(self):
         """Test _arun with no knowledge bases configured."""
@@ -363,7 +388,7 @@ class TestKnowledgeBaseToolClean:
         assert runtime_context["context_window"] == 200000
         assert runtime_context["max_direct_chunks"] == tool.max_direct_chunks
         assert runtime_context["used_context_tokens"] > 0
-        assert runtime_context["reserved_output_tokens"] == 4096
+        assert runtime_context["reserved_output_tokens"] == 8192
         assert runtime_context["context_buffer_ratio"] == tool.context_buffer_ratio
         persistence_context = payload["persistence_context"]
         assert persistence_context["user_subtask_id"] == 123

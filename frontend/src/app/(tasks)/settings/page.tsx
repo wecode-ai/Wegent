@@ -4,7 +4,7 @@
 
 'use client'
 
-import { Suspense, useState, useEffect, useMemo, useCallback } from 'react'
+import { Suspense, useState, useEffect, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -16,12 +16,7 @@ import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/Se
 import IntegrationsPage from '@/features/settings/components/IntegrationsPage'
 import NotificationSettings from '@/features/settings/components/NotificationSettings'
 import { GroupManager } from '@/features/settings/components/groups/GroupManager'
-import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'
-import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope'
-import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
-import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope'
 import ApiKeyList from '@/features/settings/components/ApiKeyList'
-import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
 import { PetSettings } from '@/features/pet/components/PetSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -31,68 +26,41 @@ import { paths } from '@/config/paths'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
+const settingsTabs = new Set<SettingsTabId>([
+  'general',
+  'integrations',
+  'api-keys',
+  'group-manager',
+  'pet',
+])
+
+function normalizeSettingsTab(tab: string | null): SettingsTabId {
+  if (tab && settingsTabs.has(tab as SettingsTabId)) {
+    return tab as SettingsTabId
+  }
+  return 'general'
+}
+
 function SettingsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { t } = useTranslation()
   const isMobile = useIsMobile()
 
-  // Refresh trigger for SettingsTabNav groups list
-  const [groupsRefreshTrigger, setGroupsRefreshTrigger] = useState(0)
-
   // Get initial tab from URL with backward compatibility
   const getInitialTab = (): SettingsTabId => {
-    const tab = searchParams.get('tab')
-    const section = searchParams.get('section')
-
-    // Backward compatibility: map old section+tab format to new tab IDs
-    if (section && tab) {
-      return tab as SettingsTabId
-    }
-
-    // Direct tab parameter
-    if (tab) {
-      // Map old simple tab values to new format
-      const tabMap: Record<string, SettingsTabId> = {
-        team: 'personal-team',
-        models: 'personal-models',
-        shells: 'personal-shells',
-      }
-      return (tabMap[tab] || tab) as SettingsTabId
-    }
-
-    // Default to personal-team (智能体) as the entry module
-    return 'personal-team'
+    return normalizeSettingsTab(searchParams.get('tab'))
   }
 
   const [activeTab, setActiveTab] = useState<SettingsTabId>(getInitialTab)
 
-  // Selected group state for group scope
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => {
-    return searchParams.get('group') || null
-  })
-
-  // Sync state with URL parameters when they change (e.g., from GroupManager navigation)
+  // Sync state with URL parameters.
   useEffect(() => {
-    const tab = searchParams.get('tab')
-    const group = searchParams.get('group')
-
-    if (tab) {
-      // Map old simple tab values to new format (same as getInitialTab)
-      const tabMap: Record<string, SettingsTabId> = {
-        team: 'personal-team',
-        models: 'personal-models',
-        shells: 'personal-shells',
-      }
-      const mappedTab = (tabMap[tab] || tab) as SettingsTabId
-      if (mappedTab !== activeTab) {
-        setActiveTab(mappedTab)
-      }
+    const mappedTab = normalizeSettingsTab(searchParams.get('tab'))
+    if (mappedTab !== activeTab) {
+      setActiveTab(mappedTab)
     }
-    if (group !== selectedGroup) {
-      setSelectedGroup(group)
-    }
-  }, [searchParams])
+  }, [activeTab, searchParams])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -122,93 +90,16 @@ function SettingsContent() {
   }
 
   // Handle tab change
-  const handleTabChange = (tab: SettingsTabId, groupName?: string | null) => {
+  const handleTabChange = (tab: SettingsTabId) => {
     setActiveTab(tab)
-    // Update URL with new tab
-    const section = tab.startsWith('personal-')
-      ? 'personal'
-      : tab.startsWith('group-')
-        ? 'groups'
-        : tab
-    // Use provided groupName if available (for when tab change is triggered with group selection),
-    // otherwise fall back to current selectedGroup
-    const groupToUse = groupName !== undefined ? groupName : selectedGroup
-    const groupParam = groupToUse ? `&group=${encodeURIComponent(groupToUse)}` : ''
-    router.replace(`?section=${section}&tab=${tab}${groupParam}`)
+    router.replace(`?tab=${tab}`)
   }
 
-  // Handle group change
-  const handleGroupChange = useCallback(
-    (groupName: string | null) => {
-      setSelectedGroup(groupName)
-      // Update URL with group parameter
-      const section = activeTab.startsWith('personal-')
-        ? 'personal'
-        : activeTab.startsWith('group-')
-          ? 'groups'
-          : activeTab
-      const groupParam = groupName ? `&group=${encodeURIComponent(groupName)}` : ''
-      router.replace(`?section=${section}&tab=${activeTab}${groupParam}`)
-    },
-    [activeTab, router]
-  )
-
-  // Render content based on active tab
   // Render content based on active tab
   const currentComponent = useMemo(() => {
     switch (activeTab) {
-      case 'personal-models':
-        return <ModelListWithScope scope="personal" />
-      case 'personal-shells':
-        return <ShellListWithScope scope="personal" />
-      case 'personal-skills':
-        return <SkillListWithScope scope="personal" />
-      case 'personal-team':
-        return <TeamListWithScope scope="personal" />
-      case 'personal-retrievers':
-        return <RetrieverListWithScope scope="personal" />
       case 'group-manager':
-        return <GroupManager onGroupsChange={() => setGroupsRefreshTrigger(prev => prev + 1)} />
-      case 'group-models':
-        return (
-          <ModelListWithScope
-            scope="group"
-            selectedGroup={selectedGroup}
-            onGroupChange={setSelectedGroup}
-          />
-        )
-      case 'group-shells':
-        return (
-          <ShellListWithScope
-            scope="group"
-            selectedGroup={selectedGroup}
-            onGroupChange={setSelectedGroup}
-          />
-        )
-      case 'group-skills':
-        return (
-          <SkillListWithScope
-            scope="group"
-            selectedGroup={selectedGroup}
-            onGroupChange={setSelectedGroup}
-          />
-        )
-      case 'group-team':
-        return (
-          <TeamListWithScope
-            scope="group"
-            selectedGroup={selectedGroup}
-            onGroupChange={setSelectedGroup}
-          />
-        )
-      case 'group-retrievers':
-        return (
-          <RetrieverListWithScope
-            scope="group"
-            selectedGroup={selectedGroup}
-            onGroupChange={setSelectedGroup}
-          />
-        )
+        return <GroupManager />
       case 'integrations':
         return <IntegrationsPage />
       case 'general':
@@ -218,10 +109,9 @@ function SettingsContent() {
       case 'pet':
         return <PetSettings />
       default:
-        // Default to personal-team (智能体)
-        return <TeamListWithScope scope="personal" />
+        return <NotificationSettings />
     }
-  }, [activeTab, selectedGroup])
+  }, [activeTab])
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
@@ -254,13 +144,7 @@ function SettingsContent() {
         </TopNavigation>
 
         {/* Tab navigation */}
-        <SettingsTabNav
-          activeTab={activeTab}
-          onTabChange={handleTabChange}
-          selectedGroup={selectedGroup}
-          onGroupChange={handleGroupChange}
-          refreshTrigger={groupsRefreshTrigger}
-        />
+        <SettingsTabNav activeTab={activeTab} onTabChange={handleTabChange} />
 
         {/* Settings content area */}
         <div className="flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6">{currentComponent}</div>

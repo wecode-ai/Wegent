@@ -8,23 +8,33 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   update-contributors:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
+          token: ${{ steps.release-app-token.outputs.token }}
 
       - name: Update Contributors in README
-        uses: akhilmhdh/contributors-readme-action@v2.3.2
+        uses: akhilmhdh/contributors-readme-action@v2.3.11
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.release-app-token.outputs.token }}
         with:
+          auto_detect_branch_protection: false
           image_size: 80
           columns_per_row: 8
           readme_path: README.md
@@ -33,10 +43,11 @@ jobs:
           commit_message: 'docs: update contributors list'
 
       - name: Update Contributors in Chinese README
-        uses: akhilmhdh/contributors-readme-action@v2.3.2
+        uses: akhilmhdh/contributors-readme-action@v2.3.11
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.release-app-token.outputs.token }}
         with:
+          auto_detect_branch_protection: false
           image_size: 80
           columns_per_row: 8
           readme_path: README_zh.md

@@ -50,6 +50,12 @@ class TestExtractCompletedResult:
         result = extract_completed_result({"messages_chain": chain})
         assert result["messages_chain"] == chain
 
+    def test_preserves_termination_reason(self):
+        result = extract_completed_result(
+            {"termination_reason": "completed_with_unexecuted_tool_calls"}
+        )
+        assert result["termination_reason"] == "completed_with_unexecuted_tool_calls"
+
     def test_preserves_reasoning_content(self):
         result = extract_completed_result({"reasoning_content": "thinking..."})
         assert result["reasoning_content"] == "thinking..."
@@ -57,6 +63,42 @@ class TestExtractCompletedResult:
     def test_preserves_loaded_skills(self):
         result = extract_completed_result({"loaded_skills": ["skill1"]})
         assert result["loaded_skills"] == ["skill1"]
+
+    def test_preserves_standalone_chat_workspace_path(self):
+        result = extract_completed_result(
+            {"standalone_chat_workspace_path": "/tmp/chats/2026-05-29/new-chat"}
+        )
+        assert (
+            result["standalone_chat_workspace_path"] == "/tmp/chats/2026-05-29/new-chat"
+        )
+
+    def test_preserves_file_changes(self):
+        file_changes = {
+            "version": 1,
+            "status": "active",
+            "file_count": 1,
+            "additions": 1,
+            "deletions": 0,
+            "files": [
+                {
+                    "path": "data.txt",
+                    "change_type": "created",
+                    "additions": 1,
+                    "deletions": 0,
+                    "binary": False,
+                }
+            ],
+        }
+        result = extract_completed_result({"file_changes": file_changes})
+        assert result["file_changes"] == file_changes
+
+    def test_preserves_executor_session(self):
+        executor_session = {
+            "agent": "CodeX",
+            "threadId": "codex-thread-1",
+        }
+        result = extract_completed_result({"executor_session": executor_session})
+        assert result["executor_session"] == executor_session
 
     def test_preserves_silent_exit_fields(self):
         result = extract_completed_result(
@@ -68,11 +110,25 @@ class TestExtractCompletedResult:
         assert result["silent_exit"] is True
         assert result["silent_exit_reason"] == "user_cancelled"
 
+    def test_preserves_deferred_user_input_fields(self):
+        result = extract_completed_result(
+            {
+                "stop_reason": "tool_deferred",
+                "deferred_user_input": True,
+                "deferred_user_input_tool_use_id": "tool_123",
+            }
+        )
+
+        assert result["stop_reason"] == "tool_deferred"
+        assert result["deferred_user_input"] is True
+        assert result["deferred_user_input_tool_use_id"] == "tool_123"
+
     def test_missing_fields_are_none(self):
         """Fields not present in response_data are None."""
         result = extract_completed_result({})
         assert result["sources"] is None
         assert result["messages_chain"] is None
+        assert result["termination_reason"] is None
         assert result["reasoning_content"] is None
         assert result["loaded_skills"] is None
 
@@ -100,3 +156,24 @@ class TestExtractCompletedResult:
         }
         result = extract_completed_result(response_data)
         assert result["value"] == "hello"
+
+    def test_reasoning_output_is_not_merged_into_value(self):
+        response_data = {
+            "output": [
+                {
+                    "content": [
+                        {"type": "reasoning", "text": "Before tool."},
+                    ]
+                },
+                {
+                    "content": [
+                        {"type": "output_text", "text": "Final answer."},
+                    ]
+                },
+            ]
+        }
+
+        result = extract_completed_result(response_data)
+
+        assert result["value"] == "Final answer."
+        assert result["reasoning_content"] == "Before tool."

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ExternalKnowledgeRef } from '@/types/context'
+
 // Authentication Types
 
 // User Preferences
@@ -15,6 +17,7 @@ export interface UserPreferences {
   search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
   quick_access?: QuickAccessConfig
   memory_enabled?: boolean
+  chat_status_items?: string[]
   /** Default execution target: 'cloud' for cloud mode, or device_id for a specific device */
   default_execution_target?: string | null
 }
@@ -89,7 +92,7 @@ export interface Bot {
   name: string
   namespace?: string // Namespace for group bots (default: 'default')
   shell_name: string // Shell name user selected (e.g., 'ClaudeCode', 'my-custom-shell')
-  shell_type: string // Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
+  shell_type: string // Actual agent type (e.g., 'Chat', 'ClaudeCode', 'Agno', 'Dify')
   agent_config: Record<string, unknown>
   system_prompt: string
   mcp_servers: Record<string, unknown>
@@ -141,6 +144,8 @@ export interface SkillList {
   items: Skill[]
 }
 
+export type TeamAccessSource = 'native' | 'user_share' | 'namespace_authorization'
+
 // Shell Types
 export interface Shell {
   id: number
@@ -166,11 +171,13 @@ export interface Team {
   created_at: string
   updated_at: string
   share_status?: number // 0: 个人团队, 1: 分享中, 2: 共享团队
+  access_source?: TeamAccessSource
   agent_type?: string // agno, claude, dify, etc.
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: TaskType[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
+  quick_phrases?: string[] // Launcher phrases that prefill the chat input
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
   default_for_modes?: string[]
@@ -186,11 +193,18 @@ export interface BotSummary {
 }
 
 /** Bot information (used for Team.bots) */
+export type PipelineContextPassing =
+  | 'none'
+  | 'original_user'
+  | 'previous_bot'
+  | 'original_and_previous'
+
 export interface TeamBot {
   bot_id: number
   bot_prompt: string
   role?: string
   requireConfirmation?: boolean // Pipeline mode: pause after this stage for user confirmation
+  contextPassing?: PipelineContextPassing // Pipeline mode: message passed from this stage to the next stage
   bot?: BotSummary
 }
 
@@ -315,6 +329,20 @@ export interface TaskDetail {
   device_id?: string | null // Device ID used for execution (for task history)
   preserve_executor?: boolean // Whether to preserve executor pod after task completion
   requested_skills?: SkillRef[] | null // User-selected skills for this task
+  external_knowledge_refs?: ExternalKnowledgeRef[] | null // Task-level external knowledge bindings
+}
+
+export interface TaskRuntimeActiveStream {
+  subtask_id: number
+  cursor: number
+  last_activity_at?: string | null
+}
+
+export interface TaskRuntimeCheck {
+  task_id: number
+  task_status: TaskStatus
+  status_updated_at?: string | null
+  active_stream: TaskRuntimeActiveStream | null
 }
 
 /** Correction data stored in subtask.result.correction */
@@ -341,6 +369,7 @@ export interface SubtaskResult {
   thinking?: unknown[]
   value?: string | { workbench?: WorkbenchData }
   workbench?: WorkbenchData
+  termination_reason?: string
   /** Persisted correction data from AI correction mode */
   correction?: CorrectionData
   /** Video generation result */
@@ -401,6 +430,12 @@ export interface Task {
   id: number
   title: string
   team_id: number
+  team_name?: string | null
+  team_namespace?: string | null
+  team_display_name?: string | null
+  team_icon?: string | null
+  device_id?: string | null
+  device_name?: string | null
   git_url: string
   git_repo: string
   git_repo_id: number
@@ -520,9 +555,8 @@ export interface AskUserQuestion {
 
 export interface AskUserFormData {
   type: 'interactive_form_question'
-  ask_id: string
-  /** Tool use ID from Claude (UUID format) - used as fallback for answer submission */
-  tool_use_id?: string | null
+  /** Tool call ID used to submit the deferred form answer. */
+  tool_use_id: string
   task_id: number
   subtask_id: number
   /** All questions to render. A single-question form uses a one-item array. */
@@ -534,10 +568,19 @@ export interface AskUserFormData {
   tool_output?: Record<string, unknown> | null
 }
 
+export interface InteractiveFormAnswerPayload {
+  type: 'interactive_form_question'
+  tool_use_id: string
+  task_id?: number | null
+  subtask_id?: number | null
+  success?: boolean
+  status?: 'answered' | 'cancelled'
+  answers: Record<string, string | string[]>
+  message?: string
+}
+
 export interface AskUserAnswer {
-  ask_id: string
-  /** Tool use ID for fallback lookup when ask_id doesn't match */
-  tool_use_id?: string | null
+  tool_use_id: string
   /** Single-question answer */
   answer?: string | string[]
   /** Multi-question answers: {question_id: value_or_list} */
@@ -616,7 +659,7 @@ export interface MultiAttachmentUploadState {
 }
 
 // Subtask Context Types (unified context system)
-export type ContextType = 'attachment' | 'knowledge_base' | 'table'
+export type ContextType = 'attachment' | 'knowledge_base' | 'table' | 'external_knowledge'
 export type ContextStatus = 'pending' | 'uploading' | 'parsing' | 'ready' | 'failed' | 'empty'
 
 export interface SubtaskContextBrief {
@@ -631,11 +674,30 @@ export interface SubtaskContextBrief {
   // Knowledge base fields (from type_data)
   knowledge_id?: number | null
   document_count?: number | null
+  document_ids?: number[] | null
+  folder_ids?: number[] | null
+  folder_names?: string[] | null
+  include_subfolders?: boolean | null
+  scope_restricted?: boolean | null
   // Table fields (from type_data)
   document_id?: number | null
   source_config?: {
     url?: string
   } | null
+  // External knowledge fields
+  external_provider?: string | null
+  external_mode?: string | null
+  external_id?: string | null
+  external_scope?: string | null
+  external_target_type?: 'knowledge_base' | 'folder' | 'document' | null
+  external_node_id?: string | null
+  external_document_id?: string | null
+  external_parent_id?: string | null
+  // External web content fields
+  video_count?: number | null
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 // Quick Access Types
@@ -655,6 +717,64 @@ export interface QuickAccessResponse {
   user_version: number | null
   show_system_recommended: boolean // True if user_version < system_version
   teams: QuickAccessTeam[]
+}
+
+export interface QuickLaunchFunction {
+  type: 'system_function'
+  id: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  team_id: number
+  name: string
+  enabled: boolean
+  order: number
+  input_presets: QuickLaunchInputPreset[]
+}
+
+export interface QuickLaunchFavoriteAgent {
+  type: 'favorite_agent'
+  id: number
+  team_id: number
+  name: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  recommended_mode?: 'chat' | 'code' | 'both'
+  agent_type?: string | null
+  quick_phrases: string[]
+  input_presets: QuickLaunchInputPreset[]
+}
+
+export interface QuickLaunchResponse {
+  system_functions: QuickLaunchFunction[]
+  favorite_agents: QuickLaunchFavoriteAgent[]
+}
+
+export interface QuickLaunchInputOptions {
+  enable_deep_thinking?: boolean | null
+  enable_clarification?: boolean | null
+  force_override?: boolean | null
+  selected_skill_names?: string[]
+}
+
+export interface QuickLaunchInputPreset {
+  id: string
+  title: string
+  prompt?: string | null
+  options?: QuickLaunchInputOptions | null
+  source_attachment_ids?: number[]
+}
+
+export interface QuickLaunchPreparePresetRequest {
+  function_id: string
+  preset_id: string
+}
+
+export interface QuickLaunchPreparePresetResponse {
+  function_id: string
+  preset_id: string
+  attachments: Attachment[]
 }
 
 // Welcome Config Types (Slogan & Tips)
@@ -716,6 +836,49 @@ export type {
 } from './knowledge'
 
 // Project Types
+export type ProjectExecutionTargetType = 'local' | 'cloud' | 'remote'
+export type ProjectWorkspaceSource = 'git' | 'local_path' | 'device_path'
+
+export interface ProjectWorkspaceRef {
+  name: string
+  namespace: string
+}
+
+export interface ProjectExecutionConfig {
+  targetType: ProjectExecutionTargetType
+  deviceId?: string | null
+}
+
+export interface ProjectTeamConfig {
+  id?: number | null
+  name?: string | null
+  namespace: string
+}
+
+export interface ProjectWorkspaceConfig {
+  source: ProjectWorkspaceSource
+  localPath?: string | null
+  checkoutPath?: string | null
+  devicePath?: string | null
+  workspaceRef?: ProjectWorkspaceRef | null
+}
+
+export interface ProjectGitConfig {
+  url: string
+  repo?: string | null
+  repoId?: number | null
+  domain?: string | null
+  branch?: string | null
+}
+
+export interface ProjectConfig {
+  mode?: 'workspace' | null
+  execution?: ProjectExecutionConfig | null
+  team?: ProjectTeamConfig | null
+  workspace?: ProjectWorkspaceConfig | null
+  git?: ProjectGitConfig | null
+}
+
 /** Task within a project */
 export interface ProjectTask {
   task_id: number
@@ -723,6 +886,7 @@ export interface ProjectTask {
   task_status: TaskStatus
   is_group_chat: boolean
   project_id: number
+  updated_at?: string | null
 }
 
 /** Project for organizing tasks */
@@ -735,6 +899,7 @@ export interface Project {
   sort_order: number
   is_expanded: boolean
   task_count: number
+  config?: ProjectConfig | null
   created_at: string
   updated_at: string
 }

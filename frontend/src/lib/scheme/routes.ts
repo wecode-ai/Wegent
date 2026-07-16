@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { paths } from '@/config/paths'
+import { getCodingEntryHref, openNavigationHref } from '@/config/coding-route'
 import { registerScheme } from './registry'
 import type { SchemeHandlerContext } from './types'
 
@@ -30,17 +31,20 @@ export function initializeRouteMappings(): void {
     examples: ['wegent://open/chat', 'wegent://open/chat?team=123'],
   })
 
-  // Code page
+  // Coding entry
   registerScheme('open-code', {
     pattern: 'wegent://open/code',
     handler: (context: SchemeHandlerContext) => {
       const { params, router } = context
       const team = params.team as string | undefined
-      const href = team ? `${paths.code.getHref()}?team=${team}` : paths.code.getHref()
-      router.push(href)
+      const query = new URLSearchParams()
+      if (team) {
+        query.set('team', team)
+      }
+      openNavigationHref(router, getCodingEntryHref(undefined, query))
     },
     requireAuth: false,
-    description: 'Navigate to code page',
+    description: 'Navigate to coding mode',
     examples: ['wegent://open/code', 'wegent://open/code?team=123'],
   })
 

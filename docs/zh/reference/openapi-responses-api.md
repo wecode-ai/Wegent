@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # OpenAPI v1/responses API
 
 本文档描述 OpenAPI v1/responses 端点，该端点提供与 OpenAI Responses API 兼容的接口，用于与 Wegent 智能体（Team）进行交互。
@@ -45,6 +49,7 @@ POST /api/v1/responses
 | `input` | string \| array | 是 | 用户输入提示或对话历史 |
 | `stream` | boolean | 否 | 启用流式输出（默认：`false`） |
 | `previous_response_id` | string | 否 | 用于后续对话的前一个响应 ID |
+| `reasoning` | object | 否 | 模型推理配置，包含 `effort` 和可选的 `summary` |
 | `tools` | array | 否 | Wegent 自定义工具配置 |
 
 #### Model 格式
@@ -80,6 +85,21 @@ POST /api/v1/responses
 }
 ```
 
+#### 推理配置
+
+`reasoning.effort` 支持 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max` 和 `ultra`。实际可用级别取决于所选模型；客户端应使用模型运行时返回的能力列表，不应为不支持的模型构造级别。
+
+`reasoning.summary` 可选值为 `auto`、`concise` 或 `detailed`。
+
+```json
+{
+  "reasoning": {
+    "effort": "ultra",
+    "summary": "auto"
+  }
+}
+```
+
 #### 工具配置
 
 `tools` 数组用于启用额外的服务端能力：
@@ -98,6 +118,7 @@ POST /api/v1/responses
 | `wegent_code_bot` | 启用代码任务并指定 Git 仓库（用于 Executor 类型的 Team） |
 | `mcp` | 添加自定义 MCP 服务器 |
 | `skill` | 预加载特定技能 |
+| `knowledge_base` | 让 Chat Shell 智能体使用指定知识库，可按目录或文档限定访问范围 |
 
 **代码任务配置：**
 ```json
@@ -146,6 +167,54 @@ POST /api/v1/responses
   ]
 }
 ```
+
+**知识库配置：**
+
+整库访问继续使用 `knowledge_base_names`：
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_names": ["default#产品文档"]
+    }
+  ]
+}
+```
+
+按目录或文档限定访问范围时，推荐使用 `knowledge_base_refs`：
+
+```json
+{
+  "tools": [
+    {
+      "type": "knowledge_base",
+      "knowledge_base_refs": [
+        {
+          "name": "default#产品文档",
+          "folder_ids": [10],
+          "document_ids": [101],
+          "include_subfolders": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+目录范围规则：
+
+- `folder_ids` 和 `document_ids` 同时传时，范围取并集。
+- `folder_ids: [0]` 表示知识库根目录直接文档，不表示整库。
+- 整库访问不要传 `folder_ids` 或 `document_ids`。
+- `folder_ids: []` 和 `document_ids: []` 是非法参数。
+- `knowledge_base_refs` 与 `knowledge_base_names` 不能同时使用。
+- 顶层 `folder_ids` / `document_ids` 只作为单知识库兼容写法；多知识库请求必须使用 `knowledge_base_refs`。
+
+范围是强访问边界。启用目录或文档范围后，智能体的 `knowledge_base_search`、`kb_ls`、`kb_head` 只能搜索、列出或读取范围内文档；越界读取会返回 `document_scope_violation`。
+
+当请求带有 `previous_response_id` 且本轮没有重新传入 `knowledge_base` tool 时，系统会继承该任务上一次绑定的知识库范围，并在本轮重新解析目录内文档。显式传入新的 `knowledge_base` tool 会覆盖之前的范围。
 
 #### 响应行为
 
@@ -308,11 +377,19 @@ curl -X DELETE "https://your-domain/api/v1/responses/resp_123" \
 | `response.output_item.added` | 添加了新的输出项（消息） |
 | `response.content_part.added` | 向消息添加了新的内容部分 |
 | `response.output_text.delta` | 收到文本块 |
+| `response.reasoning_summary_part.added` | 添加了新的推理摘要输出项 |
+| `response.reasoning_summary_text.delta` | 收到推理摘要文本块 |
 | `response.output_text.done` | 文本输出完成 |
 | `response.content_part.done` | 内容部分完成 |
 | `response.output_item.done` | 输出项完成 |
 | `response.completed` | 响应完全完成 |
 | `response.failed` | 响应失败并带有错误 |
+
+### 推理输出顺序
+
+启用深度思考或模型返回推理摘要时，流式输出可能包含多个独立的 `reasoning` 输出项。工具调用或普通文本输出会结束当前推理块；之后如果继续产生推理内容，会创建新的 `reasoning` 输出项。
+
+最终的 `response.completed.response.output` 会保留这些输出项的时间顺序，例如 `reasoning -> shell_call -> reasoning -> message`。客户端应按 `output` 数组顺序渲染，不应把多个 `reasoning` 内容合并成一个块。
 
 ### SSE 流示例
 

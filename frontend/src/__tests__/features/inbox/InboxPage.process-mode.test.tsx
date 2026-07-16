@@ -175,7 +175,7 @@ describe('InboxPage process routing', () => {
     })
   })
 
-  it('routes code mode to the code page', async () => {
+  it('routes code mode to chat code-agent mode', async () => {
     mockUseDevices.mockReturnValue({ devices: [] })
 
     const user = userEvent.setup()
@@ -187,6 +187,6 @@ describe('InboxPage process routing', () => {
     expect(mockGetPreferredExecutionDevice).not.toHaveBeenCalled()
     expect(mockToastError).not.toHaveBeenCalled()
     expect(push).toHaveBeenCalledTimes(1)
-    expect(push).toHaveBeenNthCalledWith(1, '/code?process_message=42')
+    expect(push).toHaveBeenNthCalledWith(1, '/chat?process_message=42&agent=code')
   })
 })

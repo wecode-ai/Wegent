@@ -55,6 +55,22 @@ export interface MCPServerListResponse {
   error_details?: string
 }
 
+export interface MCPToolInfo {
+  name: string
+  description: string
+}
+
+export interface MCPTestRequest {
+  server_name: string
+  server_config: Record<string, unknown>
+}
+
+export interface MCPTestResponse {
+  success: boolean
+  error?: string
+  tools: MCPToolInfo[]
+}
+
 export const mcpProviderApis = {
   /** Get list of MCP providers */
   getProviders: async (): Promise<MCPProviderListResponse> => {
@@ -69,5 +85,10 @@ export const mcpProviderApis = {
   /** Update MCP provider API keys */
   updateKeys: async (data: MCPProviderKeysRequest): Promise<MCPProviderKeysResponse> => {
     return apiClient.put<MCPProviderKeysResponse>('/mcp-providers/keys', data)
+  },
+
+  /** Test MCP server connection */
+  testServer: async (data: MCPTestRequest): Promise<MCPTestResponse> => {
+    return apiClient.post<MCPTestResponse>('/mcp-providers/test', data)
   },
 }

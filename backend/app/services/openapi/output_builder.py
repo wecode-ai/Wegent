@@ -42,6 +42,21 @@ def _parse_arguments(value: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def normalize_tool_output(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return value
+
+    if isinstance(value, dict):
+        sanitized = dict(value)
+        sanitized.pop("pending_user_input", None)
+        sanitized.pop("pending_user_input_payload", None)
+        return sanitized
+    return value
+
+
 def _extract_text_content(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -207,6 +222,7 @@ def _build_tool_item_from_tool_call(
             server_label=str((block or {}).get("server_label") or ""),
             arguments=arguments,
             status=_shell_call_status(block),
+            output=normalize_tool_output((block or {}).get("tool_output")),
         )
 
     return FunctionCallOutputItem(
@@ -250,6 +266,7 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
         )
 
     if protocol == "mcp_call":
+        tool_output = normalize_tool_output(block.get("tool_output"))
         return MCPCallOutputItem(
             type="mcp_call",
             id=tool_use_id or f"mcp_{tool_name}",
@@ -257,6 +274,7 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
             server_label=str(block.get("server_label") or ""),
             arguments=_dump_arguments(tool_input),
             status=_shell_call_status(block),
+            output=tool_output,
         )
 
     return FunctionCallOutputItem(
@@ -350,7 +368,20 @@ def _build_items_from_blocks(
         return []
 
     output: list[ResponseOutputItem] = []
-    text_parts: list[str] = []
+    emitted_text = False
+    emitted_reasoning = False
+
+    def append_message(content: list[OutputTextContent]) -> None:
+        output.append(
+            OutputMessage(
+                type="message",
+                id=f"msg_{subtask.id}_{len(output)}",
+                status=_message_status(subtask, status_override),
+                role="assistant",
+                content=content,
+            )
+        )
+
     for block in blocks:
         if not isinstance(block, dict):
             continue
@@ -359,23 +390,31 @@ def _build_items_from_blocks(
         elif block.get("type") == "text":
             content = block.get("content")
             if isinstance(content, str) and content:
-                text_parts.append(content)
+                emitted_text = True
+                append_message(
+                    [
+                        OutputTextContent(
+                            type="output_text", text=content, annotations=[]
+                        )
+                    ]
+                )
+        elif block.get("type") == "thinking":
+            content = block.get("content")
+            if isinstance(content, str) and content:
+                emitted_reasoning = True
+                append_message(
+                    [OutputTextContent(type="reasoning", text=content, annotations=[])]
+                )
 
     final_text = (
-        content_override or "\n".join(text_parts) or str(result.get("value") or "")
+        "" if emitted_text else content_override or str(result.get("value") or "")
     )
     final_reasoning = str(result.get("reasoning_content") or "")
-    if final_text or final_reasoning:
-        output.append(
-            OutputMessage(
-                type="message",
-                id=f"msg_{subtask.id}",
-                status=_message_status(subtask, status_override),
-                role="assistant",
-                content=_build_message_content(
-                    text=final_text,
-                    reasoning=final_reasoning,
-                ),
+    if final_text or (final_reasoning and not emitted_reasoning):
+        append_message(
+            _build_message_content(
+                text=final_text,
+                reasoning="" if emitted_reasoning else final_reasoning,
             )
         )
 
@@ -455,3 +494,10 @@ def build_response_output(
             )
         )
     return output
+
+
+def extract_pending_user_input_state(
+    subtasks: Iterable[Subtask],
+) -> tuple[bool, Optional[dict[str, Any]]]:
+    """Do not expose legacy pending-user-input state through Responses API."""
+    return False, None

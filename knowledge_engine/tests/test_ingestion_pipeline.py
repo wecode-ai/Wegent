@@ -118,6 +118,366 @@ def test_build_ingestion_result_without_splitter_config_uses_flat_file_aware_def
     assert "Useful body paragraph with enough detail." in result.index_nodes[0].text
 
 
+@pytest.mark.parametrize("file_extension", [".md", ".txt"])
+def test_build_ingestion_result_auto_unitizes_qa_documents(
+    file_extension: str,
+) -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "## Section A\n\n"
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes the complete answer with enough detail "
+                    "to keep the returned chunk useful.\n"
+                    "- It preserves readable answer structure.\n\n"
+                    "**Q2：How is each answer returned?**\n\n"
+                    "**A：**\n"
+                    "Each detected question and answer pair becomes one node "
+                    "without changing the query architecture."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=file_extension,
+        embed_model=MagicMock(),
+    )
+
+    assert result.normalized_splitter_config.chunk_strategy == "flat"
+    assert result.parser_subtype == "qa_pair"
+    assert result.index_nodes == result.nodes
+    assert result.parent_nodes is None
+    assert result.child_nodes is None
+    assert len(result.index_nodes) == 2
+
+    first_node = result.index_nodes[0]
+    second_node = result.index_nodes[1]
+    assert first_node.metadata["node_role"] == "qa_pair"
+    assert first_node.metadata["parser_subtype"] == "qa_pair"
+    assert first_node.metadata["chunk_strategy"] == "flat"
+    assert first_node.metadata["format_enhancement"] == "file_aware"
+    assert first_node.metadata["qa_id"] == "doc1-q0001"
+    assert first_node.metadata["qa_index"] == 0
+    assert first_node.metadata["question"] == "What does Wegent index?"
+    assert first_node.metadata["display_text"] == first_node.text
+    assert first_node.metadata["retrieval_text"].startswith(
+        "Section: Section A\nQuestion: What does Wegent index?"
+    )
+    assert first_node.metadata["retrieval_text"] != first_node.text
+    assert "\n\nA:" not in first_node.metadata["retrieval_text"]
+    assert "question" in first_node.excluded_embed_metadata_keys
+    assert "question" in first_node.excluded_llm_metadata_keys
+    assert first_node.metadata["heading_path"] == "Section A"
+    assert first_node.metadata["qa_confidence"] > 0.8
+    assert first_node.metadata["source_position"].count(":") == 1
+    assert first_node.text.startswith("Q: What does Wegent index?")
+    assert "A: Wegent indexes the complete answer" in first_node.text
+    assert "\n- It preserves readable answer structure." in first_node.text
+    assert "How is each answer returned?" not in first_node.text
+    assert second_node.metadata["qa_id"] == "doc1-q0002"
+    assert "Each detected question and answer pair becomes one node" in second_node.text
+
+
+def test_build_ingestion_result_rejects_multiline_question() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "Question: What does Wegent index?\n"
+                    "Include uploaded files and pasted text.\n\n"
+                    "Answer: Wegent indexes the resulting text as searchable nodes "
+                    "with metadata for retrieval.\n\n"
+                    "Question: How is each answer returned?\n\n"
+                    "Answer: Each answer remains readable as display text while "
+                    "retrieval uses a focused search text."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
+def test_build_ingestion_result_generates_unique_ids_for_mixed_question_numbering() -> (
+    None
+):
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "**Q1: What is indexed?**\n\n"
+                    "**A:** Indexed text is stored as retrievable nodes with "
+                    "source metadata.\n\n"
+                    "**Q: How is it returned?**\n\n"
+                    "**A:** Returned text remains readable and includes the "
+                    "complete answer.\n\n"
+                    "**Q2: Does retrieval change?**\n\n"
+                    "**A:** The retrieval contract remains compatible with "
+                    "existing knowledge base queries."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    qa_ids = [
+        node.metadata["qa_id"]
+        for node in result.index_nodes
+        if node.metadata["node_role"] == "qa_pair"
+    ]
+    assert qa_ids == ["doc1-q0001", "doc1-q0003", "doc1-q0002"]
+    assert len(qa_ids) == len(set(qa_ids))
+
+
+def test_build_ingestion_result_unitizes_plain_qa_labels() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "Q1: What changed in retrieval?\n\n"
+                    "A: Retrieval can index each question and answer pair "
+                    "as a focused searchable node.\n\n"
+                    "Q2: Does the answer stay readable?\n\n"
+                    "A: The returned node keeps the full answer text for "
+                    "downstream LLM context."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert [node.metadata["node_role"] for node in result.index_nodes] == [
+        "qa_pair",
+        "qa_pair",
+    ]
+
+
+def test_build_ingestion_result_preserves_short_prefix_for_qa_document() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "Important note.\n\n"
+                    "**Q1: What is indexed?**\n\n"
+                    "**A:** Indexed text is stored as retrievable nodes with "
+                    "source metadata.\n\n"
+                    "**Q2: How is it returned?**\n\n"
+                    "**A:** Returned text remains readable and includes the "
+                    "complete answer."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert [node.metadata["node_role"] for node in result.index_nodes] == [
+        "qa_pair",
+        "qa_pair",
+        "chunk",
+    ]
+    assert "Important note." in result.index_nodes[2].text
+
+
+def test_qa_answer_ends_at_first_blank_line() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: What is indexed?\n"
+                    "A: The focused answer is indexed.\n\n"
+                    "This prose is outside the answer and makes coverage low.\n"
+                    "It must not be swallowed by the preceding answer.\n\n"
+                    "Q2: How is it returned?\n"
+                    "A: The answer remains readable."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
+def test_qa_pairs_must_be_separated_by_a_blank_line() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: How do I configure it?\n"
+                    "A: Follow these steps.\n"
+                    "Q2: How do I verify it?\n"
+                    "A: Run the verification command."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+
+
+def test_qa_and_answer_markers_do_not_require_a_blank_line() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: What is indexed?\n"
+                    "A: The complete answer is indexed as one Q/A node.\n\n"
+                    "Q2: Is a blank required before A?\n"
+                    "A: No. The A marker may immediately follow the Q line."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert len(result.index_nodes) == 2
+
+
+def test_qa_coverage_below_eighty_percent_uses_normal_splitter() -> None:
+    preface = "Ordinary preface content. " * 20
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    f"{preface}\n\n"
+                    "Q1: What is indexed?\n"
+                    "A: The focused answer is indexed.\n\n"
+                    "Q2: How is it returned?\n"
+                    "A: The answer remains readable."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
+def test_long_contiguous_answer_remains_one_qa_node() -> None:
+    long_answer = "\n".join(
+        f"Answer line {index} contains a distinct operational detail."
+        for index in range(100)
+    )
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: What is indexed?\n"
+                    f"A: {long_answer}\n\n"
+                    "Q2: How is it returned?\n"
+                    "A: The answer remains readable and searchable."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert len(result.index_nodes) == 2
+    assert long_answer in result.index_nodes[0].text
+
+
+def test_qa_answer_preserves_markdown_indentation() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: How is nested content represented?\n"
+                    "A:\n"
+                    "- Parent item\n"
+                    "  - Child item\n\n"
+                    "Q2: How is code represented?\n"
+                    "A:\n"
+                    "    if ready:\n"
+                    "        run()"
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert "\n  - Child item" in result.index_nodes[0].text
+    assert "\n    if ready:\n        run()" in result.index_nodes[1].text
+
+
+def test_qa_coverage_ignores_blank_line_formatting() -> None:
+    blank_lines = "\n" * 100
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "This ordinary prose is the majority of the document content. "
+                    "It must keep the document on the normal splitter path.\n\n"
+                    f"Q1: First?\n{blank_lines}A: One.\n\n"
+                    f"Q2: Second?\n{blank_lines}A: Two."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
+def test_build_ingestion_result_does_not_unitize_single_qa_document() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes the complete answer with enough detail."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert len(result.index_nodes) == 1
+    assert result.index_nodes[0].metadata["node_role"] == "chunk"
+
+
 def test_build_ingestion_result_with_hierarchical_config_returns_parent_and_child_nodes() -> (
     None
 ):
@@ -296,6 +656,109 @@ def test_document_indexer_indexes_flat_nodes_with_enriched_metadata() -> None:
     assert indexed_nodes[0].metadata["heading_path"] == "Intro"
     assert result["chunks_data"]["splitter_type"] == "flat"
     assert result["chunks_data"]["splitter_subtype"] == "markdown_sentence"
+    assert result["chunks_data"]["qa_pair_count"] == 0
+
+
+def test_document_indexer_exposes_qa_pair_count_for_unitized_documents() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.return_value = {
+        "status": "success",
+        "indexed_count": 2,
+        "index_name": "wegent_kb_1",
+    }
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config=None,
+        file_extension=".md",
+    )
+
+    result = indexer._index_documents(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes complete question and answer pairs.\n\n"
+                    "**Q2：Does retrieval change?**\n\n"
+                    "**A：**\n"
+                    "Retrieval keeps reading the same node text, so query behavior "
+                    "does not require a new architecture."
+                )
+            )
+        ],
+        chunk_metadata=ChunkMetadata(
+            knowledge_id="1",
+            doc_ref="doc_qa",
+            source_file="faq.md",
+            created_at="2026-04-12T00:00:00+00:00",
+        ),
+    )
+
+    indexed_nodes = storage_backend.index_with_metadata.call_args.kwargs["nodes"]
+    assert len(indexed_nodes) == 2
+    assert indexed_nodes[0].metadata["node_role"] == "qa_pair"
+    assert indexed_nodes[0].metadata["parser_subtype"] == "qa_pair"
+    assert result["chunks_data"]["splitter_type"] == "flat"
+    assert result["chunks_data"]["splitter_subtype"] == "qa_pair"
+    assert result["chunks_data"]["qa_pair_count"] == 2
+    assert result["chunks_data"]["items"][0]["content"].startswith(
+        "Q: What does Wegent index?"
+    )
+    assert (
+        "A: Wegent indexes complete question and answer pairs."
+        in result["chunks_data"]["items"][0]["content"]
+    )
+
+
+def test_document_indexer_counts_only_qa_pair_nodes_for_mixed_qa_documents() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.return_value = {
+        "status": "success",
+        "indexed_count": 3,
+        "index_name": "wegent_kb_1",
+    }
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config=None,
+        file_extension=".md",
+    )
+
+    result = indexer._index_documents(
+        documents=[
+            Document(
+                text=(
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes complete question and answer pairs.\n\n"
+                    "**Q2：Does retrieval change?**\n\n"
+                    "**A：**\n"
+                    "Retrieval keeps reading the same node text."
+                )
+            ),
+            Document(
+                text="Note.",
+            ),
+        ],
+        chunk_metadata=ChunkMetadata(
+            knowledge_id="1",
+            doc_ref="doc_qa_mixed",
+            source_file="faq.md",
+            created_at="2026-04-12T00:00:00+00:00",
+        ),
+    )
+
+    indexed_nodes = storage_backend.index_with_metadata.call_args.kwargs["nodes"]
+    assert [node.metadata["node_role"] for node in indexed_nodes] == [
+        "qa_pair",
+        "qa_pair",
+        "chunk",
+    ]
+    assert result["chunks_data"]["splitter_subtype"] == "qa_pair"
+    assert result["chunks_data"]["qa_pair_count"] == 2
+    assert result["chunks_data"]["total_count"] == 3
 
 
 def test_document_indexer_hierarchical_routes_through_ingestion_result_contract() -> (

@@ -41,6 +41,8 @@ const mockTranslate = (key: string, options?: { count?: number }) => {
     'bot.default_knowledge_bases_source_shared': 'Shared',
     'knowledge:document_count': `${options?.count ?? 0} document`,
     'knowledge:documents_count': `${options?.count ?? 0} documents`,
+    'skills.preload_hint': 'Check skills to preload them.',
+    'skills.preload_skills_section': 'Preload Skills',
   }
 
   const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
@@ -81,11 +83,16 @@ jest.mock('@/apis/models', () => ({
   },
 }))
 
-jest.mock('@/apis/shells', () => ({
-  shellApis: {
-    getUnifiedShells: jest.fn(),
-  },
-}))
+jest.mock('@/apis/shells', () => {
+  const actual = jest.requireActual('@/apis/shells')
+  return {
+    ...actual,
+    shellApis: {
+      ...actual.shellApis,
+      getUnifiedShells: jest.fn(),
+    },
+  }
+})
 
 jest.mock('@/apis/skills', () => ({
   fetchUnifiedSkillsList: jest.fn(),
@@ -427,6 +434,37 @@ describe('BotEdit default knowledge bases', () => {
 
     expect(await screen.findByText('交互式表单提问')).toBeInTheDocument()
     expect(screen.queryByTestId('rich-skill-selector')).not.toBeInTheDocument()
+  })
+
+  test('shows preload controls for selected Claude Code skills', async () => {
+    mockedFetchUnifiedSkillsList.mockResolvedValue([
+      {
+        id: 5,
+        name: 'repo-reader',
+        namespace: 'default',
+        description: 'Read repository context',
+        displayName: 'Repo Reader',
+        visible: true,
+        is_active: true,
+        is_public: false,
+        user_id: 7,
+      },
+    ])
+
+    renderBotEdit({
+      skills: ['repo-reader'],
+      skill_refs: {
+        'repo-reader': {
+          skill_id: 5,
+          namespace: 'default',
+          is_public: false,
+        },
+      },
+    })
+
+    expect((await screen.findAllByText('Repo Reader')).length).toBeGreaterThan(0)
+    expect(screen.getByTitle('Preload Skills')).toBeInTheDocument()
+    expect(screen.getByText('Check skills to preload them.')).toBeInTheDocument()
   })
 
   test('shows hidden public skills as selectable when editing public bots', async () => {

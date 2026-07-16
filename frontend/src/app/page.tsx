@@ -7,6 +7,7 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
+import { openNavigationHref } from '@/config/coding-route'
 import { getLastTab } from '@/utils/userPreferences'
 
 export default function Home() {
@@ -15,7 +16,7 @@ export default function Home() {
   useEffect(() => {
     const lastTab = getLastTab()
     if (lastTab === 'code') {
-      router.replace(paths.code.getHref())
+      openNavigationHref(router, paths.code.getHref())
     } else if (lastTab === 'wiki') {
       router.replace(paths.wiki.getHref())
     } else {

@@ -210,12 +210,20 @@ export function useKnowledgeDialogs(props: KnowledgeDialogsProps): KnowledgeDial
           description: data.description,
           namespace,
           retrieval_config: data.retrieval_config,
+          rag_config_mode: data.rag_config_mode,
           summary_enabled: data.summary_enabled,
           summary_model_ref: data.summary_model_ref,
           kb_type: kbType,
           guided_questions: data.guided_questions,
           max_calls_per_conversation: data.max_calls_per_conversation,
           exempt_calls_before_check: data.exempt_calls_before_check,
+          // Forward multimodal config — buildMultimodalSubmitFields() already
+          // assembled these in the dialog; omitting them here silently dropped
+          // the toggle on create (while edit passed `data` through unchanged).
+          multimodal_analysis_enabled: data.multimodal_analysis_enabled,
+          multimodal_analysis_model_ref: data.multimodal_analysis_model_ref,
+          multimodal_analysis_video_prompt: data.multimodal_analysis_video_prompt,
+          multimodal_analysis_image_prompt: data.multimodal_analysis_image_prompt,
         })
 
         if (data.summary_enabled && data.summary_model_ref) {

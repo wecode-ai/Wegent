@@ -9,9 +9,12 @@ Unit tests for MilvusBackend storage backend implementation.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from llama_index.core.schema import TextNode
 
+from knowledge_engine.retrieval.filters import parse_metadata_filters
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.storage.milvus_backend import MilvusBackend
+from shared.models import RetrievalScope
 
 
 class TestMilvusBackendInit:
@@ -155,12 +158,113 @@ class TestCreateVectorStore:
             upsert_mode=True,
             overwrite=False,
             enable_sparse=True,
-            hybrid_ranker="RRFRanker",
+            hybrid_ranker="WeightedRanker",
+            hybrid_ranker_params={},
         )
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_defaults_to_weighted_ranker(self, mock_milvus_vs):
+        """Test that WeightedRanker is the default hybrid ranker."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+            }
+        )
+
+        backend.create_vector_store("test_collection")
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "WeightedRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {}
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_can_opt_out_to_rrf_ranker(self, mock_milvus_vs):
+        """Test that an explicit opt-out can request RRFRanker."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {"hybrid_ranker": "RRFRanker"},
+            }
+        )
+
+        backend.create_vector_store("test_collection")
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "RRFRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {}
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_threads_weighted_ranker_params_from_retrieval_setting(
+        self, mock_milvus_vs
+    ):
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {"hybrid_ranker": "WeightedRanker"},
+            }
+        )
+
+        backend.create_vector_store(
+            "test_collection",
+            retrieval_mode="hybrid",
+            retrieval_setting={"vector_weight": 0.8, "keyword_weight": 0.2},
+        )
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "WeightedRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {
+            "weights": [0.8, 0.2]
+        }
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_uses_configured_weighted_ranker_params_as_fallback(
+        self, mock_milvus_vs
+    ):
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {
+                    "hybrid_ranker": "WeightedRanker",
+                    "hybrid_ranker_params": {"weights": [0.6, 0.4]},
+                },
+            }
+        )
+
+        backend.create_vector_store(
+            "test_collection",
+            retrieval_mode="hybrid",
+            retrieval_setting={},
+        )
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {
+            "weights": [0.6, 0.4]
+        }
 
 
 class TestRetrieve:
     """Tests for retrieve method."""
+
+    def test_process_query_results_returns_display_text(self):
+        from knowledge_engine.storage.milvus_backend import MilvusBackend
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        node = TextNode(
+            text="Question-only retrieval text",
+            metadata={"display_text": "Q: question\n\nA: full answer"},
+        )
+
+        result = backend._process_query_results(
+            MagicMock(nodes=[node], similarities=[0.9]),
+            score_threshold=0.1,
+        )
+
+        assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_vector_mode(self, mock_milvus_vs):
@@ -200,6 +304,154 @@ class TestRetrieve:
         assert len(result["records"]) == 1
         assert result["records"][0]["content"] == "test content"
         assert result["records"][0]["score"] == 0.9
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_vector_mode_adds_native_document_scope_expr(self, mock_milvus_vs):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10, 11]),
+        )
+
+        assert mock_store.query.call_args.kwargs["string_expr"] == (
+            'knowledge_id == \'kb_1\' and doc_ref in ["10", "11"]'
+        )
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.filters is None
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_preserves_metadata_filter_expr_with_document_scope(
+        self, mock_milvus_vs
+    ):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+        mock_store.query.return_value = MagicMock(nodes=[], similarities=[])
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "vector",
+            },
+            scope=RetrievalScope(document_ids=[10]),
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {"key": "tags", "operator": "contains", "value": "release"},
+                    {
+                        "key": "summary",
+                        "operator": "text_match",
+                        "value": "checklist",
+                    },
+                ],
+            },
+        )
+
+        string_expr = mock_store.query.call_args.kwargs["string_expr"]
+        assert "knowledge_id == 'kb_1'" in string_expr
+        assert "array_contains(tags, 'release')" in string_expr
+        assert "summary like 'checklist%'" in string_expr
+        assert 'doc_ref in ["10"]' in string_expr
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.filters is None
+
+    def test_scoped_native_filter_expr_keeps_knowledge_id_outside_user_or(self):
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        metadata_filters = parse_metadata_filters(
+            "kb_1",
+            {
+                "operator": "or",
+                "conditions": [
+                    {"key": "lang", "operator": "==", "value": "zh"},
+                    {"key": "source", "operator": "==", "value": "manual"},
+                ],
+            },
+        )
+
+        string_expr = backend._build_scoped_native_filter_expr(
+            scope=RetrievalScope(document_ids=[10]),
+            metadata_filters=metadata_filters,
+        )
+
+        assert string_expr == (
+            "(knowledge_id == 'kb_1' and (lang == 'zh' or source == 'manual')) "
+            'and doc_ref in ["10"]'
+        )
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_rejects_doc_ref_in_metadata_condition_with_scope(
+        self, mock_milvus_vs
+    ):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        mock_embed_model = MagicMock()
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        with pytest.raises(ValueError, match=r"RetrievalScope\.document_ids"):
+            backend.retrieve(
+                knowledge_id="kb_1",
+                query="test query",
+                embed_model=mock_embed_model,
+                retrieval_setting={
+                    "top_k": 10,
+                    "score_threshold": 0.5,
+                    "retrieval_mode": "vector",
+                },
+                scope=RetrievalScope(document_ids=[10]),
+                metadata_condition={
+                    "operator": "and",
+                    "conditions": [
+                        {"key": "doc_ref", "operator": "in", "value": ["10"]}
+                    ],
+                },
+            )
+
+        mock_store.query.assert_not_called()
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_keyword_mode(self, mock_milvus_vs):
@@ -268,11 +520,94 @@ class TestRetrieve:
                 "top_k": 10,
                 "score_threshold": 0.5,
                 "retrieval_mode": "hybrid",
+                "search_hints": {
+                    "semantic_query": "How to verify the test query?",
+                    "keywords": ["test"],
+                    "phrases": ["test query"],
+                },
             },
         )
 
         assert "records" in result
-        mock_embed_model.get_query_embedding.assert_called_once()
+        mock_embed_model.get_query_embedding.assert_called_once_with(
+            "How to verify the test query?"
+        )
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.query_str == "test query test"
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_hybrid_mode_threads_ranker_weights(self, mock_milvus_vs):
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        mock_result = MagicMock()
+        mock_result.nodes = []
+        mock_result.similarities = []
+        mock_store.query.return_value = mock_result
+
+        mock_embed_model = MagicMock()
+        mock_embed_model.get_query_embedding.return_value = [0.1] * 1536
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {"hybrid_ranker": "WeightedRanker"},
+            }
+        )
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=mock_embed_model,
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "hybrid",
+                "vector_weight": 0.75,
+                "keyword_weight": 0.25,
+            },
+        )
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "WeightedRanker"
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker_params"] == {
+            "weights": [0.75, 0.25]
+        }
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_retrieve_keyword_mode_uses_sparse_hints(self, mock_milvus_vs):
+        """Test keyword retrieval uses sparse hints when provided."""
+        mock_store = MagicMock()
+        mock_milvus_vs.return_value = mock_store
+
+        mock_result = MagicMock()
+        mock_result.nodes = []
+        mock_result.similarities = []
+        mock_store.query.return_value = mock_result
+
+        config = {
+            "url": "http://localhost:19530/default",
+            "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+        }
+        backend = MilvusBackend(config)
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="test query",
+            embed_model=MagicMock(),
+            retrieval_setting={
+                "top_k": 10,
+                "score_threshold": 0.5,
+                "retrieval_mode": "keyword",
+                "search_hints": {
+                    "keywords": ["test"],
+                    "phrases": ["test query"],
+                },
+            },
+        )
+
+        vs_query = mock_store.query.call_args.args[0]
+        assert vs_query.query_str == "test query test"
 
     def test_retrieve_invalid_mode(self):
         """Test that invalid retrieval mode raises ValueError."""

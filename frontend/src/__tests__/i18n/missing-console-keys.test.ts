@@ -1,0 +1,36 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import enChat from '@/i18n/locales/en/chat.json'
+import zhChat from '@/i18n/locales/zh-CN/chat.json'
+import enCommon from '@/i18n/locales/en/common.json'
+import zhCommon from '@/i18n/locales/zh-CN/common.json'
+import enFeed from '@/i18n/locales/en/feed.json'
+import zhFeed from '@/i18n/locales/zh-CN/feed.json'
+
+describe('i18n console warning keys', () => {
+  test('has chat scrollbar marker translations in zh-CN and en', () => {
+    expect(enChat.scroll_to_bottom).toBeTruthy()
+    expect(zhChat.scroll_to_bottom).toBeTruthy()
+    expect(enCommon.scroll_to_bottom).toBeTruthy()
+    expect(zhCommon.scroll_to_bottom).toBeTruthy()
+  })
+
+  test('has common empty-state translations in zh-CN and en', () => {
+    expect(enCommon.noData).toBeTruthy()
+    expect(zhCommon.noData).toBeTruthy()
+  })
+
+  test('has tool detail empty output translations in zh-CN and en', () => {
+    expect(enChat.thinking.no_output).toBe('No output')
+    expect(zhChat.thinking.no_output).toBe('无输出')
+  })
+
+  test('uses automation as the feed module title in zh-CN and en', () => {
+    expect(zhCommon.navigation.flow).toBe('自动化')
+    expect(zhFeed.title).toBe('自动化')
+    expect(enCommon.navigation.flow).toBe('Automation')
+    expect(enFeed.title).toBe('Automation')
+  })
+})

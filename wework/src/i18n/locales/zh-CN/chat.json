@@ -1,0 +1,212 @@
+{
+  "message_navigation": {
+    "label": "历史发言导航",
+    "jump_to_message": "跳转到第 {{index}} 条发言",
+    "loading_target": "正在加载目标位置...",
+    "gap_missing": "部分记录未加载",
+    "loading_gap": "正在加载缺失记录..."
+  },
+  "thinking": {
+    "running": "正在思考",
+    "updating": "正在整理思路...",
+    "completed": "思考过程",
+    "chars": "字符"
+  },
+  "process_text": {
+    "running": "正在处理"
+  },
+  "assistant_status": {
+    "stopped": "已停止",
+    "stopped_after": "你在 {{duration}} 后停止了"
+  },
+  "queue": {
+    "paused": "队列已暂停",
+    "resume": "继续发送",
+    "send_with_paused_title": "恢复暂停的队列？",
+    "send_with_paused_description": "发送新消息前，请选择是否保留现有待发送消息。",
+    "send_with_paused_cancel": "取消",
+    "send_with_paused_clear": "清空队列",
+    "send_with_paused_preserve": "保留并继续"
+  },
+  "request_user_input": {
+    "asked_count": "已询问 {{count}} 个问题",
+    "ignore": "取消",
+    "submit": "提交",
+    "custom_placeholder": "输入你的回答"
+  },
+  "plan_card": {
+    "title": "计划",
+    "generating": "正在生成",
+    "download": "下载计划",
+    "copy": "复制计划",
+    "copy_success": "已复制",
+    "expand": "全屏查看计划",
+    "close": "关闭计划"
+  },
+  "codex_context": {
+    "compacting": "正在自动压缩上下文",
+    "compacted": "上下文已自动压缩"
+  },
+  "codex_references": {
+    "title": "引用文件",
+    "open_label": "打开 {{path}}",
+    "open_with": "打开方式",
+    "preview_label": "打开预览",
+    "show_more": "显示另外 {{count}} 个",
+    "show_less": "收起文件",
+    "kind": "文档",
+    "kind_with_extension": "文档 · {{extension}}"
+  },
+  "memory_citations": {
+    "summary": "{{count}} 条记忆引用",
+    "line_label": "{{range}} 行",
+    "open_label": "打开 {{path}}"
+  },
+  "file_changes": {
+    "editing_files": "正在编辑 {{count}} 个文件",
+    "creating_files": "正在创建 {{count}} 个文件",
+    "deleting_files": "正在删除 {{count}} 个文件",
+    "renaming_files": "正在重命名 {{count}} 个文件",
+    "edited_files": "已编辑 {{count}} 个文件",
+    "created_files": "已创建 {{count}} 个文件",
+    "deleted_files": "已删除 {{count}} 个文件",
+    "renamed_files": "已重命名 {{count}} 个文件",
+    "edited_file": "已编辑 {{filename}}",
+    "created_file": "已创建 {{filename}}",
+    "deleted_file": "已删除 {{filename}}",
+    "renamed_file": "已重命名 {{filename}}",
+    "view_changes": "查看更改",
+    "show_more": "再显示 {{count}} 个文件",
+    "show_less": "收起文件",
+    "review": "审核",
+    "review_title": "本轮文件变更",
+    "preview_file_label": "预览 {{path}} 的文件变更",
+    "copy_code": "复制代码",
+    "revert": "撤销",
+    "confirm_revert_title": "撤销本轮文件变更？",
+    "confirm_revert_description": "仅当反向补丁可安全应用时才会修改工作区，不会覆盖后续变更。",
+    "confirm_revert": "确认撤销",
+    "cancel": "取消",
+    "close": "关闭",
+    "reverting": "撤销中",
+    "loading_diff": "正在从设备加载变更...",
+    "empty_diff": "没有可展示的文本变更",
+    "changes_label": "变更",
+    "unstaged_label": "未暂存",
+    "staged_label": "已暂存",
+    "commit_label": "提交",
+    "previous_turn_label": "上轮对话",
+    "branch_label": "分支",
+    "branch_unknown": "当前工作区",
+    "large_diff_single_file_notice": "此差异较大，每次仅显示一个文件",
+    "file_list_label": "变更文件",
+    "file_search_placeholder": "筛选文件...",
+    "file_search_empty": "没有匹配的文件",
+    "all_files_diff_label": "全部文件变更",
+    "actions": {
+      "refresh": "刷新",
+      "toggle_wrap": "启用自动换行",
+      "collapse_all_hunks": "折叠全部差异",
+      "expand_all_hunks": "展开全部差异",
+      "collapse_file_diff": "折叠文件差异",
+      "expand_file_diff": "展开文件差异",
+      "copy_git_apply": "复制 git apply 命令",
+      "hide_files": "隐藏文件",
+      "show_files": "显示文件"
+    },
+    "review_failed": "加载文件变更失败",
+    "revert_failed": "撤销文件变更失败",
+    "device_offline": "设备离线，无法审核或撤销",
+    "reverted": "已撤销",
+    "conflicted": "存在后续冲突，未修改工作区",
+    "artifact_missing": "变更文件已不存在",
+    "binary_file": "二进制文件"
+  },
+  "assistant_error": {
+    "details": "错误详情",
+    "actions": {
+      "switch_model_retry": "切换模型并重试",
+      "retry": "重试"
+    },
+    "types": {
+      "context_length_exceeded": {
+        "title": "对话内容超出当前模型的上下文长度限制",
+        "description": "建议切换到支持更大上下文的模型，或开始一个新对话。"
+      },
+      "quota_exceeded": {
+        "title": "当前模型的使用额度已耗尽",
+        "description": "请切换到其他可用模型，或稍后在额度恢复后继续。"
+      },
+      "rate_limit": {
+        "title": "请求过于频繁，请稍后再试",
+        "description": "请等待片刻后重试，或切换到其他可用模型。"
+      },
+      "payload_too_large": {
+        "title": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小",
+        "description": "请减少附件或上下文内容后重试。"
+      },
+      "network_error": {
+        "title": "网络连接失败：请检查网络连接后重试",
+        "description": "当前连接中断或服务暂时不可达，请稍后重试。"
+      },
+      "timeout_error": {
+        "title": "请求超时：服务响应时间过长，请稍后重试",
+        "description": "服务暂时没有及时响应，可以稍后重新发送。"
+      },
+      "llm_error": {
+        "title": "模型调用失败：模型暂时不可用，请稍后重试",
+        "description": "模型服务当前不可用，可以稍后重试或切换模型。"
+      },
+      "llm_unsupported": {
+        "title": "当前模型不支持此请求，请更换其他模型",
+        "description": "当前输入或附件类型不被该模型支持，请切换兼容模型。"
+      },
+      "invalid_parameter": {
+        "title": "参数错误：请求参数不正确，请检查输入内容",
+        "description": "请求参数与模型要求不匹配，请调整输入后重试。"
+      },
+      "forbidden": {
+        "title": "访问被拒绝：您没有使用此资源的权限",
+        "description": "请确认账号、设备或模型权限后重试。"
+      },
+      "container_oom": {
+        "title": "执行环境内存不足",
+        "description": "请开始新对话重试，或联系管理员增加执行环境内存。"
+      },
+      "container_error": {
+        "title": "执行环境异常",
+        "description": "容器或本地任务服务暂时不可用，请稍后重试。"
+      },
+      "content_filter": {
+        "title": "内容触发安全审核，请修改敏感内容后重试",
+        "description": "请调整输入中可能触发安全策略的内容。"
+      },
+      "provider_error": {
+        "title": "模型服务异常，请稍后再试",
+        "description": "上游模型服务返回异常，可以稍后重试或切换模型。"
+      },
+      "image_too_large": {
+        "title": "图片超出大小限制，请压缩图片后重试",
+        "description": "请压缩图片或减少图片数量后重新发送。"
+      },
+      "model_protocol_error": {
+        "title": "模型与当前运行协议不匹配",
+        "description": "当前模型不支持此请求格式。请切换兼容模型后重试。",
+        "description_with_model": "{{model}} 不支持当前运行协议。请切换兼容模型后重试。"
+      },
+      "invalid_role": {
+        "title": "模型参数异常：消息角色格式不兼容",
+        "description": "当前模型不支持此消息格式，建议切换模型后重试。"
+      },
+      "permission_denied": {
+        "title": "无权限使用当前模型，请切换到有权限的模型",
+        "description": "请确认模型访问权限，或切换到权限范围内的模型。"
+      },
+      "generic_error": {
+        "title": "消息生成失败",
+        "description": "请求未能完成。你可以稍后重试，或查看错误详情。",
+        "description_without_details": "请求未能完成。你可以稍后重试。"
+      }
+    }
+  }
+}

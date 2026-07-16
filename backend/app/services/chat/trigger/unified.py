@@ -21,12 +21,25 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.external_knowledge_refs import (
+    extract_task_external_knowledge_refs,
+    validate_external_knowledge_refs,
+)
 from app.services.context import context_service
+from app.services.runtime_codex_model import (
+    CODEX_RUNTIME_MODEL_ID,
+    CODEX_RUNTIME_MODEL_NAME,
+)
+from app.services.user_runtime_config import (
+    UserRuntimeConfigError,
+    user_runtime_config_service,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -37,6 +50,254 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+CODEX_RUNTIME = "codex"
+RUNTIME_MODEL_TYPE = "runtime"
+EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS = {"ClaudeCode", "Agno", "CodeX", "Codex"}
+SERVICE_TIER_ALIASES = {
+    "fast": "priority",
+    "priority": "priority",
+    "快速": "priority",
+    "运行快速": "priority",
+    "standard": "default",
+    "default": "default",
+    "普通": "default",
+    "标准": "default",
+    "运行标准": "default",
+}
+
+
+def _request_shell_type(request: "ExecutionRequest") -> str:
+    """Extract the primary shell type from an execution request."""
+    if request.bot and isinstance(request.bot[0], dict):
+        return str(request.bot[0].get("shell_type") or "")
+    return ""
+
+
+def _should_inline_attachment_content(request: "ExecutionRequest") -> bool:
+    """Return whether parsed attachment content should be injected into prompt."""
+    return _request_shell_type(request) not in EXECUTOR_ATTACHMENT_METADATA_ONLY_SHELLS
+
+
+def _reasoning_from_model_options(payload: Any) -> Optional[Dict[str, Any]]:
+    """Convert UI model options into execution reasoning config."""
+    if payload is None:
+        return None
+    model_options = getattr(payload, "model_options", None)
+    if not isinstance(model_options, dict):
+        return None
+    reasoning = model_options.get("reasoning")
+    summary = model_options.get("summary")
+    if not reasoning and not summary:
+        return None
+
+    result: Dict[str, Any] = {}
+    if isinstance(reasoning, dict):
+        effort = reasoning.get("effort") or reasoning.get("reasoning")
+        summary = summary or reasoning.get("summary")
+    else:
+        effort = reasoning
+
+    if effort:
+        result["effort"] = str(effort)
+    if summary:
+        result["summary"] = str(summary)
+    return result or None
+
+
+def _service_tier_from_model_options(payload: Any) -> Optional[str]:
+    """Convert UI speed options into Codex service tier values."""
+    if payload is None:
+        return None
+    model_options = getattr(payload, "model_options", None)
+    if not isinstance(model_options, dict):
+        return None
+
+    speed = model_options.get("speed") or model_options.get("service_tier")
+    if isinstance(speed, dict):
+        speed = speed.get("value") or speed.get("speed") or speed.get("service_tier")
+    if not speed:
+        return None
+
+    return SERVICE_TIER_ALIASES.get(str(speed).strip().lower())
+
+
+def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
+    """Return whether a caller can fall back when task model labels are stale."""
+    return bool(
+        payload is not None
+        and getattr(payload, "ignore_unavailable_task_model_override", False)
+    )
+
+
+def _task_model_override_available(
+    db: "Session",
+    *,
+    model_name: str,
+    user_id: int,
+) -> bool:
+    """Return whether the task-level model override resolves as a Model CRD."""
+    from app.services.chat.config.model_resolver import _find_model_with_namespace
+
+    _model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    return model_spec is not None
+
+
+def _model_has_explicit_provider_credentials(model_config: Dict[str, Any]) -> bool:
+    """Return True when the model config already carries its own endpoint credentials."""
+    base_url = str(model_config.get("base_url") or "").strip()
+    api_key = str(model_config.get("api_key") or "").strip()
+    return bool(base_url) and bool(api_key)
+
+
+def _build_codex_runtime_model_config(
+    model_name: str,
+    model_options: Optional[Dict[str, Any]] = None,
+    db: Optional["Session"] = None,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a Codex-compatible model config for Wework runtime models.
+
+    When the requested name matches a Wegent Model CRD, the full model config
+    (model_id, base_url, api_key, default_headers, etc.) is extracted from the
+    CRD so that third-party Codex providers receive the same credentials the
+    Wegent web frontend would use. Otherwise a minimal runtime config is built
+    for runtime-only or official Codex models.
+
+    """
+    requested_name = model_name
+    options = model_options or {}
+    provider_id = options.get("codexProviderId") or options.get("codex_model_provider")
+    provider_name = options.get("codexProviderName") or options.get(
+        "codex_provider_name"
+    )
+
+    # Official Codex runtime model: keep the existing minimal config.
+    if model_name == CODEX_RUNTIME_MODEL_NAME:
+        config: Dict[str, Any] = {
+            "model": "openai",
+            "model_id": CODEX_RUNTIME_MODEL_ID,
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+        if provider_id:
+            config["model_provider"] = str(provider_id)
+        if provider_name:
+            config["provider_name"] = str(provider_name)
+        return config
+
+    resolved_config: Optional[Dict[str, Any]] = None
+    if db is not None and user_id is not None:
+        try:
+            from app.services.chat.config.model_resolver import (
+                _extract_model_config,
+                _find_model_with_namespace,
+            )
+
+            _kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+            if model_spec:
+                full_config = _extract_model_config(model_spec)
+                resolved_config = {
+                    "model": "openai",
+                    "model_id": str(full_config.get("model_id") or model_name),
+                    "api_format": "responses",
+                    "protocol": "openai-responses",
+                    "base_url": str(full_config.get("base_url") or "").strip(),
+                    "api_key": str(full_config.get("api_key") or "").strip(),
+                }
+                if full_config.get("default_headers"):
+                    resolved_config["default_headers"] = dict(
+                        full_config["default_headers"]
+                    )
+                if full_config.get("context_window") is not None:
+                    resolved_config["context_window"] = full_config["context_window"]
+                if full_config.get("max_output_tokens") is not None:
+                    resolved_config["max_output_tokens"] = full_config[
+                        "max_output_tokens"
+                    ]
+                if full_config.get("temperature") is not None:
+                    resolved_config["temperature"] = full_config["temperature"]
+                if full_config.get("think_config"):
+                    resolved_config["think_config"] = dict(full_config["think_config"])
+        except Exception:
+            pass
+
+    if resolved_config is None:
+        resolved_config = {
+            "model": "openai",
+            "model_id": model_name,
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+
+    if provider_id:
+        resolved_config["model_provider"] = str(provider_id)
+    if provider_name:
+        resolved_config["provider_name"] = str(provider_name)
+    return resolved_config
+
+
+def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
+    model_type = str(model_config.get("model") or "").lower()
+    api_format = str(
+        model_config.get("api_format") or model_config.get("apiFormat") or ""
+    ).lower()
+    protocol = str(model_config.get("protocol") or "").lower()
+    wire_api = str(model_config.get("wire_api") or "").lower()
+
+    return model_type == "openai" and (
+        api_format == "responses"
+        or protocol == "openai-responses"
+        or wire_api == "responses"
+    )
+
+
+def _apply_user_runtime_config(
+    db: "Session",
+    request: "ExecutionRequest",
+    user: User,
+) -> Optional[Dict[str, Any]]:
+    """Attach user runtime config status to model_config for executor routing.
+
+    If the selected model already carries explicit endpoint credentials (base_url +
+    api_key), keep the user's Codex auth.json synced to the device for convenience
+    but do not override the request with use_user_config. This lets Wegent-managed
+    third-party Codex models use their own credentials instead of being shadowed by
+    the user's personal auth.json.
+    """
+    if not _is_codex_model_config(request.model_config):
+        return None
+
+    try:
+        status = user_runtime_config_service.get_execution_config(
+            db,
+            user_id=user.id,
+            runtime=CODEX_RUNTIME,
+            preferences=getattr(user, "preferences", None),
+        )
+    except UserRuntimeConfigError:
+        logger.exception(
+            "[build_execution_request] Failed to resolve user runtime config"
+        )
+        return None
+
+    has_credentials = _model_has_explicit_provider_credentials(request.model_config)
+    prefer_user_config = bool(status.get("use_user_config")) and not has_credentials
+
+    runtime_config = dict(request.model_config.get("runtime_config") or {})
+    runtime_config[CODEX_RUNTIME] = {
+        "use_user_config": prefer_user_config,
+        "configured": bool(status.get("configured")),
+        "target_path": status.get("target_path"),
+        "auth_json_sha256": status.get("auth_json_sha256"),
+        "use_proxy": bool(status.get("use_proxy")),
+        "proxy_configured": bool(status.get("proxy_configured")),
+    }
+    if status.get("proxy_url"):
+        proxy = dict(request.model_config.get("proxy") or {})
+        proxy["url"] = status["proxy_url"]
+        request.model_config["proxy"] = proxy
+    request.model_config["runtime_config"] = runtime_config
+    return status
 
 
 def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
@@ -186,6 +447,7 @@ async def build_execution_request(
     preload_skills: Optional[list] = None,
     previous_bot_id: Optional[int] = None,
     knowledge_base_names: Optional[List[Dict[str, str]]] = None,
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = None,
     reasoning_config: Optional[Dict[str, Any]] = None,
 ):
     """Build ExecutionRequest without dispatching.
@@ -209,7 +471,8 @@ async def build_execution_request(
         enable_web_search: Whether to enable web search (default: False)
         enable_clarification: Whether to enable clarification mode (default: False)
         preload_skills: Optional list of skills to preload
-        knowledge_base_names: Optional list of KB names in {'namespace': str, 'name': str} format
+        knowledge_base_names: Optional legacy list of KB names in {'namespace': str, 'name': str} format
+        knowledge_base_refs: Optional normalized KB refs with optional folder/document scope
         reasoning_config: Optional reasoning config dict with 'effort' and 'summary' keys
 
     Returns:
@@ -239,22 +502,69 @@ async def build_execution_request(
             additional_skills = getattr(payload, "additional_skills", None)
             if additional_skills:
                 preload_skills = list(preload_skills or []) + list(additional_skills)
+        web_runtime_guidance = (
+            payload is not None
+            and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
+        )
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
         override_model_name = None
+        override_model_type = None
         force_override = False
-        task_json = task.json or {}
-        task_labels = task_json.get("metadata", {}).get("labels", {})
+        runtime_model_config = None
+        task_json = task.json if isinstance(task.json, dict) else {}
+        metadata = task_json.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        labels = metadata.get("labels") or {}
+        task_labels = labels if isinstance(labels, dict) else {}
         if task_labels:
             override_model_name = task_labels.get("modelId")
+            override_model_type = task_labels.get("forceOverrideBotModelType")
             force_override = task_labels.get("forceOverrideBotModel") == "true"
             logger.info(
                 "[build_execution_request] Extracted model override from task labels: "
-                "modelId=%s, forceOverrideBotModel=%s",
+                "modelId=%s, forceOverrideBotModel=%s, forceOverrideBotModelType=%s",
                 override_model_name,
                 force_override,
+                override_model_type,
             )
+            if (
+                force_override
+                and override_model_name
+                and (override_model_type == RUNTIME_MODEL_TYPE)
+            ):
+                runtime_model_config = _build_codex_runtime_model_config(
+                    override_model_name,
+                    db=db,
+                    user_id=user.id,
+                )
+                logger.info(
+                    "[build_execution_request] Using runtime model config: "
+                    "selectedModel=%s, executorModel=%s",
+                    override_model_name,
+                    runtime_model_config.get("model_id"),
+                )
+                override_model_name = None
+                force_override = False
+            elif (
+                force_override
+                and override_model_name
+                and _should_ignore_unavailable_task_model_override(payload)
+                and not _task_model_override_available(
+                    db,
+                    model_name=override_model_name,
+                    user_id=user.id,
+                )
+            ):
+                logger.info(
+                    "[build_execution_request] Ignoring unavailable task model "
+                    "override for payload fallback: modelId=%s",
+                    override_model_name,
+                )
+                override_model_name = None
+                force_override = False
 
         request = builder.build(
             subtask=assistant_subtask,
@@ -272,15 +582,30 @@ async def build_execution_request(
             override_model_name=override_model_name,
             force_override=force_override,
             previous_bot_id=previous_bot_id,
+            web_runtime_guidance=web_runtime_guidance,
+            runtime_model_config=runtime_model_config,
         )
+        request.device_id = device_id or request.device_id
+        # Task spec is the runtime source of truth. Message-level external
+        # contexts are materialized into Task.spec before execution is built.
+        task_refs = extract_task_external_knowledge_refs(task)
+        if task_refs:
+            validate_external_knowledge_refs(
+                task_refs,
+                binding_level="conversation",
+            )
+            request.external_knowledge_refs = task_refs
 
-        # Merge reasoning_config from API request into model_config
-        # Priority: API request reasoning_config > model's think_config
-        if reasoning_config:
-            request.model_config["reasoning"] = reasoning_config
+        # Merge reasoning config from API/model selection into model_config.
+        # Priority: explicit API reasoning_config > UI model_options > model think_config.
+        selected_reasoning_config = reasoning_config or _reasoning_from_model_options(
+            payload
+        )
+        if selected_reasoning_config:
+            request.model_config["reasoning"] = selected_reasoning_config
             logger.info(
-                "[build_execution_request] Applied reasoning config from API request: %s",
-                reasoning_config,
+                "[build_execution_request] Applied selected reasoning config: %s",
+                selected_reasoning_config,
             )
         elif request.model_config.get("think_config"):
             # If no API reasoning_config but model has think_config, use it
@@ -290,10 +615,30 @@ async def build_execution_request(
                 request.model_config["think_config"],
             )
 
+        selected_service_tier = _service_tier_from_model_options(payload)
+        if selected_service_tier:
+            request.model_config["service_tier"] = selected_service_tier
+            logger.info(
+                "[build_execution_request] Applied selected service tier: %s",
+                selected_service_tier,
+            )
+
+        _apply_user_runtime_config(db, request, user)
+
         # Store reasoning_config in ExecutionRequest for downstream access
-        request.reasoning_config = reasoning_config or request.model_config.get(
-            "reasoning"
+        request.reasoning_config = (
+            selected_reasoning_config or request.model_config.get("reasoning")
         )
+
+        if payload is not None:
+            interactive_form_answer = getattr(payload, "interactive_form_answer", None)
+            if interactive_form_answer:
+                if hasattr(interactive_form_answer, "model_dump"):
+                    request.interactive_form_answer = (
+                        interactive_form_answer.model_dump(mode="json")
+                    )
+                elif isinstance(interactive_form_answer, dict):
+                    request.interactive_form_answer = dict(interactive_form_answer)
 
         # Merge user-selected generate_params into videoConfig for video models
         # Validates params against model capabilities to reject invalid values
@@ -361,10 +706,13 @@ async def build_execution_request(
             "context" if current_request_id else "generated",
         )
 
-        # Process knowledge base names from API request (OpenAPI v1/responses)
+        # Process knowledge base refs from API request (OpenAPI v1/responses)
         # This creates SubtaskContext records for KBs specified in the request
+        normalized_kb_refs = knowledge_base_refs
+        if normalized_kb_refs is None:
+            normalized_kb_refs = knowledge_base_names
         processed_subtask_id = None
-        if knowledge_base_names:
+        if normalized_kb_refs:
             processed_subtask_id = (
                 user_subtask_id if user_subtask_id else assistant_subtask.id
             )
@@ -377,7 +725,7 @@ async def build_execution_request(
                 db,
                 user.id,
                 processed_subtask_id,
-                knowledge_base_names,
+                normalized_kb_refs,
                 task=task,
                 user_name=user.user_name,
             )
@@ -438,6 +786,7 @@ async def _process_contexts(
 
     # Get context_window from model_config for selected_documents injection threshold
     model_context_window = request.model_config.get("context_window")
+    inline_attachment_content = _should_inline_attachment_content(request)
 
     # Process contexts (attachments, knowledge bases, etc.)
     ctx = await prepare_contexts_for_chat(
@@ -449,6 +798,7 @@ async def _process_contexts(
         task_id=request.task_id,
         context_window=model_context_window,
         model_config=request.model_config,
+        inline_attachment_content=inline_attachment_content,
     )
 
     # Update request with all processed context results.
@@ -463,21 +813,31 @@ async def _process_contexts(
         _build_executor_attachment_payload(context)
         for context in context_service.get_attachments_by_subtask(db, user_subtask_id)
     ]
+    logger.info(
+        "[ai_trigger_unified] Executor attachment payload built: "
+        "task_id=%d, user_subtask_id=%d, attachment_ids=%s",
+        request.task_id,
+        user_subtask_id,
+        [attachment.get("id") for attachment in request.attachments],
+    )
     if ctx.kb.knowledge_base_ids:
         request.knowledge_base_ids = ctx.kb.knowledge_base_ids
+        request.knowledge_base_scopes = ctx.kb.knowledge_base_scopes
         request.is_user_selected_kb = ctx.kb.is_user_selected_kb
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
-        if ctx.kb.document_ids:
+        if ctx.kb.document_ids and not ctx.kb.knowledge_base_scopes:
             request.document_ids = ctx.kb.document_ids
         _ensure_selected_kb_skill_priority(request)
 
     logger.info(
         "[ai_trigger_unified] Context processing completed: "
-        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, attachments=%d",
+        "user_subtask_id=%d, knowledge_base_ids=%s, table_contexts_count=%d, "
+        "attachments=%d, inline_attachment_content=%s",
         user_subtask_id,
         request.knowledge_base_ids,
         len(ctx.table_contexts),
         len(request.attachments),
+        inline_attachment_content,
     )
 
     return request
@@ -487,7 +847,7 @@ async def _create_kb_contexts_from_api_request(
     db: "Session",
     user_id: int,
     user_subtask_id: int,
-    knowledge_base_names: List[Dict[str, str]],
+    knowledge_base_names: List[Dict[str, Any]],
     task=None,
     user_name: Optional[str] = None,
 ) -> None:

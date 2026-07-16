@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -28,7 +28,9 @@ class DeviceType(str, Enum):
     """
 
     LOCAL = "local"
+    APP = "app"
     CLOUD = "cloud"
+    REMOTE = "remote"
 
 
 class BindShell(str, Enum):
@@ -68,16 +70,6 @@ class DeviceRunningTask(BaseModel):
     created_at: Optional[str] = Field(None, description="Task creation timestamp")
 
 
-class CloudConfig(BaseModel):
-    """Cloud device configuration from Device CRD spec."""
-
-    sandboxId: str = Field(..., description="Cloud sandbox ID")
-    imageId: str = Field(..., description="Image ID used for VM creation")
-    createdAt: Optional[str] = Field(
-        None, description="Cloud device creation timestamp"
-    )
-
-
 class DeviceInfo(BaseModel):
     """Response schema for device information."""
 
@@ -91,7 +83,7 @@ class DeviceInfo(BaseModel):
     )
     # Device type and connection mode
     device_type: DeviceType = Field(
-        DeviceType.LOCAL, description="Device type (local or cloud)"
+        DeviceType.LOCAL, description="Device type (local, app, cloud, or remote)"
     )
     connection_mode: DeviceConnectionMode = Field(
         DeviceConnectionMode.WEBSOCKET, description="How device connects to backend"
@@ -114,9 +106,25 @@ class DeviceInfo(BaseModel):
     update_available: bool = Field(False, description="Whether an update is available")
     # Network information
     client_ip: Optional[str] = Field(None, description="Device's client IP address")
+    runtime_transfer_host: Optional[str] = Field(
+        None, description="Host peers should use for runtime direct transfers"
+    )
+    runtime_instance_id: Optional[str] = Field(
+        None, description="Stable runtime installation ID shared by all routes"
+    )
+    app_device_id: Optional[str] = Field(
+        None, description="Desktop app IPC device ID for app registrations"
+    )
+    socket_device_id: Optional[str] = Field(
+        None, description="Online WebSocket route device ID for relay-backed devices"
+    )
     # Cloud device specific config
-    cloud_config: Optional[CloudConfig] = Field(
+    cloud_config: Optional[Dict[str, Any]] = Field(
         None, description="Cloud device configuration (only for cloud devices)"
+    )
+    # Remote device specific config
+    remote_config: Optional[Dict[str, Any]] = Field(
+        None, description="Remote device configuration (only for remote devices)"
     )
     # Shell binding type
     bind_shell: BindShell = Field(
@@ -133,6 +141,122 @@ class DeviceListResponse(BaseModel):
 
     items: List[DeviceInfo]
     total: int
+
+
+class DeviceCommandRequest(BaseModel):
+    """Request model for executing a command on a local device."""
+
+    command_key: str = Field(
+        ...,
+        min_length=1,
+        description="Configured command key to execute",
+    )
+    path: Optional[str] = Field(None, description="Execution path for the command")
+    args: List[str] = Field(
+        default_factory=list,
+        description="Command arguments appended after the configured command",
+    )
+    cwd: Optional[str] = Field(
+        None,
+        description="Deprecated alias for path; path takes precedence when both are set",
+    )
+    env: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Additional environment variables for the command",
+    )
+    timeout_seconds: int = Field(
+        default=60,
+        gt=0,
+        le=600,
+        description="Command timeout in seconds",
+    )
+    max_output_bytes: int = Field(
+        default=1024 * 1024,
+        gt=0,
+        le=5 * 1024 * 1024,
+        description="Maximum stdout and stderr bytes returned separately",
+    )
+
+
+class DeviceCommandResponse(BaseModel):
+    """Response model for a completed local device command."""
+
+    success: bool
+    exit_code: Optional[int] = None
+    stdout: Union[str, Dict[str, Any], List[str], List[Dict[str, Any]]] = ""
+    stderr: str = ""
+    duration: float
+    timed_out: bool = False
+    error: Optional[str] = None
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+
+class DeviceCapabilitySyncRequest(BaseModel):
+    """Request model for syncing global local executor capabilities."""
+
+    skill_ids: List[int] = Field(
+        default_factory=list,
+        description="Executable Skill Kind IDs to sync.",
+    )
+    installed_skill_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledSkill Kind IDs to resolve and sync.",
+    )
+    installed_mcp_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledMCP Kind IDs to resolve and sync.",
+    )
+    installed_plugin_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledPlugin Kind IDs to resolve and sync.",
+    )
+    mcp_ids: List[str] = Field(
+        default_factory=list,
+        description="Deprecated server-key based MCP IDs; use installed_mcp_ids.",
+    )
+    mode: Literal["merge", "replace"] = Field(
+        "merge",
+        description="How the device should apply the capability set.",
+    )
+
+
+class DeviceCapabilityItemResult(BaseModel):
+    """Per-item capability sync result."""
+
+    id: Optional[Union[int, str]] = None
+    name: Optional[str] = None
+    server_name: Optional[str] = None
+    status: str = "ok"
+    error: Optional[str] = None
+
+
+class DeviceCapabilitySyncResult(BaseModel):
+    """Per-device capability sync result."""
+
+    device_id: str
+    success: bool
+    error: Optional[str] = None
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class DeviceCapabilitySyncResponse(BaseModel):
+    """Response model for capability sync requests."""
+
+    success: bool = True
+    device_id: str = ""
+    mode: Literal["merge", "replace"] = "merge"
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    synced: int = 0
+    failed: int = 0
+    skipped: int = 0
+    results: List[DeviceCapabilitySyncResult] = Field(default_factory=list)
 
 
 class DeviceRegisterPayload(BaseModel):
@@ -168,6 +292,21 @@ class DeviceRegisterPayload(BaseModel):
         max_length=50,
         description="Device's client IP address",
     )
+    runtime_transfer_host: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Host peers should use for runtime direct transfers",
+    )
+    runtime_instance_id: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Stable runtime installation ID shared by all routes",
+    )
+    app_device_id: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Desktop app IPC device ID when device_type is app",
+    )
     bind_shell: BindShell = Field(
         BindShell.CLAUDECODE,
         description="Shell runtime binding (claudecode or openclaw)",
@@ -185,6 +324,19 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         max_length=50,
         description="Executor version (e.g., '1.0.0')",
+    )
+    capabilities: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Sanitized local global capability state reported by executor",
+    )
+    runtime_auth_files: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Sanitized runtime auth file existence state reported by executor",
+    )
+    runtime_transfer_host: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Host peers should use for runtime direct transfers",
     )
 
 

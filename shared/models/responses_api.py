@@ -54,6 +54,7 @@ class ReasoningContent(TypedDict):
 
     type: Literal["reasoning"]
     text: str
+    annotations: NotRequired[List[Any]]
 
 
 class MessageItem(TypedDict, total=False):
@@ -63,7 +64,7 @@ class MessageItem(TypedDict, total=False):
     id: str
     status: str
     role: Literal["assistant"]
-    content: List[OutputTextContent]
+    content: List[Union[OutputTextContent, ReasoningContent]]
 
 
 class FunctionCallItem(TypedDict, total=False):
@@ -127,6 +128,9 @@ class ResponsesAPIResponse(TypedDict, total=False):
     sources: List[Any]
     silent_exit: bool
     silent_exit_reason: str
+    deferred_user_input: bool
+    deferred_user_input_tool_use_id: str
+    termination_reason: str
 
 
 # ============================================================
@@ -263,6 +267,44 @@ class ResponsePartAddedEvent(TypedDict):
     part: ReasoningContent
 
 
+class ReasoningSummaryTextDeltaEvent(TypedDict):
+    """response.reasoning_summary_text.delta event."""
+
+    type: Literal["response.reasoning_summary_text.delta"]
+    item_id: str
+    output_index: int
+    content_index: int
+    delta: str
+
+
+class BlockCreatedEvent(TypedDict):
+    """response.block.created event."""
+
+    type: Literal["response.block.created"]
+    response_id: str
+    item_id: str
+    block: dict[str, Any]
+
+
+class BlockUpdatedEvent(TypedDict):
+    """response.block.updated event."""
+
+    type: Literal["response.block.updated"]
+    response_id: str
+    item_id: str
+    block_id: str
+    updates: dict[str, Any]
+
+
+class StatusUpdatedEvent(TypedDict):
+    """response.status.updated event."""
+
+    type: Literal["response.status.updated"]
+    response_id: str
+    phase: str
+    context_metrics: dict[str, Any]
+
+
 class ErrorEvent(TypedDict):
     """error event."""
 
@@ -287,6 +329,10 @@ ResponsesAPIStreamingResponse = Union[
     FunctionCallArgumentsDeltaEvent,
     FunctionCallArgumentsDoneEvent,
     ResponsePartAddedEvent,
+    ReasoningSummaryTextDeltaEvent,
+    BlockCreatedEvent,
+    BlockUpdatedEvent,
+    StatusUpdatedEvent,
     ErrorEvent,
 ]
 
@@ -358,6 +404,11 @@ class ResponsesAPIStreamEvents(str, Enum):
     # Image generation events
     IMAGE_GENERATION_PARTIAL_IMAGE = "image_generation.partial_image"
 
+    # Wegent block events
+    BLOCK_CREATED = "response.block.created"
+    BLOCK_UPDATED = "response.block.updated"
+    STATUS_UPDATED = "response.status.updated"
+
     # Error event
     ERROR = "error"
 
@@ -392,6 +443,10 @@ __all__ = [
     "FunctionCallArgumentsDeltaEvent",
     "FunctionCallArgumentsDoneEvent",
     "ResponsePartAddedEvent",
+    "ReasoningSummaryTextDeltaEvent",
+    "BlockCreatedEvent",
+    "BlockUpdatedEvent",
+    "StatusUpdatedEvent",
     "ErrorEvent",
     # Event builder
     "ResponsesAPIEventBuilder",
@@ -440,7 +495,7 @@ class ResponsesAPIEventBuilder:
 
     @staticmethod
     def _json_arguments(arguments: Optional[dict]) -> str:
-        return json.dumps(arguments) if arguments else ""
+        return json.dumps(arguments) if arguments is not None else ""
 
     @staticmethod
     def _shell_action(arguments: Optional[dict]) -> ShellCallAction:
@@ -618,6 +673,42 @@ class ResponsesAPIEventBuilder:
             "message": message,
         }
 
+    def block_created(self, block: dict[str, Any]) -> dict:
+        """Create a block-created event for non-text blocks."""
+        return {
+            "type": ResponsesAPIStreamEvents.BLOCK_CREATED.value,
+            "response_id": self.response_id,
+            "item_id": self.item_id,
+            "block": block,
+        }
+
+    def block_updated(self, block_id: str, updates: dict[str, Any]) -> dict:
+        """Create a block-updated event for non-text blocks."""
+        return {
+            "type": ResponsesAPIStreamEvents.BLOCK_UPDATED.value,
+            "response_id": self.response_id,
+            "item_id": self.item_id,
+            "block_id": block_id,
+            "updates": updates,
+        }
+
+    def status_updated(
+        self,
+        phase: str,
+        context_metrics: dict[str, Any],
+        context_compaction: dict[str, Any] | None = None,
+    ) -> dict:
+        """Create a context-status update event."""
+        event = {
+            "type": ResponsesAPIStreamEvents.STATUS_UPDATED.value,
+            "response_id": self.response_id,
+            "phase": phase,
+            "context_metrics": context_metrics,
+        }
+        if context_compaction is not None:
+            event["context_compaction"] = context_compaction
+        return event
+
     # ============================================================
     # Text Streaming Events
     # ============================================================
@@ -790,7 +881,8 @@ class ResponsesAPIEventBuilder:
     def function_call_arguments_delta(
         self,
         call_id: str,
-        arguments: Optional[dict] = None,
+        arguments: Optional[Any] = None,
+        arguments_summary: Optional[dict] = None,
     ) -> dict:
         """Create response.function_call_arguments.delta event.
 
@@ -801,20 +893,26 @@ class ResponsesAPIEventBuilder:
         Returns:
             Event data dictionary
         """
-        delta = self._json_arguments(arguments)
-        return {
+        delta = (
+            arguments if isinstance(arguments, str) else self._json_arguments(arguments)
+        )
+        data = {
             "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
             "response_id": self.response_id,
             "item_id": call_id,
             "output_index": self._tool_output_index,
             "delta": delta,
         }
+        if arguments_summary is not None:
+            data["arguments_summary"] = arguments_summary
+        return data
 
     def function_call_arguments_done(
         self,
         call_id: str,
         arguments: Optional[dict] = None,
         output: Optional[str] = None,
+        arguments_summary: Optional[dict] = None,
     ) -> dict:
         """Create response.function_call_arguments.done event.
 
@@ -837,6 +935,8 @@ class ResponsesAPIEventBuilder:
         # Add output as Wegent extension for tool result
         if output is not None:
             data["output"] = output
+        if arguments_summary is not None:
+            data["arguments_summary"] = arguments_summary
         return data
 
     def function_call_done(
@@ -844,6 +944,8 @@ class ResponsesAPIEventBuilder:
         call_id: str,
         name: str,
         arguments: Optional[dict] = None,
+        output: Optional[str] = None,
+        status: str = "completed",
     ) -> dict:
         """Create response.output_item.done event for function call.
 
@@ -858,7 +960,7 @@ class ResponsesAPIEventBuilder:
         args_str = self._json_arguments(arguments)
         output_index = self._tool_output_index
         self._tool_output_index += 1  # Increment for next tool call
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             "response_id": self.response_id,
             "output_index": output_index,
@@ -868,8 +970,12 @@ class ResponsesAPIEventBuilder:
                 "call_id": call_id,
                 "name": name,
                 "arguments": args_str,
+                "status": status,
             },
         }
+        if output is not None:
+            data["item"]["output"] = output
+        return data
 
     # ============================================================
     # MCP Call Events
@@ -918,14 +1024,17 @@ class ResponsesAPIEventBuilder:
             "output_index": self._tool_output_index,
         }
 
-    def mcp_call_completed(self, item_id: str) -> dict:
+    def mcp_call_completed(self, item_id: str, output: Optional[Any] = None) -> dict:
         """Create response.mcp_call.completed event."""
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
             "response_id": self.response_id,
             "item_id": item_id,
             "output_index": self._tool_output_index,
         }
+        if output is not None:
+            data["output"] = output
+        return data
 
     def mcp_call_failed(self, item_id: str, error: Optional[str] = None) -> dict:
         """Create response.mcp_call.failed event."""
@@ -1023,6 +1132,23 @@ class ResponsesAPIEventBuilder:
     # ============================================================
     # Reasoning Events
     # ============================================================
+
+    def reasoning_delta(self, delta: str) -> dict:
+        """Create response.reasoning_summary_text.delta event.
+
+        Args:
+            delta: Reasoning/thinking text delta
+
+        Returns:
+            Event data dictionary
+        """
+        return {
+            "type": ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            "item_id": self.item_id,
+            "output_index": self.output_index,
+            "content_index": self.content_index,
+            "delta": delta,
+        }
 
     def reasoning(self, content: str) -> dict:
         """Create response.reasoning_summary_part.added event.

@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel
 
 from app.schemas.bot import BotInDB
+from app.schemas.quick_launch import QuickPhraseMixin
 from app.schemas.user import UserInDB
 
 
@@ -28,6 +29,9 @@ class BotInfo(BaseModel):
     requireConfirmation: Optional[bool] = (
         False  # Pipeline mode: pause after this stage for user confirmation
     )
+    contextPassing: Optional[str] = (
+        "none"  # Pipeline mode: message passed from this stage to the next stage
+    )
     bot: Optional[BotSummary] = None
 
 
@@ -39,7 +43,7 @@ class BotDetailInfo(BaseModel):
     role: Optional[str] = None
 
 
-class TeamBase(BaseModel):
+class TeamBase(QuickPhraseMixin):
     """Team base model"""
 
     name: str
@@ -63,7 +67,7 @@ class TeamCreate(TeamBase):
     )
 
 
-class TeamUpdate(BaseModel):
+class TeamUpdate(QuickPhraseMixin):
     """Team update model"""
 
     name: Optional[str] = None
@@ -78,6 +82,7 @@ class TeamUpdate(BaseModel):
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
     )
+    quick_phrases: Optional[List[str]] = None
 
 
 class TeamInDB(TeamBase):
@@ -109,6 +114,7 @@ class TeamDetail(BaseModel):
     description: Optional[str] = None  # Team description
     bots: List[BotDetailInfo]
     workflow: Optional[dict[str, Any]] = None
+    quick_phrases: List[str] = []
     is_active: bool = True
     created_at: datetime
     updated_at: datetime

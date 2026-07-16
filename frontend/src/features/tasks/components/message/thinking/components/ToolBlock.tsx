@@ -27,9 +27,16 @@ function getToolInputPreview(
   maxLength: number = 60
 ): string | null {
   const input = tool.toolUse?.details?.input as Record<string, unknown> | string | undefined
-  if (!input) return null
+  if (!hasMeaningfulToolInput(input)) return null
 
   const toolName = tool.toolName
+
+  if (isSkillLoaderTool(toolName)) {
+    const skillName = getSkillNameFromInput(input)
+    if (skillName) {
+      return truncateText(skillName, maxLength)
+    }
+  }
 
   // Handle different tool types
   switch (toolName) {
@@ -107,10 +114,59 @@ function getToolInputPreview(
   return null
 }
 
+function isSkillLoaderTool(toolName: string): boolean {
+  return toolName === 'load_skill' || toolName === 'Skill' || toolName === '加载技能'
+}
+
+function getSkillNameFromInput(input: Record<string, unknown> | string | undefined): string | null {
+  if (!input) return null
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim()
+    if (!trimmed || trimmed === '{}' || trimmed === '[]') return null
+
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (typeof parsed === 'string') {
+        return parsed.trim() || null
+      }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return getSkillNameFromInput(parsed as Record<string, unknown>)
+      }
+    } catch {
+      return trimmed
+    }
+
+    return null
+  }
+
+  const fields = ['skill_name', 'skill', 'name']
+  for (const field of fields) {
+    const value = input[field]
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+
+  return null
+}
+
+function hasMeaningfulToolInput(input: Record<string, unknown> | string | undefined): boolean {
+  if (!input) return false
+  if (typeof input === 'string') {
+    const trimmed = input.trim()
+    if (!trimmed) return false
+    if (trimmed === '{}' || trimmed === '[]') return false
+    return true
+  }
+  return Object.keys(input).length > 0
+}
+
 /**
  * Truncate text to a maximum length, adding ellipsis if needed
  */
-function truncateText(text: string, maxLength: number): string {
+function truncateText(text: string | undefined | null, maxLength: number): string {
+  if (!text) return ''
   // Remove newlines and extra whitespace for inline display
   const cleaned = text.replace(/\s+/g, ' ').trim()
   if (cleaned.length <= maxLength) {
@@ -170,7 +226,10 @@ export const ToolBlock = memo(function ToolBlock({
   // For merged tools, check if any of them is still running
   const isRunning = useMemo(() => {
     const checkRunning = (status: string | undefined) =>
-      status === 'invoking' || status === 'streaming' || status === 'pending'
+      status === 'generating_arguments' ||
+      status === 'invoking' ||
+      status === 'streaming' ||
+      status === 'pending'
 
     if (count > 1 && mergedTools.length > 0) {
       return mergedTools.some(item => checkRunning(item.status))
@@ -199,11 +258,9 @@ export const ToolBlock = memo(function ToolBlock({
   const inputPreview = useMemo(() => getToolInputPreview(tool), [tool])
 
   // Check if expandable (has content to show)
-  const hasInput =
-    tool.toolUse?.details?.input &&
-    (typeof tool.toolUse.details.input === 'string'
-      ? tool.toolUse.details.input.length > 0
-      : Object.keys(tool.toolUse.details.input).length > 0)
+  const hasInput = hasMeaningfulToolInput(
+    tool.toolUse?.details?.input as Record<string, unknown> | string | undefined
+  )
   const hasOutput = tool.toolResult?.details?.output || tool.toolResult?.details?.content
   const hasContent = hasInput || hasOutput
   const isExpandable = hasContent
@@ -285,11 +342,9 @@ export const ToolBlock = memo(function ToolBlock({
             const CurrentToolRenderer = getToolRenderer(toolItem.toolName)
             const preview = getToolInputPreview(toolItem, 80)
             // Check if tool has content to render
-            const toolHasInput =
-              toolItem.toolUse?.details?.input &&
-              (typeof toolItem.toolUse.details.input === 'string'
-                ? toolItem.toolUse.details.input.length > 0
-                : Object.keys(toolItem.toolUse.details.input).length > 0)
+            const toolHasInput = hasMeaningfulToolInput(
+              toolItem.toolUse?.details?.input as Record<string, unknown> | string | undefined
+            )
             const toolHasOutput =
               toolItem.toolResult?.details?.output || toolItem.toolResult?.details?.content
             const toolHasContent = toolHasInput || toolHasOutput
@@ -313,14 +368,14 @@ export const ToolBlock = memo(function ToolBlock({
                 {!toolHasContent && toolIsRunning ? (
                   <div className="flex items-center gap-2 text-xs text-[#888] dark:text-[#777]">
                     <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>{t('thinking.tool_executing') || 'Executing...'}</span>
+                    <span>{t('thinking.tool_executing')}</span>
                   </div>
                 ) : toolHasContent ? (
                   <CurrentToolRenderer tool={toolItem} />
                 ) : (
                   // Tool completed but no content (edge case)
                   <div className="text-xs text-[#888] dark:text-[#777] italic">
-                    {t('thinking.no_output') || 'No output'}
+                    {t('thinking.no_output')}
                   </div>
                 )}
               </div>
@@ -349,6 +404,8 @@ function getToolDisplayName(tool: ToolRendererProps['tool'], t: (key: string) =>
     TodoWrite: t('thinking.tools.todo') || 'Update Tasks',
     knowledge_base_search: t('thinking.tools.kb_search') || 'Search Knowledge Base',
     web_search: t('thinking.tools.web_search') || 'Web Search',
+    load_skill: t('thinking.tools.load_skill') || 'Load Skill',
+    Skill: t('thinking.tools.load_skill') || 'Load Skill',
   }
 
   // Priority 1: If we have a known tool name, use it

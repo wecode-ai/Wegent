@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType
-from app.models.subtask import Subtask
+from app.models.subtask import SubtaskStatus
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
@@ -37,6 +37,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
 logger = logging.getLogger(__name__)
@@ -142,14 +143,10 @@ class SharedTaskService:
                 )
 
                 # Query task
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                task = task_store.get_task_by_states(
+                    db,
+                    task_id=task_id,
+                    states=TaskResource.is_active_query(),
                 )
 
                 if not user or not task:
@@ -177,19 +174,11 @@ class SharedTaskService:
                         task_crd = Task.model_validate(task.json)
                         workspace_ref = task_crd.spec.workspaceRef
 
-                        # Find the workspace by name and namespace
-                        from app.models.task import TaskResource as TaskResourceModel
-
-                        workspace = (
-                            db.query(TaskResourceModel)
-                            .filter(
-                                TaskResourceModel.name == workspace_ref.name,
-                                TaskResourceModel.namespace == workspace_ref.namespace,
-                                TaskResourceModel.user_id == user_id,
-                                TaskResourceModel.kind == "Workspace",
-                                TaskResourceModel.is_active == True,
-                            )
-                            .first()
+                        workspace = task_store.get_workspace_by_ref(
+                            db,
+                            user_id=user_id,
+                            name=workspace_ref.name,
+                            namespace=workspace_ref.namespace,
                         )
 
                         if workspace:
@@ -257,14 +246,10 @@ class SharedTaskService:
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Get the task to get the actual owner's user_id for token generation
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=TaskResource.is_active_query(),
         )
 
         if task is None:
@@ -290,15 +275,11 @@ class SharedTaskService:
             raise HTTPException(status_code=400, detail="Invalid share token")
 
         # Validate task still exists and is active
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == share_info.task_id,
-                TaskResource.user_id == share_info.user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=share_info.task_id,
+            states=[TaskResource.STATE_ACTIVE],
+            user_id=share_info.user_id,
         )
 
         if not task:
@@ -326,6 +307,8 @@ class SharedTaskService:
         """Copy task and all its subtasks to new user"""
         from app.schemas.kind import Task, Team, Workspace
 
+        should_force_override_model = bool(model_id) or force_override_bot_model
+
         # Get the new team to get its name and namespace
         new_team = (
             db.query(Kind)
@@ -351,17 +334,9 @@ class SharedTaskService:
                 f"branch_name={branch_name}, git_repo={git_repo}, "
                 f"git_url={git_url}, git_domain={git_domain}"
             )
-            # Find workspace by gitRepoId in workspace JSON
-            from app.models.task import TaskResource as TaskResourceModel
-
-            all_workspaces = (
-                db.query(TaskResourceModel)
-                .filter(
-                    TaskResourceModel.user_id == new_user_id,
-                    TaskResourceModel.kind == "Workspace",
-                    TaskResourceModel.is_active == True,
-                )
-                .all()
+            all_workspaces = task_store.list_active_workspaces_by_user(
+                db,
+                user_id=new_user_id,
             )
             logger.info(
                 f"Found {len(all_workspaces)} workspaces for user {new_user_id}"
@@ -425,18 +400,17 @@ class SharedTaskService:
                         ),
                     )
 
-                    # Save workspace to database
-                    new_workspace = TaskResourceModel(
-                        kind="Workspace",
-                        name=workspace_name,
+                    new_workspace = task_store.create_workspace(
+                        db,
                         user_id=new_user_id,
+                        name=workspace_name,
                         namespace="default",
-                        json=workspace_crd.model_dump(mode="json", exclude_none=True),
-                        is_active=True,
-                        created_at=datetime.now(),
-                        updated_at=datetime.now(),
+                        payload=workspace_crd.model_dump(
+                            mode="json",
+                            exclude_none=True,
+                        ),
+                        client_origin="frontend",
                     )
-                    db.add(new_workspace)
                     db.flush()  # Get new workspace ID
 
                     logger.info(
@@ -513,12 +487,12 @@ class SharedTaskService:
             del task_crd.metadata.labels["forceOverrideBotModelType"]
 
         # Update model configuration in metadata labels if provided by user during import
-        if model_id or force_override_bot_model:
+        if model_id or should_force_override_model:
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
             if model_id:
                 task_crd.metadata.labels["modelId"] = model_id
-            if force_override_bot_model:
+            if should_force_override_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
             if force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (
@@ -529,39 +503,27 @@ class SharedTaskService:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         unique_task_name = f"Copy of {original_task.name}-{timestamp}"
 
-        # Create new task with updated team reference
-        from app.models.task import TaskResource
-
-        new_task = TaskResource(
-            kind="Task",
+        new_task = task_store.create_task_resource(
+            db,
             name=unique_task_name,
             user_id=new_user_id,
             namespace=original_task.namespace,
-            json=task_crd.model_dump(
-                mode="json", exclude_none=True
-            ),  # Use updated JSON
-            is_active=True,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
+            payload=task_crd.model_dump(mode="json", exclude_none=True),
+            client_origin=original_task.client_origin,
         )
-
-        db.add(new_task)
         db.flush()  # Get new task ID
 
         # Get all subtasks from original task (ordered by message_id)
-        original_subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == original_task.id,
-                Subtask.status != "DELETE",
-            )
-            .order_by(Subtask.message_id)
-            .all()
+        original_subtasks = subtask_store.list_by_task_ordered(
+            db,
+            task_id=original_task.id,
+            exclude_deleted=True,
         )
 
         # Copy each subtask
         for original_subtask in original_subtasks:
-            new_subtask = Subtask(
+            new_subtask = subtask_store.create_subtask(
+                db,
                 user_id=new_user_id,
                 task_id=new_task.id,
                 team_id=new_team_id,
@@ -570,25 +532,23 @@ class SharedTaskService:
                 role=original_subtask.role,
                 executor_namespace=original_subtask.executor_namespace,
                 executor_name="",  # Clear executor_name - each task should have its own executor
-                executor_deleted_at=False,  # Reset executor_deleted_at
                 prompt=original_subtask.prompt,
                 message_id=original_subtask.message_id,
                 parent_id=original_subtask.parent_id,
-                status="COMPLETED",  # Set all copied subtasks to COMPLETED
+                status=SubtaskStatus.COMPLETED,
                 progress=100,  # Mark as fully completed
                 result=original_subtask.result,
                 error_message=original_subtask.error_message,
-                # Copy group chat fields to preserve sender information
+            )
+            subtask_store.update_fields(
+                db,
+                subtask=new_subtask,
+                executor_deleted_at=False,
                 sender_type=original_subtask.sender_type,
                 sender_user_id=original_subtask.sender_user_id,
                 reply_to_subtask_id=original_subtask.reply_to_subtask_id,
-                # Use local time instead of UTC to match other subtask creation in the codebase
-                created_at=datetime.now(),
-                updated_at=datetime.now(),
-                completed_at=datetime.now(),
             )
 
-            db.add(new_subtask)
             db.flush()  # Get new subtask ID
 
             # Copy contexts (attachments) if any
@@ -650,15 +610,11 @@ class SharedTaskService:
             )
 
         # Validate original task still exists and is active
-        original_task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == share_info.task_id,
-                TaskResource.user_id == share_info.user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        original_task = task_store.get_task_by_states(
+            db,
+            task_id=share_info.task_id,
+            states=TaskResource.is_active_query(),
+            user_id=share_info.user_id,
         )
 
         if not original_task:
@@ -672,7 +628,8 @@ class SharedTaskService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == share_info.task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -681,15 +638,11 @@ class SharedTaskService:
         if existing_share and existing_share.status == MemberStatus.APPROVED:
             # Verify that the copied task still exists and is active
             if existing_share.copied_resource_id > 0:
-                copied_task_check = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == existing_share.copied_resource_id,
-                        TaskResource.user_id == user_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                copied_task_check = task_store.get_task_by_states(
+                    db,
+                    task_id=existing_share.copied_resource_id,
+                    states=[TaskResource.STATE_ACTIVE],
+                    user_id=user_id,
                 )
 
                 # If copied task still exists, cannot copy again
@@ -727,7 +680,8 @@ class SharedTaskService:
             resource_member = ResourceMember(
                 resource_type=ResourceType.TASK,
                 resource_id=share_info.task_id,
-                user_id=user_id,
+                entity_type="user",
+                entity_id=str(user_id),
                 role=ResourceRole.Maintainer.value,
                 status=MemberStatus.APPROVED,
                 invited_by_user_id=share_info.user_id,
@@ -752,7 +706,8 @@ class SharedTaskService:
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
                 ResourceMember.copied_resource_id > 0,  # Only entries with copied tasks
             )
@@ -784,7 +739,8 @@ class SharedTaskService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == original_task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
@@ -826,15 +782,11 @@ class SharedTaskService:
             raise HTTPException(status_code=400, detail="Invalid share link format")
 
         # Now check if task exists and is active
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=TaskResource.is_active_query(),
+            user_id=user_id,
         )
 
         if not task:
@@ -854,14 +806,10 @@ class SharedTaskService:
         )
 
         # Get all subtasks (only public data, no sensitive information)
-        subtasks = (
-            db.query(Subtask)
-            .filter(
-                Subtask.task_id == task.id,
-                Subtask.status != "DELETE",
-            )
-            .order_by(Subtask.message_id)
-            .all()
+        subtasks = subtask_store.list_by_task_ordered(
+            db,
+            task_id=task.id,
+            exclude_deleted=True,
         )
 
         # Query sender user names for group chat messages

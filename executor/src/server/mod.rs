@@ -1,0 +1,2309 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use std::{
+    collections::{HashMap, VecDeque},
+    env, fs,
+    future::Future,
+    io::Read,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    pin::Pin,
+    process::Stdio,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+mod config;
+
+use axum::{
+    body::{Body, Bytes},
+    extract::{Multipart, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use base64::Engine;
+use futures_util::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
+use tokio::{process::Command, sync::Semaphore, time::timeout};
+
+use crate::{
+    agents::runtime_capabilities,
+    agents::{AgentCommandPlanner, AgentProcessEngine},
+    callback::CallbackSink,
+    envd::archive::{
+        create_runtime_archive, restore_runtime_archive, ArchiveError, ArchiveMode, ArchiveOptions,
+    },
+    heartbeat::start_heartbeat_from_env,
+    logging::{executor_log_timestamp, log_executor_event, task_fields, write_executor_log_line},
+    protocol::{ExecutionRequest, OpenAIResponsesRequest, ProtocolError, TaskStatus},
+    runner::BackgroundTaskRunner,
+};
+
+pub use config::{ServerConfig, ServerConfigError};
+
+pub trait TaskRunner: Clone + Send + Sync + 'static {
+    type SubmitFuture: Future<Output = RunnerResult> + Send + 'static;
+
+    fn submit(&self, request: ExecutionRequest) -> Self::SubmitFuture;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerResult {
+    pub status: TaskStatus,
+    pub message: Option<String>,
+}
+
+impl RunnerResult {
+    pub fn accepted(status: TaskStatus) -> Self {
+        Self {
+            status,
+            message: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppState<R> {
+    runner: R,
+}
+
+impl<R> AppState<R> {
+    pub fn new(runner: R) -> Self {
+        Self { runner }
+    }
+}
+
+pub fn create_router<R>(state: AppState<R>) -> Router
+where
+    R: TaskRunner,
+{
+    Router::new()
+        .route("/", get(health_check))
+        .route("/health", get(envd_health_check))
+        .route("/metrics", get(envd_metrics))
+        .route("/init", post(envd_init))
+        .route("/envs", get(envd_envs))
+        .route("/v1/responses", post(openai_responses::<R>))
+        .route(
+            "/v1/codex-responses-proxy/responses",
+            post(codex_responses_proxy),
+        )
+        .route("/v1/attachments/sync", post(sync_attachments))
+        .route("/filesystem/list-dir", get(list_workspace_directory))
+        .route("/filesystem/file", get(download_workspace_file))
+        .route(
+            "/filesystem.Filesystem/ListDir",
+            post(connect_list_workspace_directory),
+        )
+        .route("/filesystem.Filesystem/Stat", post(connect_stat_path))
+        .route("/filesystem.Filesystem/MakeDir", post(connect_make_dir))
+        .route("/process.Process/List", post(connect_process_list))
+        .route("/process.Process/Start", post(connect_process_start))
+        .route(
+            "/process.Process/SendSignal",
+            post(connect_process_send_signal),
+        )
+        .route("/files", get(download_envd_file).post(upload_envd_file))
+        .route("/api/archive", post(archive_workspace))
+        .route("/api/restore", post(restore_workspace))
+        .with_state(state)
+}
+
+async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<Value>, HttpError> {
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    let attachment_count = request
+        .extra
+        .get("attachments")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    fields.push(("attachment_count", attachment_count.to_string()));
+    fields.push((
+        "has_auth_token",
+        request
+            .auth_token
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+            .to_string(),
+    ));
+    fields.push((
+        "backend_url_present",
+        request
+            .backend_url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+            .to_string(),
+    ));
+    log_executor_event("attachment sync request received", &fields);
+    Ok(Json(
+        runtime_capabilities::sync_attachments_for_request(request).await,
+    ))
+}
+
+pub fn create_docker_router_from_env() -> Result<Router, String> {
+    let engine = AgentProcessEngine::new(AgentCommandPlanner::from_env());
+    let sink = CallbackSink::new(env::var("CALLBACK_URL").unwrap_or_default())?;
+    Ok(create_router(AppState::new(BackgroundTaskRunner::new(
+        engine, sink,
+    ))))
+}
+
+pub async fn serve(config: ServerConfig) -> Result<(), String> {
+    let bind_addr = config.bind_addr().map_err(|error| error.to_string())?;
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .map_err(|error| format!("failed to bind executor server at {bind_addr}: {error}"))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|error| format!("failed to read executor server local address: {error}"))?;
+    set_executor_http_addr(local_addr);
+    write_executor_log_line(&startup_log_line(local_addr));
+    let _heartbeat = start_heartbeat_from_env();
+
+    axum::serve(listener, create_docker_router_from_env()?)
+        .await
+        .map_err(|error| format!("executor server failed: {error}"))
+}
+
+pub fn startup_log_line(bind_addr: SocketAddr) -> String {
+    format!("{} listening on {bind_addr}", executor_log_timestamp())
+}
+
+pub fn executor_loopback_base_url() -> Option<String> {
+    let addr = *executor_http_addr()
+        .lock()
+        .expect("executor HTTP address should not be poisoned");
+    addr.map(|addr| format!("http://127.0.0.1:{}", addr.port()))
+}
+
+fn set_executor_http_addr(addr: SocketAddr) {
+    *executor_http_addr()
+        .lock()
+        .expect("executor HTTP address should not be poisoned") = Some(addr);
+}
+
+fn executor_http_addr() -> &'static Mutex<Option<SocketAddr>> {
+    static ADDR: OnceLock<Mutex<Option<SocketAddr>>> = OnceLock::new();
+    ADDR.get_or_init(|| Mutex::new(None))
+}
+
+async fn health_check() -> Json<Value> {
+    Json(json!({"status": "healthy", "service": "task_executor"}))
+}
+
+async fn envd_health_check() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexResponsesProxyUpstream {
+    pub base_url: String,
+    pub responses_url: Option<String>,
+    pub api_key: String,
+    pub default_headers: Vec<(String, String)>,
+    pub proxy_url: Option<String>,
+}
+
+pub fn register_codex_responses_proxy(upstream: CodexResponsesProxyUpstream) -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let token = {
+        let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+        let mut guard = next_id
+            .lock()
+            .expect("proxy token counter should not be poisoned");
+        *guard += 1;
+        format!("codex-{}-{}", std::process::id(), *guard)
+    };
+    codex_responses_proxy_registry()
+        .lock()
+        .expect("proxy registry should not be poisoned")
+        .insert(token.clone(), upstream);
+    token
+}
+
+fn codex_responses_proxy_registry() -> &'static Mutex<HashMap<String, CodexResponsesProxyUpstream>>
+{
+    static REGISTRY: OnceLock<Mutex<HashMap<String, CodexResponsesProxyUpstream>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn extract_codex_responses_proxy_local_token(headers: &HeaderMap) -> Option<String> {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    let mut parts = auth.split_whitespace();
+    if parts.next()?.eq_ignore_ascii_case("Bearer") {
+        parts.next().map(str::to_owned)
+    } else {
+        None
+    }
+}
+
+async fn codex_responses_proxy(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
+    let request_id = next_codex_responses_proxy_request_id();
+    let started_at = Instant::now();
+    let local_token =
+        extract_codex_responses_proxy_local_token(&headers).ok_or_else(|| HttpError {
+            status: StatusCode::UNAUTHORIZED,
+            detail: "missing Codex responses proxy local token".to_owned(),
+        })?;
+    let upstream = codex_responses_proxy_registry()
+        .lock()
+        .expect("proxy registry should not be poisoned")
+        .get(&local_token)
+        .cloned()
+        .ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "unknown Codex responses proxy token".to_owned(),
+        })?;
+    let upstream_url = upstream
+        .responses_url
+        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    log_executor_event(
+        "codex responses proxy request started",
+        &[
+            ("request_id", request_id.clone()),
+            ("token", local_token.clone()),
+            ("upstream", codex_responses_proxy_log_target(&upstream_url)),
+            ("proxy_configured", upstream.proxy_url.is_some().to_string()),
+            ("body_bytes", body.len().to_string()),
+            (
+                "accept",
+                headers
+                    .get(header::ACCEPT)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned(),
+            ),
+        ],
+    );
+    let client = codex_responses_proxy_client(upstream.proxy_url.as_deref())?;
+    let mut request = client
+        .post(upstream_url)
+        .bearer_auth(upstream.api_key)
+        .body(body.to_vec());
+    if let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+    }
+    if let Some(accept) = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(reqwest::header::ACCEPT, accept);
+    }
+    for (key, value) in upstream.default_headers {
+        request = request.header(key, value);
+    }
+
+    let upstream_response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            log_executor_event(
+                "codex responses proxy request failed",
+                &[
+                    ("request_id", request_id),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return Err(HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Codex responses proxy request failed: {error}"),
+            });
+        }
+    };
+    let upstream_headers_elapsed = started_at.elapsed();
+    let status = upstream_response.status();
+    let content_type = upstream_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    log_executor_event(
+        "codex responses proxy upstream headers received",
+        &[
+            ("request_id", request_id.clone()),
+            ("status", status.as_u16().to_string()),
+            (
+                "elapsed_ms",
+                upstream_headers_elapsed.as_millis().to_string(),
+            ),
+            ("content_type", content_type.clone().unwrap_or_default()),
+        ],
+    );
+    let stream_stats = CodexResponsesProxyStreamStats::new(request_id, started_at);
+    let stream =
+        normalize_codex_responses_sse_stream(upstream_response.bytes_stream(), stream_stats);
+    let mut response = Response::new(Body::from_stream(stream));
+    *response.status_mut() = status;
+    if let Some(content_type) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type);
+    }
+    Ok(response)
+}
+
+fn codex_responses_proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(reqwest::Client::new());
+    };
+    reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Invalid Codex responses proxy URL: {error}"),
+        })?)
+        .build()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to configure Codex responses proxy client: {error}"),
+        })
+}
+
+fn next_codex_responses_proxy_request_id() -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+    let mut guard = next_id
+        .lock()
+        .expect("proxy request id counter should not be poisoned");
+    *guard += 1;
+    format!("proxy-{}-{}", std::process::id(), *guard)
+}
+
+fn codex_responses_proxy_log_target(upstream_url: &str) -> String {
+    reqwest::Url::parse(upstream_url)
+        .ok()
+        .and_then(|url| {
+            let host = url.host_str()?;
+            let port = url
+                .port()
+                .map(|port| format!(":{port}"))
+                .unwrap_or_default();
+            Some(format!("{}://{}{}{}", url.scheme(), host, port, url.path()))
+        })
+        .unwrap_or_else(|| "<invalid-url>".to_owned())
+}
+
+#[derive(Debug)]
+struct CodexResponsesProxyStreamStats {
+    request_id: String,
+    started_at: Instant,
+    first_upstream_chunk_ms: Option<u128>,
+    first_forwarded_event_ms: Option<u128>,
+    last_upstream_chunk_at: Option<Instant>,
+    last_forwarded_event_at: Option<Instant>,
+    max_upstream_chunk_gap_ms: u128,
+    max_forward_gap_ms: u128,
+    upstream_chunk_count: u64,
+    upstream_bytes: u64,
+    forwarded_event_count: u64,
+    completed_event_count: u64,
+    max_pending_bytes: usize,
+}
+
+impl CodexResponsesProxyStreamStats {
+    fn new(request_id: String, started_at: Instant) -> Self {
+        Self {
+            request_id,
+            started_at,
+            first_upstream_chunk_ms: None,
+            first_forwarded_event_ms: None,
+            last_upstream_chunk_at: None,
+            last_forwarded_event_at: None,
+            max_upstream_chunk_gap_ms: 0,
+            max_forward_gap_ms: 0,
+            upstream_chunk_count: 0,
+            upstream_bytes: 0,
+            forwarded_event_count: 0,
+            completed_event_count: 0,
+            max_pending_bytes: 0,
+        }
+    }
+
+    fn record_upstream_chunk(&mut self, bytes_len: usize, pending_len: usize) {
+        let now = Instant::now();
+        if let Some(last_upstream_chunk_at) = self.last_upstream_chunk_at {
+            let gap_ms = now.duration_since(last_upstream_chunk_at).as_millis();
+            self.max_upstream_chunk_gap_ms = self.max_upstream_chunk_gap_ms.max(gap_ms);
+        }
+        self.last_upstream_chunk_at = Some(now);
+        self.upstream_chunk_count += 1;
+        self.upstream_bytes += bytes_len as u64;
+        self.max_pending_bytes = self.max_pending_bytes.max(pending_len);
+        if self.first_upstream_chunk_ms.is_none() {
+            let elapsed_ms = self.started_at.elapsed().as_millis();
+            self.first_upstream_chunk_ms = Some(elapsed_ms);
+            log_executor_event(
+                "codex responses proxy first upstream chunk received",
+                &[
+                    ("request_id", self.request_id.clone()),
+                    ("elapsed_ms", elapsed_ms.to_string()),
+                    ("chunk_bytes", bytes_len.to_string()),
+                ],
+            );
+        }
+    }
+
+    fn record_forwarded_event(&mut self, event_type: Option<&str>, output_bytes: usize) {
+        let now = Instant::now();
+        let elapsed_ms = self.started_at.elapsed().as_millis();
+        if self.first_forwarded_event_ms.is_none() {
+            self.first_forwarded_event_ms = Some(elapsed_ms);
+            log_executor_event(
+                "codex responses proxy first event forwarded",
+                &[
+                    ("request_id", self.request_id.clone()),
+                    ("elapsed_ms", elapsed_ms.to_string()),
+                    ("event_type", event_type.unwrap_or("").to_owned()),
+                    ("output_bytes", output_bytes.to_string()),
+                ],
+            );
+        }
+        if let Some(last_forwarded_event_at) = self.last_forwarded_event_at {
+            let gap_ms = now.duration_since(last_forwarded_event_at).as_millis();
+            self.max_forward_gap_ms = self.max_forward_gap_ms.max(gap_ms);
+        }
+        self.last_forwarded_event_at = Some(now);
+        self.forwarded_event_count += 1;
+        if event_type == Some("response.completed") {
+            self.completed_event_count += 1;
+        }
+    }
+
+    fn record_upstream_error(&self, error: &reqwest::Error) {
+        log_executor_event(
+            "codex responses proxy upstream stream error",
+            &[
+                ("request_id", self.request_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+                ("error", error.to_string()),
+            ],
+        );
+    }
+
+    fn log_finished(&self, pending_bytes: usize) {
+        log_executor_event(
+            "codex responses proxy stream finished",
+            &[
+                ("request_id", self.request_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+                (
+                    "first_upstream_chunk_ms",
+                    self.first_upstream_chunk_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "first_forwarded_event_ms",
+                    self.first_forwarded_event_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_chunk_count",
+                    self.upstream_chunk_count.to_string(),
+                ),
+                ("upstream_bytes", self.upstream_bytes.to_string()),
+                (
+                    "forwarded_event_count",
+                    self.forwarded_event_count.to_string(),
+                ),
+                (
+                    "completed_event_count",
+                    self.completed_event_count.to_string(),
+                ),
+                (
+                    "max_upstream_chunk_gap_ms",
+                    self.max_upstream_chunk_gap_ms.to_string(),
+                ),
+                ("max_forward_gap_ms", self.max_forward_gap_ms.to_string()),
+                ("max_pending_bytes", self.max_pending_bytes.to_string()),
+                ("pending_bytes", pending_bytes.to_string()),
+            ],
+        );
+    }
+}
+
+struct CodexResponsesProxyStreamState<S> {
+    stream: Pin<Box<S>>,
+    pending: String,
+    output: VecDeque<Result<Bytes, std::io::Error>>,
+    stats: CodexResponsesProxyStreamStats,
+}
+
+fn normalize_codex_responses_sse_stream<S>(
+    stream: S,
+    stats: CodexResponsesProxyStreamStats,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
+    let state = CodexResponsesProxyStreamState {
+        stream: Box::pin(stream),
+        pending: String::new(),
+        output: VecDeque::new(),
+        stats,
+    };
+    futures_util::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(output) = state.output.pop_front() {
+                return Some((output, state));
+            }
+            match state.stream.next().await {
+                Some(Ok(bytes)) => {
+                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    state
+                        .stats
+                        .record_upstream_chunk(bytes.len(), state.pending.len());
+                    while let Some(index) = state.pending.find("\n\n") {
+                        let event = state.pending[..index].to_owned();
+                        state.pending = state.pending[index + 2..].to_owned();
+                        let event_type = codex_responses_sse_event_type(&event);
+                        let normalized = normalize_codex_responses_sse_event(&event);
+                        let output = Bytes::from(format!("{normalized}\n\n"));
+                        state
+                            .stats
+                            .record_forwarded_event(event_type.as_deref(), output.len());
+                        state.output.push_back(Ok(output));
+                    }
+                }
+                Some(Err(error)) => {
+                    state.stats.record_upstream_error(&error);
+                    return Some((Err(std::io::Error::other(error.to_string())), state));
+                }
+                None => {
+                    state.stats.log_finished(state.pending.len());
+                    return None;
+                }
+            }
+        }
+    })
+}
+
+fn codex_responses_sse_event_type(event: &str) -> Option<String> {
+    event.lines().find_map(|line| {
+        let data = line.strip_prefix("data:")?.trim_start();
+        if data == "[DONE]" {
+            return Some("[DONE]".to_owned());
+        }
+        serde_json::from_str::<Value>(data)
+            .ok()
+            .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
+    })
+}
+
+fn normalize_codex_responses_sse_event(event: &str) -> String {
+    if !event.contains("response.completed") {
+        return event.to_owned();
+    }
+    let mut changed = false;
+    let lines = event
+        .lines()
+        .map(|line| {
+            let Some(data) = line.strip_prefix("data:") else {
+                return line.to_owned();
+            };
+            let data = data.trim_start();
+            if data == "[DONE]" {
+                return line.to_owned();
+            }
+            let Ok(mut value) = serde_json::from_str::<Value>(data) else {
+                return line.to_owned();
+            };
+            if value.get("type").and_then(Value::as_str) != Some("response.completed") {
+                return line.to_owned();
+            }
+            normalize_codex_response_completed_usage(&mut value);
+            changed = true;
+            format!(
+                "data: {}",
+                serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
+            )
+        })
+        .collect::<Vec<_>>();
+    if changed {
+        lines.join("\n")
+    } else {
+        event.to_owned()
+    }
+}
+
+fn normalize_codex_response_completed_usage(value: &mut Value) {
+    let Some(response) = value.get_mut("response").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(usage) = response.get_mut("usage").and_then(Value::as_object_mut) else {
+        return;
+    };
+    ensure_object_field_with_default(usage, "input_tokens_details", "cached_tokens");
+    ensure_object_field_with_default(usage, "output_tokens_details", "reasoning_tokens");
+}
+
+fn ensure_object_field_with_default(
+    usage: &mut Map<String, Value>,
+    details_key: &str,
+    field: &str,
+) {
+    match usage.get_mut(details_key) {
+        Some(Value::Object(details)) => {
+            details
+                .entry(field.to_owned())
+                .or_insert_with(|| Value::Number(0.into()));
+        }
+        Some(Value::Null) | None => {}
+        Some(_) => {
+            usage.insert(details_key.to_owned(), Value::Null);
+        }
+    }
+}
+
+async fn envd_metrics() -> Json<MetricsResponse> {
+    let disk = disk_usage_bytes(Path::new("/")).unwrap_or_default();
+    let memory = memory_usage_bytes().unwrap_or_default();
+    Json(MetricsResponse {
+        ts: chrono::Utc::now().timestamp(),
+        cpu_count: std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1),
+        cpu_used_pct: cpu_used_pct().await.unwrap_or_default(),
+        mem_total: memory.total,
+        mem_used: memory.used,
+        disk_total: disk.total,
+        disk_used: disk.used,
+    })
+}
+
+async fn envd_init(Json(request): Json<InitRequest>) -> Result<Response, HttpError> {
+    envd_state().lock().unwrap().init(request)?;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(""));
+    Ok((StatusCode::NO_CONTENT, headers).into_response())
+}
+
+async fn envd_envs() -> Json<HashMap<String, String>> {
+    Json(envd_state().lock().unwrap().env_vars.clone())
+}
+
+async fn list_workspace_directory(
+    Query(query): Query<WorkspacePathQuery>,
+) -> Result<Json<Vec<WorkspaceEntry>>, HttpError> {
+    let path = resolve_workspace_path(query.path.as_deref().unwrap_or("/workspace"))?;
+    list_workspace_entries(&path).map(Json)
+}
+
+async fn connect_list_workspace_directory(
+    Json(payload): Json<ConnectListDirRequest>,
+) -> Result<Json<ConnectListDirResponse<FsEntryInfo>>, HttpError> {
+    let raw_path = payload.path.as_deref().unwrap_or_default();
+    let path = resolve_envd_filesystem_path(raw_path)?;
+    log_executor_event(
+        "envd filesystem list_dir request",
+        &[
+            ("raw_path", raw_path.to_owned()),
+            ("resolved_path", path.to_string_lossy().to_string()),
+            ("depth", payload.depth.unwrap_or(1).to_string()),
+        ],
+    );
+    let entries = list_envd_filesystem_entries(&path, payload.depth.unwrap_or(1))?;
+    Ok(Json(ConnectListDirResponse { entries }))
+}
+
+async fn connect_stat_path(
+    Json(payload): Json<ConnectStatRequest>,
+) -> Result<Json<ConnectStatResponse>, HttpError> {
+    let path = resolve_envd_filesystem_path(&payload.path)?;
+    log_executor_event(
+        "envd filesystem stat request",
+        &[
+            ("raw_path", payload.path),
+            ("resolved_path", path.to_string_lossy().to_string()),
+        ],
+    );
+    Ok(Json(ConnectStatResponse {
+        entry: envd_filesystem_entry(&path, &path)?,
+    }))
+}
+
+async fn connect_make_dir(
+    Json(payload): Json<ConnectMakeDirRequest>,
+) -> Result<Json<ConnectMakeDirResponse>, HttpError> {
+    let path = resolve_envd_filesystem_path(&payload.path)?;
+    log_executor_event(
+        "envd filesystem make_dir request",
+        &[
+            ("raw_path", payload.path),
+            ("resolved_path", path.to_string_lossy().to_string()),
+        ],
+    );
+    if path.exists() {
+        if path.is_dir() {
+            return Err(HttpError {
+                status: StatusCode::CONFLICT,
+                detail: format!("Directory already exists: {}", path.display()),
+            });
+        }
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!(
+                "Path already exists but it is not a directory: {}",
+                path.display()
+            ),
+        });
+    }
+    fs::create_dir_all(&path).map_err(|error| HttpError {
+        status: if error.kind() == std::io::ErrorKind::PermissionDenied {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        },
+        detail: format!("Failed to create directory: {error}"),
+    })?;
+    Ok(Json(ConnectMakeDirResponse {
+        entry: envd_filesystem_entry(&path, &path)?,
+    }))
+}
+
+async fn connect_process_list() -> Json<Value> {
+    Json(json!({"processes": []}))
+}
+
+async fn connect_process_send_signal() -> Json<Value> {
+    Json(json!({}))
+}
+
+async fn connect_process_start(body: Body) -> Result<Response, HttpError> {
+    let bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("failed to read process start request: {error}"),
+        })?;
+    let request: ProcessStartRequest = serde_json::from_slice(&connect_request_payload(&bytes)?)
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("invalid process start request: {error}"),
+        })?;
+    let output = run_envd_process(&request).await;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/connect+json"),
+    );
+    Ok((
+        StatusCode::OK,
+        headers,
+        Body::from(process_start_stream_body(&output)),
+    )
+        .into_response())
+}
+
+async fn download_workspace_file(
+    Query(query): Query<WorkspacePathQuery>,
+) -> Result<Response, HttpError> {
+    let raw_path = query.path.as_deref().ok_or_else(|| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "missing path".to_owned(),
+    })?;
+    let path = resolve_workspace_path(raw_path)?;
+    let metadata = fs::metadata(&path).map_err(|_| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "File not found".to_owned(),
+    })?;
+    if metadata.is_dir() {
+        ensure_directory_download_size(&path)?;
+        let content = zip_directory(&path).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        );
+        return Ok((headers, Body::from(content)).into_response());
+    }
+    if !metadata.is_file() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "Path is not a file".to_owned(),
+        });
+    }
+    ensure_file_download_size(metadata.len())?;
+    let content = fs::read(&path).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("failed to read file: {error}"),
+    })?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    Ok((headers, Body::from(content)).into_response())
+}
+
+async fn download_envd_file(
+    headers: HeaderMap,
+    Query(query): Query<WorkspacePathQuery>,
+) -> Result<Response, HttpError> {
+    log_executor_event(
+        "envd file download request",
+        &[
+            ("path", query.path.clone().unwrap_or_default()),
+            ("username", query.username.clone().unwrap_or_default()),
+            ("content_type", header_value(&headers, header::CONTENT_TYPE)),
+        ],
+    );
+    let path = resolve_envd_path(&query)?;
+    let metadata = fs::metadata(&path).map_err(|_| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: format!(
+            "File not found: {}",
+            query.path.as_deref().unwrap_or_default()
+        ),
+    })?;
+    if !has_read_access(&path) {
+        return Err(HttpError {
+            status: StatusCode::UNAUTHORIZED,
+            detail: format!(
+                "Permission denied: {}",
+                query.path.as_deref().unwrap_or_default()
+            ),
+        });
+    }
+    if metadata.is_dir() {
+        ensure_directory_download_size(&path)?;
+        let content = zip_directory(&path).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        );
+        return Ok((headers, Body::from(content)).into_response());
+    }
+    if !metadata.is_file() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!(
+                "Path is not a file: {}",
+                query.path.as_deref().unwrap_or_default()
+            ),
+        });
+    }
+    ensure_file_download_size(metadata.len())?;
+    let mut file = fs::File::open(&path).map_err(|error| HttpError {
+        status: if error.kind() == std::io::ErrorKind::PermissionDenied {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        },
+        detail: format!("failed to read file: {error}"),
+    })?;
+    let mut content = Vec::new();
+    file.read_to_end(&mut content).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("failed to read file: {error}"),
+    })?;
+    log_executor_event(
+        "envd file download succeeded",
+        &[
+            ("path", path.to_string_lossy().to_string()),
+            ("size", content.len().to_string()),
+        ],
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    Ok((headers, Body::from(content)).into_response())
+}
+
+fn ensure_file_download_size(size: u64) -> Result<(), HttpError> {
+    let limit_bytes = workspace_download_limit_bytes();
+    if size > limit_bytes {
+        return Err(HttpError {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            detail: format!("Download exceeds {} MiB limit", limit_bytes / 1024 / 1024),
+        });
+    }
+    Ok(())
+}
+
+fn workspace_download_limit_bytes() -> u64 {
+    std::env::var("MAX_WORKSPACE_DOWNLOAD_MB")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB)
+        .saturating_mul(1024 * 1024)
+}
+
+fn ensure_directory_download_size(path: &Path) -> Result<(), HttpError> {
+    let mut total = 0;
+    add_directory_download_size(path, &mut total)
+}
+
+fn add_directory_download_size(path: &Path, total: &mut u64) -> Result<(), HttpError> {
+    for entry in fs::read_dir(path).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("failed to read directory: {error}"),
+    })? {
+        let entry = entry.map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to read directory entry: {error}"),
+        })?;
+        let entry_path = entry.path();
+        let metadata = fs::symlink_metadata(&entry_path).map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to read metadata: {error}"),
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                detail: "Directory archive cannot include symbolic links".to_owned(),
+            });
+        }
+        if metadata.is_dir() {
+            add_directory_download_size(&entry_path, total)?;
+        } else if metadata.is_file() {
+            *total = total.saturating_add(metadata.len());
+            ensure_file_download_size(*total)?;
+        }
+    }
+    Ok(())
+}
+
+async fn zip_directory(path: &Path) -> Result<Vec<u8>, HttpError> {
+    let _permit = zip_download_semaphore()
+        .try_acquire()
+        .map_err(|_| HttpError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            detail: "Too many archive downloads in progress".to_owned(),
+        })?;
+    let parent = path.parent().ok_or_else(|| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "Directory parent not found".to_owned(),
+    })?;
+    let file_name = path.file_name().ok_or_else(|| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "Directory name not found".to_owned(),
+    })?;
+
+    let mut command = Command::new("zip");
+    command
+        .arg("-r")
+        .arg("-q")
+        .arg("-")
+        .arg(file_name)
+        .current_dir(parent)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let output = match timeout(
+        Duration::from_secs(MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS),
+        command.output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return Err(HttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                detail: format!("failed to run zip: {error}"),
+            });
+        }
+        Err(_) => {
+            return Err(HttpError {
+                status: StatusCode::REQUEST_TIMEOUT,
+                detail: "Archive download timed out".to_owned(),
+            });
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("zip failed: {stderr}"),
+        });
+    }
+
+    Ok(output.stdout)
+}
+
+fn zip_download_semaphore() -> &'static Semaphore {
+    static SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+    SEMAPHORE.get_or_init(|| Semaphore::new(MAX_WORKSPACE_ZIP_CONCURRENCY))
+}
+
+async fn upload_envd_file(
+    headers: HeaderMap,
+    Query(query): Query<WorkspacePathQuery>,
+    mut multipart: Multipart,
+) -> Result<Json<Vec<EntryInfo>>, HttpError> {
+    log_executor_event(
+        "envd file upload request",
+        &[
+            ("path", query.path.clone().unwrap_or_default()),
+            ("username", query.username.clone().unwrap_or_default()),
+            ("content_type", header_value(&headers, header::CONTENT_TYPE)),
+        ],
+    );
+    let path = resolve_envd_path(&query)?;
+    let Some(parent) = path.parent() else {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "Path is required".to_owned(),
+        });
+    };
+    fs::create_dir_all(parent).map_err(|error| {
+        log_executor_event(
+            "envd file upload parent create failed",
+            &[
+                ("path", path.to_string_lossy().to_string()),
+                ("parent", parent.to_string_lossy().to_string()),
+                ("error", error.to_string()),
+            ],
+        );
+        HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to create parent directory: {error}"),
+        }
+    })?;
+    if let Some(usage) = disk_usage_bytes(parent) {
+        let free = usage.total.saturating_sub(usage.used);
+        log_executor_event(
+            "envd file upload disk check",
+            &[
+                ("path", path.to_string_lossy().to_string()),
+                ("parent", parent.to_string_lossy().to_string()),
+                ("free_bytes", free.to_string()),
+                ("required_bytes", MIN_UPLOAD_FREE_SPACE_BYTES.to_string()),
+            ],
+        );
+        if free < MIN_UPLOAD_FREE_SPACE_BYTES {
+            return Err(HttpError {
+                status: StatusCode::INSUFFICIENT_STORAGE,
+                detail: "Not enough disk space".to_owned(),
+            });
+        }
+    }
+
+    while let Some(field) = multipart.next_field().await.map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("invalid multipart body: {error}"),
+    })? {
+        let field_name = field.name().unwrap_or_default().to_owned();
+        let file_name = field.file_name().unwrap_or_default().to_owned();
+        log_executor_event(
+            "envd file upload multipart field",
+            &[
+                ("path", path.to_string_lossy().to_string()),
+                ("field_name", field_name.clone()),
+                ("file_name", file_name),
+            ],
+        );
+        if field_name != "file" {
+            continue;
+        }
+        let bytes = field.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("failed to read uploaded file: {error}"),
+        })?;
+        let size = bytes.len();
+        fs::write(&path, &bytes).map_err(|error| {
+            log_executor_event(
+                "envd file upload write failed",
+                &[
+                    ("path", path.to_string_lossy().to_string()),
+                    ("size", size.to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            HttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                detail: format!("failed to write uploaded file: {error}"),
+            }
+        })?;
+        log_executor_event(
+            "envd file upload succeeded",
+            &[
+                ("path", path.to_string_lossy().to_string()),
+                ("size", size.to_string()),
+            ],
+        );
+        return Ok(Json(vec![EntryInfo {
+            path: path.to_string_lossy().to_string(),
+            name: path
+                .file_name()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            entry_type: "file".to_owned(),
+        }]));
+    }
+
+    Err(HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "multipart field 'file' is required".to_owned(),
+    })
+}
+
+async fn archive_workspace(
+    Json(request): Json<ArchiveRequest>,
+) -> Result<Json<ArchiveResponse>, HttpError> {
+    let mode = parse_archive_mode(&request.runtime_type)?;
+    let archive = create_runtime_archive(ArchiveOptions {
+        mode,
+        workspace_path: task_workspace_path(request.task_id),
+        home_path: runtime_home_path(mode),
+        max_size_bytes: u64::from(request.max_size_mb) * 1024 * 1024,
+    })
+    .map_err(archive_error_to_http)?;
+
+    let size_bytes = archive.bytes.len() as u64;
+    let session_file_included = archive.session_file_included;
+    let git_included = archive.git_included;
+
+    reqwest::Client::new()
+        .put(&request.upload_url)
+        .header(header::CONTENT_TYPE.as_str(), "application/gzip")
+        .body(archive.bytes)
+        .send()
+        .await
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("failed to upload archive: {error}"),
+        })?
+        .error_for_status()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("archive upload failed: {error}"),
+        })?;
+
+    Ok(Json(ArchiveResponse {
+        task_id: request.task_id,
+        size_bytes,
+        session_file_included,
+        git_included,
+    }))
+}
+
+async fn restore_workspace(
+    Json(request): Json<RestoreRequest>,
+) -> Result<Json<RestoreResponse>, HttpError> {
+    let mode = parse_archive_mode(&request.runtime_type)?;
+    let bytes = reqwest::Client::new()
+        .get(&request.download_url)
+        .send()
+        .await
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("failed to download archive: {error}"),
+        })?
+        .error_for_status()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("archive download failed: {error}"),
+        })?
+        .bytes()
+        .await
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("failed to read archive response: {error}"),
+        })?;
+
+    let result = restore_runtime_archive(
+        &bytes,
+        mode,
+        &task_workspace_path(request.task_id),
+        &runtime_home_path(mode),
+    )
+    .map_err(archive_error_to_http)?;
+
+    Ok(Json(RestoreResponse {
+        success: result.success,
+        session_restored: result.session_restored,
+        git_restored: result.git_restored,
+    }))
+}
+
+async fn openai_responses<R>(
+    State(state): State<AppState<R>>,
+    body: Bytes,
+) -> Result<Json<OpenAIBackgroundResponse>, HttpError>
+where
+    R: TaskRunner,
+{
+    let payload = serde_json::from_slice::<Value>(&body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: error.to_string(),
+    })?;
+    let payload_preview = sanitized_json_preview(&payload, REQUEST_PAYLOAD_PREVIEW_CHARS);
+    let request = OpenAIResponsesRequest::from_value(payload)?;
+    let background = request.background();
+    let execution_request = request.to_execution_request();
+    let response_id = format!("resp_{}", execution_request.subtask_id);
+    let mut fields = task_fields(&execution_request.task_id, &execution_request.subtask_id);
+    fields.push((
+        "agent",
+        format!("{:?}", execution_request.resolved_agent_kind()),
+    ));
+    fields.push(("background", background.to_string()));
+    fields.push(("payload_preview", payload_preview));
+    log_executor_event("received request", &fields);
+
+    let result = state.runner.submit(execution_request).await;
+    let status = response_status(background, result.status);
+    fields.push(("status", result.status.to_string()));
+    log_executor_event("request submitted", &fields);
+
+    Ok(Json(OpenAIBackgroundResponse {
+        id: response_id,
+        status,
+        message: format!("Task execution status: {}", result.status),
+    }))
+}
+
+fn response_status(background: bool, status: TaskStatus) -> String {
+    if background {
+        "queued".to_owned()
+    } else {
+        status.as_str().to_owned()
+    }
+}
+
+const REQUEST_PAYLOAD_PREVIEW_CHARS: usize = 2_000;
+
+fn sanitized_json_preview(value: &Value, max_chars: usize) -> String {
+    let sanitized = sanitize_log_value(value);
+    let serialized = serde_json::to_string(&sanitized).unwrap_or_default();
+    truncate_log_value(&serialized, max_chars)
+}
+
+fn sanitize_log_value(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| {
+                    let value = if is_sensitive_log_key(key) {
+                        Value::String("***".to_owned())
+                    } else {
+                        sanitize_log_value(value)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_log_value).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_log_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    normalized.contains("token")
+        || normalized.contains("secret")
+        || normalized.contains("password")
+        || normalized.contains("api_key")
+        || normalized.contains("apikey")
+        || normalized.contains("private_key")
+        || normalized == "authorization"
+}
+
+fn truncate_log_value(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    let truncated = value.chars().take(max_chars).collect::<String>();
+    format!("{truncated}...")
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAIBackgroundResponse {
+    id: String,
+    status: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspacePathQuery {
+    path: Option<String>,
+    username: Option<String>,
+    signature: Option<String>,
+    signature_expiration: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InitRequest {
+    #[serde(default, rename = "hyperloopIP")]
+    hyperloop_ip: Option<String>,
+    #[serde(default, rename = "envVars")]
+    env_vars: Option<HashMap<String, String>>,
+    #[serde(default, rename = "accessToken")]
+    access_token: Option<String>,
+    #[serde(default)]
+    timestamp: Option<String>,
+    #[serde(default, rename = "defaultUser")]
+    default_user: Option<String>,
+    #[serde(default, rename = "defaultWorkdir")]
+    default_workdir: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct MetricsResponse {
+    ts: i64,
+    cpu_count: usize,
+    cpu_used_pct: f64,
+    mem_total: u64,
+    mem_used: u64,
+    disk_used: u64,
+    disk_total: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct EntryInfo {
+    path: String,
+    name: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchiveRequest {
+    task_id: i64,
+    upload_url: String,
+    #[serde(default = "default_archive_max_size_mb")]
+    max_size_mb: u32,
+    #[serde(default = "default_runtime_type")]
+    runtime_type: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ArchiveResponse {
+    task_id: i64,
+    size_bytes: u64,
+    session_file_included: bool,
+    git_included: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreRequest {
+    task_id: i64,
+    download_url: String,
+    #[serde(default = "default_runtime_type")]
+    runtime_type: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RestoreResponse {
+    success: bool,
+    session_restored: bool,
+    git_restored: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConnectListDirRequest {
+    path: Option<String>,
+    #[allow(dead_code)]
+    depth: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConnectListDirResponse<T> {
+    entries: Vec<T>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConnectStatRequest {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ConnectStatResponse {
+    entry: FsEntryInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConnectMakeDirRequest {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ConnectMakeDirResponse {
+    entry: FsEntryInfo,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessStartRequest {
+    process: ProcessStartConfig,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessStartConfig {
+    cmd: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    envs: HashMap<String, String>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Debug)]
+struct ProcessOutput {
+    pid: u32,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    exit_code: i32,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FsEntryInfo {
+    name: String,
+    #[serde(rename = "type")]
+    entry_type: String,
+    path: String,
+    size: u64,
+    mode: u32,
+    permissions: String,
+    owner: String,
+    group: String,
+    modified_time: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceEntry {
+    name: String,
+    path: String,
+    is_directory: bool,
+    size: u64,
+    modified_at: Option<u64>,
+    #[serde(rename = "type")]
+    entry_type: String,
+}
+
+fn list_workspace_entries(path: &Path) -> Result<Vec<WorkspaceEntry>, HttpError> {
+    let metadata = fs::metadata(path).map_err(|_| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "Path not found".to_owned(),
+    })?;
+    if !metadata.is_dir() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "Path is not a directory".to_owned(),
+        });
+    }
+
+    let mut entries = fs::read_dir(path)
+        .map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to list directory: {error}"),
+        })?
+        .filter_map(|entry| workspace_entry(entry.ok()?))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        right
+            .is_directory
+            .cmp(&left.is_directory)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(entries)
+}
+
+fn list_envd_filesystem_entries(path: &Path, depth: usize) -> Result<Vec<FsEntryInfo>, HttpError> {
+    let metadata = fs::metadata(path).map_err(|_| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: format!("Directory not found: {}", path.display()),
+    })?;
+    if !metadata.is_dir() {
+        return Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("Path is not a directory: {}", path.display()),
+        });
+    }
+
+    let max_depth = depth.max(1);
+    let mut entries = Vec::new();
+    collect_envd_filesystem_entries(path, path, max_depth, 0, &mut entries)?;
+    entries.sort_by(|left, right| {
+        let left_is_dir = left.entry_type == "FILE_TYPE_DIRECTORY";
+        let right_is_dir = right.entry_type == "FILE_TYPE_DIRECTORY";
+        right_is_dir
+            .cmp(&left_is_dir)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(entries)
+}
+
+fn collect_envd_filesystem_entries(
+    root: &Path,
+    current: &Path,
+    max_depth: usize,
+    current_depth: usize,
+    entries: &mut Vec<FsEntryInfo>,
+) -> Result<(), HttpError> {
+    if current_depth >= max_depth {
+        return Ok(());
+    }
+    let children = fs::read_dir(current).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("Error reading directory {}: {error}", current.display()),
+    })?;
+    for child in children {
+        let child = child.map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("Error reading directory entry: {error}"),
+        })?;
+        let child_path = child.path();
+        entries.push(envd_filesystem_entry(root, &child_path)?);
+        if child_path.is_dir() {
+            collect_envd_filesystem_entries(
+                root,
+                &child_path,
+                max_depth,
+                current_depth + 1,
+                entries,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn envd_filesystem_entry(_root: &Path, path: &Path) -> Result<FsEntryInfo, HttpError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| HttpError {
+        status: if error.kind() == std::io::ErrorKind::NotFound {
+            StatusCode::NOT_FOUND
+        } else if error.kind() == std::io::ErrorKind::PermissionDenied {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        },
+        detail: format!("Failed to get file info: {error}"),
+    })?;
+    let mode = file_mode(&metadata);
+    Ok(FsEntryInfo {
+        name: path
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        entry_type: if path.is_dir() {
+            "FILE_TYPE_DIRECTORY".to_owned()
+        } else {
+            "FILE_TYPE_FILE".to_owned()
+        },
+        path: path.to_string_lossy().to_string(),
+        size: metadata.len(),
+        mode,
+        permissions: file_permissions(mode, metadata.is_dir()),
+        owner: String::new(),
+        group: String::new(),
+        modified_time: metadata
+            .modified()
+            .ok()
+            .map(chrono::DateTime::<chrono::Utc>::from)
+            .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true))
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned()),
+    })
+}
+
+fn workspace_entry(entry: fs::DirEntry) -> Option<WorkspaceEntry> {
+    let path = entry.path();
+    let metadata = entry.metadata().ok()?;
+    let is_directory = metadata.is_dir();
+    Some(WorkspaceEntry {
+        name: entry.file_name().to_string_lossy().to_string(),
+        path: display_workspace_path(&path)?,
+        is_directory,
+        size: if is_directory { 0 } else { metadata.len() },
+        modified_at: metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs()),
+        entry_type: if is_directory {
+            "FILE_TYPE_DIRECTORY".to_owned()
+        } else {
+            "FILE_TYPE_FILE".to_owned()
+        },
+    })
+}
+
+fn resolve_workspace_path(raw_path: &str) -> Result<PathBuf, HttpError> {
+    let workspace_root = workspace_root();
+    let path = raw_path.trim();
+    if path.is_empty() {
+        return Ok(workspace_root);
+    }
+
+    let candidate = if path == "/workspace" {
+        workspace_root.clone()
+    } else if let Some(rest) = path.strip_prefix("/workspace/") {
+        workspace_root.join(rest)
+    } else {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            path
+        } else {
+            workspace_root.join(path)
+        }
+    };
+
+    let root = fs::canonicalize(&workspace_root).map_err(|_| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "Workspace root not found".to_owned(),
+    })?;
+    let canonical = fs::canonicalize(&candidate).map_err(|_| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "Path not found".to_owned(),
+    })?;
+    if !canonical.starts_with(&root) {
+        return Err(HttpError {
+            status: StatusCode::FORBIDDEN,
+            detail: "Path is outside workspace".to_owned(),
+        });
+    }
+    Ok(canonical)
+}
+
+fn resolve_envd_path(query: &WorkspacePathQuery) -> Result<PathBuf, HttpError> {
+    let _ = (&query.signature, query.signature_expiration);
+    let raw_path = query
+        .path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: "Path is required".to_owned(),
+        })?;
+    let mut path = PathBuf::from(raw_path);
+    if !path.is_absolute() {
+        if let Some(username) = query.username.as_deref().filter(|value| !value.is_empty()) {
+            let current_user = env::var("USER").unwrap_or_default();
+            let user_home = if username == current_user {
+                home_path()
+            } else {
+                PathBuf::from("/home").join(username)
+            };
+            path = user_home.join(path);
+        } else {
+            let default_workdir = envd_state().lock().unwrap().default_workdir.clone();
+            if let Some(default_workdir) = default_workdir.filter(|value| !value.is_empty()) {
+                path = PathBuf::from(default_workdir).join(path);
+            } else {
+                path = env::current_dir()
+                    .map_err(|error| HttpError {
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                        detail: format!("failed to resolve current directory: {error}"),
+                    })?
+                    .join(path);
+            }
+        }
+    }
+    log_executor_event(
+        "envd path resolved",
+        &[
+            ("raw_path", raw_path.to_owned()),
+            ("resolved_path", path.to_string_lossy().to_string()),
+            ("username", query.username.clone().unwrap_or_default()),
+        ],
+    );
+    Ok(path)
+}
+
+fn resolve_envd_filesystem_path(raw_path: &str) -> Result<PathBuf, HttpError> {
+    let path = if raw_path.trim().is_empty() {
+        PathBuf::from(".")
+    } else if raw_path == "~" {
+        home_path()
+    } else if let Some(rest) = raw_path.strip_prefix("~/") {
+        home_path().join(rest)
+    } else {
+        PathBuf::from(raw_path)
+    };
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    env::current_dir()
+        .map(|current| current.join(path))
+        .map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("failed to resolve current directory: {error}"),
+        })
+}
+
+fn display_workspace_path(path: &Path) -> Option<String> {
+    let root = fs::canonicalize(workspace_root()).ok()?;
+    let relative = path.strip_prefix(root).ok()?;
+    let suffix = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    if suffix.is_empty() {
+        Some("/workspace".to_owned())
+    } else {
+        Some(format!("/workspace/{suffix}"))
+    }
+}
+
+fn workspace_root() -> PathBuf {
+    env::var_os("WORKSPACE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/workspace"))
+}
+
+async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
+    let mut command = Command::new(&request.process.cmd);
+    command
+        .args(&request.process.args)
+        .envs(&request.process.envs)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(cwd) = request
+        .process
+        .cwd
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        command.current_dir(cwd);
+    }
+    log_executor_event(
+        "envd process start request",
+        &[
+            ("cmd", request.process.cmd.clone()),
+            ("arg_count", request.process.args.len().to_string()),
+            ("cwd", request.process.cwd.clone().unwrap_or_default()),
+        ],
+    );
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return ProcessOutput {
+                pid: 0,
+                stdout: Vec::new(),
+                stderr: error.to_string().into_bytes(),
+                exit_code: -1,
+                error: error.to_string(),
+            };
+        }
+    };
+    let pid = child.id().unwrap_or_default();
+    match child.wait_with_output().await {
+        Ok(output) => {
+            let exit_code = output.status.code().unwrap_or(-1);
+            log_executor_event(
+                "envd process finished",
+                &[
+                    ("pid", pid.to_string()),
+                    ("exit_code", exit_code.to_string()),
+                    ("stdout_len", output.stdout.len().to_string()),
+                    ("stderr_len", output.stderr.len().to_string()),
+                ],
+            );
+            ProcessOutput {
+                pid,
+                stdout: output.stdout,
+                stderr: output.stderr,
+                exit_code,
+                error: String::new(),
+            }
+        }
+        Err(error) => ProcessOutput {
+            pid,
+            stdout: Vec::new(),
+            stderr: error.to_string().into_bytes(),
+            exit_code: -1,
+            error: error.to_string(),
+        },
+    }
+}
+
+fn connect_request_payload(bytes: &[u8]) -> Result<Vec<u8>, HttpError> {
+    if bytes.len() < CONNECT_ENVELOPE_HEADER_LEN {
+        return Ok(bytes.to_vec());
+    }
+    let flags = bytes[0];
+    let len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
+    if bytes.len() == CONNECT_ENVELOPE_HEADER_LEN + len {
+        if flags & CONNECT_FLAG_COMPRESSED != 0 {
+            return Err(HttpError {
+                status: StatusCode::BAD_REQUEST,
+                detail: "compressed connect requests are not supported".to_owned(),
+            });
+        }
+        return Ok(bytes[CONNECT_ENVELOPE_HEADER_LEN..].to_vec());
+    }
+    Ok(bytes.to_vec())
+}
+
+fn process_start_stream_body(output: &ProcessOutput) -> Vec<u8> {
+    let mut stream = Vec::new();
+    append_connect_json_message(
+        &mut stream,
+        json!({"event": {"start": {"pid": output.pid}}}),
+    );
+    if !output.stdout.is_empty() {
+        append_connect_json_message(
+            &mut stream,
+            json!({"event": {"data": {"stdout": base64_encode(&output.stdout)}}}),
+        );
+    }
+    if !output.stderr.is_empty() {
+        append_connect_json_message(
+            &mut stream,
+            json!({"event": {"data": {"stderr": base64_encode(&output.stderr)}}}),
+        );
+    }
+    append_connect_json_message(
+        &mut stream,
+        json!({
+            "event": {
+                "end": {
+                    "exitCode": output.exit_code,
+                    "exited": true,
+                    "status": if output.exit_code == 0 { "success" } else { "error" },
+                    "error": output.error,
+                }
+            }
+        }),
+    );
+    append_connect_envelope(&mut stream, CONNECT_FLAG_END_STREAM, b"{}");
+    stream
+}
+
+fn append_connect_json_message(stream: &mut Vec<u8>, value: Value) {
+    append_connect_envelope(stream, 0, value.to_string().as_bytes());
+}
+
+fn append_connect_envelope(stream: &mut Vec<u8>, flags: u8, data: &[u8]) {
+    stream.push(flags);
+    stream.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    stream.extend_from_slice(data);
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+const CONNECT_ENVELOPE_HEADER_LEN: usize = 5;
+const CONNECT_FLAG_COMPRESSED: u8 = 0b0000_0001;
+const CONNECT_FLAG_END_STREAM: u8 = 0b0000_0010;
+
+fn task_workspace_path(task_id: i64) -> PathBuf {
+    workspace_root().join(task_id.to_string())
+}
+
+fn runtime_home_path(mode: ArchiveMode) -> PathBuf {
+    match mode {
+        ArchiveMode::Executor => home_path(),
+        ArchiveMode::Sandbox => PathBuf::from("/home/user"),
+    }
+}
+
+fn home_path() -> PathBuf {
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user"))
+}
+
+fn parse_archive_mode(value: &str) -> Result<ArchiveMode, HttpError> {
+    match value {
+        "executor" | "" => Ok(ArchiveMode::Executor),
+        "sandbox" => Ok(ArchiveMode::Sandbox),
+        other => Err(HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("invalid runtime_type: {other}"),
+        }),
+    }
+}
+
+fn archive_error_to_http(error: ArchiveError) -> HttpError {
+    let status = match error {
+        ArchiveError::MissingWorkspace(_) | ArchiveError::EmptyArchiveRoots { .. } => {
+            StatusCode::NOT_FOUND
+        }
+        ArchiveError::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        ArchiveError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    HttpError {
+        status,
+        detail: error.to_string(),
+    }
+}
+
+#[derive(Debug, Default)]
+struct EnvdState {
+    env_vars: HashMap<String, String>,
+    access_token: Option<String>,
+    last_set_time: Option<SystemTime>,
+    default_user: Option<String>,
+    default_workdir: Option<String>,
+    hyperloop_ip: Option<String>,
+}
+
+impl EnvdState {
+    fn init(&mut self, request: InitRequest) -> Result<(), HttpError> {
+        let request_time = request.timestamp.as_deref().and_then(parse_envd_timestamp);
+        let should_update = request_time
+            .map(|time| self.last_set_time.map_or(true, |last| time > last))
+            .unwrap_or(true);
+        if !should_update {
+            return Ok(());
+        }
+        if let Some(access_token) = request
+            .access_token
+            .as_ref()
+            .filter(|value| !value.is_empty())
+        {
+            if self
+                .access_token
+                .as_ref()
+                .is_some_and(|existing| existing != access_token)
+            {
+                return Err(HttpError {
+                    status: StatusCode::CONFLICT,
+                    detail: "Access token is already set".to_owned(),
+                });
+            }
+            self.access_token = Some(access_token.clone());
+        }
+        if let Some(hyperloop_ip) = request.hyperloop_ip.filter(|value| !value.is_empty()) {
+            self.hyperloop_ip = Some(hyperloop_ip);
+        }
+        if let Some(env_vars) = request.env_vars {
+            self.env_vars.extend(env_vars);
+        }
+        if let Some(default_user) = request.default_user.filter(|value| !value.is_empty()) {
+            self.default_user = Some(default_user);
+        }
+        if let Some(default_workdir) = request.default_workdir.filter(|value| !value.is_empty()) {
+            self.default_workdir = Some(default_workdir);
+        }
+        if let Some(request_time) = request_time {
+            self.last_set_time = Some(request_time);
+        }
+        Ok(())
+    }
+}
+
+fn envd_state() -> &'static Mutex<EnvdState> {
+    static STATE: OnceLock<Mutex<EnvdState>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(EnvdState::default()))
+}
+
+fn parse_envd_timestamp(value: &str) -> Option<SystemTime> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(SystemTime::from)
+}
+
+fn default_archive_max_size_mb() -> u32 {
+    2048
+}
+
+fn default_runtime_type() -> String {
+    "executor".to_owned()
+}
+
+const MIN_UPLOAD_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
+const DEFAULT_MAX_WORKSPACE_DOWNLOAD_MB: u64 = 500;
+const MAX_WORKSPACE_ZIP_CONCURRENCY: usize = 2;
+const MAX_WORKSPACE_ZIP_TIMEOUT_SECONDS: u64 = 120;
+
+#[derive(Debug, Default)]
+struct ByteUsage {
+    total: u64,
+    used: u64,
+}
+
+async fn cpu_used_pct() -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    {
+        let first = read_cpu_times()?;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let second = read_cpu_times()?;
+        let total = second.total.saturating_sub(first.total);
+        if total == 0 {
+            return Some(0.0);
+        }
+        let idle = second.idle.saturating_sub(first.idle);
+        Some(((total.saturating_sub(idle)) as f64 / total as f64) * 100.0)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct CpuTimes {
+    total: u64,
+    idle: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn read_cpu_times() -> Option<CpuTimes> {
+    let stat = fs::read_to_string("/proc/stat").ok()?;
+    let line = stat.lines().find(|line| line.starts_with("cpu "))?;
+    let values = line
+        .split_whitespace()
+        .skip(1)
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect::<Vec<_>>();
+    let total = values.iter().copied().sum::<u64>();
+    let idle =
+        values.get(3).copied().unwrap_or_default() + values.get(4).copied().unwrap_or_default();
+    Some(CpuTimes { total, idle })
+}
+
+fn memory_usage_bytes() -> Option<ByteUsage> {
+    #[cfg(target_os = "linux")]
+    {
+        let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+        let mut total_kb = None;
+        let mut available_kb = None;
+        for line in meminfo.lines() {
+            if let Some(value) = line.strip_prefix("MemTotal:") {
+                total_kb = value.split_whitespace().next()?.parse::<u64>().ok();
+            } else if let Some(value) = line.strip_prefix("MemAvailable:") {
+                available_kb = value.split_whitespace().next()?.parse::<u64>().ok();
+            }
+        }
+        let total = total_kb?.saturating_mul(1024);
+        let available = available_kb.unwrap_or(0).saturating_mul(1024);
+        Some(ByteUsage {
+            total,
+            used: total.saturating_sub(available),
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(unix)]
+fn disk_usage_bytes(path: &Path) -> Option<ByteUsage> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    let result = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    let block_size = unsigned_to_u64(stat.f_frsize);
+    let total = unsigned_to_u64(stat.f_blocks).saturating_mul(block_size);
+    let available = unsigned_to_u64(stat.f_bavail).saturating_mul(block_size);
+    Some(ByteUsage {
+        total,
+        used: total.saturating_sub(available),
+    })
+}
+
+#[cfg(unix)]
+fn unsigned_to_u64<T>(value: T) -> u64
+where
+    T: Into<u64>,
+{
+    value.into()
+}
+
+#[cfg(not(unix))]
+fn disk_usage_bytes(_path: &Path) -> Option<ByteUsage> {
+    None
+}
+
+#[cfg(unix)]
+fn has_read_access(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+        return true;
+    };
+    unsafe { libc::access(c_path.as_ptr(), libc::R_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn has_read_access(_path: &Path) -> bool {
+    true
+}
+
+#[cfg(unix)]
+fn file_mode(metadata: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::MetadataExt;
+
+    metadata.mode()
+}
+
+#[cfg(not(unix))]
+fn file_mode(_metadata: &fs::Metadata) -> u32 {
+    0
+}
+
+fn file_permissions(mode: u32, is_dir: bool) -> String {
+    let mut value = String::with_capacity(10);
+    value.push(if is_dir { 'd' } else { '-' });
+    for shift in [6, 3, 0] {
+        value.push(if mode & (0o4 << shift) != 0 { 'r' } else { '-' });
+        value.push(if mode & (0o2 << shift) != 0 { 'w' } else { '-' });
+        value.push(if mode & (0o1 << shift) != 0 { 'x' } else { '-' });
+    }
+    value
+}
+
+fn header_value(headers: &HeaderMap, name: header::HeaderName) -> String {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[derive(Debug)]
+struct HttpError {
+    status: StatusCode,
+    detail: String,
+}
+
+impl From<ProtocolError> for HttpError {
+    fn from(error: ProtocolError) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            detail: error.to_string(),
+        }
+    }
+}
+
+impl IntoResponse for HttpError {
+    fn into_response(self) -> Response {
+        log_executor_event(
+            "http error response",
+            &[
+                ("status", self.status.as_u16().to_string()),
+                ("detail", self.detail.clone()),
+            ],
+        );
+        (self.status, Json(json!({ "detail": self.detail }))).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sanitized_json_preview_redacts_nested_secrets() {
+        let preview = sanitized_json_preview(
+            &json!({
+                "input": "clone repo",
+                "metadata": {
+                    "auth_token": "task-jwt-secret",
+                    "skill_identity_token": "skill-jwt-secret",
+                    "user": {
+                        "gitToken": "glpat-secret",
+                        "git_login": "tester"
+                    }
+                },
+                "headers": {
+                    "Authorization": "Bearer auth-secret"
+                },
+                "tools": [
+                    {
+                        "env": {
+                            "GITLAB_TOKEN": "gitlab-secret",
+                            "repo": "message-flow"
+                        }
+                    }
+                ]
+            }),
+            2_000,
+        );
+
+        assert!(preview.contains("\"input\":\"clone repo\""));
+        assert!(preview.contains("\"repo\":\"message-flow\""));
+        assert!(preview.contains("\"auth_token\":\"***\""));
+        assert!(preview.contains("\"skill_identity_token\":\"***\""));
+        assert!(preview.contains("\"gitToken\":\"***\""));
+        assert!(preview.contains("\"Authorization\":\"***\""));
+        assert!(preview.contains("\"GITLAB_TOKEN\":\"***\""));
+        assert!(!preview.contains("task-jwt-secret"));
+        assert!(!preview.contains("skill-jwt-secret"));
+        assert!(!preview.contains("glpat-secret"));
+        assert!(!preview.contains("auth-secret"));
+        assert!(!preview.contains("gitlab-secret"));
+    }
+
+    #[test]
+    fn sanitized_json_preview_truncates_long_payloads() {
+        let preview =
+            sanitized_json_preview(&json!({ "message": "abcdefghijklmnopqrstuvwxyz" }), 16);
+
+        assert!(preview.ends_with("..."));
+        assert!(preview.chars().count() <= 19);
+    }
+
+    #[test]
+    fn codex_responses_proxy_fills_missing_completed_usage_detail_fields() {
+        let event = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":",
+            "{\"input_tokens\":1,\"input_tokens_details\":{},\"output_tokens\":2,",
+            "\"output_tokens_details\":{},\"total_tokens\":3}}}"
+        );
+
+        let normalized = normalize_codex_responses_sse_event(event);
+        let data = normalized
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("normalized event should contain data");
+        let value = serde_json::from_str::<Value>(data).unwrap();
+
+        assert_eq!(
+            value["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            json!(0)
+        );
+        assert_eq!(
+            value["response"]["usage"]["output_tokens_details"]["reasoning_tokens"],
+            json!(0)
+        );
+    }
+
+    #[test]
+    fn codex_responses_proxy_client_rejects_invalid_proxy_url() {
+        let result = codex_responses_proxy_client(Some("not a proxy url"));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn codex_responses_proxy_leaves_non_completed_events_unchanged() {
+        let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
+
+        assert_eq!(normalize_codex_responses_sse_event(event), event);
+    }
+}

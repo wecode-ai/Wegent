@@ -8,21 +8,25 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.task import TaskResource
 from app.schemas.kind import Task
+from app.stores.tasks import task_access_store, task_store
 
 from .converters import convert_to_task_dict, convert_to_task_dict_optimized
 from .filters import filter_tasks_for_display, filter_tasks_with_title_match
-from .helpers import build_lite_task_list, get_tasks_related_data_batch
+from .helpers import (
+    build_lite_task_groups,
+    build_lite_task_list,
+    get_tasks_related_data_batch,
+)
 from .query_utils import (
     count_non_deleted_tasks_by_ids,
     get_accessible_task_ids_and_total,
     get_group_task_ids_for_accessible_user,
-    get_group_task_ids_for_owned_tasks,
     get_owned_task_ids_and_total,
+    get_personal_task_ids_and_total,
     load_tasks_by_ids,
     load_tasks_by_ids_ordered,
     restore_task_order,
@@ -132,6 +136,7 @@ class TaskQueryMixin:
         skip: int = 0,
         limit: int = 50,
         types: List[str] = None,
+        client_origin: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination.
@@ -143,22 +148,66 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        all_group_task_ids = get_group_task_ids_for_owned_tasks(db, user_id=user_id)
-        task_ids, total_owned = get_owned_task_ids_and_total(
-            db, user_id=user_id, skip=skip, limit=limit, extra_limit=200
-        )
-        adjusted_total = max(total_owned - len(all_group_task_ids), 0)
+        query_kwargs = {
+            "user_id": user_id,
+            "skip": skip,
+            "limit": limit,
+            "extra_limit": 200,
+        }
+        if client_origin:
+            query_kwargs["client_origin"] = client_origin
+        task_ids, total_personal = get_personal_task_ids_and_total(db, **query_kwargs)
 
         if not task_ids:
-            return [], adjusted_total
+            return [], total_personal
 
         tasks = load_tasks_by_ids(db, task_ids)
-        valid_tasks = self._filter_personal_tasks(tasks, all_group_task_ids, types)
+        valid_tasks = self._filter_personal_tasks(tasks, set(), types)
         id_to_task = {task.id: task for task in valid_tasks}
         ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
 
         result = build_lite_task_list(db, ordered_tasks, user_id)
-        return result, max(adjusted_total, len(ordered_tasks))
+        return result, max(total_personal, len(ordered_tasks))
+
+    def get_user_personal_task_groups_lite(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 50,
+        types: List[str] = None,
+        client_origin: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get user's personal task page grouped by device or team.
+
+        The database query is still the existing flat page query. Grouping is only
+        applied to the current page to avoid full-history grouping costs.
+        """
+        if types is None:
+            types = ["online", "offline"]
+
+        query_kwargs = {
+            "user_id": user_id,
+            "skip": skip,
+            "limit": limit,
+            "extra_limit": 200,
+        }
+        if client_origin:
+            query_kwargs["client_origin"] = client_origin
+        task_ids, total_personal = get_personal_task_ids_and_total(db, **query_kwargs)
+
+        if not task_ids:
+            return [], total_personal
+
+        tasks = load_tasks_by_ids(db, task_ids)
+        valid_tasks = self._filter_personal_tasks(tasks, set(), types)
+        id_to_task = {task.id: task for task in valid_tasks}
+        ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
+
+        result = build_lite_task_groups(db, ordered_tasks, user_id)
+        return result, max(total_personal, len(ordered_tasks))
 
     def _filter_personal_tasks(
         self,
@@ -230,54 +279,56 @@ class TaskQueryMixin:
         return result, total
 
     def get_task_by_id(
-        self, db: Session, *, task_id: int, user_id: int
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Get task by ID and user ID (only active tasks).
 
         Allows access if user is owner or approved member.
         """
-        from app.services.task_member_service import task_member_service
-
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-                text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-            )
-            .first()
+        task = task_store.get_active_non_deleted_task(
+            db, task_id=task_id, client_origin=client_origin
         )
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        if not task_member_service.is_member(db, task_id, user_id):
+        if not task_access_store.is_member(db, task_id=task_id, user_id=user_id):
             raise HTTPException(status_code=404, detail="Task not found")
 
         return convert_to_task_dict(task, db, task.user_id)
 
     def get_task_detail(
-        self, db: Session, *, task_id: int, user_id: int
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Get detailed task information including related entities."""
         from app.services.adapters.team_kinds import team_kinds_service
         from app.services.readers.kinds import KindType, kindReader
         from app.services.readers.users import userReader
-        from app.services.subtask import subtask_service
-        from app.services.task_member_service import task_member_service
+        from app.services.task_fork_history import (
+            ForkHistoryItem,
+            task_fork_history_resolver,
+        )
 
-        task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
+        task_dict = self.get_task_by_id(
+            db, task_id=task_id, user_id=user_id, client_origin=client_origin
+        )
 
         # Get the raw task resource to extract requested skills from labels
-        task_resource = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-            )
-            .first()
+        task_resource = task_store.get_by_id(
+            db,
+            task_id=task_id,
+            owner_user_id=task_dict.get("user_id"),
         )
         if task_resource and task_resource.json:
             task_crd_for_skills = Task.model_validate(task_resource.json)
@@ -298,7 +349,7 @@ class TaskQueryMixin:
             )
             team = kindReader.get_by_id(db, KindType.TEAM, team_id)
             if team:
-                task_owner_id = task_member_service.get_task_owner_id(db, task_id)
+                task_owner_id = task_access_store.get_task_owner_id(db, task_id=task_id)
                 logger.info(
                     "[get_task_detail] task_owner_id=%s, team found: %s",
                     task_owner_id,
@@ -315,12 +366,16 @@ class TaskQueryMixin:
                     )
                     team = None
 
-        subtasks = subtask_service.get_by_task(
-            db=db, task_id=task_id, user_id=user_id, from_latest=True
+        subtasks = task_fork_history_resolver.resolve_for_task(
+            db=db,
+            task_id=task_id,
+            user_id=task_dict.get("user_id") or user_id,
+            limit=100,
         )
 
         all_bot_ids = set()
-        for subtask in subtasks:
+        for item in subtasks:
+            subtask = item.subtask if isinstance(item, ForkHistoryItem) else item
             if subtask.bot_ids:
                 all_bot_ids.update(subtask.bot_ids)
 

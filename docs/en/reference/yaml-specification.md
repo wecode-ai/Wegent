@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # YAML Configuration Formats
 
 English | [简体中文](../zh/reference/yaml-specification.md)
@@ -10,11 +14,13 @@ This document provides detailed explanations of the YAML configuration formats f
 - [✨ Skill](#-skill)
 - [🧠 Model](#-model)
 - [🐚 Shell](#-shell)
+- [🖥 Device](#-device)
 - [🤖 Bot](#-bot)
 - [👥 Team](#-team)
 - [🤝 Collaboration](#-collaboration)
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
+- [📚 KnowledgeBase](#-knowledgebase)
 
 ---
 
@@ -53,13 +59,13 @@ spec:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Ghost |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.systemPrompt` | string | Yes | System prompt defining agent personality and capabilities |
-| `spec.mcpServers` | object | No | MCP server configuration defining agent's tool capabilities |
-| `spec.skills` | array | No | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
+| Field                | Type   | Required | Description                                                                      |
+| -------------------- | ------ | -------- | -------------------------------------------------------------------------------- |
+| `metadata.name`      | string | Yes      | Unique identifier for the Ghost                                                  |
+| `metadata.namespace` | string | Yes      | Namespace, typically `default`                                                   |
+| `spec.systemPrompt`  | string | Yes      | System prompt defining agent personality and capabilities                        |
+| `spec.mcpServers`    | object | No       | MCP server configuration defining agent's tool capabilities                      |
+| `spec.skills`        | array  | No       | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
 
 ---
 
@@ -88,25 +94,27 @@ status:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Skill (used in Ghost `spec.skills` field) |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.description` | string | Yes | Skill功能描述 (extracted from SKILL.md frontmatter) |
-| `spec.version` | string | No | Version number (semantic versioning recommended) |
-| `spec.author` | string | No | Author name or organization |
-| `spec.tags` | array | No | Tags for categorization, e.g., `["python", "debugging"]` |
-| `status.state` | string | Yes | Skill status: `Available` or `Unavailable` |
-| `status.fileSize` | integer | No | ZIP package size in bytes |
-| `status.fileHash` | string | No | SHA256 hash of the ZIP package |
+| Field                | Type    | Required | Description                                                         |
+| -------------------- | ------- | -------- | ------------------------------------------------------------------- |
+| `metadata.name`      | string  | Yes      | Unique identifier for the Skill (used in Ghost `spec.skills` field) |
+| `metadata.namespace` | string  | Yes      | Namespace, typically `default`                                      |
+| `spec.description`   | string  | Yes      | Skill功能描述 (extracted from SKILL.md frontmatter)                 |
+| `spec.version`       | string  | No       | Version number (semantic versioning recommended)                    |
+| `spec.author`        | string  | No       | Author name or organization                                         |
+| `spec.tags`          | array   | No       | Tags for categorization, e.g., `["python", "debugging"]`            |
+| `status.state`       | string  | Yes      | Skill status: `Available` or `Unavailable`                          |
+| `status.fileSize`    | integer | No       | ZIP package size in bytes                                           |
+| `status.fileHash`    | string  | No       | SHA256 hash of the ZIP package                                      |
 
 ### ZIP Package Requirements
 
 Skills must be uploaded as ZIP packages containing:
+
 1. **SKILL.md** (required): Skill documentation with YAML frontmatter
 2. Other files: Scripts, configurations, assets, etc.
 
 **SKILL.md Format:**
+
 ```markdown
 ---
 description: "Your skill description here"
@@ -132,15 +140,13 @@ metadata:
   namespace: default
 spec:
   systemPrompt: "You are a senior developer..."
-  mcpServers: {...}
+  mcpServers: { ... }
   skills:
     - python-debugger
     - code-formatter
 ```
 
 When a task starts with this Ghost, the Executor automatically downloads and deploys these skills to `~/.claude/skills/`.
-
-
 
 ## 🧠 Model
 
@@ -155,6 +161,8 @@ metadata:
   name: ClaudeSonnet4
   namespace: default
 spec:
+  modelGroup: "Primary"
+  modelSubGroup: "Fast"
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -165,20 +173,26 @@ spec:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Model |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.modelConfig` | object | Yes | Model configuration object |
-| `spec.modelConfig.env` | object | Yes | Environment variables configuration |
+| Field                  | Type   | Required | Description                                        |
+| ---------------------- | ------ | -------- | -------------------------------------------------- |
+| `metadata.name`        | string | Yes      | Unique identifier for the Model                    |
+| `metadata.namespace`   | string | Yes      | Namespace, typically `default`                     |
+| `spec.modelGroup`      | string | No       | First-level display group used by model selectors  |
+| `spec.modelSubGroup`   | string | No       | Second-level display group under `spec.modelGroup` |
+| `spec.modelConfig`     | object | Yes      | Model configuration object                         |
+| `spec.modelConfig.env` | object | Yes      | Environment variables configuration                |
+
+### Model Selector Grouping
+
+Model selectors display models as `modelGroup` → `modelSubGroup` → model. These fields are stored in `spec`, not `metadata.labels`, so grouping is part of the Model resource definition. Models without these fields are shown under the default ungrouped/uncategorized buckets. Grouping only affects display and search behavior; it does not change model protocol, credentials, permissions, or runtime selection.
 
 ### Common Environment Variables for ClaudeCode
 
-| Variable Name | Description | Example Value |
-|---------------|-------------|---------------|
-| `ANTHROPIC_MODEL` | Main model configuration | `openrouter,anthropic/claude-sonnet-4` |
-| `ANTHROPIC_BASE_URL` | API base URL | `http://xxxxx` |
-| `ANTHROPIC_AUTH_TOKEN` | Authentication token | `sk-xxxxxx` |
+| Variable Name                   | Description              | Example Value                           |
+| ------------------------------- | ------------------------ | --------------------------------------- |
+| `ANTHROPIC_MODEL`               | Main model configuration | `openrouter,anthropic/claude-sonnet-4`  |
+| `ANTHROPIC_BASE_URL`            | API base URL             | `http://xxxxx`                          |
+| `ANTHROPIC_AUTH_TOKEN`          | Authentication token     | `sk-xxxxxx`                             |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Fast model configuration | `openrouter,anthropic/claude-haiku-4.5` |
 
 ---
@@ -207,29 +221,82 @@ status:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Shell |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `metadata.labels` | object | No | Labels for categorization, e.g., `type: local_engine` or `type: external_api` |
-| `spec.shellType` | string | Yes | Shell type, such as `ClaudeCode`, `Agno`, `Dify` |
-| `spec.supportModel` | array | No | List of supported model types |
-| `spec.baseImage` | string | No | Docker base image for local engine shells (required for `local_engine` type) |
-| `status.state` | string | No | Shell status: `Available` or `Unavailable` |
+| Field                | Type   | Required | Description                                                                   |
+| -------------------- | ------ | -------- | ----------------------------------------------------------------------------- |
+| `metadata.name`      | string | Yes      | Unique identifier for the Shell                                               |
+| `metadata.namespace` | string | Yes      | Namespace, typically `default`                                                |
+| `metadata.labels`    | object | No       | Labels for categorization, e.g., `type: local_engine` or `type: external_api` |
+| `spec.shellType`     | string | Yes      | Shell type, such as `ClaudeCode`, `Agno`, `Dify`                              |
+| `spec.supportModel`  | array  | No       | List of supported model types                                                 |
+| `spec.baseImage`     | string | No       | Docker base image for local engine shells (required for `local_engine` type)  |
+| `status.state`       | string | No       | Shell status: `Available` or `Unavailable`                                    |
 
 ### Shell Types
 
-| Type | Label | Description |
-|------|-------|-------------|
-| `ClaudeCode` | `local_engine` | Claude Code runtime, requires `baseImage` |
-| `Agno` | `local_engine` | Agno runtime, requires `baseImage` |
-| `Dify` | `external_api` | Dify external API runtime, no `baseImage` needed |
+| Type         | Label          | Description                                      |
+| ------------ | -------------- | ------------------------------------------------ |
+| `ClaudeCode` | `local_engine` | Claude Code runtime, requires `baseImage`        |
+| `Agno`       | `local_engine` | Agno runtime, requires `baseImage`               |
+| `Dify`       | `external_api` | Dify external API runtime, no `baseImage` needed |
 
 ### Labels
 
-| Label | Values | Description |
-|-------|--------|-------------|
+| Label  | Values                         | Description                                                          |
+| ------ | ------------------------------ | -------------------------------------------------------------------- |
 | `type` | `local_engine`, `external_api` | Indicates whether the shell runs locally or connects to external API |
+
+---
+
+## 🖥 Device
+
+Device defines an execution device. Device records are usually created automatically by the local executor, cloud device service, or remote Docker device entrypoint. Users normally should not create them by hand.
+
+### Remote Docker Device Example
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Device
+metadata:
+  name: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
+  namespace: default
+  displayName: alice-remote-a931
+spec:
+  deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
+  displayName: alice-remote-a931
+  deviceType: remote
+  connectionMode: websocket
+  bindShell: claudecode
+  isDefault: false
+  capabilities: null
+  remoteConfig:
+    provider: docker
+    image: ghcr.io/wecode-ai/wegent-device:latest
+    deviceId: 7b7c9d64-xxxx-xxxx-xxxx-3f70c6f4a931
+    deviceName: alice-remote-a931
+    backendUrl: https://backend.example.com
+    publicBaseUrl: http://localhost:17888
+    createdAt: "2026-06-17T10:00:00"
+status:
+  state: Available
+```
+
+### Field Description
+
+| Field                 | Type                       | Required | Description                                                                |
+| --------------------- | -------------------------- | -------- | -------------------------------------------------------------------------- |
+| `metadata.name`       | string                     | Yes      | Device resource name, usually the same as `spec.deviceId`                  |
+| `metadata.namespace`  | string                     | Yes      | Namespace, typically `default`                                             |
+| `spec.deviceId`       | string                     | Yes      | Device ID used by executor registration and heartbeat                      |
+| `spec.displayName`    | string                     | No       | Display name in the frontend                                               |
+| `spec.deviceType`     | `local`, `cloud`, `remote` | Yes      | Device type; `remote` means a user-managed Docker container or remote host |
+| `spec.connectionMode` | `websocket`                | Yes      | How the device connects to the backend                                     |
+| `spec.bindShell`      | `claudecode`, `openclaw`   | No       | Shell runtime bound to the device                                          |
+| `spec.isDefault`      | boolean                    | No       | Whether this is the default device for its type                            |
+| `spec.capabilities`   | array or null              | No       | Device capability tags                                                     |
+| `spec.cloudConfig`    | object                     | No       | Cloud device metadata, used only by cloud devices                          |
+| `spec.remoteConfig`   | object                     | No       | Remote device metadata, used only by remote devices                        |
+
+`remoteConfig` stores only non-sensitive metadata. The `WEGENT_AUTH_TOKEN` returned in the remote Docker startup command is a newly created remote device API key and is not written to the Device CRD. `backendUrl` is the URL the container uses to reach Backend and is derived from the current Backend environment; `publicBaseUrl` is the browser-facing URL for the device session gateway.
 
 ---
 
@@ -259,13 +326,13 @@ spec:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Bot |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.ghostRef` | object | Yes | Ghost reference |
-| `spec.shellRef` | object | Yes | Shell reference |
-| `spec.modelRef` | object | Yes | Model reference |
+| Field                | Type   | Required | Description                    |
+| -------------------- | ------ | -------- | ------------------------------ |
+| `metadata.name`      | string | Yes      | Unique identifier for the Bot  |
+| `metadata.namespace` | string | Yes      | Namespace, typically `default` |
+| `spec.ghostRef`      | object | Yes      | Ghost reference                |
+| `spec.shellRef`      | object | Yes      | Shell reference                |
+| `spec.modelRef`      | object | Yes      | Model reference                |
 
 ### Reference Format
 
@@ -297,34 +364,87 @@ spec:
         name: developer-bot
         namespace: default
       prompt: ""
+      contextPassing: "previous_bot"
   collaborationModel: "pipeline"
 ```
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Team |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.members` | array | Yes | List of team members |
-| `spec.collaborationModel` | string | Yes | Collaboration model |
+| Field                     | Type   | Required | Description                    |
+| ------------------------- | ------ | -------- | ------------------------------ |
+| `metadata.name`           | string | Yes      | Unique identifier for the Team |
+| `metadata.namespace`      | string | Yes      | Namespace, typically `default` |
+| `spec.members`            | array  | Yes      | List of team members           |
+| `spec.collaborationModel` | string | Yes      | Collaboration model            |
 
 ### Member Configuration
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `role` | string | No | Member role, such as `leader` |
-| `botRef` | object | Yes | Bot reference |
-| `prompt` | string | No | Member-specific prompt |
+| Field            | Type   | Required | Description                                                                                                                            |
+| ---------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `role`           | string | No       | Member role, such as `leader`                                                                                                          |
+| `botRef`         | object | Yes      | Bot reference                                                                                                                          |
+| `prompt`         | string | No       | Member-specific prompt                                                                                                                 |
+| `contextPassing` | string | No       | Message passed to the next pipeline stage after this stage completes: `none`, `original_user`, `previous_bot`, `original_and_previous` |
 
 ### Collaboration Models
 
-| Model | Description |
-|-------|-------------|
-| `pipeline` | Pipeline mode, execute in sequence |
-| `route` | Route mode, route based on conditions |
-| `coordinate` | Coordinate mode, members coordinate |
+| Model         | Description                                     |
+| ------------- | ----------------------------------------------- |
+| `pipeline`    | Pipeline mode, execute in sequence              |
+| `route`       | Route mode, route based on conditions           |
+| `coordinate`  | Coordinate mode, members coordinate             |
 | `collaborate` | Concurrent mode, members execute simultaneously |
+
+---
+
+## 📚 KnowledgeBase
+
+KnowledgeBase is used to manage document knowledge bases, retrieval configuration, and summary capabilities.
+
+### Retrieval Configuration
+
+| Field                                                   | Type    | Required | Description                                                                                      |
+| ------------------------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `spec.retrievalConfig`                                  | object  | No       | RAG retrieval configuration. Missing or `null` means the knowledge base has no RAG configuration |
+| `spec.retrievalConfig.retriever_name`                   | string  | Yes\*    | Retriever name                                                                                   |
+| `spec.retrievalConfig.retriever_namespace`              | string  | No       | Namespace where the retriever is defined, defaults to `default`                                  |
+| `spec.retrievalConfig.embedding_config.model_name`      | string  | Yes\*    | Embedding model name                                                                             |
+| `spec.retrievalConfig.embedding_config.model_namespace` | string  | No       | Namespace where the embedding model is defined, defaults to `default`                            |
+| `spec.retrievalConfig.retrieval_mode`                   | string  | No       | Retrieval mode: `vector`, `keyword`, or `hybrid`                                                 |
+| `spec.retrievalConfig.top_k`                            | integer | No       | Number of results to return                                                                      |
+| `spec.retrievalConfig.score_threshold`                  | number  | No       | Minimum relevance threshold                                                                      |
+| `spec.retrievalConfig.hybrid_weights`                   | object  | No       | Hybrid retrieval weights                                                                         |
+
+`retriever_name` and `embedding_config.model_name` are required only when `spec.retrievalConfig` exists. By default, the backend automatically fills in a missing retriever and embedding model during creation; if the create request explicitly uses no-RAG mode, or if no usable defaults are available, it does not write `retrievalConfig`. The create request field `rag_config_mode` expresses creation intent only and is not persisted as a KnowledgeBase YAML field. The persisted stable states are either a complete `retrievalConfig` or no `retrievalConfig`.
+
+### Summary-Related Configuration
+
+| Field                            | Type    | Required | Description                                      |
+| -------------------------------- | ------- | -------- | ------------------------------------------------ |
+| `spec.summaryEnabled`            | boolean | No       | Whether automatic summary generation is enabled  |
+| `spec.summaryModelRef.name`      | string  | No       | Summary model name                               |
+| `spec.summaryModelRef.namespace` | string  | No       | Namespace where the summary model is defined     |
+| `spec.summaryModelRef.type`      | string  | No       | Summary model type: `public`, `user`, or `group` |
+
+### Runtime Summary Fields
+
+`spec.summary` is maintained by the system at runtime and is not intended to be authored directly in YAML. Common fields include:
+
+| Field                 | Description                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| `short_summary`       | AI-generated short summary                                                                    |
+| `long_summary`        | AI-generated long summary                                                                     |
+| `manual_long_summary` | Manually edited knowledge base long summary; takes priority for display and context injection |
+| `topics`              | AI-generated topic tags                                                                       |
+| `status`              | Summary state: `pending`, `generating`, `completed`, `failed`                                 |
+| `manual_updated_at`   | Last manual summary update time                                                               |
+| `manual_updated_by`   | Last manual summary editor                                                                    |
+
+**Notes:**
+
+- Manual summary does not stop AI summary generation from continuing
+- When `manual_long_summary` exists, the system uses it first for UI display and chat-context injection
+- After using **Restore AI Summary**, the system falls back to the latest `long_summary`
 
 ---
 
@@ -357,20 +477,20 @@ spec:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Collaboration |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.type` | string | Yes | Collaboration type |
-| `spec.config` | object | Yes | Collaboration configuration |
+| Field                | Type   | Required | Description                             |
+| -------------------- | ------ | -------- | --------------------------------------- |
+| `metadata.name`      | string | Yes      | Unique identifier for the Collaboration |
+| `metadata.namespace` | string | Yes      | Namespace, typically `default`          |
+| `spec.type`          | string | Yes      | Collaboration type                      |
+| `spec.config`        | object | Yes      | Collaboration configuration             |
 
 ### Workflow Configuration
 
-| Field | Type | Description |
-|------|------|-------------|
-| `steps` | array | List of workflow steps |
-| `steps.name` | string | Step name |
-| `steps.participants` | array | List of participants |
+| Field                | Type   | Description            |
+| -------------------- | ------ | ---------------------- |
+| `steps`              | array  | List of workflow steps |
+| `steps.name`         | string | Step name              |
+| `steps.participants` | array  | List of participants   |
 
 ---
 
@@ -396,20 +516,20 @@ spec:
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Workspace |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.repository` | object | Yes | Repository configuration |
+| Field                | Type   | Required | Description                         |
+| -------------------- | ------ | -------- | ----------------------------------- |
+| `metadata.name`      | string | Yes      | Unique identifier for the Workspace |
+| `metadata.namespace` | string | Yes      | Namespace, typically `default`      |
+| `spec.repository`    | object | Yes      | Repository configuration            |
 
 ### Repository Configuration
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `gitUrl` | string | Yes | Git repository URL |
-| `gitRepo` | string | Yes | Repository path format |
-| `branchName` | string | Yes | Default branch name |
-| `gitDomain` | string | Yes | Git domain |
+| Field        | Type   | Required | Description            |
+| ------------ | ------ | -------- | ---------------------- |
+| `gitUrl`     | string | Yes      | Git repository URL     |
+| `gitRepo`    | string | Yes      | Repository path format |
+| `branchName` | string | Yes      | Default branch name    |
+| `gitDomain`  | string | Yes      | Git domain             |
 
 ---
 
@@ -434,29 +554,80 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
+  knowledgeBaseScopes:
+    - id: 101
+      namespace: default
+      name: Product Docs
+      scopeRestricted: true
+      folderIds: [12]
+      explicitDocumentIds: null
+      includeSubfolders: true
+  externalKnowledgeRefs:
+    - provider: ap
+      mode: explicit
+      id: kb-1
+      name: External Product Docs
+      scope: organization
+      target_type: document
+      node_id: document:node-1
+      document_id: node-1
+      target_name: api-reference.md
 ```
 
 ### Field Description
 
-| Field | Type | Required | Description |
-|------|------|----------|-------------|
-| `metadata.name` | string | Yes | Unique identifier for the Task |
-| `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.title` | string | Yes | Task title |
-| `spec.prompt` | string | Yes | Task description |
-| `spec.teamRef` | object | Yes | Team reference |
-| `spec.workspaceRef` | object | Yes | Workspace reference |
+| Field                        | Type   | Required | Description                                                                                                                |
+| ---------------------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `metadata.name`              | string | Yes      | Unique identifier for the Task                                                                                             |
+| `metadata.namespace`         | string | Yes      | Namespace, typically `default`                                                                                             |
+| `spec.title`                 | string | Yes      | Task title                                                                                                                 |
+| `spec.prompt`                | string | Yes      | Task description                                                                                                           |
+| `spec.teamRef`               | object | Yes      | Team reference                                                                                                             |
+| `spec.workspaceRef`          | object | Yes      | Workspace reference                                                                                                        |
+| `spec.knowledgeBaseScopes`   | array  | No       | Knowledge-base access scopes bound by `/api/v1/responses`, used to inherit folder/document scope in follow-up turns        |
+| `spec.externalKnowledgeRefs` | array  | No       | Task-level external knowledge source bindings maintained by chat context selection and the task knowledge management entry |
+
+### Knowledge Base Scopes
+
+`spec.knowledgeBaseScopes` is maintained automatically by the OpenAPI Responses knowledge-base tool. When a folder or document scope is enabled, follow-up requests with `previous_response_id` inherit the scope and re-resolve folder membership for the current turn.
+
+| Field                 | Type    | Required | Description                                                            |
+| --------------------- | ------- | -------- | ---------------------------------------------------------------------- |
+| `id`                  | integer | No       | Knowledge base ID, preferred when present                              |
+| `namespace`           | string  | No       | Knowledge base namespace, defaults to `default`                        |
+| `name`                | string  | Yes      | Knowledge base name                                                    |
+| `scopeRestricted`     | boolean | No       | Whether access is restricted to the listed folders or documents        |
+| `folderIds`           | array   | No       | Allowed folder IDs. `0` means documents directly under the root folder |
+| `explicitDocumentIds` | array   | No       | Explicitly allowed document IDs                                        |
+| `includeSubfolders`   | boolean | No       | Whether folder scope includes subfolders, defaults to `true`           |
+
+### External Knowledge Source Bindings
+
+`spec.externalKnowledgeRefs` is a runtime field describing the external knowledge sources bound to the current Task. It is maintained by chat send handling and the task knowledge management APIs. It is not used for Ghost, Bot, or Team default configuration.
+
+| Field         | Type   | Required      | Description                                                                                    |
+| ------------- | ------ | ------------- | ---------------------------------------------------------------------------------------------- |
+| `provider`    | string | Yes           | External knowledge provider id                                                                 |
+| `mode`        | string | No            | Binding mode, defaults to `explicit`; `explicit` requires `id`                                 |
+| `id`          | string | Conditionally | Stable provider-owned source ID                                                                |
+| `name`        | string | No            | Source display name                                                                            |
+| `scope`       | string | No            | Provider-interpretable scope                                                                   |
+| `target_type` | string | No            | `knowledge_base`, `folder`, or `document`; missing values are treated as whole-source bindings |
+| `node_id`     | string | No            | Provider-neutral node ID                                                                       |
+| `document_id` | string | No            | Provider-neutral document ID                                                                   |
+| `parent_id`   | string | No            | Provider-neutral parent node ID                                                                |
+| `target_name` | string | No            | Folder or document target display name                                                         |
 
 ### Task Status
 
-| Status | Description |
-|--------|-------------|
-| `PENDING` | Waiting for execution |
-| `RUNNING` | Currently executing |
-| `COMPLETED` | Execution completed |
-| `FAILED` | Execution failed |
-| `CANCELLED` | Execution cancelled |
-| `DELETE` | Task deleted |
+| Status      | Description           |
+| ----------- | --------------------- |
+| `PENDING`   | Waiting for execution |
+| `RUNNING`   | Currently executing   |
+| `COMPLETED` | Execution completed   |
+| `FAILED`    | Execution failed      |
+| `CANCELLED` | Execution cancelled   |
+| `DELETE`    | Task deleted          |
 
 ---
 

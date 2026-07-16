@@ -1,0 +1,107 @@
+{
+  "title": "资源库",
+  "tabs": {
+    "discover": "发现",
+    "mine": "我的",
+    "installed": "已安装",
+    "published": "我发布的"
+  },
+  "filters": {
+    "all": "全部",
+    "agent": "智能体",
+    "model": "模型",
+    "shell": "执行器",
+    "skill": "技能",
+    "retriever": "检索器"
+  },
+  "scopes": {
+    "personal": "我创建的",
+    "group": "团队共享",
+    "group_placeholder": "选择组"
+  },
+  "sources": {
+    "all": "全部",
+    "personal": "我创建的",
+    "group": "团队",
+    "system": "系统",
+    "all_groups": "全部团队"
+  },
+  "targets": {
+    "personal": "我的资源",
+    "personal_description": "仅你可见和管理",
+    "personal_section": "个人",
+    "group_description": "团队成员可见，按团队权限管理",
+    "group_section": "团队",
+    "select": "选择"
+  },
+  "actions": {
+    "install": "安装",
+    "installed": "已安装",
+    "publish": "发布资源",
+    "upgrade": "升级",
+    "archive": "归档",
+    "configure": "配置",
+    "view_detail": "查看详情",
+    "details": "详情",
+    "manage_groups": "管理...",
+    "retry": "重试",
+    "create_to_personal": "创建到我的资源",
+    "create_to_group": "创建到 {{group}}",
+    "choose_create_target": "{{action}}保存到哪里？",
+    "choose_create_target_description": "保存位置会影响谁能看到和管理这个资源。",
+    "search": "搜索",
+    "close": "关闭",
+    "cancel": "取消"
+  },
+  "status": {
+    "installed": "已安装",
+    "requires_configuration": "需要配置",
+    "draft": "草稿",
+    "published": "已发布",
+    "archived": "已归档"
+  },
+  "fields": {
+    "name": "名称",
+    "display_name": "显示名称",
+    "description": "描述",
+    "tags": "标签",
+    "type": "资源类型",
+    "sort": "排序",
+    "source": "来源",
+    "source_id": "源资源 ID",
+    "version": "版本",
+    "publisher": "发布者",
+    "install_count": "安装次数",
+    "updated_at": "更新时间"
+  },
+  "sort": {
+    "default": "默认",
+    "latest": "最新"
+  },
+  "empty": {
+    "discover": "暂无可发现资源",
+    "mine": "暂无我的资源"
+  },
+  "states": {
+    "loading": "正在加载资源",
+    "empty": "暂无资源",
+    "error": "加载失败",
+    "requiresConfiguration": "需要配置",
+    "no_groups": "暂无组资源"
+  },
+  "search": {
+    "placeholder": "搜索资源",
+    "groups_placeholder": "搜索团队",
+    "groups_empty": "没有匹配的团队"
+  },
+  "messages": {
+    "install_success": "安装成功",
+    "install_requires_configuration": "安装成功，需要配置",
+    "install_failed": "安装失败",
+    "publish_success": "发布成功",
+    "publish_failed": "发布失败"
+  },
+  "publish": {
+    "description": "将已有智能体或技能发布到资源库"
+  }
+}

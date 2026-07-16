@@ -26,6 +26,31 @@ class WorkspaceConfig(BaseModel):
     )
 
 
+class KnowledgeBaseRefConfig(BaseModel):
+    """Knowledge base reference with optional folder/document scope."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Knowledge base name in 'namespace#name' or 'name' format.",
+    )
+    folder_ids: Optional[List[int]] = Field(
+        default=None,
+        description=(
+            "Folder IDs to restrict this knowledge base. Use [0] for root-level "
+            "documents. Omit for full knowledge-base access."
+        ),
+    )
+    document_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Document IDs to restrict this knowledge base.",
+    )
+    include_subfolders: bool = Field(
+        default=True,
+        description="Whether folder_ids include descendant folders.",
+    )
+
+
 class WegentTool(BaseModel):
     """Custom Wegent tool configuration.
 
@@ -102,6 +127,22 @@ class WegentTool(BaseModel):
         default=None,
         description="List of knowledge base names in 'namespace#name' format. Required when type='knowledge_base'",
     )
+    knowledge_base_refs: Optional[List[KnowledgeBaseRefConfig]] = Field(
+        default=None,
+        description="Knowledge base refs with optional folder/document scope.",
+    )
+    folder_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Single-KB compatibility scope. Only valid with one knowledge_base_names entry.",
+    )
+    document_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Single-KB compatibility scope. Only valid with one knowledge_base_names entry.",
+    )
+    include_subfolders: bool = Field(
+        default=True,
+        description="Whether top-level folder_ids include descendant folders.",
+    )
 
 
 class InputTextContent(BaseModel):
@@ -141,9 +182,11 @@ class ReasoningConfig(BaseModel):
         {"effort": "medium", "summary": "concise"}
     """
 
-    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(
+    effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+    ] = Field(
         default="medium",
-        description="Constrains effort on reasoning. Supported values: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'. "
+        description="Constrains effort on reasoning. Supported values: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'. "
         "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning. "
         "gpt-5.1 defaults to 'none'. Models before gpt-5.1 default to 'medium'.",
     )
@@ -242,6 +285,7 @@ class MCPCallOutputItem(BaseModel):
     server_label: str
     arguments: str
     status: str
+    output: Optional[Any] = None
 
 
 class ShellCallAction(BaseModel):
@@ -291,6 +335,8 @@ class ResponseObject(BaseModel):
     error: Optional[ResponseError] = None
     model: str  # The model string from request
     output: List[ResponseOutputItem] = Field(default_factory=list)
+    pending_user_input: Optional[bool] = None
+    pending_user_input_payload: Optional[Dict[str, Any]] = None
     previous_response_id: Optional[str] = None
 
 

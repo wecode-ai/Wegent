@@ -3,8 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { QueueEditDialog } from '@/features/inbox/components/QueueEditDialog'
 import { createWorkQueue } from '@/apis/work-queue'
@@ -115,8 +114,6 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
   default: ({
     selectedModel,
     setSelectedModel,
-    forceOverride,
-    setForceOverride,
   }: {
     selectedModel: { name: string } | null
     setSelectedModel: (model: {
@@ -126,8 +123,6 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
       type: 'public'
       namespace: string
     }) => void
-    forceOverride: boolean
-    setForceOverride: (value: boolean) => void
   }) => (
     <div>
       <button
@@ -145,14 +140,6 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
       >
         Select GPT 5
       </button>
-      <label htmlFor="queue-force-override-model-switch">Override</label>
-      <input
-        id="queue-force-override-model-switch"
-        data-testid="queue-force-override-model-switch"
-        type="checkbox"
-        checked={forceOverride}
-        onChange={event => setForceOverride(event.target.checked)}
-      />
       <div data-testid="queue-current-model">{selectedModel?.name ?? 'none'}</div>
     </div>
   ),
@@ -164,14 +151,14 @@ describe('QueueEditDialog', () => {
     ;(createWorkQueue as jest.Mock).mockResolvedValue({ id: 1 })
   })
 
-  it('saves direct agent model override settings into queue auto process config', async () => {
-    const user = userEvent.setup()
-
+  it('saves selected direct agent models as force override by default', async () => {
     render(<QueueEditDialog open onOpenChange={jest.fn()} />)
 
-    await user.type(screen.getByTestId('queue-name-input'), 'triage')
-    await user.type(screen.getByTestId('queue-display-name-input'), 'Triage Queue')
-    await user.click(screen.getByTestId('auto-process-toggle'))
+    fireEvent.change(screen.getByTestId('queue-name-input'), { target: { value: 'triage' } })
+    fireEvent.change(screen.getByTestId('queue-display-name-input'), {
+      target: { value: 'Triage Queue' },
+    })
+    fireEvent.click(screen.getByTestId('auto-process-toggle'))
 
     await waitFor(() => {
       expect(screen.getByTestId('queue-team-searchable-select')).toHaveValue('7')
@@ -181,9 +168,8 @@ describe('QueueEditDialog', () => {
       expect(screen.getByTestId('queue-model-selector')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByTestId('queue-select-gpt-5'))
-    await user.click(screen.getByTestId('queue-force-override-model-switch'))
-    await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
+    fireEvent.click(screen.getByTestId('queue-select-gpt-5'))
+    fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
     await waitFor(() => {
       expect(createWorkQueue).toHaveBeenCalledWith({

@@ -1,5 +1,6 @@
 {
   "title": "聊天",
+  "scroll_to_bottom": "滚动到底部",
   "placeholder": {
     "input": "在此输入您的消息...",
     "empty": "还没有消息。开始对话吧！"
@@ -44,6 +45,50 @@
     "quoted_text": "引用内容",
     "remove_quote": "移除引用"
   },
+  "sourceReferences": {
+    "title": "引用来源",
+    "openSource": "打开来源",
+    "unavailableSource": "无法打开来源",
+    "footerCited": "引用 {{documents}} 个文档，来自 {{sources}} 个知识源",
+    "footerNoHit": "{{count}} 个知识源未命中",
+    "footerSkipped": "跳过 {{count}} 个不可用来源",
+    "footerSearchedNoReferences": "已检索 {{searched}} 个知识源，但未返回可引用内容",
+    "footerSearched": "本次检索 {{searched}} 个知识源",
+    "footerSearchedAndIgnored": "本次检索 {{searched}} 个知识源 · 跳过 {{ignored}} 个不可用来源"
+  },
+  "guidance": {
+    "send": "发送引导",
+    "applied": "引导已生效",
+    "cancel": "取消引导",
+    "send_as_message": "作为消息发送",
+    "status_queued": "引导待发送",
+    "status_sending": "引导发送中",
+    "status_failed": "引导发送失败",
+    "status_expired": "引导已过期",
+    "expired": "当前回复已结束，引导未生效",
+    "send_failed": "引导发送失败",
+    "no_active_stream": "当前没有可接收引导的回复"
+  },
+  "pending_task_confirm": {
+    "eyebrow": "任务接续确认",
+    "title": "上一条任务尚未开始",
+    "description": "发送新消息前，需要先处理上一条未开始的任务。",
+    "wait": "继续等待",
+    "wait_hint": "保留当前任务",
+    "confirm": "取消上一条并发送",
+    "confirm_hint": "开始这条新消息",
+    "confirming": "处理中..."
+  },
+  "pending_form_confirm": {
+    "eyebrow": "表单待提交",
+    "title": "当前智能体正在等待表单结果",
+    "description": "发送新消息前，需要先提交当前表单，或取消表单并把这条消息作为新的说明交给智能体。",
+    "keep": "继续填写",
+    "keep_hint": "保留当前表单",
+    "confirm": "取消表单并发送",
+    "confirm_hint": "用这条消息继续",
+    "confirming": "处理中..."
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",
@@ -79,6 +124,10 @@
     "status_failed": "已失败",
     "status_cancelled": "已取消",
     "status_cancelling": "取消中",
+    "status_queued": "已排队",
+    "status_sending": "发送中",
+    "cancel_queued": "取消排队消息",
+    "queue_failed": "排队消息发送失败",
     "recovered": "已恢复",
     "content_recovered": "已恢复内容",
     "content_recovered_desc": "页面刷新后已恢复之前的内容",
@@ -196,6 +245,7 @@
     "tool_input": "输入",
     "tool_output": "输出",
     "tool_executing": "执行中...",
+    "no_output": "无输出",
     "downloadable": "可下载",
     "processing": "正在处理...",
     "tools": {
@@ -207,7 +257,8 @@
       "glob": "查找文件",
       "todo": "更新待办事项",
       "kb_search": "搜索知识库",
-      "web_search": "网页搜索"
+      "web_search": "网页搜索",
+      "load_skill": "加载技能"
     }
   },
   "send_button": {
@@ -222,6 +273,14 @@
   "send_shortcut": "回车发送，Shift+回车换行",
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
+  "quick_launch": {
+    "system_functions": "推荐功能",
+    "favorite_agents": "我的收藏",
+    "overwrite_confirm_title": "覆盖当前输入？",
+    "overwrite_confirm_description": "发送框里已有内容，使用这条快捷短语会替换当前输入。",
+    "overwrite_confirm_cancel": "保留当前输入",
+    "overwrite_confirm_action": "覆盖"
+  },
   "errors": {
     "request_failed": "请求大模型接口失败",
     "request_failed_retry": "请求大模型接口失败, 请点击重试",
@@ -338,7 +397,7 @@
   },
   "upload": {
     "attachment": "附件",
-    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
     "image_tooltip": "支持的文件类型: 图片 (JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n上传参考图片用于生成",
     "wait_for_upload": "请等待文件上传完成"
   },
@@ -354,6 +413,17 @@
     "longer_than_usual": "响应时间较长，请耐心等待",
     "stale_update_10m": "任务仍在运行，但已超过 10 分钟没有新的流更新，建议停止后重试",
     "started_over_20m": "任务已运行超过 20 分钟，请关注执行状态，建议停止后重试"
+  },
+  "knowledgeBinding": {
+    "title": "知识来源",
+    "count": "已绑定 {{count}} 个",
+    "externalKnowledge": "外部知识来源",
+    "empty": "暂未绑定知识来源",
+    "loadFailed": "加载知识来源失败",
+    "externalLoadFailed": "外部知识来源加载失败，内部知识库仍可管理。",
+    "remove": "移除 {{name}}",
+    "removeSuccess": "已移除「{{name}}」",
+    "removeFailed": "移除知识来源失败"
   },
   "groupChat": {
     "mentionHint": "在群聊中，请使用 @ 提及智能体来获取 AI 回复",
@@ -662,6 +732,17 @@
     "goToConfigure": "前往配置",
     "docBadgeHint": "钉钉文档",
     "searchPlaceholder": "搜索文档...",
-    "referencedDocsLabel": "引用的钉钉文档："
+    "referencedDocsLabel": "引用的钉钉文档：",
+    "myDocsTab": "我的文档",
+    "wikispaceTab": "知识库",
+    "allDocs": "全部文档",
+    "selectAll": "选择全部",
+    "deselectAll": "取消全选",
+    "wikispaceSync": "同步",
+    "wikispaceSyncing": "同步中...",
+    "wikispaceEmpty": "暂无知识库内容",
+    "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
+    "wikispaceLastSynced": "上次同步: {{time}}",
+    "wikispaceNeverSynced": "从未同步"
   }
 }

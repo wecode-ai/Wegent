@@ -16,6 +16,73 @@ from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
 
 
+def _bot_kind_with_ghost(
+    *,
+    user_id: int,
+    name: str = "chat-bot",
+    ghost_name: str = "chat-ghost",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        user_id=user_id,
+        kind="Bot",
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": ghost_name, "namespace": "default"},
+                "shellRef": {"name": "Chat", "namespace": "default"},
+            },
+        },
+    )
+
+
+def _ghost_kind_with_mcp(
+    mcp_servers: dict | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": "chat-ghost", "namespace": "default"},
+            "spec": {
+                "systemPrompt": "You are a chat bot.",
+                "mcpServers": mcp_servers
+                or {
+                    "ghost-server": {
+                        "type": "streamable-http",
+                        "url": "http://ghost.example.com/mcp",
+                    }
+                },
+            },
+        }
+    )
+
+
+class TestClarificationSkillInjection:
+    """Tests for clarification-mode preload skill injection."""
+
+    def test_injects_interactive_skill(self):
+        result = TaskRequestBuilder._inject_clarification_skill([])
+
+        assert result == [
+            {
+                "name": "interactive",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+
+    def test_does_not_duplicate_interactive_skill(self):
+        preload_skills = ["interactive"]
+
+        result = TaskRequestBuilder._inject_clarification_skill(preload_skills)
+
+        assert result == preload_skills
+
+
 class TestExtractSkillMcpToList:
     """Tests for _extract_skill_mcp_to_list static method."""
 
@@ -240,6 +307,91 @@ class TestFilterReachableMcpServers:
 
         assert len(result) == 1
         assert result[0]["name"] == "good-server"
+
+
+class TestBuildMcpServers:
+    """Tests for request-level MCP server merging."""
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch(
+        "app.services.execution.request_builder.settings.CHAT_MCP_SERVERS",
+        '{"mcpServers":{"env-server":{"type":"streamable-http","url":"http://env.example.com/mcp"}}}',
+    )
+    def test_system_team_excludes_env_mcp_servers(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp()
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=0),
+            SimpleNamespace(user_id=0, name="system-agent"),
+            user=SimpleNamespace(id=7),
+        )
+
+        assert result == [
+            {
+                "name": "ghost-server",
+                "type": "streamable-http",
+                "url": "http://ghost.example.com/mcp",
+            }
+        ]
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch(
+        "app.services.execution.request_builder.settings.CHAT_MCP_SERVERS",
+        '{"mcpServers":{"env-server":{"type":"streamable-http","url":"http://env.example.com/mcp"}}}',
+    )
+    def test_user_team_keeps_env_mcp_servers(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp()
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7),
+        )
+
+        assert [server["name"] for server in result] == [
+            "env-server",
+            "ghost-server",
+        ]
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_bot_mcp_preserves_timeout_fields(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp(
+            {
+                "seconds-server": {
+                    "type": "http",
+                    "url": "http://seconds.example.com/mcp",
+                    "timeoutSeconds": 900,
+                },
+                "native-server": {
+                    "type": "http",
+                    "url": "http://native.example.com/mcp",
+                    "timeout": 900000,
+                },
+            }
+        )
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7),
+        )
+
+        servers = {server["name"]: server for server in result}
+        assert servers["seconds-server"]["timeoutSeconds"] == 900
+        assert servers["native-server"]["timeout"] == 900000
 
 
 class TestPrepareMcpForClaudeCode:

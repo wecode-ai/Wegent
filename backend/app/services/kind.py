@@ -12,6 +12,7 @@ from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.services.kind_factory import KindServiceFactory
+from app.stores.tasks import task_store
 
 # Kinds that use the tasks table instead of kinds table
 TASK_RESOURCE_KINDS = {"Task", "Workspace"}
@@ -75,14 +76,11 @@ class KindService:
         with SessionLocal() as db:
             # Use TaskResource model for Task and Workspace kinds
             if kind in TASK_RESOURCE_KINDS:
-                resource = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == resource_id,
-                        TaskResource.kind == kind,
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                resource = task_store.get_task_by_states(
+                    db,
+                    task_id=resource_id,
+                    states=[TaskResource.STATE_ACTIVE],
+                    kind=kind,
                 )
             else:
                 resource = (
@@ -110,14 +108,11 @@ class KindService:
         with SessionLocal() as db:
             # Use TaskResource model for Task and Workspace kinds
             if kind in TASK_RESOURCE_KINDS:
-                resource = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == resource_id,
-                        TaskResource.kind == kind,
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+                resource = task_store.get_task_by_states(
+                    db,
+                    task_id=resource_id,
+                    states=[TaskResource.STATE_ACTIVE],
+                    kind=kind,
                 )
             else:
                 resource = (

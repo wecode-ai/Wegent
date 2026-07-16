@@ -1,0 +1,107 @@
+{
+  "title": "Resource Library",
+  "tabs": {
+    "discover": "Discover",
+    "mine": "Mine",
+    "installed": "Installed",
+    "published": "Published by me"
+  },
+  "filters": {
+    "all": "All",
+    "agent": "Agent",
+    "model": "Model",
+    "shell": "Executor",
+    "skill": "Skill",
+    "retriever": "Retriever"
+  },
+  "scopes": {
+    "personal": "Created by me",
+    "group": "Team shared",
+    "group_placeholder": "Select group"
+  },
+  "sources": {
+    "all": "All",
+    "personal": "Created by me",
+    "group": "Team",
+    "system": "System",
+    "all_groups": "All teams"
+  },
+  "targets": {
+    "personal": "My Resources",
+    "personal_description": "Only you can see and manage it.",
+    "personal_section": "Personal",
+    "group_description": "Team members can see it and manage it by team permissions.",
+    "group_section": "Team",
+    "select": "Select"
+  },
+  "actions": {
+    "install": "Install",
+    "installed": "Installed",
+    "publish": "Publish Resource",
+    "upgrade": "Upgrade",
+    "archive": "Archive",
+    "configure": "Configure",
+    "view_detail": "View Details",
+    "details": "Details",
+    "manage_groups": "Manage...",
+    "retry": "Retry",
+    "create_to_personal": "Create in My Resources",
+    "create_to_group": "Create in {{group}}",
+    "choose_create_target": "Where should {{action}} be saved?",
+    "choose_create_target_description": "The save location controls who can see and manage this resource.",
+    "search": "Search",
+    "close": "Close",
+    "cancel": "Cancel"
+  },
+  "status": {
+    "installed": "Installed",
+    "requires_configuration": "Requires Configuration",
+    "draft": "Draft",
+    "published": "Published",
+    "archived": "Archived"
+  },
+  "fields": {
+    "name": "Name",
+    "display_name": "Display Name",
+    "description": "Description",
+    "tags": "Tags",
+    "type": "Resource type",
+    "sort": "Sort",
+    "source": "Source",
+    "source_id": "Source resource ID",
+    "version": "Version",
+    "publisher": "Publisher",
+    "install_count": "Installs",
+    "updated_at": "Updated"
+  },
+  "sort": {
+    "default": "Default",
+    "latest": "Latest"
+  },
+  "empty": {
+    "discover": "No resources to discover",
+    "mine": "No resources yet"
+  },
+  "states": {
+    "loading": "Loading resources",
+    "empty": "No resources",
+    "error": "Failed to load resources",
+    "requiresConfiguration": "Configuration required",
+    "no_groups": "No group resources"
+  },
+  "search": {
+    "placeholder": "Search resources",
+    "groups_placeholder": "Search teams",
+    "groups_empty": "No matching teams"
+  },
+  "messages": {
+    "install_success": "Installed",
+    "install_requires_configuration": "Installed, configuration required",
+    "install_failed": "Install failed",
+    "publish_success": "Published",
+    "publish_failed": "Publish failed"
+  },
+  "publish": {
+    "description": "Publish an existing Agent or Skill to the resource library"
+  }
+}

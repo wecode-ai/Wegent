@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskType } from '@/types/api'
+import { getTaskTargetHref, type TaskRouteTarget } from '@/utils/taskRouting'
 
 /**
  * Browser notification utility
@@ -123,27 +123,14 @@ export async function sendNotification(
  * Send task completion notification
  */
 export function notifyTaskCompletion(
-  taskId: number,
+  task: TaskRouteTarget,
   taskTitle: string,
-  success: boolean,
-  taskType?: TaskType
+  success: boolean
 ): void {
   const title = success ? '✅ Task Completed' : '❌ Task Failed'
   const body = taskTitle.length > 100 ? `${taskTitle.substring(0, 100)}...` : taskTitle
 
-  // Build target URL based on task type
-  let targetUrl: string
-  if (taskType === 'code') {
-    targetUrl = `${window.location.origin}/code?taskId=${taskId}`
-  } else if (taskType === 'knowledge') {
-    targetUrl = `${window.location.origin}/knowledge?taskId=${taskId}`
-  } else if (taskType === 'task') {
-    targetUrl = `${window.location.origin}/devices/chat?taskId=${taskId}`
-  } else if (taskType === 'video') {
-    targetUrl = `${window.location.origin}/generate?taskId=${taskId}`
-  } else {
-    targetUrl = `${window.location.origin}/chat?taskId=${taskId}`
-  }
+  const targetUrl = new URL(getTaskTargetHref(task), window.location.origin).toString()
 
   sendNotification(
     title,

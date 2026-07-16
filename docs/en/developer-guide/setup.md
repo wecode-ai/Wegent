@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # 💻 Development Setup
 
 This document provides detailed instructions on setting up a local development environment for Wegent.
@@ -11,7 +15,7 @@ Before starting, ensure your development environment has the following software 
 ### Required Software
 
 - **Python 3.10+**: For backend service, Executor, and Executor Manager
-- **Node.js 18+**: For frontend development
+- **Node.js 20+**: For frontend development and tests
 - **MySQL 8.0+**: Database service
 - **Redis 7+**: Cache service
 - **Docker & Docker Compose**: For containerized deployment and development
@@ -42,6 +46,7 @@ docker-compose up -d
 ```
 
 This will start all required services:
+
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/api/docs
@@ -87,7 +92,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-> **Note**: Database tables and initial data will be created automatically on first backend startup, no need to execute SQL scripts manually.
+> **Note**: Database tables and initial data will be created automatically on first backend startup, no need to execute SQL scripts manually. Initialization creates the `admin` administrator account without a default password; the first visit to the login page must complete the administrator password setup flow.
 
 ---
 
@@ -152,9 +157,12 @@ cp .env.example .env
 # Main configuration items:
 # DATABASE_URL=mysql+pymysql://task_user:task_password@localhost:3306/task_manager
 # REDIS_URL=redis://127.0.0.1:6379/0
+# CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
 ```
+
+`CHECK_SYSTEM_INITIALIZATION_STATUS` is enabled by default. When enabled, the backend loads the first-run administrator password setup state into memory at startup, and the login page receives the `ADMIN_PASSWORD_SETUP_REQUIRED` error code through the `/users/me` handshake. Set it to `False` for deployments that must skip this check.
 
 #### Run Development Server
 
@@ -164,6 +172,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Access API documentation:
+
 - Swagger UI: http://localhost:8000/api/docs
 - ReDoc: http://localhost:8000/api/redoc
 
@@ -192,10 +201,10 @@ The frontend is a React application based on Next.js 15.
 #### Install Dependencies
 
 ```bash
-cd frontend
+cd wegent
 
-# Install npm dependencies
-npm install
+# Install pnpm workspace dependencies
+pnpm install
 ```
 
 #### Configure Environment Variables
@@ -208,19 +217,22 @@ cp .env.local.example .env.local
 # Main configuration items (runtime variables, can be changed without rebuilding):
 # RUNTIME_INTERNAL_API_URL=http://localhost:8000  # Server-side proxy URL
 # RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket connection URL
+# RUNTIME_WEWORK_CODE_URL=https://wework.example.com/coding  # Optional: route coding entry points to Wework
+# RUNTIME_ENABLE_PROJECT_WORKSPACE=false          # Enable project workspace UI
+# RUNTIME_PROJECT_WORKSPACE_WHITELIST=admin       # Allowed user_names, empty means all users
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 # NEXT_PUBLIC_USE_MOCK_API=false
 # NEXT_PUBLIC_LOGIN_MODE=all
 # I18N_LNG=en
 ```
 
-> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` and `RUNTIME_SOCKET_DIRECT_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application.
+> **Note**: The frontend now uses `RUNTIME_INTERNAL_API_URL` and `RUNTIME_SOCKET_DIRECT_URL` instead of `NEXT_PUBLIC_API_URL`. Runtime variables can be changed without rebuilding the application. When `RUNTIME_WEWORK_CODE_URL` is empty, coding entry points open `/chat?agent=code`; when configured, the menu shows **WeWork** and opens that URL. This variable has no `NEXT_PUBLIC_*` fallback.
 
 #### Run Development Server
 
 ```bash
 # Start development server
-npm run dev
+pnpm --filter wecode-ai-assistant run dev
 ```
 
 Access application: http://localhost:3000
@@ -229,17 +241,28 @@ Access application: http://localhost:3000
 
 ```bash
 # Lint code
-npm run lint
+pnpm --filter wecode-ai-assistant run lint
 
 # Format code
-npm run format
+pnpm --filter wecode-ai-assistant run format
 
 # Production build
-npm run build
+pnpm --filter wecode-ai-assistant run build
 
 # Run production version
-npm run start
+pnpm --filter wecode-ai-assistant run start
 ```
+
+#### Wework and Local Rust Build Cache
+
+The Wework macOS development scripts share Cargo targets by component across Git worktrees, so switching worktrees can reuse already compiled dependencies instead of compiling them from scratch. Cargo coordinates concurrent access to a target directory and rebuilds artifacts when their fingerprints change. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing to reuse compiler outputs as well.
+
+- `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.
+- When `sccache` is available, the scripts set `RUSTC_WRAPPER` and `SCCACHE_BASEDIRS` automatically, normalize source and target paths across worktrees, and disable Cargo incremental compilation, which is incompatible with shared compiler caching.
+- Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose another target cache root.
+- Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use Cargo's repository-local default `target/`.
+- Set `WEGENT_DISABLE_SCCACHE=1` to skip automatic installation and disable `sccache`.
+- Explicit `CARGO_TARGET_DIR` and `RUSTC_WRAPPER` values are always preserved.
 
 ---
 
@@ -322,16 +345,16 @@ pytest -m integration
 ### Frontend Testing
 
 ```bash
-cd frontend
+cd wegent
 
 # Run tests
-npm test
+pnpm --filter wecode-ai-assistant test
 
 # Run and watch for changes
-npm run test:watch
+pnpm --filter wecode-ai-assistant run test:watch
 
 # Generate coverage report
-npm run test:coverage
+pnpm --filter wecode-ai-assistant run test:coverage
 ```
 
 ### Executor and Shared Module Testing
@@ -353,6 +376,7 @@ pytest tests/ --cov=utils
 ### Complete Testing Guide
 
 For detailed testing framework documentation, best practices, and CI/CD configuration, see:
+
 - 📖 [Complete Testing Guide](./testing.md) - Test framework documentation, Fixtures, Mocking strategies, and more
 
 ---
@@ -370,6 +394,7 @@ uvicorn app.main:app --reload --log-level debug
 ### Frontend Debugging
 
 In browser developer tools, check:
+
 - Console: JavaScript errors and logs
 - Network: API requests and responses
 - React DevTools: Component state and performance

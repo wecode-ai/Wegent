@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.constants import SUPPORTED_CLIENT_ORIGINS
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.model import (
@@ -87,15 +88,21 @@ def list_unified_models(
         None,
         description="Filter by model category type (llm, tts, stt, embedding, rerank)",
     ),
+    client_origin: Optional[str] = Query(
+        None,
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
+        description="Optional client surface requesting the model list",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get unified list of all available models (both public and user-defined) with scope support.
+    Get unified list of all available models with scope support.
 
     This endpoint aggregates models from:
     - Public models (type='public'): Shared across all users
     - User-defined models (type='user'): Private to the current user or group
+    - Runtime models (type='runtime'): Derived from enabled user runtime config
 
     Scope behavior:
     - scope='personal' (default): personal models + public models
@@ -111,13 +118,14 @@ def list_unified_models(
     - scope: Query scope ('personal', 'group', or 'all')
     - group_name: Group name (required when scope='group')
     - model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank)
+    - client_origin: Optional client surface requesting the model list
 
     Response:
     {
       "data": [
         {
           "name": "model-name",
-          "type": "public" | "user",
+          "type": "public" | "user" | "group" | "runtime",
           "displayName": "Human Readable Name",
           "provider": "openai" | "claude",
           "modelId": "gpt-4",
@@ -134,6 +142,7 @@ def list_unified_models(
         scope=scope,
         group_name=group_name,
         model_category_type=model_category_type,
+        client_origin=client_origin,
     )
     return {"data": data}
 
@@ -142,7 +151,7 @@ def list_unified_models(
 def get_unified_model(
     model_name: str,
     model_type: Optional[str] = Query(
-        None, description="Model type ('public' or 'user')"
+        None, description="Model type ('public', 'user', 'group', or 'runtime')"
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -157,12 +166,12 @@ def get_unified_model(
 
     Parameters:
     - model_name: Model name
-    - model_type: Optional model type hint ('public' or 'user')
+    - model_type: Optional model type hint ('public', 'user', 'group', or 'runtime')
 
     Response:
     {
       "name": "model-name",
-      "type": "public" | "user",
+      "type": "public" | "user" | "group" | "runtime",
       "displayName": "Human Readable Name",
       "provider": "openai" | "claude",
       "modelId": "gpt-4",
@@ -311,6 +320,13 @@ def get_compatible_models(
             if isinstance(model_config, dict):
                 env = model_config.get("env", {})
                 model_type = env.get("model", "")
+                api_format = getattr(model_crd.spec.apiFormat, "value", None)
+                protocol = model_crd.spec.protocol
+                is_codex_compatible = (
+                    api_format == "responses"
+                    or protocol == "openai-responses"
+                    or model_config.get("wire_api") == "responses"
+                )
 
                 # Filter compatible models
                 # Agno supports OpenAI, Claude and Gemini models
@@ -320,7 +336,10 @@ def get_compatible_models(
                     "gemini",
                 ]:
                     compatible_models.append({"name": model_kind.name})
-                elif shell_type == "ClaudeCode" and model_type == "claude":
+                elif shell_type == "ClaudeCode" and (
+                    model_type == "claude"
+                    or (model_type == "openai" and is_codex_compatible)
+                ):
                     compatible_models.append({"name": model_kind.name})
         except Exception as e:
             logger.warning(f"Failed to parse model {model_kind.name}: {e}")

@@ -16,6 +16,7 @@ Note on non-vector retrieval support:
 - Future enhancement: Add BM42/hybrid search support when upgrading Qdrant integration
 """
 
+import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
@@ -33,8 +34,12 @@ from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
 )
+from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from shared.models import RetrievalScope
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantBackend(BaseStorageBackend):
@@ -58,6 +63,7 @@ class QdrantBackend(BaseStorageBackend):
 
     # Qdrant only supports vector search
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector"]
+    supports_retrieval_scope: ClassVar[bool] = True
 
     # Override INDEX_PREFIX for Qdrant collections
     INDEX_PREFIX: ClassVar[str] = "collection"
@@ -137,8 +143,9 @@ class QdrantBackend(BaseStorageBackend):
         vector_store = self.create_vector_store(collection_name)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
+        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
         VectorStoreIndex(
-            nodes,
+            nodes_for_embedding,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
@@ -156,6 +163,7 @@ class QdrantBackend(BaseStorageBackend):
         query: str,
         embed_model,
         retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
@@ -201,20 +209,37 @@ class QdrantBackend(BaseStorageBackend):
         # Build metadata filters
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
 
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
+
         # Generate query embedding
-        query_embedding = embed_model.get_query_embedding(query)
+        query_embedding = embed_model.get_query_embedding(resolved_queries.dense_query)
 
         # Create VectorStoreQuery (vector mode only)
         vs_query = VectorStoreQuery(
-            query_str=query,
+            query_str=resolved_queries.dense_query,
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=VectorStoreQueryMode.DEFAULT,
             filters=filters,
         )
+        native_filter = self._build_scoped_native_filter(
+            vector_store=vector_store,
+            query=vs_query,
+            scope=scope,
+        )
+
+        logger.info(
+            "[Qdrant] retrieve: collection=%s, mode=%s, top_k=%s, score_threshold=%s, dense_query=%s",
+            collection_name,
+            retrieval_mode,
+            top_k,
+            score_threshold,
+            resolved_queries.dense_query,
+        )
 
         # Execute query
-        result = vector_store.query(vs_query)
+        query_kwargs = {"qdrant_filters": native_filter} if native_filter else {}
+        result = vector_store.query(vs_query, **query_kwargs)
 
         # Process results
         return self._process_query_results(result, score_threshold)
@@ -233,6 +258,29 @@ class QdrantBackend(BaseStorageBackend):
             MetadataFilters object
         """
         return parse_metadata_filters(knowledge_id, metadata_condition)
+
+    def _build_scoped_native_filter(
+        self,
+        *,
+        vector_store: QdrantVectorStore,
+        query: VectorStoreQuery,
+        scope: Optional[RetrievalScope],
+    ) -> qdrant_models.Filter | None:
+        if not scope or not scope.document_ids:
+            return None
+
+        base_filter = vector_store._build_query_filter(query)
+        doc_scope_condition = qdrant_models.FieldCondition(
+            key="doc_ref",
+            match=qdrant_models.MatchAny(
+                any=[str(doc_id) for doc_id in scope.document_ids]
+            ),
+        )
+        must: List[Any] = [doc_scope_condition]
+        if base_filter is not None:
+            must.insert(0, base_filter)
+
+        return qdrant_models.Filter(must=must)
 
     def _process_query_results(
         self,
@@ -268,7 +316,7 @@ class QdrantBackend(BaseStorageBackend):
             if score >= score_threshold:
                 results.append(
                     {
-                        "content": node.text,
+                        "content": self.get_node_display_text(node),
                         "score": float(score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
@@ -457,7 +505,7 @@ class QdrantBackend(BaseStorageBackend):
             chunks.append(
                 {
                     "chunk_index": metadata.get("chunk_index"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "metadata": metadata,
                 }
             )
@@ -657,10 +705,14 @@ class QdrantBackend(BaseStorageBackend):
                 # extract the human-readable `text` field and drop internal
                 # fields (id_, relationships, embeddings, etc.).
                 raw_content = payload.get("_node_content", "")
+                fallback_content = self.extract_chunk_text(raw_content)
 
                 chunks.append(
                     {
-                        "content": self.extract_chunk_text(raw_content),
+                        "content": self.get_display_text_from_metadata(
+                            payload,
+                            fallback=fallback_content,
+                        ),
                         "title": payload.get("source_file", ""),
                         "chunk_id": payload.get("chunk_index", 0),
                         "doc_ref": payload.get("doc_ref", ""),
@@ -719,7 +771,7 @@ class QdrantBackend(BaseStorageBackend):
                     "knowledge_id": knowledge_id,
                     "doc_ref": node.metadata.get("doc_ref"),
                     "source_file": node.metadata.get("source_file"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "title": node.metadata.get("source_file", ""),
                     "metadata": node.metadata,
                 },

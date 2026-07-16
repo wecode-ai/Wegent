@@ -26,15 +26,19 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.models.task import TaskResource
+from app.services.channels.callback import forward_event_to_channel_callbacks
 
 # Import channel callback modules to ensure they register with
 # ChannelCallbackRegistry in this worker process. Without these imports,
 # the registry may be empty when /callback is handled by a different worker
 # than the one that processed the original IM message.
 from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
+from app.services.channels.telegram import callback as _telegram_cb  # noqa: F401
+from app.services.chat.storage import session_manager
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
+from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
 
@@ -42,38 +46,6 @@ router = APIRouter(prefix="/callback", tags=["execution-callback"])
 
 # Shared event parser instance
 _event_parser = ResponsesAPIEventParser()
-
-
-async def _forward_event_to_channels(
-    task_id: int,
-    subtask_id: int,
-    event: Any,
-) -> None:
-    """Forward a non-terminal event to registered channel callback services.
-
-    Each channel service checks if it has callback info for the task and
-    forwards the event to the appropriate streaming emitter.
-    """
-    from app.services.channels.callback import get_callback_registry
-
-    registry = get_callback_registry()
-    for channel_type, service in registry.iter_services():
-        try:
-            forwarded = await service.emit_event(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                event=event,
-            )
-            if forwarded:
-                logger.debug(
-                    f"[Callback] Forwarded event {event.type} to "
-                    f"{channel_type.value} for task {task_id}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"[Callback] Failed to forward event to {channel_type.value} "
-                f"for task {task_id}: {e}"
-            )
 
 
 class CallbackRequest(BaseModel):
@@ -151,14 +123,10 @@ async def handle_callback(
             return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
         # Get user_id from task for task:status notification
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == request.task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=request.task_id,
+            states=[TaskResource.STATE_ACTIVE],
         )
         user_id = task.user_id if task else None
 
@@ -180,6 +148,10 @@ async def handle_callback(
         await emitter.emit(event)
         await emitter.close()
 
+        # Publish to callback stream channel for any active SSE consumers
+        # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
+        await session_manager.publish_callback_event(request.subtask_id, event)
+
         logger.info(
             f"[Callback] Event emitted: type={event.type}, "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
@@ -188,10 +160,11 @@ async def handle_callback(
         # Forward non-terminal events to registered channel callback services
         # (e.g., DingTalk AI Card streaming). Terminal events (DONE, ERROR,
         # CANCELLED) are handled by TaskCompletedEvent via send_task_result().
-        await _forward_event_to_channels(
+        await forward_event_to_channel_callbacks(
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             event=event,
+            source="Callback",
         )
 
         # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
@@ -253,18 +226,15 @@ async def handle_batch_callback(
                 continue
 
             # Get user_id from cache or database for task:status notification
-            if request.task_id not in task_user_cache:
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == request.task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                    )
-                    .first()
+            cache_key = request.task_id
+            if cache_key not in task_user_cache:
+                task = task_store.get_task_by_states(
+                    db,
+                    task_id=request.task_id,
+                    states=[TaskResource.STATE_ACTIVE],
                 )
-                task_user_cache[request.task_id] = task.user_id if task else None
-            user_id = task_user_cache[request.task_id]
+                task_user_cache[cache_key] = task.user_id if task else None
+            user_id = task_user_cache[cache_key]
 
             # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
             # StatusUpdatingEmitter handles:

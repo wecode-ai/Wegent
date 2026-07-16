@@ -9,16 +9,15 @@ import logging
 import threading
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, make_transient
 
 from app.core.events import QueueMessageCreatedEvent, TaskCompletedEvent
 from app.db.session import get_db_session
 from app.models.kind import Kind
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.work_queue import AutoProcessConfig, TeamRef
 from app.services.readers import KindType, kindReader
+from app.stores.tasks import subtask_store, task_store
 from shared.models.db.enums import QueueMessageStatus
 from shared.models.db.work_queue import QueueMessage
 
@@ -253,16 +252,11 @@ class InboxDirectAgentHandler:
         """Return workspace-related kwargs for TaskCreationParams from the team's
         most recent active Task. Returns an empty dict if no Task with a non-empty
         repository is found (resulting in a pure chat Task)."""
-        latest_task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .order_by(TaskResource.id.desc())
-            .limit(50)
-            .all()
+        latest_task = task_store.list_regular_active_tasks(
+            db,
+            user_id=user_id,
+            order_by_id_desc=True,
+            limit=50,
         )
 
         for task_resource in latest_task:
@@ -276,16 +270,11 @@ class InboxDirectAgentHandler:
                 workspace_ref = spec.get("workspaceRef")
                 if workspace_ref:
                     # Find the matching Workspace TaskResource
-                    workspace = (
-                        db.query(TaskResource)
-                        .filter(
-                            TaskResource.user_id == user_id,
-                            TaskResource.kind == "Workspace",
-                            TaskResource.name == workspace_ref.get("name"),
-                            TaskResource.namespace
-                            == workspace_ref.get("namespace", "default"),
-                        )
-                        .first()
+                    workspace = task_store.get_workspace_by_ref(
+                        db,
+                        user_id=user_id,
+                        name=workspace_ref.get("name"),
+                        namespace=workspace_ref.get("namespace", "default"),
                     )
                     if workspace:
                         repo = workspace.json.get("spec", {}).get("repository", {})
@@ -351,64 +340,16 @@ class InboxDirectAgentHandler:
             thread_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(thread_loop)
             try:
-                with get_db_session() as thread_db:
-                    # Reload ORM objects in this thread's session
-                    thread_task = (
-                        thread_db.query(TaskResource)
-                        .filter(
-                            TaskResource.id == task_id,
-                            TaskResource.kind == "Task",
-                        )
-                        .first()
+                thread_loop.run_until_complete(
+                    self._dispatch_ai_execution(
+                        task_id=task_id,
+                        assistant_subtask_id=assistant_subtask_id,
+                        team_id=team_id,
+                        user_id=user_id,
+                        message=message,
+                        user_subtask_id=user_subtask_id,
                     )
-                    if not thread_task:
-                        logger.error(
-                            f"[InboxDirectAgent] Task {task_id} not found in AI trigger thread"
-                        )
-                        return
-
-                    thread_assistant_subtask = (
-                        thread_db.query(Subtask)
-                        .filter(Subtask.id == assistant_subtask_id)
-                        .first()
-                    )
-                    if not thread_assistant_subtask:
-                        logger.error(
-                            f"[InboxDirectAgent] Assistant subtask {assistant_subtask_id} "
-                            f"not found in AI trigger thread"
-                        )
-                        return
-
-                    thread_team = (
-                        thread_db.query(Kind)
-                        .filter(Kind.id == team_id, Kind.kind == "Team")
-                        .first()
-                    )
-                    if not thread_team:
-                        logger.error(
-                            f"[InboxDirectAgent] Team {team_id} not found in AI trigger thread"
-                        )
-                        return
-
-                    thread_user = (
-                        thread_db.query(User).filter(User.id == user_id).first()
-                    )
-                    if not thread_user:
-                        logger.error(
-                            f"[InboxDirectAgent] User {user_id} not found in AI trigger thread"
-                        )
-                        return
-
-                    thread_loop.run_until_complete(
-                        self._dispatch_ai_execution(
-                            task=thread_task,
-                            assistant_subtask=thread_assistant_subtask,
-                            team=thread_team,
-                            user=thread_user,
-                            message=message,
-                            user_subtask_id=user_subtask_id,
-                        )
-                    )
+                )
             except Exception as exc:
                 logger.error(
                     f"[InboxDirectAgent] AI trigger thread failed for task {task_id}: {exc}",
@@ -423,10 +364,10 @@ class InboxDirectAgentHandler:
 
     async def _dispatch_ai_execution(
         self,
-        task: TaskResource,
-        assistant_subtask: Subtask,
-        team: Kind,
-        user: User,
+        task_id: int,
+        assistant_subtask_id: int,
+        team_id: int,
+        user_id: int,
         message: str,
         user_subtask_id: Optional[int],
     ) -> None:
@@ -435,33 +376,30 @@ class InboxDirectAgentHandler:
         Uses SSEResultEmitter (thread-safe) to avoid WebSocket/Socket.IO
         cross-thread issues.
         """
-        from app.services.chat.trigger.unified import build_execution_request
         from app.services.execution import execution_dispatcher
         from app.services.execution.emitters import SSEResultEmitter
 
         logger.info(
             f"[InboxDirectAgent] Dispatching AI execution: "
-            f"task_id={task.id}, subtask_id={assistant_subtask.id}"
+            f"task_id={task_id}, subtask_id={assistant_subtask_id}"
         )
 
         try:
-            request = await build_execution_request(
-                task=task,
-                assistant_subtask=assistant_subtask,
-                team=team,
-                user=user,
+            request = await self._build_ai_execution_request(
+                task_id=task_id,
+                assistant_subtask_id=assistant_subtask_id,
+                team_id=team_id,
+                user_id=user_id,
                 message=message,
-                payload=None,
                 user_subtask_id=user_subtask_id,
-                is_subscription=False,
-                enable_tools=True,
-                enable_deep_thinking=True,
             )
+            if not request:
+                return
 
             # Use SSEResultEmitter to avoid WebSocket/Socket.IO cross-thread issues
             emitter = SSEResultEmitter(
-                task_id=task.id,
-                subtask_id=assistant_subtask.id,
+                task_id=task_id,
+                subtask_id=assistant_subtask_id,
             )
 
             dispatch_task = asyncio.create_task(
@@ -478,14 +416,97 @@ class InboxDirectAgentHandler:
 
             logger.info(
                 f"[InboxDirectAgent] AI execution completed: "
-                f"task_id={task.id}, content_length={len(accumulated_content)}"
+                f"task_id={task_id}, content_length={len(accumulated_content)}"
             )
 
         except Exception as exc:
             logger.error(
-                f"[InboxDirectAgent] AI dispatch failed for task {task.id}: {exc}",
+                f"[InboxDirectAgent] AI dispatch failed for task {task_id}: {exc}",
                 exc_info=True,
             )
+
+    async def _build_ai_execution_request(
+        self,
+        task_id: int,
+        assistant_subtask_id: int,
+        team_id: int,
+        user_id: int,
+        message: str,
+        user_subtask_id: Optional[int],
+    ):
+        """Build an execution request without keeping the loader session open."""
+        from app.services.chat.trigger.unified import build_execution_request
+
+        with get_db_session() as db:
+            try:
+                loaded = self._load_ai_execution_objects(
+                    db=db,
+                    task_id=task_id,
+                    assistant_subtask_id=assistant_subtask_id,
+                    team_id=team_id,
+                    user_id=user_id,
+                )
+                if not loaded:
+                    return None
+                task, assistant_subtask, team, user = loaded
+                self._detach_ai_execution_objects(db, loaded)
+            finally:
+                db.rollback()
+
+        return await build_execution_request(
+            task=task,
+            assistant_subtask=assistant_subtask,
+            team=team,
+            user=user,
+            message=message,
+            payload=None,
+            user_subtask_id=user_subtask_id,
+            is_subscription=False,
+            enable_tools=True,
+            enable_deep_thinking=True,
+        )
+
+    def _detach_ai_execution_objects(self, db: Session, loaded) -> None:
+        """Detach loaded ORM objects before closing the loader session."""
+        for obj in loaded:
+            if hasattr(obj, "_sa_instance_state"):
+                db.refresh(obj)
+                make_transient(obj)
+
+    def _load_ai_execution_objects(
+        self,
+        db: Session,
+        task_id: int,
+        assistant_subtask_id: int,
+        team_id: int,
+        user_id: int,
+    ):
+        """Load ORM objects required to build a direct-agent request."""
+        task = task_store.get_by_id(db, task_id=task_id)
+        assistant_subtask = subtask_store.get_basic_by_id(
+            db,
+            subtask_id=assistant_subtask_id,
+        )
+        team = db.query(Kind).filter(Kind.id == team_id, Kind.kind == "Team").first()
+        user = db.query(User).filter(User.id == user_id).first()
+
+        missing = []
+        if not task:
+            missing.append(f"task={task_id}")
+        if not assistant_subtask:
+            missing.append(f"assistant_subtask={assistant_subtask_id}")
+        if not team:
+            missing.append(f"team={team_id}")
+        if not user:
+            missing.append(f"user={user_id}")
+        if missing:
+            logger.error(
+                "[InboxDirectAgent] Missing AI execution objects: %s",
+                ", ".join(missing),
+            )
+            return None
+
+        return task, assistant_subtask, team, user
 
     def _mark_failed(self, db: Session, message: QueueMessage, error: str) -> None:
         """Mark the message as failed with the given error."""

@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 # Redis key patterns and TTL
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 DEVICE_ONLINE_TTL = 90  # seconds (heartbeat interval 30s x 3)
+DEVICE_CAPABILITIES_KEY_PREFIX = "device:capabilities:"
+DEVICE_CAPABILITIES_TTL = 600
 
 
 class LocalDeviceProvider(BaseDeviceProvider):
@@ -66,6 +68,11 @@ class LocalDeviceProvider(BaseDeviceProvider):
         """Generate Redis key for device online status."""
         return f"{DEVICE_ONLINE_KEY_PREFIX}{user_id}:{device_id}"
 
+    @staticmethod
+    def generate_capabilities_key(user_id: int, device_id: str) -> str:
+        """Generate Redis key for device global capability state."""
+        return f"{DEVICE_CAPABILITIES_KEY_PREFIX}{user_id}:{device_id}"
+
     async def register(
         self,
         db: Session,
@@ -76,6 +83,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         executor_version: Optional[str] = None,
         capabilities: Optional[List[str]] = None,
         client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a local device.
 
@@ -90,6 +98,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             executor_version: Executor version string
             capabilities: Device capability tags
             client_ip: Device's client IP address
+            runtime_transfer_host: Host peers should use for direct transfers
 
         Returns:
             Dict with device 'id' and 'is_default'
@@ -114,12 +123,14 @@ class LocalDeviceProvider(BaseDeviceProvider):
             device_json = device_kind.json.copy()
             persisted_display_name = resolve_device_display_name(device_json, name)
             set_device_display_name(device_json, persisted_display_name)
-            device_json["spec"]["deviceType"] = DeviceType.LOCAL.value
+            device_json["spec"]["deviceType"] = self.device_type.value
             device_json["spec"]["connectionMode"] = DeviceConnectionMode.WEBSOCKET.value
             if capabilities is not None:
                 device_json["spec"]["capabilities"] = capabilities
             if client_ip is not None:
                 device_json["spec"]["clientIp"] = client_ip
+            if runtime_transfer_host is not None:
+                device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
             device_kind.json = device_json
             device_kind.updated_at = datetime.now()
             device_kind.is_active = True
@@ -145,7 +156,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 1
                 for device in existing_devices
                 if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
-                == DeviceType.LOCAL.value
+                == self.device_type.value
             )
             is_first_device = existing_count == 0
 
@@ -159,11 +170,12 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 },
                 "spec": {
                     "deviceId": device_id,
-                    "deviceType": DeviceType.LOCAL.value,
+                    "deviceType": self.device_type.value,
                     "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
                     "isDefault": is_first_device,
                     "capabilities": capabilities,
                     "clientIp": client_ip,
+                    "runtimeTransferHost": runtime_transfer_host,
                 },
                 "status": {
                     "state": "Available",
@@ -196,6 +208,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 name=name,
                 status="online",
                 executor_version=executor_version,
+                client_ip=client_ip,
+                runtime_transfer_host=runtime_transfer_host,
             )
 
         return {
@@ -211,6 +225,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
         name: str,
         status: str = "online",
         executor_version: Optional[str] = None,
+        client_ip: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Set device online status in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -220,6 +236,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "status": status,
             "last_heartbeat": datetime.now().isoformat(),
             "executor_version": executor_version,
+            "client_ip": client_ip,
+            "runtime_transfer_host": runtime_transfer_host,
         }
         result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
         logger.info(f"[LocalDeviceProvider] set_online: key={key}, result={result}")
@@ -263,6 +281,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
             return None
 
         spec = device_kind.json.get("spec", {})
+        if spec.get("deviceType", DeviceType.LOCAL.value) != self.device_type.value:
+            return None
 
         # Get online info from Redis
         online_info = await self._get_online_info(user_id, device_id)
@@ -282,7 +302,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "name": spec.get("displayName") or device_id,
             "status": online_info.get("status", "online") if online_info else "offline",
             "is_default": spec.get("isDefault", False),
-            "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
+            "device_type": spec.get("deviceType", self.device_type.value),
             "connection_mode": spec.get(
                 "connectionMode", DeviceConnectionMode.WEBSOCKET.value
             ),
@@ -297,6 +317,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "latest_version": latest_version,
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
+            "runtime_transfer_host": spec.get("runtimeTransferHost"),
+            "runtime_instance_id": spec.get("runtimeInstanceId"),
+            "app_device_id": spec.get("appDeviceId"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
@@ -312,6 +335,26 @@ class LocalDeviceProvider(BaseDeviceProvider):
             f"[LocalDeviceProvider] get_online_info: key={key}, found={result is not None}"
         )
         return result
+
+    async def store_capabilities_state(
+        self,
+        user_id: int,
+        device_id: str,
+        capabilities: Dict[str, Any],
+    ) -> bool:
+        """Store sanitized local global capability state reported by heartbeat."""
+        key = self.generate_capabilities_key(user_id, device_id)
+        payload = dict(capabilities)
+        payload["reported_at"] = datetime.now().isoformat()
+        return await cache_manager.set(key, payload, expire=DEVICE_CAPABILITIES_TTL)
+
+    async def get_capabilities_state(
+        self, user_id: int, device_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get the latest sanitized global capability state for a device."""
+        return await cache_manager.get(
+            self.generate_capabilities_key(user_id, device_id)
+        )
 
     async def list_devices(
         self,
@@ -339,7 +382,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         for device_kind in devices:
             spec = device_kind.json.get("spec", {})
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-            if device_type != DeviceType.CLOUD.value:
+            if device_type == self.device_type.value:
                 local_devices.append(device_kind)
 
         if not local_devices:
@@ -394,7 +437,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                         else "offline"
                     ),
                     "is_default": spec.get("isDefault", False),
-                    "device_type": spec.get("deviceType", DeviceType.LOCAL.value),
+                    "device_type": self.device_type.value,
                     "connection_mode": spec.get(
                         "connectionMode", DeviceConnectionMode.WEBSOCKET.value
                     ),
@@ -409,6 +452,9 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "latest_version": latest_version,
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
+                    "runtime_transfer_host": spec.get("runtimeTransferHost"),
+                    "runtime_instance_id": spec.get("runtimeInstanceId"),
+                    "app_device_id": spec.get("appDeviceId"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
@@ -421,6 +467,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
         device_id: str,
         running_task_ids: Optional[List[int]] = None,
         executor_version: Optional[str] = None,
+        runtime_transfer_host: Optional[str] = None,
     ) -> bool:
         """Refresh device heartbeat in Redis."""
         key = self.generate_online_key(user_id, device_id)
@@ -431,6 +478,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 data["running_task_ids"] = running_task_ids
             if executor_version is not None:
                 data["executor_version"] = executor_version
+            if runtime_transfer_host is not None:
+                data["runtime_transfer_host"] = runtime_transfer_host
             result = await cache_manager.set(key, data, expire=DEVICE_ONLINE_TTL)
             logger.debug(
                 f"[LocalDeviceProvider] refresh_heartbeat: key={key}, "
@@ -456,24 +505,17 @@ class LocalDeviceProvider(BaseDeviceProvider):
         db: Session, running_task_ids: Optional[List[int]]
     ) -> Dict[str, Any]:
         """Build slot usage payload from reported task IDs."""
-        from app.models.task import TaskResource
+        from app.stores.tasks import task_store
 
         running_task_ids = running_task_ids or []
 
         running_tasks = []
         if running_task_ids:
-            tasks = (
-                db.query(TaskResource)
-                .filter(
-                    and_(
-                        TaskResource.id.in_(running_task_ids),
-                        TaskResource.kind == "Task",
-                    )
-                )
-                .all()
-            )
+            tasks = task_store.list_by_ids(db, task_ids=running_task_ids)
 
             for task in tasks:
+                if task.kind != "Task":
+                    continue
                 try:
                     from app.schemas.kind import Task as TaskCRD
 
@@ -569,3 +611,15 @@ class LocalDeviceProvider(BaseDeviceProvider):
 
 # Singleton instance
 local_device_provider = LocalDeviceProvider()
+
+
+class AppDeviceProvider(LocalDeviceProvider):
+    """Provider for the desktop app's current local executor cloud registration."""
+
+    @property
+    def device_type(self) -> DeviceType:
+        """Return APP device type."""
+        return DeviceType.APP
+
+
+app_device_provider = AppDeviceProvider()

@@ -46,6 +46,9 @@ class TestKBPromptConstants:
         assert "knowledge base management" in strict_lower
         assert "document_names" in KB_PROMPT_STRICT
         assert "document_ids" in KB_PROMPT_STRICT
+        assert "knowledge_list_documents" in KB_PROMPT_STRICT
+        assert "selected_sources" in KB_PROMPT_STRICT
+        assert "external providers" in strict_lower
         assert "kb_ls" in KB_PROMPT_STRICT
         assert "kb_head" in KB_PROMPT_STRICT
         assert "spreadsheet files" in strict_lower
@@ -64,6 +67,9 @@ class TestKBPromptConstants:
         assert "Intent Routing" in KB_PROMPT_RELAXED
         assert "document_names" in KB_PROMPT_RELAXED
         assert "document_ids" in KB_PROMPT_RELAXED
+        assert "knowledge_list_documents" in KB_PROMPT_RELAXED
+        assert "selected_sources" in KB_PROMPT_RELAXED
+        assert "prefer it over `kb_ls`" in relaxed_lower
         assert "kb_ls" in KB_PROMPT_RELAXED
         assert "spreadsheet files" in relaxed_lower
         assert "kb_head" in relaxed_lower
@@ -99,10 +105,26 @@ class TestKBPromptConstants:
 
         # Check for key phrases in no-RAG mode
         assert "Exploration Mode" in KB_PROMPT_NO_RAG
+        assert "knowledge_list_documents" in KB_PROMPT_NO_RAG
         assert "kb_ls" in KB_PROMPT_NO_RAG
         assert "kb_head" in KB_PROMPT_NO_RAG
         assert "RAG retrieval is NOT configured" in KB_PROMPT_NO_RAG
         assert "Intent Routing" in KB_PROMPT_NO_RAG
+
+    def test_kb_prompts_prefer_unified_listing_when_available(self):
+        """Document-listing prompts should prefer the unified listing tool safely."""
+        from shared.prompts import (
+            KB_PROMPT_NO_RAG,
+            KB_PROMPT_RELAXED,
+            KB_PROMPT_STRICT,
+        )
+
+        for prompt in (KB_PROMPT_STRICT, KB_PROMPT_RELAXED, KB_PROMPT_NO_RAG):
+            prompt_lower = prompt.lower()
+            assert "if `knowledge_list_documents` is available" in prompt_lower
+            assert "all mounted knowledge sources" in prompt_lower
+            assert "do not omit sources with zero documents" in prompt_lower
+            assert "otherwise" in prompt_lower
 
     def test_kb_prompt_restricted_analyst_importable(self):
         """Should be able to import KB_PROMPT_RESTRICTED_ANALYST from shared.prompts."""

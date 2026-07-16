@@ -25,17 +25,22 @@ Usage:
     await emitter.done(content="Hello world", usage={"input_tokens": 10})
 """
 
+import inspect
 import json
 import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from .responses_api import ResponsesAPIEventBuilder, ResponsesAPIStreamEvents
 
 logger = logging.getLogger(__name__)
 SHELL_TOOL_NAMES = {"exec"}
+CompletionFieldsProvider = Callable[
+    [],
+    Union[dict[str, Any], Awaitable[dict[str, Any]]],
+]
 
 __all__ = [
     "ResponsesAPIEmitter",
@@ -87,6 +92,19 @@ class ResponsesAPIEmitter:
         self.executor_namespace = executor_namespace
         self.builder = ResponsesAPIEventBuilder(subtask_id, model)
         self._tool_contexts: dict[str, dict[str, Any]] = {}
+        self._completion_fields_provider: Optional[CompletionFieldsProvider] = None
+
+    def set_completion_fields_provider(
+        self,
+        provider: Optional[CompletionFieldsProvider],
+    ) -> None:
+        """Set a one-shot provider for fields added to the completion event."""
+        self._completion_fields_provider = provider
+        logger.info(
+            "Response completion fields provider %s for subtask_id=%s",
+            "set" if provider is not None else "cleared",
+            self.subtask_id,
+        )
 
     # ============================================================
     # Response Lifecycle Events
@@ -143,6 +161,35 @@ class ResponsesAPIEmitter:
         """
         # Flush any buffered events before sending done
         await self.flush()
+
+        provider = self._completion_fields_provider
+        self._completion_fields_provider = None
+        logger.info(
+            "Preparing response.completed for subtask_id=%s completion_provider=%s",
+            self.subtask_id,
+            provider is not None,
+        )
+        if provider is not None:
+            try:
+                provider_fields = provider()
+                if inspect.isawaitable(provider_fields):
+                    provider_fields = await provider_fields
+                if isinstance(provider_fields, dict):
+                    logger.info(
+                        "Collected response completion fields for subtask_id=%s keys=%s",
+                        self.subtask_id,
+                        sorted(provider_fields.keys()),
+                    )
+                    for key, value in provider_fields.items():
+                        extra_fields.setdefault(key, value)
+                else:
+                    logger.info(
+                        "Response completion fields provider returned non-dict for subtask_id=%s: %s",
+                        self.subtask_id,
+                        type(provider_fields).__name__,
+                    )
+            except Exception:
+                logger.exception("Failed to collect response completion fields")
 
         data = self.builder.response_completed(
             content=content,
@@ -320,6 +367,83 @@ class ResponsesAPIEmitter:
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value, delta_data
         )
 
+    async def tool_argument_start(
+        self,
+        call_id: str,
+        name: str,
+        arguments_summary: Optional[dict] = None,
+        display_name: Optional[str] = None,
+        tool_protocol: str = "function_call",
+        server_label: Optional[str] = None,
+    ) -> Any:
+        """Emit the start of streamed tool argument generation."""
+        if hasattr(self.transport, "start_collecting"):
+            self.transport.start_collecting()
+
+        protocol_type = self._normalize_protocol_type(name, tool_protocol)
+        self._tool_contexts[call_id] = {
+            "protocol_type": protocol_type,
+            "name": name,
+            "arguments": arguments_summary,
+            "server_label": server_label,
+            "arguments_emitted": False,
+        }
+
+        if protocol_type != "function_call":
+            return await self.tool_start(
+                call_id=call_id,
+                name=name,
+                arguments=arguments_summary,
+                display_name=display_name,
+                tool_protocol=tool_protocol,
+                server_label=server_label,
+            )
+
+        added_data = self.builder.function_call_added(call_id, name, display_name)
+        added_data["argument_status"] = "streaming"
+        if arguments_summary is not None:
+            added_data["arguments_summary"] = arguments_summary
+        return await self._emit(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data
+        )
+
+    async def tool_argument_delta(
+        self,
+        call_id: str,
+        arguments_delta: str,
+        arguments_summary: Optional[dict] = None,
+    ) -> Any:
+        """Emit an incremental tool argument delta."""
+        delta_data = self.builder.function_call_arguments_delta(
+            call_id,
+            arguments_delta,
+            arguments_summary=arguments_summary,
+        )
+        return await self._emit(
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value, delta_data
+        )
+
+    async def tool_argument_done(
+        self,
+        call_id: str,
+        arguments: Optional[dict] = None,
+        arguments_summary: Optional[dict] = None,
+    ) -> Any:
+        """Emit completion of streamed tool arguments without tool output."""
+        tool_context = self._tool_contexts.get(call_id)
+        if tool_context is not None:
+            tool_context["arguments"] = arguments_summary or arguments
+            tool_context["arguments_emitted"] = True
+
+        done_data = self.builder.function_call_arguments_done(
+            call_id,
+            arguments,
+            arguments_summary=arguments_summary,
+        )
+        return await self._emit(
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value, done_data
+        )
+
     async def tool_done(
         self,
         call_id: str,
@@ -384,7 +508,7 @@ class ResponsesAPIEmitter:
                     failed_data,
                 )
             else:
-                completed_data = self.builder.mcp_call_completed(call_id)
+                completed_data = self.builder.mcp_call_completed(call_id, output)
                 await self._emit(
                     ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
                     completed_data,
@@ -412,9 +536,10 @@ class ResponsesAPIEmitter:
                 ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
             )
 
-        # Send arguments done (with output for tool result)
+        # Send arguments done. Tool output is carried by output_item.done so the
+        # argument lifecycle stays distinct from the execution result lifecycle.
         done_data = self.builder.function_call_arguments_done(
-            call_id, resolved_arguments, output
+            call_id, resolved_arguments
         )
         await self._emit(
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value, done_data
@@ -422,7 +547,11 @@ class ResponsesAPIEmitter:
 
         # Send function call done
         item_done_data = self.builder.function_call_done(
-            call_id, resolved_name, resolved_arguments
+            call_id,
+            resolved_name,
+            resolved_arguments,
+            output=output,
+            status=status,
         )
         return await self._emit(
             ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
@@ -433,7 +562,7 @@ class ResponsesAPIEmitter:
     # ============================================================
 
     async def reasoning(self, content: str) -> Any:
-        """Emit reasoning/thinking event.
+        """Emit reasoning/thinking text delta event.
 
         Args:
             content: Reasoning content
@@ -441,10 +570,35 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
-        data = self.builder.reasoning(content)
+        data = self.builder.reasoning_delta(content)
         return await self._emit(
-            ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value, data
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value, data
         )
+
+    async def block_created(self, block: dict[str, Any]) -> Any:
+        """Emit a non-text block creation event."""
+        data = self.builder.block_created(block)
+        return await self._emit(ResponsesAPIStreamEvents.BLOCK_CREATED.value, data)
+
+    async def block_updated(self, block_id: str, updates: dict[str, Any]) -> Any:
+        """Emit a non-text block update event."""
+        data = self.builder.block_updated(block_id, updates)
+        return await self._emit(ResponsesAPIStreamEvents.BLOCK_UPDATED.value, data)
+
+    async def status_updated(
+        self,
+        *,
+        phase: str,
+        context_metrics: dict[str, Any],
+        context_compaction: dict[str, Any] | None = None,
+    ) -> Any:
+        """Emit a session-level context status update event."""
+        data = self.builder.status_updated(
+            phase,
+            context_metrics,
+            context_compaction=context_compaction,
+        )
+        return await self._emit(ResponsesAPIStreamEvents.STATUS_UPDATED.value, data)
 
     # ============================================================
     # Buffer Management

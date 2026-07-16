@@ -27,6 +27,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$SCRIPT_DIR"
+
 # Default configuration
 DEFAULT_PORT=3000
 DEFAULT_API_URL="http://localhost:8000"
@@ -168,8 +173,8 @@ if [ ! -f "package.json" ]; then
 fi
 
 if [ ! -d "node_modules" ]; then
-    echo "Installing dependencies with npm..."
-    npm install
+    echo "Installing dependencies with pnpm..."
+    pnpm --dir "$PROJECT_ROOT" install --frozen-lockfile
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error: Failed to install dependencies${NC}"
         exit 1
@@ -195,6 +200,7 @@ if [ ! -f ".env.local" ]; then
 
 # Runtime API Configuration (can be changed without rebuilding)
 # RUNTIME_INTERNAL_API_URL is set via environment variable by this script
+# RUNTIME_PUBLIC_API_URL is set via environment variable by this script
 # RUNTIME_SOCKET_DIRECT_URL is set via environment variable by this script
 
 # Legacy: NEXT_PUBLIC_API_URL is deprecated, use RUNTIME_INTERNAL_API_URL instead
@@ -214,8 +220,9 @@ fi
 
 # Export runtime environment variables (will be read by Next.js at startup)
 export RUNTIME_INTERNAL_API_URL=$API_URL
+export RUNTIME_PUBLIC_API_URL=$API_URL
 export RUNTIME_SOCKET_DIRECT_URL=$API_URL
-echo -e "${GREEN}✓ Using API URL: $API_URL (via RUNTIME_INTERNAL_API_URL)${NC}"
+echo -e "${GREEN}✓ Using API URL: $API_URL (via RUNTIME_INTERNAL_API_URL and RUNTIME_PUBLIC_API_URL)${NC}"
 echo -e "${YELLOW}Note: Using runtime environment variables (no rebuild required)${NC}"
 echo ""
 
@@ -227,5 +234,6 @@ echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo ""
 
-# Start Next.js development server
-PORT=$PORT npm run dev
+# Start Next.js development server. Do not pass --turbopack because Turbopack
+# cannot resolve Next.js reliably with the pnpm workspace symlink layout.
+env -u TURBOPACK pnpm run dev --port "$PORT"

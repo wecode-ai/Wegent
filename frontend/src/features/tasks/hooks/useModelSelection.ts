@@ -22,9 +22,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   isPredefinedModel,
   getModelFromConfig,
+  getModelNamespaceFromConfig,
+  getModelTypeFromConfig,
   getAllowedModelsFromConfig,
 } from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
 import {
   saveGlobalModelPreference,
   getGlobalModelPreference,
@@ -51,6 +54,8 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  modelGroup?: string | null
+  modelSubGroup?: string | null
   config?: Record<string, unknown>
 }
 
@@ -99,8 +104,9 @@ export interface UseModelSelectionReturn {
   showDefaultOption: boolean
   isModelRequired: boolean
   isMixedTeam: boolean
-  compatibleProvider: string | null
+  compatibleProvider: CompatibleProvider[] | null
   hasAdvancedModels: boolean
+  boundDefaultModel: Model | null
 
   // Actions
   selectModel: (model: Model | null) => void
@@ -131,6 +137,9 @@ export function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    namespace: unified.namespace,
+    modelGroup: unified.modelGroup,
+    modelSubGroup: unified.modelSubGroup,
     config: unified.config,
   }
 }
@@ -138,6 +147,21 @@ export function unifiedToModel(unified: UnifiedModel): Model {
 /** Get display text for a model: displayName or name */
 function getModelDisplayTextHelper(model: Model): string {
   return model.displayName || model.name
+}
+
+function modelMatchesConfiguredRef(
+  model: Model,
+  modelName: string,
+  modelType?: ModelTypeEnum,
+  modelNamespace?: string
+): boolean {
+  const nameMatches = model.name === modelName || model.displayName === modelName
+  if (!nameMatches) return false
+  if (modelType && model.type !== modelType) return false
+  if (modelNamespace && modelNamespace !== 'default' && model.namespace !== modelNamespace) {
+    return false
+  }
+  return true
 }
 
 /** Check if all bots in a team have predefined models */
@@ -162,9 +186,7 @@ export function useModelSelection({
   teamId,
   taskId,
   taskModelId,
-  initialForceOverride,
   selectedTeam,
-  disabled = false,
   modelCategoryType = 'llm',
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
@@ -200,7 +222,7 @@ export function useModelSelection({
   }, [selectedTeam])
 
   /** Get compatible provider based on team agent_type */
-  const compatibleProvider = useMemo((): string | null => {
+  const compatibleProvider = useMemo((): CompatibleProvider[] | null => {
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [selectedTeam?.agent_type])
 
@@ -211,23 +233,43 @@ export function useModelSelection({
     return getAllowedModelsFromConfig(firstBot.agent_config as Record<string, unknown>)
   }, [selectedTeam])
 
-  /** Check if there are any advanced models (after provider filtering) */
-  const hasAdvancedModels = useMemo(() => {
-    let result = models
-    if (compatibleProvider) {
-      result = result.filter(model => model.provider === compatibleProvider)
-    }
-    return result.some(model => model.isAdvanced === true)
-  }, [models, compatibleProvider])
+  const boundDefaultModel = useMemo((): Model | null => {
+    const configuredModels = (selectedTeam?.bots ?? [])
+      .map(botInfo => botInfo.bot?.agent_config as Record<string, unknown> | undefined)
+      .filter((config): config is Record<string, unknown> => Boolean(config))
+      .map(config => {
+        const modelName = getModelFromConfig(config)
+        if (!modelName) return null
+        return models.find(model =>
+          modelMatchesConfiguredRef(
+            model,
+            modelName,
+            getModelTypeFromConfig(config),
+            getModelNamespaceFromConfig(config)
+          )
+        )
+      })
+      .filter((model): model is Model => Boolean(model))
 
-  /** Filter models by compatible provider, advanced flag, allowed_models whitelist, and sort by display name */
-  const filteredModels = useMemo(() => {
-    let result = models
-    if (compatibleProvider) {
-      result = result.filter(model => model.provider === compatibleProvider)
+    const uniqueKeys = new Set(configuredModels.map(model => `${model.name}:${model.type || ''}`))
+    if (uniqueKeys.size !== 1) {
+      return null
     }
-    if (!showAdvancedModels) {
-      result = result.filter(model => !model.isAdvanced)
+
+    return configuredModels[0] ?? null
+  }, [selectedTeam?.bots, models])
+
+  /**
+   * Models that are valid for the current team.
+   * This intentionally ignores showAdvancedModels: advanced visibility is a UI filter,
+   * not a compatibility rule for persisted or already-selected models.
+   */
+  const selectableModels = useMemo(() => {
+    let result = models
+    if (compatibleProvider && compatibleProvider.length > 0) {
+      result = result.filter(model =>
+        compatibleProvider.includes(model.provider as CompatibleProvider)
+      )
     }
     // Apply allowed_models whitelist filter if configured
     if (allowedModels.length > 0) {
@@ -239,7 +281,26 @@ export function useModelSelection({
       const displayB = getModelDisplayTextHelper(b).toLowerCase()
       return displayA.localeCompare(displayB)
     })
-  }, [models, compatibleProvider, showAdvancedModels, allowedModels])
+  }, [models, compatibleProvider, allowedModels])
+
+  /** Check if there are any advanced models (after provider filtering) */
+  const hasAdvancedModels = useMemo(() => {
+    return selectableModels.some(model => model.isAdvanced === true)
+  }, [selectableModels])
+
+  const shouldShowOnlyAdvancedModels = useMemo(() => {
+    return selectableModels.length > 0 && selectableModels.every(model => model.isAdvanced === true)
+  }, [selectableModels])
+
+  const effectiveShowAdvancedModels = showAdvancedModels || shouldShowOnlyAdvancedModels
+
+  /** Filter models by advanced visibility for dropdown display */
+  const filteredModels = useMemo(() => {
+    if (effectiveShowAdvancedModels) {
+      return selectableModels
+    }
+    return selectableModels.filter(model => !model.isAdvanced)
+  }, [selectableModels, effectiveShowAdvancedModels])
 
   /** Check if model selection is required */
   const isModelRequired = !showDefaultOption && !selectedModel
@@ -256,14 +317,19 @@ export function useModelSelection({
     if (botConfig) {
       const bindModel = getModelFromConfig(botConfig)
       if (bindModel) {
-        const foundModel = filteredModels.find(
-          m => m.name === bindModel || m.displayName === bindModel
+        const foundModel = selectableModels.find(model =>
+          modelMatchesConfiguredRef(
+            model,
+            bindModel,
+            getModelTypeFromConfig(botConfig),
+            getModelNamespaceFromConfig(botConfig)
+          )
         )
         return foundModel || null
       }
     }
     return null
-  }, [selectedTeam?.bots, filteredModels])
+  }, [selectedTeam?.bots, selectableModels])
 
   // -------------------------------------------------------------------------
   // Model Fetching
@@ -297,17 +363,8 @@ export function useModelSelection({
   }, [fetchModels])
 
   // -------------------------------------------------------------------------
-  // Auto-enable force override when team has predefined models
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    if (showDefaultOption && !disabled) {
-      setForceOverrideState(true)
-    }
-  }, [showDefaultOption, disabled])
-
-  // -------------------------------------------------------------------------
   // Model Selection Logic (Simplified)
-  // Priority: 1. taskModelId (from API) -> 2. team's bind_model -> 3. global preference
+  // Priority: 1. taskModelId (from API) -> 2. global preference -> 3. team's bind_model -> 4. default
   // -------------------------------------------------------------------------
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null
@@ -337,17 +394,17 @@ export function useModelSelection({
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
-          restoredForceOverride = initialForceOverride
+          restoredForceOverride = true
         }
       }
 
       // Priority 2: Use global preference (for new chat only, i.e. no taskId)
-      // NOTE: Must search in filteredModels to ensure model is compatible with current team's agent_type
+      // NOTE: Must search in selectableModels to ensure model is compatible with current team's agent_type
+      // while still allowing persisted advanced models even when they are hidden from the dropdown.
       if (!restoredModel && teamId && !taskId) {
         const preference = getGlobalModelPreference(teamId)
         if (preference && preference.modelName !== DEFAULT_MODEL_NAME) {
-          // Search in filteredModels (not models) to ensure compatibility with team's agent_type
-          const foundModel = filteredModels.find(m => {
+          const foundModel = selectableModels.find(m => {
             if (preference.modelType) {
               return m.name === preference.modelName && m.type === preference.modelType
             }
@@ -355,7 +412,7 @@ export function useModelSelection({
           })
           if (foundModel) {
             restoredModel = foundModel
-            restoredForceOverride = preference.forceOverride
+            restoredForceOverride = true
           }
         }
       }
@@ -377,6 +434,9 @@ export function useModelSelection({
 
       if (restoredModel) {
         setSelectedModel(restoredModel)
+        if (restoredModel.isAdvanced) {
+          setShowAdvancedModelsState(true)
+        }
         if (restoredModel.name === DEFAULT_MODEL_NAME) {
           setForceOverrideState(false)
         } else if (restoredForceOverride !== undefined) {
@@ -399,7 +459,7 @@ export function useModelSelection({
 
     // Case 2: Model list changed - check compatibility
     if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
-      const isStillCompatible = filteredModels.some(m => {
+      const isStillCompatible = selectableModels.some(m => {
         if (selectedModel.type) {
           return m.name === selectedModel.name && m.type === selectedModel.type
         }
@@ -414,11 +474,10 @@ export function useModelSelection({
     selectedTeam?.id,
     showDefaultOption,
     models,
-    filteredModels,
+    selectableModels,
     teamId,
     taskId,
     taskModelId,
-    initialForceOverride,
     compatibleProvider,
   ])
 
@@ -458,6 +517,10 @@ export function useModelSelection({
   /** Select a model directly */
   const selectModel = useCallback((model: Model | null) => {
     setSelectedModel(model)
+    if (model?.isAdvanced) {
+      setShowAdvancedModelsState(true)
+    }
+    setForceOverrideState(Boolean(model && model.name !== DEFAULT_MODEL_NAME))
   }, [])
 
   /** Select model by key (format: "modelName:modelType") */
@@ -466,6 +529,7 @@ export function useModelSelection({
       if (key === DEFAULT_MODEL_NAME) {
         const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
         setSelectedModel(defaultModel)
+        setForceOverrideState(false)
         return
       }
 
@@ -473,6 +537,10 @@ export function useModelSelection({
       const model = filteredModels.find(m => m.name === modelName && m.type === modelType)
       if (model) {
         setSelectedModel(model)
+        if (model.isAdvanced) {
+          setShowAdvancedModelsState(true)
+        }
+        setForceOverrideState(true)
       }
     },
     [filteredModels]
@@ -482,7 +550,11 @@ export function useModelSelection({
   const selectDefaultModel = useCallback(() => {
     const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
     setSelectedModel(defaultModel)
-  }, [])
+    if (boundDefaultModel?.isAdvanced) {
+      setShowAdvancedModelsState(true)
+    }
+    setForceOverrideState(false)
+  }, [boundDefaultModel?.isAdvanced])
 
   /** Set force override flag */
   const setForceOverride = useCallback((value: boolean) => {
@@ -546,20 +618,8 @@ export function useModelSelection({
       }
       return t('common:task_submit.default_model', '默认')
     }
-    const displayText = getModelDisplayTextHelper(selectedModel)
-    if (forceOverride && !isMixedTeam) {
-      return `${displayText}(${t('common:task_submit.override_short', '覆盖')})`
-    }
-    return displayText
-  }, [
-    selectedModel,
-    isLoading,
-    isModelRequired,
-    forceOverride,
-    isMixedTeam,
-    getBoundModelDisplayNames,
-    t,
-  ])
+    return getModelDisplayTextHelper(selectedModel)
+  }, [selectedModel, isLoading, isModelRequired, getBoundModelDisplayNames, t])
 
   // -------------------------------------------------------------------------
   // Return
@@ -579,13 +639,14 @@ export function useModelSelection({
     isMixedTeam,
     compatibleProvider,
     hasAdvancedModels,
+    boundDefaultModel,
 
     // Actions
     selectModel,
     selectModelByKey,
     selectDefaultModel,
     setForceOverride,
-    showAdvancedModels,
+    showAdvancedModels: effectiveShowAdvancedModels,
     setShowAdvancedModels,
     refreshModels: fetchModels,
 

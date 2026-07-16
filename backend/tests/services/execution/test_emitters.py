@@ -42,6 +42,28 @@ class TestWebSocketResultEmitter:
             assert call_kwargs["shell_type"] == "Chat"
 
     @pytest.mark.asyncio
+    async def test_emit_start_forwards_bot_name(self):
+        """START events should expose the current bot name to the frontend."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
+            await emitter.emit_start(
+                task_id=1,
+                subtask_id=1,
+                message_id=100,
+                data={"shell_type": "ClaudeCode", "bot_name": "pipeline-bot"},
+            )
+
+            call_kwargs = mock_ws.emit_chat_start.call_args[1]
+            assert call_kwargs["bot_name"] == "pipeline-bot"
+
+    @pytest.mark.asyncio
     async def test_emit_chunk(self):
         """Test emitting chunk event."""
         from app.services.execution.emitters import WebSocketResultEmitter
@@ -53,7 +75,9 @@ class TestWebSocketResultEmitter:
             mock_get.return_value = mock_ws
 
             emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
-            await emitter.emit_chunk(task_id=1, subtask_id=1, content="Hello", offset=0)
+            await emitter.emit_chunk(
+                task_id=1, subtask_id=1, content="Hello", offset=0, message_id=100
+            )
 
             mock_ws.emit_chat_chunk.assert_called_once()
             call_kwargs = mock_ws.emit_chat_chunk.call_args[1]
@@ -61,6 +85,7 @@ class TestWebSocketResultEmitter:
             assert call_kwargs["subtask_id"] == 1
             assert call_kwargs["content"] == "Hello"
             assert call_kwargs["offset"] == 0
+            assert call_kwargs["message_id"] == 100
 
     @pytest.mark.asyncio
     async def test_emit_done(self):
@@ -140,6 +165,232 @@ class TestWebSocketResultEmitter:
             assert call_kwargs["result"] == {
                 "reasoning_chunk": "Let me reason about this..."
             }
+
+    @pytest.mark.asyncio
+    async def test_tool_result_emits_interactive_form_render_payload(self):
+        """Interactive form tool results should update the real tool block with render payload."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
+            event = ExecutionEvent.create(
+                EventType.TOOL_RESULT,
+                task_id=10,
+                subtask_id=20,
+                tool_name="interactive_form_question",
+                tool_use_id="tool-real-1",
+                tool_input={
+                    "questions": [
+                        {
+                            "id": "genre",
+                            "question": "Genre?",
+                            "input_type": "choice",
+                            "options": [{"label": "Fantasy", "value": "fantasy"}],
+                        }
+                    ],
+                },
+                tool_output={
+                    "__deferred_user_input__": True,
+                    "success": True,
+                    "status": "waiting_for_user_response",
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_block_updated.assert_awaited_once()
+            call_kwargs = mock_ws.emit_block_updated.call_args.kwargs
+            assert call_kwargs["block_id"] == "tool-real-1"
+            assert call_kwargs["render_payload"] == {
+                "type": "interactive_form_question",
+                "task_id": 10,
+                "subtask_id": 20,
+                "questions": [
+                    {
+                        "id": "genre",
+                        "question": "Genre?",
+                        "input_type": "choice",
+                        "options": [
+                            {
+                                "label": "Fantasy",
+                                "value": "fantasy",
+                                "recommended": False,
+                            }
+                        ],
+                        "multi_select": False,
+                        "required": True,
+                        "default": None,
+                        "placeholder": None,
+                    }
+                ],
+            }
+            assert "ask_id" not in call_kwargs["render_payload"]
+
+    @pytest.mark.asyncio
+    async def test_emit_status_updated_event(self) -> None:
+        """Test emitting STATUS_UPDATED sends websocket event and caches snapshot."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch(
+                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
+                new_callable=AsyncMock,
+            ) as mock_save_context_metrics,
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
+            event = ExecutionEvent.create(
+                EventType.STATUS_UPDATED,
+                task_id=1,
+                subtask_id=2,
+                data={
+                    "phase": "after_tool_end",
+                    "context_metrics": {
+                        "remaining_percent": 38,
+                        "is_over_trigger": False,
+                    },
+                    "context_compaction": {
+                        "type": "summary_compact",
+                        "status": "started",
+                    },
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_save_context_metrics.assert_awaited_once_with(
+                2,
+                {
+                    "task_id": 1,
+                    "subtask_id": 2,
+                    "phase": "after_tool_end",
+                    "context_metrics": {
+                        "remaining_percent": 38,
+                        "is_over_trigger": False,
+                    },
+                    "context_compaction": {
+                        "type": "summary_compact",
+                        "status": "started",
+                    },
+                },
+            )
+            mock_ws.emit_chat_status_updated.assert_awaited_once_with(
+                task_id=1,
+                subtask_id=2,
+                phase="after_tool_end",
+                context_metrics={
+                    "remaining_percent": 38,
+                    "is_over_trigger": False,
+                },
+                context_compaction={
+                    "type": "summary_compact",
+                    "status": "started",
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_emit_status_updated_event_ignores_cache_failure(self) -> None:
+        """Status updates should still be emitted when cache persistence fails."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch(
+                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("redis down"),
+            ),
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
+            event = ExecutionEvent.create(
+                EventType.STATUS_UPDATED,
+                task_id=1,
+                subtask_id=2,
+                data={
+                    "phase": "after_tool_end",
+                    "context_metrics": {"remaining_percent": 38},
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_chat_status_updated.assert_awaited_once_with(
+                task_id=1,
+                subtask_id=2,
+                phase="after_tool_end",
+                context_metrics={"remaining_percent": 38},
+                context_compaction=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_direct_block_updated_emits_and_persists_block_update(self):
+        """Direct block updates should reach the websocket and update stored blocks."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch("app.services.chat.storage.session_manager") as mock_session,
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+            mock_session.get_blocks = AsyncMock(
+                return_value=[
+                    {
+                        "id": "codex-commentary-1",
+                        "type": "thinking",
+                        "content": "",
+                        "status": "streaming",
+                    }
+                ]
+            )
+            mock_session.add_block = AsyncMock()
+
+            emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
+            event = ExecutionEvent.create(
+                EventType.BLOCK_UPDATED,
+                task_id=10,
+                subtask_id=20,
+                data={
+                    "block_id": "codex-commentary-1",
+                    "updates": {"content": "Working", "status": "done"},
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_block_updated.assert_awaited_once_with(
+                task_id=10,
+                subtask_id=20,
+                block_id="codex-commentary-1",
+                content="Working",
+                status="done",
+            )
+            mock_session.add_block.assert_awaited_once_with(
+                20,
+                {
+                    "id": "codex-commentary-1",
+                    "type": "thinking",
+                    "content": "Working",
+                    "status": "done",
+                },
+            )
 
 
 class TestSSEResultEmitter:

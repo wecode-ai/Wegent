@@ -17,7 +17,7 @@
 
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import {
   LayoutList,
   User,
@@ -32,6 +32,7 @@ import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
+import type { KnowledgeSourceView } from '@/features/knowledge/knowledgeSourceViewRegistry'
 import type { GroupType } from './GroupItem'
 
 export interface KnowledgeGroup {
@@ -64,6 +65,8 @@ export interface NavigationSectionProps {
   isGroupsSelected: boolean
   /** Whether "DingTalk" is selected */
   isDingtalkSelected: boolean
+  /** Currently selected external source view ID */
+  selectedSourceViewId: string | null
   /** Whether section is expanded */
   isExpanded: boolean
   /** Toggle expand/collapse */
@@ -76,12 +79,23 @@ export interface NavigationSectionProps {
   onSelectGroups: () => void
   /** Select "DingTalk" docs */
   onSelectDingtalk: () => void
+  /** Select an external source view */
+  onSelectSourceView: (sourceViewId: string) => void
+  /** Registered external source views */
+  sourceViews: KnowledgeSourceView[]
   /** Total KB count */
   totalKbCount: number
   /** DingTalk synced doc count */
   dingtalkDocCount: number
   /** Whether DingTalk MCP is configured */
   isDingtalkConfigured: boolean
+  /** Summary counts from backend */
+  summary?: {
+    total_count: number
+    personal_count: number
+    group_count: number
+    organization_count: number
+  }
 }
 
 /**
@@ -324,18 +338,58 @@ export function NavigationSection({
   isAllSelected,
   isGroupsSelected,
   isDingtalkSelected,
-  isExpanded: _isExpanded,
-  onToggle: _onToggle,
+  selectedSourceViewId,
+  isExpanded,
+  onToggle,
   onSelectAll,
   onSelectGroup,
   onSelectGroups,
   onSelectDingtalk,
+  onSelectSourceView,
+  sourceViews,
   totalKbCount,
   dingtalkDocCount,
   isDingtalkConfigured: _isDingtalkConfigured,
+  summary,
 }: NavigationSectionProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
+  const [sourceViewCounts, setSourceViewCounts] = useState<Map<string, number>>(new Map())
+
+  useEffect(() => {
+    const countableViews = sourceViews.filter(sourceView => sourceView.getKnowledgeBaseCount)
+    if (countableViews.length === 0) {
+      setSourceViewCounts(new Map())
+      return
+    }
+
+    let cancelled = false
+    countableViews.forEach(sourceView => {
+      sourceView.getKnowledgeBaseCount!()
+        .then(count => {
+          if (cancelled) return
+          setSourceViewCounts(prev => {
+            if (prev.get(sourceView.id) === count) return prev
+            const next = new Map(prev)
+            next.set(sourceView.id, count)
+            return next
+          })
+        })
+        .catch(() => {
+          if (cancelled) return
+          setSourceViewCounts(prev => {
+            if (prev.get(sourceView.id) === 0) return prev
+            const next = new Map(prev)
+            next.set(sourceView.id, 0)
+            return next
+          })
+        })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [sourceViews])
 
   // Separate groups by type
   const personalGroup = groups.find(g => g.type === 'personal')
@@ -375,7 +429,8 @@ export function NavigationSection({
   }, [])
 
   // Calculate total count for team groups
-  const teamGroupsTotalCount = teamGroups.reduce((sum, g) => sum + g.kbCount, 0)
+  const teamGroupsTotalCount =
+    summary?.group_count ?? teamGroups.reduce((sum, g) => sum + g.kbCount, 0)
 
   // Handle settings click for groups
   const handleGroupsSettingsClick = useCallback(() => {
@@ -404,11 +459,11 @@ export function NavigationSection({
         testId="nav-all-item"
       />
 
-      {/* Personal (个人) */}
+      {/* Personal Knowledge */}
       {personalGroup && (
         <NavItem
           icon={<User className="w-4 h-4" />}
-          label={t('document.sidebar.personal', '个人')}
+          label={t('document.sidebar.personal', '个人知识')}
           count={personalGroup.kbCount}
           isSelected={selectedGroupId === personalGroup.id}
           onClick={() => onSelectGroup(personalGroup.id)}
@@ -416,35 +471,16 @@ export function NavigationSection({
         />
       )}
 
-      {/* Organization (公司) */}
-      {organizationGroup && (
-        <NavItem
-          icon={<Building2 className="w-4 h-4" />}
-          label={t('document.sidebar.organization', '公司')}
-          count={organizationGroup.kbCount}
-          isSelected={selectedGroupId === organizationGroup.id}
-          onClick={() => onSelectGroup(organizationGroup.id)}
-          testId="nav-organization-item"
-        />
-      )}
-
-      {/* DingTalk Docs (钉钉文档) */}
-      <NavItem
-        icon={<FileText className="w-4 h-4" />}
-        label={t('document.sidebar.dingtalk', '钉钉文档')}
-        count={dingtalkDocCount}
-        isSelected={isDingtalkSelected}
-        onClick={onSelectDingtalk}
-        testId="nav-dingtalk-item"
-      />
-
-      {/* Groups (组) - with tree structure, always expanded without collapse arrow */}
+      {/* Group Knowledge - default collapsed, click to expand/collapse */}
       <NavItem
         icon={<Users className="w-4 h-4" />}
-        label={t('document.sidebar.groups', '组')}
+        label={t('document.sidebar.groups', '组知识')}
         count={teamGroupsTotalCount}
         isSelected={isGroupsSelected}
-        onClick={onSelectGroups}
+        onClick={() => {
+          onSelectGroups()
+          onToggle()
+        }}
         testId="nav-groups-item"
         actionButton={
           <span
@@ -466,7 +502,7 @@ export function NavigationSection({
         }
       >
         {/* Sub-groups tree - hierarchical structure */}
-        {groupTree.length > 0 ? (
+        {isExpanded && groupTree.length > 0 ? (
           <div className="space-y-0.5">
             {groupTree.map(node => (
               <TreeGroupItem
@@ -480,12 +516,46 @@ export function NavigationSection({
               />
             ))}
           </div>
-        ) : (
+        ) : isExpanded ? (
           <div className="px-3 py-2 text-xs text-text-muted">
             {t('document.sidebar.noGroups', '暂无分组')}
           </div>
-        )}
+        ) : null}
       </NavItem>
+
+      {/* Company Knowledge */}
+      {organizationGroup && (
+        <NavItem
+          icon={<Building2 className="w-4 h-4" />}
+          label={t('document.sidebar.organization', '公司知识')}
+          count={organizationGroup.kbCount}
+          isSelected={selectedGroupId === organizationGroup.id}
+          onClick={() => onSelectGroup(organizationGroup.id)}
+          testId="nav-organization-item"
+        />
+      )}
+
+      {/* DingTalk Docs (钉钉文档) */}
+      <NavItem
+        icon={<FileText className="w-4 h-4" />}
+        label={t('document.sidebar.dingtalk', '钉钉文档')}
+        count={dingtalkDocCount}
+        isSelected={isDingtalkSelected}
+        onClick={onSelectDingtalk}
+        testId="nav-dingtalk-item"
+      />
+
+      {sourceViews.map(sourceView => (
+        <NavItem
+          key={sourceView.id}
+          icon={sourceView.icon ?? <FileText className="w-4 h-4" />}
+          label={sourceView.label}
+          count={sourceViewCounts.get(sourceView.id) ?? 0}
+          isSelected={selectedSourceViewId === sourceView.id}
+          onClick={() => onSelectSourceView(sourceView.id)}
+          testId={`nav-source-view-${sourceView.id}`}
+        />
+      ))}
     </div>
   )
 }

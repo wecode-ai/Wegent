@@ -77,7 +77,7 @@ async def retrieve_documents(
                 "namespace": "default"
             },
             "top_k": 5,
-            "score_threshold": 0.7,
+            "score_threshold": 0.5,
             "retrieval_mode": "hybrid",
             "hybrid_weights": {
                 "vector_weight": 0.7,
@@ -92,6 +92,7 @@ async def retrieve_documents(
             db=db,
             knowledge_base_id=knowledge_base_id,
             query=request.query,
+            search_hints=request.search_hints,
             max_results=request.top_k,
             retriever_name=request.retriever_ref.name,
             retriever_namespace=request.retriever_ref.namespace,

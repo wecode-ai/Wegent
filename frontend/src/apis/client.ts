@@ -22,6 +22,10 @@ export class ApiError extends Error {
   }
 }
 
+interface RequestOptions {
+  redirectOnUnauthorized?: boolean
+}
+
 // HTTP Client with interceptors
 class APIClient {
   private baseURL: string
@@ -56,7 +60,38 @@ class APIClient {
     return getApiBaseUrl()
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private createApiError(errorText: string, status: number): ApiError {
+    let errorMsg = errorText
+    let errorCode: string | number | undefined
+    try {
+      // Try to parse as JSON and extract detail field
+      const json = JSON.parse(errorText)
+      if (json && typeof json.detail === 'string') {
+        errorMsg = json.detail
+      } else if (json && typeof json.detail === 'object' && json.detail !== null) {
+        // StructuredValidationException: detail is an object with error_code and extra fields.
+        // Use error_code as message fallback - callers should prefer errorCode for i18n lookup.
+        errorMsg = json.detail.error_code || JSON.stringify(json.detail)
+      }
+      if (json && (typeof json.error_code === 'string' || typeof json.error_code === 'number')) {
+        errorCode = json.error_code
+      } else if (
+        json?.detail &&
+        (typeof json.detail.error_code === 'string' || typeof json.detail.error_code === 'number')
+      ) {
+        errorCode = json.detail.error_code
+      }
+    } catch {
+      // Not JSON, use original text directly
+    }
+    return new ApiError(errorMsg, status, errorCode)
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    requestOptions: RequestOptions = {}
+  ): Promise<T> {
     const url = `${this.getBaseURL()}${endpoint}`
     const token = getToken()
 
@@ -73,6 +108,10 @@ class APIClient {
       const response = await fetch(url, config)
       // Handle authentication errors
       if (response.status === 401) {
+        if (requestOptions.redirectOnUnauthorized === false) {
+          const errorText = await response.text()
+          throw this.createApiError(errorText || 'Authentication failed', response.status)
+        }
         removeToken()
         if (typeof window !== 'undefined') {
           const loginPath = paths.auth.login.getHref()
@@ -96,25 +135,7 @@ class APIClient {
 
       if (!response.ok) {
         const errorText = await response.text()
-        let errorMsg = errorText
-        let errorCode: string | number | undefined
-        try {
-          // Try to parse as JSON and extract detail field
-          const json = JSON.parse(errorText)
-          if (json && typeof json.detail === 'string') {
-            errorMsg = json.detail
-          }
-          if (
-            json &&
-            (typeof json.error_code === 'string' || typeof json.error_code === 'number')
-          ) {
-            errorCode = json.error_code
-          }
-        } catch {
-          // Not JSON, use original text directly
-        }
-        // Throw ApiError with status code for better error handling
-        throw new ApiError(errorMsg, response.status, errorCode)
+        throw this.createApiError(errorText, response.status)
       }
 
       // Handle 204 No Content responses
@@ -129,8 +150,8 @@ class APIClient {
     }
   }
 
-  async get<T>(endpoint: string): Promise<T> {
-    return this.request<T>(endpoint, { method: 'GET' })
+  async get<T>(endpoint: string, requestOptions?: RequestOptions): Promise<T> {
+    return this.request<T>(endpoint, { method: 'GET' }, requestOptions)
   }
 
   async post<T>(endpoint: string, data?: unknown): Promise<T> {

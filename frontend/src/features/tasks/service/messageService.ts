@@ -12,7 +12,7 @@ import { taskApis, CreateTaskRequest } from '@/apis/tasks'
  * 2. team.bots[0].bot.shell_type === 'Chat' (fallback for task detail teams)
  *
  * NOTE: Chat Shell now uses WebSocket for streaming instead of SSE.
- * The streaming is handled by ChatStreamContext, not this service.
+ * The streaming is handled by TaskSessionContext, not this service.
  *
  * @param team - Team to check
  * @returns true if the team uses Chat Shell
@@ -47,7 +47,7 @@ export function canUseChatContexts(taskType: TaskType | undefined, team: Team | 
     return true
   }
 
-  return isChatShell(team)
+  return isChatShell(team) || isClaudeCode(team)
 }
 
 /**
@@ -77,6 +77,16 @@ export function isClaudeCode(team: Team | null): boolean {
 }
 
 /**
+ * Check whether the model selector should stay enabled after a task has messages.
+ *
+ * Chat Shell already supports per-message model switching. ClaudeCode receives the selected
+ * model through the existing task override path and executor model configuration.
+ */
+export function canSwitchModelAfterMessages(team: Team | null): boolean {
+  return isChatShell(team) || isClaudeCode(team)
+}
+
+/**
  * Check if a task uses Chat Shell type based on team information.
  * Now relies solely on team.agent_type since subtasks are managed by TaskStateMachine.
  *
@@ -101,7 +111,7 @@ export interface SendMessageResult {
 /**
  * Send message for non-Chat Shell teams.
  *
- * NOTE: For Chat Shell teams, use ChatStreamContext.startStream() instead.
+ * NOTE: For Chat Shell teams, use TaskSessionContext.startStream() instead.
  * This function is only for non-streaming task creation (e.g., code tasks, Dify, etc.)
  *
  * @param params - Message parameters
@@ -162,7 +172,7 @@ export async function sendMessage(params: {
     user_id: 0,
     user_name: '',
     model_id: model_id,
-    force_override_bot_model: force_override_bot_model,
+    force_override_bot_model: Boolean(model_id) || force_override_bot_model,
   }
 
   try {

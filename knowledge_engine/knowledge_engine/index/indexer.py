@@ -15,11 +15,11 @@ from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
 )
-from knowledge_engine.parsers.xmind import parse_xmind_to_markdown
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
 from shared.telemetry.decorators import add_span_event
+from shared.utils.xmind_parser import parse_xmind_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -257,10 +257,17 @@ class DocumentIndexer:
             )
             current_position += text_length
 
+        qa_pair_count = sum(
+            1
+            for node in nodes
+            if getattr(node, "metadata", {}).get("node_role") == "qa_pair"
+        )
+
         return {
             "items": items,
             "total_count": len(items),
             "splitter_type": self.splitter_config.chunk_strategy,
             "splitter_subtype": parser_subtype,
+            "qa_pair_count": qa_pair_count if parser_subtype == "qa_pair" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

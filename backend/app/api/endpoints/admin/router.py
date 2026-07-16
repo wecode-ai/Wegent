@@ -17,11 +17,13 @@ from app.api.endpoints.admin import (
     public_retrievers,
     public_shells,
     public_teams,
+    runtime_cleanup,
     stats,
     subscription_monitor,
     system_config,
     tasks,
     templates,
+    token_issuers,
     users,
 )
 
@@ -37,6 +39,7 @@ router.include_router(public_shells.router, tags=["admin-public-shells"])
 router.include_router(public_retrievers.router, tags=["admin-public-retrievers"])
 router.include_router(system_config.router, tags=["admin-system-config"])
 router.include_router(api_keys.router, tags=["admin-api-keys"])
+router.include_router(token_issuers.router, tags=["admin-token-issuers"])
 router.include_router(kind_management.router, tags=["admin-kind-management"])
 router.include_router(stats.router, tags=["admin-stats"])
 router.include_router(subscription_monitor.router, tags=["admin-subscription-monitor"])
@@ -44,3 +47,4 @@ router.include_router(tasks.router, tags=["admin-tasks"])
 router.include_router(im_channels.router, tags=["admin-im-channels"])
 router.include_router(device_monitor.router, tags=["admin-device-monitor"])
 router.include_router(templates.router, tags=["admin-templates"])
+router.include_router(runtime_cleanup.router, tags=["admin-runtime-cleanup"])

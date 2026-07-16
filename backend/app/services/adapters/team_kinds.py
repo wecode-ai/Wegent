@@ -18,21 +18,26 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
-from sqlalchemy import literal_column, union_all
+from sqlalchemy import and_, func, literal, literal_column, union_all
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
+from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
+from app.services.adapters.pipeline_context import normalize_context_passing
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
+from app.stores.tasks import task_store
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 
@@ -41,11 +46,48 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     Team service class using kinds table
     """
 
+    ACCESS_SOURCE_NATIVE = "native"
+    ACCESS_SOURCE_USER_SHARE = "user_share"
+    ACCESS_SOURCE_NAMESPACE_AUTHORIZATION = "namespace_authorization"
+    ACCESS_RANK_NATIVE = 0
+    ACCESS_RANK_USER_SHARE = 1
+    ACCESS_RANK_NAMESPACE_AUTHORIZATION = 2
+
     # List of sensitive keys that should be decrypted when reading
     SENSITIVE_CONFIG_KEYS = [
         "DIFY_API_KEY",
         # Add more sensitive keys here as needed
     ]
+
+    def _get_accessible_authorization_namespace_ids(
+        self, db: Session, user_id: int, namespaces: list[str]
+    ) -> list[int]:
+        """Return namespace ids that can activate Team namespace grants."""
+        group_namespaces = [
+            namespace for namespace in namespaces if namespace != "default"
+        ]
+        if not group_namespaces:
+            return []
+
+        from app.services.group_permission import get_effective_role_in_group
+
+        accessible_namespaces = []
+        for namespace in group_namespaces:
+            role = get_effective_role_in_group(db, user_id, namespace)
+            if role is not None and has_permission(role, BaseRole.Reporter.value):
+                accessible_namespaces.append(namespace)
+        if not accessible_namespaces:
+            return []
+
+        return [
+            row.id
+            for row in db.query(Namespace.id)
+            .filter(
+                Namespace.name.in_(accessible_namespaces),
+                Namespace.is_active.is_(True),
+            )
+            .all()
+        ]
 
     def _decrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -143,6 +185,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 if hasattr(bot_info, "requireConfirmation")
                 else bot_info.get("requireConfirmation", False)
             )
+            context_passing = (
+                bot_info.contextPassing
+                if hasattr(bot_info, "contextPassing")
+                else bot_info.get("contextPassing", "none")
+            )
 
             # Get bot from kinds table
             bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
@@ -157,6 +204,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 "prompt": bot_prompt or "",
                 "role": role or "",
                 "requireConfirmation": require_confirmation or False,
+                "contextPassing": normalize_context_passing(context_passing),
             }
             members.append(member)
 
@@ -187,6 +235,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = getattr(obj_in, "requires_workspace", None)
         if requires_workspace is not None:
             spec["requiresWorkspace"] = requires_workspace
+
+        quick_phrases = getattr(obj_in, "quick_phrases", None)
+        if quick_phrases is not None:
+            spec["quick_phrases"] = normalize_quick_phrases(quick_phrases)
 
         metadata = {"name": obj_in.name, "namespace": namespace}
         display_name = getattr(obj_in, "displayName", None)
@@ -268,6 +320,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         queries = []
         group_namespaces = [ns for ns in namespaces_to_query if ns != "default"]
         has_default = "default" in namespaces_to_query
+        team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
+        approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
+        authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
+            db, user_id, group_namespaces
+        )
 
         if has_default:
             # Query for user's own teams in default namespace
@@ -281,6 +338,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.updated_at.label("team_updated_at"),
                 literal_column("0").label("share_status"),  # Default 0 for own teams
                 literal_column(str(user_id)).label("context_user_id"),
+                literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Team",
@@ -305,15 +364,22 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         Kind.user_id.label(
                             "context_user_id"
                         ),  # Use team owner, not inviter
+                        literal(self.ACCESS_SOURCE_USER_SHARE).label("access_source"),
+                        literal(self.ACCESS_RANK_USER_SHARE).label("access_rank"),
                     )
                     .join(
                         ResourceMember,
                         (ResourceMember.resource_id == Kind.id)
-                        & (ResourceMember.resource_type == ResourceType.TEAM),
+                        & (
+                            ResourceMember.resource_type.in_(
+                                team_resource_type_variants
+                            )
+                        ),
                     )
                     .filter(
-                        ResourceMember.user_id == user_id,
-                        ResourceMember.status == MemberStatus.APPROVED,
+                        ResourceMember.entity_type == "user",
+                        ResourceMember.entity_id == str(user_id),
+                        ResourceMember.status.in_(approved_status_variants),
                         Kind.is_active == True,
                         Kind.kind == "Team",
                     )
@@ -333,6 +399,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         "share_status"
                     ),  # 0 for public teams (system-owned)
                     literal_column("0").label("context_user_id"),
+                    literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                    literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
                 ).filter(
                     Kind.user_id == 0,
                     Kind.kind == "Team",
@@ -354,6 +422,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.updated_at.label("team_updated_at"),
                 literal_column("0").label("share_status"),
                 Kind.user_id.label("context_user_id"),
+                literal(self.ACCESS_SOURCE_NATIVE).label("access_source"),
+                literal(self.ACCESS_RANK_NATIVE).label("access_rank"),
             ).filter(
                 Kind.kind == "Team",
                 Kind.namespace.in_(
@@ -362,6 +432,43 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.is_active == True,
             )
             queries.append(group_teams_query)
+
+        if authorized_namespace_ids:
+            authorized_namespace_entity_ids = [
+                str(ns_id) for ns_id in authorized_namespace_ids
+            ]
+            authorized_member_exists = (
+                db.query(ResourceMember.id)
+                .filter(
+                    ResourceMember.resource_id == Kind.id,
+                    ResourceMember.resource_type.in_(team_resource_type_variants),
+                    ResourceMember.entity_type == "namespace",
+                    ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
+                    ResourceMember.status.in_(approved_status_variants),
+                )
+                .exists()
+            )
+            authorized_team_query = db.query(
+                Kind.id.label("team_id"),
+                Kind.user_id.label("team_user_id"),
+                Kind.name.label("team_name"),
+                Kind.namespace.label("team_namespace"),
+                Kind.json.label("team_json"),
+                Kind.created_at.label("team_created_at"),
+                Kind.updated_at.label("team_updated_at"),
+                literal_column("2").label("share_status"),
+                Kind.user_id.label("context_user_id"),
+                literal(self.ACCESS_SOURCE_NAMESPACE_AUTHORIZATION).label(
+                    "access_source"
+                ),
+                literal(self.ACCESS_RANK_NAMESPACE_AUTHORIZATION).label("access_rank"),
+            ).filter(
+                authorized_member_exists,
+                Kind.kind == "Team",
+                Kind.is_active.is_(True),
+                ~Kind.namespace.in_(group_namespaces),
+            )
+            queries.append(authorized_team_query)
 
         # Handle empty queries case
         if not queries:
@@ -373,9 +480,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             combined_query = queries[0].subquery()
         else:
             combined_query = union_all(*queries).alias("combined_teams")
-
-        # Create final query with pagination
-        final_query = (
+        ranked_query = (
             db.query(
                 combined_query.c.team_id,
                 combined_query.c.team_user_id,
@@ -386,9 +491,37 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 combined_query.c.team_updated_at,
                 combined_query.c.share_status,
                 combined_query.c.context_user_id,
+                combined_query.c.access_source,
+                func.row_number()
+                .over(
+                    partition_by=combined_query.c.team_id,
+                    order_by=(
+                        combined_query.c.access_rank.asc(),
+                        combined_query.c.team_updated_at.desc(),
+                        combined_query.c.team_id.desc(),
+                    ),
+                )
+                .label("access_row_number"),
             )
+        ).subquery()
+
+        # Create final query with pagination
+        final_query = (
+            db.query(
+                ranked_query.c.team_id,
+                ranked_query.c.team_user_id,
+                ranked_query.c.team_name,
+                ranked_query.c.team_namespace,
+                ranked_query.c.team_json,
+                ranked_query.c.team_created_at,
+                ranked_query.c.team_updated_at,
+                ranked_query.c.share_status,
+                ranked_query.c.context_user_id,
+                ranked_query.c.access_source,
+            )
+            .filter(ranked_query.c.access_row_number == 1)
             .order_by(
-                combined_query.c.team_updated_at.desc(), combined_query.c.team_id.desc()
+                ranked_query.c.team_updated_at.desc(), ranked_query.c.team_id.desc()
             )
             .offset(skip)
             .limit(limit)
@@ -447,7 +580,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     )
 
         # Batch fetch all bots
-        from sqlalchemy import and_, or_
+        from sqlalchemy import or_
 
         bots_cache = {}  # (user_id, name, namespace) -> Kind for personal bots
         group_bots_cache = {}  # (name, namespace) -> Kind for group bots
@@ -676,6 +809,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             team_dict = self._convert_to_team_dict_with_cache(
                 temp_team, db, team_data.context_user_id, preloaded_cache
             )
+            team_dict["access_source"] = team_data.access_source
 
             # For own teams, check if share_status is set in metadata.labels
             if team_data.share_status == 0:  # This is an own team
@@ -725,31 +859,28 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Get detailed team information including related user and bots
         """
-        # Check if user has access to this team (own or shared)
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        # Check if user has access to this team (own, shared, or entity)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource(db, team_id, user_id)
 
         if not team:
-            raise HTTPException(status_code=404, detail="Team not found")
+            # Fallback: check group namespace permission for group teams
+            team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+            if not team:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if team.namespace != "default":
+                from app.schemas.namespace import GroupRole
+                from app.services.group_permission import check_group_permission
 
-        # Check if user is the owner or has shared access
+                if not check_group_permission(
+                    db, user_id, team.namespace, GroupRole.Reporter
+                ):
+                    raise HTTPException(status_code=404, detail="Team not found")
+            else:
+                raise HTTPException(status_code=404, detail="Team not found")
+
         is_author = team.user_id == user_id
-
-        if not is_author:
-            # Check if user has shared access via ResourceMember
-            shared_member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
-                    ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .first()
-            )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
 
         # Get team dict using the team owner's context (for loading related resources)
         team_owner_id = team.user_id
@@ -896,6 +1027,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     if hasattr(bot_info, "requireConfirmation")
                     else bot_info.get("requireConfirmation", False)
                 )
+                context_passing = (
+                    bot_info.contextPassing
+                    if hasattr(bot_info, "contextPassing")
+                    else bot_info.get("contextPassing", "none")
+                )
 
                 # Get bot from kinds table
                 bot = kindReader.get_by_id(db, KindType.BOT, bot_id)
@@ -910,6 +1046,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     prompt=bot_prompt or "",
                     role=role or "",
                     requireConfirmation=require_confirmation or False,
+                    contextPassing=normalize_context_passing(context_passing),
                 )
                 members.append(member)
             team_crd.spec.members = members
@@ -937,6 +1074,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Handle requires_workspace update
         if "requires_workspace" in update_data:
             team_crd.spec.requiresWorkspace = update_data["requires_workspace"]
+
+        if "quick_phrases" in update_data:
+            team_crd.spec.quick_phrases = normalize_quick_phrases(
+                update_data["quick_phrases"]
+            )
 
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
@@ -1020,7 +1162,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()
@@ -1100,12 +1243,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         else:
             raise ValueError(f"Invalid scope: {scope}")
 
-        total_count = 0
+        count_queries = []
+        team_resource_type_variants = [ResourceType.TEAM.value, ResourceType.TEAM.name]
+        approved_status_variants = [MemberStatus.APPROVED.value, "APPROVED"]
 
         for namespace in namespaces_to_count:
             if namespace == "default":
-                # Count user's own teams
-                own_teams_count = (
+                count_queries.append(
                     db.query(Kind)
                     .filter(
                         Kind.user_id == user_id,
@@ -1113,42 +1257,94 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         Kind.namespace == "default",
                         Kind.is_active == True,
                     )
-                    .count()
+                    .with_entities(Kind.id.label("team_id"))
                 )
-                total_count += own_teams_count
 
-                # Count shared teams (for personal and all scopes) using ResourceMember
                 if scope in ("personal", "all"):
-                    shared_teams_count = (
+                    count_queries.append(
                         db.query(ResourceMember)
                         .join(
                             Kind,
                             (ResourceMember.resource_id == Kind.id)
-                            & (ResourceMember.resource_type == ResourceType.TEAM),
+                            & (
+                                ResourceMember.resource_type.in_(
+                                    team_resource_type_variants
+                                )
+                            ),
                         )
                         .filter(
-                            ResourceMember.user_id == user_id,
-                            ResourceMember.status == MemberStatus.APPROVED,
+                            ResourceMember.entity_type == "user",
+                            ResourceMember.entity_id == str(user_id),
+                            ResourceMember.status.in_(approved_status_variants),
                             Kind.is_active == True,
                             Kind.kind == "Team",
                         )
-                        .count()
+                        .with_entities(Kind.id.label("team_id"))
                     )
-                    total_count += shared_teams_count
+
+                    count_queries.append(
+                        db.query(Kind)
+                        .filter(
+                            Kind.user_id == 0,
+                            Kind.kind == "Team",
+                            Kind.namespace == "default",
+                            Kind.is_active == True,
+                        )
+                        .with_entities(Kind.id.label("team_id"))
+                    )
             else:
-                # Count group teams
-                group_teams_count = (
+                count_queries.append(
                     db.query(Kind)
                     .filter(
                         Kind.kind == "Team",
                         Kind.namespace == namespace,
                         Kind.is_active == True,
                     )
-                    .count()
+                    .with_entities(Kind.id.label("team_id"))
                 )
-                total_count += group_teams_count
 
-        return total_count
+        group_namespaces = [ns for ns in namespaces_to_count if ns != "default"]
+        authorized_namespace_ids = self._get_accessible_authorization_namespace_ids(
+            db, user_id, group_namespaces
+        )
+        if authorized_namespace_ids:
+            authorized_namespace_entity_ids = [
+                str(ns_id) for ns_id in authorized_namespace_ids
+            ]
+            authorized_member_exists = (
+                db.query(ResourceMember.id)
+                .filter(
+                    ResourceMember.resource_id == Kind.id,
+                    ResourceMember.resource_type.in_(team_resource_type_variants),
+                    ResourceMember.entity_type == "namespace",
+                    ResourceMember.entity_id.in_(authorized_namespace_entity_ids),
+                    ResourceMember.status.in_(approved_status_variants),
+                )
+                .exists()
+            )
+            count_queries.append(
+                db.query(Kind.id)
+                .filter(
+                    authorized_member_exists,
+                    Kind.kind == "Team",
+                    Kind.is_active.is_(True),
+                    ~Kind.namespace.in_(group_namespaces),
+                )
+                .with_entities(Kind.id.label("team_id"))
+            )
+
+        if not count_queries:
+            return 0
+
+        combined_count_query = (
+            count_queries[0].subquery()
+            if len(count_queries) == 1
+            else union_all(*count_queries).alias("combined_team_counts")
+        )
+        return (
+            db.query(func.count(func.distinct(combined_count_query.c.team_id))).scalar()
+            or 0
+        )
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """
@@ -1287,6 +1483,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
                     "requireConfirmation": member.requireConfirmation or False,
+                    "contextPassing": normalize_context_passing(member.contextPassing),
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -1373,6 +1570,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get requires_workspace from spec
         requires_workspace = team_crd.spec.requiresWorkspace
 
+        quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+
         total_convert_time = time.time() - convert_start
         if total_convert_time > 0.2:
             logger.info(
@@ -1396,6 +1595,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
             "icon": icon,  # Add icon field
+            "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
 
@@ -1466,6 +1666,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_prompt": member.prompt or "",
                     "role": member.role or "",
                     "requireConfirmation": member.requireConfirmation or False,
+                    "contextPassing": normalize_context_passing(member.contextPassing),
                     "bot": bot_summary,
                 }
                 bots.append(bot_info)
@@ -1572,6 +1773,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get requires_workspace from spec
         requires_workspace = team_crd.spec.requiresWorkspace
 
+        quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+
         return {
             "id": team.id,
             "user_id": team.user_id,
@@ -1589,6 +1792,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,
             "icon": icon,
+            "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
 
@@ -1853,18 +2057,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Update all references to this team in tasks when team name/namespace changes
         """
-        from app.models.task import TaskResource
-
         # Find all tasks that reference this team
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .all()
-        )
+        tasks = task_store.list_regular_active_tasks(db, user_id=user_id)
 
         for task in tasks:
             task_crd = Task.model_validate(task.json)
@@ -1906,7 +2100,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()
@@ -2094,7 +2289,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()
@@ -2151,36 +2347,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "skills": sorted(all_skills),
             "preload_skills": sorted(all_preload_skills),
         }
-
-    def _find_available_name(
-        self,
-        db: Session,
-        *,
-        base_name: str,
-        kind: str,
-        user_id: int,
-        namespace: str,
-    ) -> str:
-        """Return the first available name: base_name → base_name (2) → base_name (3) ..."""
-        is_group_namespace = namespace != "default"
-        candidate = base_name
-        counter = 2
-        while True:
-            query = db.query(Kind).filter(
-                Kind.kind == kind,
-                Kind.name == candidate,
-                Kind.namespace == namespace,
-                Kind.is_active == True,
-            )
-            # For personal namespace, scope uniqueness check to the user
-            # For group namespaces, uniqueness is across all users in the namespace
-            if not is_group_namespace:
-                query = query.filter(Kind.user_id == user_id)
-            existing = query.first()
-            if not existing:
-                return candidate
-            candidate = f"{base_name} ({counter})"
-            counter += 1
 
     def copy_team(
         self,
@@ -2255,9 +2421,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 raise HTTPException(status_code=400, detail="Leader bot not found")
 
             # Find available bot name in the destination namespace
-            bot_name = bot_kinds_service.find_available_bot_name(
+            bot_name = bot_kinds_service._find_available_name(
                 db,
                 base_name=f"Copy of {original_bot.name}",
+                kind="Bot",
                 user_id=user_id,
                 namespace=dest_namespace,
             )
@@ -2286,6 +2453,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_id": cloned_bot["id"],
                     "bot_prompt": leader_member.get("prompt", ""),
                     "role": "leader",
+                    "contextPassing": normalize_context_passing(
+                        leader_member.get("contextPassing")
+                    ),
                 }
             )
         else:
@@ -2307,9 +2477,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 if bot:
                     if dest_namespace != original.namespace:
                         # Clone the bot into the destination namespace
-                        bot_name = bot_kinds_service.find_available_bot_name(
+                        bot_name = bot_kinds_service._find_available_name(
                             db,
                             base_name=bot.name,
+                            kind="Bot",
                             user_id=user_id,
                             namespace=dest_namespace,
                         )
@@ -2334,6 +2505,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                                 "bot_id": cloned["id"],
                                 "bot_prompt": member.get("prompt", ""),
                                 "role": member.get("role", ""),
+                                "requireConfirmation": member.get(
+                                    "requireConfirmation", False
+                                ),
+                                "contextPassing": normalize_context_passing(
+                                    member.get("contextPassing")
+                                ),
                             }
                         )
                     else:
@@ -2342,13 +2519,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                                 "bot_id": bot.id,
                                 "bot_prompt": member.get("prompt", ""),
                                 "role": member.get("role", ""),
+                                "requireConfirmation": member.get(
+                                    "requireConfirmation", False
+                                ),
+                                "contextPassing": normalize_context_passing(
+                                    member.get("contextPassing")
+                                ),
                             }
                         )
 
         # Determine group_name for permission check
         group_name = dest_namespace if dest_namespace != "default" else None
 
-        team_name = self._find_available_name(
+        team_name = bot_kinds_service._find_available_name(
             db,
             base_name=f"Copy of {original.name}",
             kind="Team",

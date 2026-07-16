@@ -34,6 +34,7 @@ async function loadTranslations() {
     'inbox',
     'promptOptimization',
     'subscription',
+    'resource-library',
   ]
 
   for (const lng of supportedLanguages) {
@@ -42,7 +43,7 @@ async function loadTranslations() {
       try {
         // Dynamically import JSON file with error handling
         const translationModule = await import(`./locales/${lng}/${ns}.json`)
-        resources[lng][ns] = translationModule.default
+        resources[lng][ns] = translationModule.default ?? translationModule
       } catch (error) {
         // If file doesn't exist, use empty object
         console.warn(`Translation file not found: ./locales/${lng}/${ns}.json`, error)
@@ -91,6 +92,7 @@ export async function initI18n() {
       'inbox',
       'promptOptimization',
       'subscription',
+      'resource-library',
     ],
   })
 

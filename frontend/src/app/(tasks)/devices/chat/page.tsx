@@ -4,7 +4,8 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -19,23 +20,25 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { Monitor, WifiOff } from 'lucide-react'
-import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
+
+const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
+  ssr: false,
+})
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const { selectTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail } =
+    useTaskSession()
   const isMobile = useIsMobile()
 
   // Team state from context (centralized to avoid duplicate API calls)
@@ -47,6 +50,16 @@ export default function DeviceChatPage() {
   // Check if deviceId is specified in URL
   const searchParams = useSearchParams()
   const hasDeviceIdParam = !!(searchParams.get('deviceId') || searchParams.get('device_id'))
+
+  // Project context — when projectId is in URL, device is locked to project config
+  const projectIdParam = searchParams.get('projectId')
+  const projectId = projectIdParam ? Number(projectIdParam) : null
+  const { projects } = useProjectContext()
+  const activeProject = useMemo(() => {
+    if (!projectId) return null
+    return projects.find(p => p.id === projectId) ?? null
+  }, [projectId, projects])
+  const isProjectContext = !!activeProject
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -87,21 +100,20 @@ export default function DeviceChatPage() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    void refreshSelectedTaskDetail()
   }
 
   // Handle refresh teams
@@ -113,8 +125,7 @@ export default function DeviceChatPage() {
   const handleDeviceSelect = (deviceId: string) => {
     setSelectedDeviceId(deviceId)
     // Clear any existing task when selecting a new device
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
   }
 
   // Get current task title for top navigation
@@ -168,7 +179,8 @@ export default function DeviceChatPage() {
             <select
               value={selectedDeviceId || ''}
               onChange={e => handleDeviceSelect(e.target.value)}
-              className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              disabled={isProjectContext}
+              className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="" disabled>
                 {t('select_device')}

@@ -59,6 +59,8 @@ export interface UnifiedRetriever {
   storageType: string // 'elasticsearch' | 'qdrant'
   namespace: string
   description?: string
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 // Test Connection Types
@@ -94,7 +96,7 @@ export const retrieverApis = {
    * Get unified list of all available retrievers
    *
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    */
   async getUnifiedRetrievers(
     scope?: 'personal' | 'group' | 'all',

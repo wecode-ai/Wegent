@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { Tag } from '@/components/ui/tag'
 import { cn } from '@/lib/utils'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
+import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import type { Team } from '@/types/api'
 import SystemTeamTag from './SystemTeamTag'
 import { getTeamDisplayName, type SelectableTeam } from './team-selector-utils'
@@ -71,7 +72,9 @@ export default function TeamSelectorList({
         const isSystemTeam = team.is_system ?? team.user_id === 0
         const isFavorite = favoriteTeamIdSet.has(team.id)
         const isSystemRecommended = systemRecommendedTeamIdSet.has(team.id)
-        const isSharedTeam = team.share_status === 2 && team.user?.user_name
+        const isNamespaceAuthorized = isNamespaceAuthorizedTeam(team)
+        const isSharedTeam =
+          team.share_status === 2 && team.user?.user_name && !isNamespaceAuthorized
         const isGroupTeam =
           team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
 
@@ -121,34 +124,48 @@ export default function TeamSelectorList({
               {isSelected && <Check className="h-3 w-3" />}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
                 <span
-                  className="text-sm text-text-primary truncate flex-1 min-w-0"
+                  className="min-w-0 flex-1 truncate text-sm text-text-primary"
                   title={displayName}
                 >
                   {displayName}
                 </span>
-                {isSystemTeam && <SystemTeamTag className="max-w-[120px] truncate" />}
-                {isGroupTeam && (
-                  <Tag
-                    className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                    variant="info"
-                    title={team.namespace}
-                  >
-                    {team.namespace}
-                  </Tag>
-                )}
-                {isSharedTeam && (
-                  <Tag
-                    className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                    variant="default"
-                    style={sharedBadgeStyle}
-                    title={t('teams.shared_by', { author: team.user?.user_name })}
-                  >
-                    {t('teams.shared_by', { author: team.user?.user_name })}
-                  </Tag>
+                {(isSystemTeam || isGroupTeam || isSharedTeam) && (
+                  <span className="flex min-w-0 max-w-[58%] flex-shrink-0 items-center gap-1.5 overflow-hidden">
+                    {isSystemTeam && <SystemTeamTag className="max-w-[120px] truncate" />}
+                    {isGroupTeam && (
+                      <Tag
+                        className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
+                        variant="info"
+                        title={team.namespace}
+                      >
+                        {team.namespace}
+                      </Tag>
+                    )}
+                    {isSharedTeam && (
+                      <Tag
+                        className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
+                        variant="default"
+                        style={sharedBadgeStyle}
+                        title={t('teams.shared_by', { author: team.user?.user_name })}
+                      >
+                        {t('teams.shared_by', { author: team.user?.user_name })}
+                      </Tag>
+                    )}
+                  </span>
                 )}
               </div>
+              {isNamespaceAuthorized && team.namespace && (
+                <div className="mt-0.5 min-w-0">
+                  <span
+                    className="block truncate text-xs leading-4 text-text-muted"
+                    title={t('teams.authorized_from_group', { group: team.namespace })}
+                  >
+                    {t('teams.authorized_from_group', { group: team.namespace })}
+                  </span>
+                </div>
+              )}
             </div>
             {showFavoriteActions && quickAccessMetaLoaded && !isSystemRecommended && (
               <button

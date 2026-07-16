@@ -15,6 +15,7 @@ from app.core.security import AuthContext
 from app.models.task import TaskResource
 from app.services.auth import verify_skill_identity_token
 from app.services.object_storage import object_storage_presign_service
+from app.stores.tasks import task_store
 
 
 class ObjectStorageGrantError(Exception):
@@ -180,15 +181,11 @@ class ObjectStorageUploadGrantService:
         auth_context: AuthContext,
         task_id: int,
     ) -> None:
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.user_id == auth_context.user.id,
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-            )
-            .first()
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=TaskResource.is_active_query(),
+            user_id=auth_context.user.id,
         )
         if task is None:
             raise TaskScopeNotFoundError("Task not found")

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 """Helpers for finding active running tasks that belong to a team."""
 
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -11,10 +13,10 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.services.group_member_helper import get_group_members
 from app.services.readers.groups import groupReader
+from app.stores.tasks import task_store
 
 RUNNING_TASK_STATUSES = frozenset({"PENDING", "RUNNING"})
 
@@ -29,12 +31,13 @@ def _get_candidate_task_user_ids(db: Session, team: Kind) -> Optional[Set[int]]:
     """Return candidate task owners for a team, or None when narrowing is unsafe."""
     if team.namespace == "default":
         shared_user_ids = {
-            row[0]
+            int(row[0])
             for row in (
-                db.query(ResourceMember.user_id)
+                db.query(ResourceMember.entity_id)
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team.id,
+                    ResourceMember.entity_type == "user",
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .all()
@@ -77,17 +80,14 @@ def _task_belongs_to_team(task: TaskResource, task_crd: Task, team: Kind) -> boo
 
 def get_running_tasks_for_team(db: Session, team: Kind) -> List[Dict[str, Any]]:
     """Load running tasks for the provided team without JSON filtering in SQL."""
-    query = db.query(TaskResource).filter(
-        TaskResource.kind == "Task",
-        TaskResource.is_active == TaskResource.STATE_ACTIVE,
+    candidate_user_ids = _get_candidate_task_user_ids(db, team)
+    tasks = task_store.list_regular_active_tasks(
+        db,
+        user_ids=sorted(candidate_user_ids) if candidate_user_ids else None,
     )
 
-    candidate_user_ids = _get_candidate_task_user_ids(db, team)
-    if candidate_user_ids:
-        query = query.filter(TaskResource.user_id.in_(sorted(candidate_user_ids)))
-
     running_tasks: List[Dict[str, Any]] = []
-    for task in query.all():
+    for task in tasks:
         task_crd = Task.model_validate(task.json)
         if not _task_belongs_to_team(task, task_crd, team):
             continue

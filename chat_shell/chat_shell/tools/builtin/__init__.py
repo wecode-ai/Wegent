@@ -7,17 +7,26 @@
 from .data_table import DataTableTool
 from .evaluation import SubmitEvaluationResultTool
 from .file_reader import FileListSkill, FileReaderSkill
-from .knowledge_base import KnowledgeBaseTool
-from .knowledge_listing import KbHeadTool, KbLsTool, KBToolCallCounter
+from .knowledge_base import KnowledgeBaseTool, ScopedKnowledgeBaseTool
+from .knowledge_listing import (
+    KbHeadTool,
+    KbLsTool,
+    KBToolCallCounter,
+    KnowledgeListDocumentsTool,
+)
 from .load_skill import LoadSkillTool
-from .sandbox_image_viewer import SandboxImageViewerTool
+from .read_attachment import ReadAttachmentInput, ReadAttachmentTool
 from .silent_exit import SilentExitException
 from .web_search import WebSearchTool
 
 __all__ = [
     "WebSearchTool",
+    "ReadAttachmentTool",
+    "ReadAttachmentInput",
     "KnowledgeBaseTool",
+    "ScopedKnowledgeBaseTool",
     "KbLsTool",
+    "KnowledgeListDocumentsTool",
     "KbHeadTool",
     "KBToolCallCounter",
     "DataTableTool",
@@ -25,7 +34,6 @@ __all__ = [
     "FileListSkill",
     "SubmitEvaluationResultTool",
     "LoadSkillTool",
-    "SandboxImageViewerTool",
     "SilentExitException",  # Keep exception for backward compatibility
 ]
 

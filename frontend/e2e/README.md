@@ -8,32 +8,32 @@ This directory contains end-to-end tests for the Wegent frontend using Playwrigh
 
 ```bash
 # Run all E2E tests
-npm run e2e
+pnpm run e2e
 
 # Run tests with UI mode
-npm run e2e:ui
+pnpm run e2e:ui
 
 # Run tests in debug mode
-npm run e2e:debug
+pnpm run e2e:debug
 
 # Run tests in headed mode (see browser)
-npm run e2e:headed
+pnpm run e2e:headed
 
 # View test report
-npm run e2e:report
+pnpm run e2e:report
 ```
 
 ### Local Development
 
 ```bash
 # Run E2E tests locally (starts services automatically)
-npm run e2e:local
+pnpm run e2e:local
 
 # With UI mode
-npm run e2e:local:ui
+pnpm run e2e:local:ui
 
 # With debug mode
-npm run e2e:local:debug
+pnpm run e2e:local:debug
 ```
 
 ## Code Coverage
@@ -44,10 +44,10 @@ The E2E tests can collect code coverage data from the frontend application durin
 
 ```bash
 # Run tests and generate coverage report
-npm run e2e:coverage
+pnpm run e2e:coverage
 
 # Generate coverage report from existing data
-npm run e2e:coverage:report
+pnpm run e2e:coverage:report
 ```
 
 ### Coverage Reports
@@ -116,6 +116,28 @@ e2e/
 └── config/            # Test configuration
 ```
 
+## Agent Conversation Regression
+
+`tests/tasks/agent-conversation-regression.spec.ts` covers these backend-integrated task flows:
+
+- Normal mode Chat Shell dialogue and follow-up.
+- Normal mode ClaudeCode dialogue, follow-up, and executor session resume.
+- Coding mode ClaudeCode dialogue and follow-up.
+- Device mode ClaudeCode dialogue and follow-up through a local executor device.
+
+The regression runs in the dedicated `executor-e2e-tests` GitHub Actions job. Ordinary sharded E2E jobs skip this spec so they do not install executor dependencies, build executor images, or start executor-manager. It uses global setup authentication like the rest of `frontend/e2e`; no external Playwright auth-state secret is required.
+
+CI starts these support services:
+
+- `utils/mock-model-server.ts` receives real Chat Shell OpenAI-compatible requests and real ClaudeCode Anthropic Messages API requests, then records the second-turn prompt package.
+- A real `executor` local-mode process registers a ClaudeCode device through the Backend `/local-executor` Socket.IO namespace.
+
+Normal and coding ClaudeCode tests run through the actual executor-manager Docker path and the real `ClaudeCodeAgent` inside an executor container. Device mode runs through the actual Backend-to-local-executor WebSocket path and a real local-mode `ClaudeCodeAgent`. The model endpoint is the only mocked boundary, and the tests assert that the second-turn `/v1/messages` request received by the mock model server contains both the first-turn prompt and context token.
+
+The executor job builds `fixtures/claudecode-executor/Dockerfile`, starts a real `executor_manager` service on port `8001`, and starts a real local ClaudeCode executor process for device-mode coverage. The fixture image compiles the Rust executor once, exposes it at `/app/executor`, and the workflow extracts that same binary for the local executor process. Source files live under `/workspace/src` because executor-manager mounts the extracted `/app/executor` entrypoint volume at `/app` for custom base images.
+
+For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the ClaudeCode mock model base URL.
+
 ## Page Object Model
 
 Tests use the Page Object Model pattern for better maintainability:
@@ -146,13 +168,13 @@ test('login test', async ({ page }) => {
 
 ```bash
 # Run with UI mode to see tests execute
-npm run e2e:ui
+pnpm run e2e:ui
 
 # Run in headed mode to see browser
-npm run e2e:headed
+pnpm run e2e:headed
 
 # Run in debug mode with breakpoints
-npm run e2e:debug
+pnpm run e2e:debug
 ```
 
 ### Trace Viewer
@@ -161,7 +183,7 @@ When tests fail, traces are automatically captured:
 
 ```bash
 # View trace for failed test
-npx playwright show-trace test-results/path-to-trace.zip
+pnpm exec playwright show-trace test-results/path-to-trace.zip
 ```
 
 ## CI/CD Integration
@@ -173,6 +195,40 @@ E2E tests run automatically in GitHub Actions:
 - Nightly scheduled runs
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
+
+CI builds the production Next.js frontend once in the `build-frontend-e2e`
+workflow job, uploads it as `frontend-next-build`, and restores that artifact in
+each browser/API shard and in the executor E2E job before starting the generated
+Next.js standalone server.
+
+The executor regression job also consumes `executor-e2e-runtime`, which is built
+once by `build-executor-e2e-runtime`. That artifact contains the
+`wegent/e2e-claudecode-executor:latest` Docker image and the extracted local
+executor binary used by device-mode coverage.
+
+The workflow caches Python virtualenvs, frontend `node_modules`, Playwright
+browsers, and the executor job's Claude Code CLI. Dependency install steps are
+skipped only on exact cache hits; partial restore-key matches still run install
+commands to reconcile dependencies before saving a fresh cache.
+
+### Sharded CI Users
+
+The CI workflow runs Playwright tests across multiple shards. Each shard uses an
+isolated E2E admin and regular user to reduce cross-shard data interference:
+
+- `E2E_SHARD_INDEX=1` uses `e2e-admin-shard-1` and `e2e-user-shard-1`
+- `E2E_SHARD_INDEX=2` uses `e2e-admin-shard-2` and `e2e-user-shard-2`
+- `E2E_SHARD_INDEX=3` uses `e2e-admin-shard-3` and `e2e-user-shard-3`
+- `E2E_SHARD_INDEX=4` uses `e2e-admin-shard-4` and `e2e-user-shard-4`
+- Local runs without `E2E_SHARD_INDEX` use `e2e-admin-local` and `e2e-user-local`
+
+`global-setup.ts` provisions these users with the bootstrap admin account, logs in
+through the backend API, and writes Playwright `storageState` for browser tests.
+Set `E2E_USE_ISOLATED_USERS=false` to fall back to the bootstrap admin user when
+debugging against an environment where creating users is not desirable.
+Set `E2E_BOOTSTRAP_ADMIN_PASSWORD` explicitly before running E2E tests locally.
+When isolated users are enabled, also set `E2E_ADMIN_PASSWORD`. CI generates
+random values for each job.
 
 ## Troubleshooting
 

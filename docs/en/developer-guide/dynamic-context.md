@@ -91,6 +91,29 @@ Suggested approach:
 - Build dynamic blocks independently, then join with `\n\n`.
 - Avoid putting any request-scoped data into system prompt templates.
 
+### Controlled Exception: Web UI Runtime Guidance
+
+Tasks started from the Wegent Web UI append a small `<wegent_runtime_guidance>` system prompt block while Backend builds the `ExecutionRequest`. This block is not KB metadata or business data context. It is interaction policy: it tells the model that the request came from the Web UI, describes whether execution is on a local device, cloud sandbox, or managed runtime, and asks the model to tell users to use the task page's "View the task files" entry when previewing or downloading generated files.
+
+Keep this exception tightly scoped:
+
+- Apply it only to tasks started from the Web UI, not API or other entry points.
+- Describe only runtime and user interaction behavior; do not include KB content, business data, or large request context.
+- Keep the block short, idempotent, and guarded by the `<wegent_runtime_guidance>` marker.
+- If the new content is factual request context, prefer `dynamic_context` instead of extending the system prompt.
+
+### Wework: Terminal Runtime Context
+
+The Wework desktop app can pass recent Terminal output associated with the current task as request-scoped context to the local runtime. This helps Codex understand command errors or build output that the user just saw in the Terminal.
+
+Constraints:
+
+- Inject only Terminal output that matches the current `taskId` or `workspacePath`; do not fall back to the globally most recent Terminal, which could mix unrelated context.
+- Keep the default context compact: about `2KB`, the latest `80` lines, and at most `512B` per captured output chunk.
+- The first successful send includes the currently retained Terminal output. Later sends include only output added since the last successful delivery. A failed send does not consume the pending delta, so the next request retries it without losing diagnostic context.
+- Users can disable Terminal information injection from the Wework Settings "Context" page.
+- Wework sends this block through `additionalContext["wework.terminal.current"]`; Backend and the local runtime only pass it through, and Executor forwards it to Codex app-server `turn/start` or `turn/steer`.
+
 ## Responsibilities
 
 - [`shared/prompts/knowledge_base.py`](shared/prompts/knowledge_base.py):
@@ -99,6 +122,7 @@ Suggested approach:
 - Backend:
   - Generates `kb_meta_prompt` and stores it in [`ExecutionRequest.kb_meta_prompt`](shared/models/execution.py:46).
   - Transports it to Chat Shell via [`OpenAIRequestConverter`](shared/models/openai_converter.py:55) `metadata`.
+  - Appends controlled runtime guidance in [`TaskRequestBuilder`](backend/app/services/execution/request_builder.py:49) for Web UI tasks.
 
 - Chat Shell:
   - Injects `dynamic_context` as a human message.

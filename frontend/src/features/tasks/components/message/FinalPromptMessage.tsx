@@ -8,13 +8,14 @@ import { useState } from 'react'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
 import { Copy, Check, Plus, Star, RefreshCw, Edit3, X, Save, Loader2, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { buildChatCodeHref } from '@/config/coding-route'
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/hooks/use-toast'
-import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Textarea } from '@/components/ui/textarea'
 
 interface FinalPromptMessageProps {
@@ -56,7 +57,7 @@ export default function FinalPromptMessage({
   const { toast } = useToast()
   const { theme } = useTheme()
   const router = useRouter()
-  const chatStreamContext = useOptionalChatStreamContext()
+  const chatStreamContext = useOptionalTaskSession()
   const sendMessage = chatStreamContext?.sendMessage
   const [copied, setCopied] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -122,7 +123,7 @@ export default function FinalPromptMessage({
     sessionStorage.setItem('pendingTaskPrompt', JSON.stringify(promptData))
 
     // Navigate to new task page
-    router.push('/code')
+    router.push(buildChatCodeHref())
 
     toast({
       title: t('clarification.prompt_ready'),
@@ -151,7 +152,7 @@ export default function FinalPromptMessage({
       return
     }
 
-    // sendMessage is only available within ChatStreamProvider
+    // sendMessage is only available within TaskSessionProvider
     if (!sendMessage) {
       toast({
         variant: 'destructive',
@@ -164,7 +165,7 @@ export default function FinalPromptMessage({
     try {
       const messageContent = isEditing ? editedPrompt : data.final_prompt
 
-      // Use sendMessage from ChatStreamContext to send pipeline confirmation
+      // Use sendMessage from TaskSessionContext to send pipeline confirmation
       // This will add the user message to the state machine for display
       await sendMessage(
         {

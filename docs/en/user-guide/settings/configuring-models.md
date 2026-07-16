@@ -32,7 +32,7 @@ Bot = Executor (Shell) + Model (Brain) + Prompt (Personality)
 ```
 
 **Analogy**:
-- **Executor (Shell)**: The runtime environment (ClaudeCode, Agno, Dify, Chat)
+- **Executor (Shell)**: The runtime environment (ClaudeCode, Dify, Chat)
 - **Model**: The AI brain (Claude, GPT-4, Gemini)
 - **Prompt**: The personality and expertise
 
@@ -107,6 +107,8 @@ You'll see a unified model list showing both public (system) and your personal m
 | **Model Type** | Yes | Select: LLM, Embedding, or Rerank |
 | **Model ID** | Yes | Unique identifier (lowercase, hyphens allowed) |
 | **Display Name** | No | Human-readable name for the UI |
+| **Primary Group** | No | First-level grouping used by model selectors |
+| **Secondary Group** | No | Second-level grouping inside the primary group |
 
 #### Provider Configuration
 
@@ -127,6 +129,8 @@ Model ID: gpt-4o / claude-sonnet-4 / gemini-3-pro
 API Key: sk-xxx... / sk-ant-xxx...
 Base URL: (optional, for proxy services)
 ```
+
+Optional grouping fields are saved on the Model `spec` as `modelGroup` and `modelSubGroup`. They control how large model lists are organized in selectors, while search still matches model names, display names, and group names. Leaving either field empty places the model in the default ungrouped or uncategorized bucket.
 
 **For Embedding Models:**
 

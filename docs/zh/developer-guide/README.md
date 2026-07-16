@@ -20,6 +20,16 @@
 
 - [数据库迁移](./database-migrations.md) - 管理数据库迁移
 
+### 🔧 后端开发
+
+- [MCP 工具重构指南](./mcp-refactoring-guide.md) - Knowledge MCP 工具重构架构
+- [外部知识库 MCP](./external-knowledge-mcp.md) - 受信任外部系统的知识库 MCP 集成
+
+### 💬 Chat Shell
+
+- [Chat Shell 上下文治理](./chat-shell-context-governance.md) - Chat Shell 三阶段上下文治理总览
+- [Chat Shell 优雅关闭](./chat-shell-graceful-shutdown.md) - Chat Shell 服务关闭与流式清理
+
 ### 📱 前端开发
 
 - [响应式开发](./responsive-development.md) - 响应式设计指南

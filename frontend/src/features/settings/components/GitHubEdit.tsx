@@ -198,7 +198,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       }
       maxWidth="md"
     >
-      <div className="space-y-4">
+      <div className="space-y-4" data-testid="git-token-dialog-content">
         {/* Platform selection */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">

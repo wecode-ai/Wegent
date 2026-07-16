@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: Publish Image
+name: Wegent Release
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Custom version to release (e.g. 1.2.3). If empty, auto-increment from latest git tag'
+        description: 'Wegent platform version to release (e.g. 1.2.3 or v1.2.3). If empty, auto-increment from latest vX.Y.Z tag'
         type: string
         required: false
 
@@ -45,7 +45,7 @@ jobs:
           ref: ${{ env.GIT_REF }}
           fetch-depth: 0
 
-      - name: Get version from git tags (and bump patch)
+      - name: Get Wegent platform version
         id: get_version
         shell: bash
         env:
@@ -53,10 +53,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          # If custom version is provided, use it directly
+          validate_version() {
+            local version="$1"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
+              exit 1
+            fi
+          }
+
           if [ -n "${INPUT_VERSION:-}" ]; then
-            echo "Using custom version: ${INPUT_VERSION}"
-            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            VERSION="${INPUT_VERSION#v}"
+            validate_version "$VERSION"
+            echo "Using custom Wegent platform version: ${VERSION}"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -69,8 +78,8 @@ jobs:
             exit 0
           fi
 
-          # Remove 'v' prefix
           VERSION="${LATEST_TAG#v}"
+          validate_version "$VERSION"
           echo "Current version: $VERSION (from tag $LATEST_TAG)"
 
           IFS='.' read -ra VERSION_PARTS <<< "$VERSION"
@@ -296,6 +305,117 @@ jobs:
           cache-to: type=gha,mode=max,scope=executor-manager-arm64
 
   # ============================================================================
+  # Device Image Build (parallel AMD64 + ARM64)
+  # Self-managed remote Docker devices use this image.
+  # ============================================================================
+  build-device-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push device image (amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/device/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-amd64
+          cache-from: type=gha,scope=device-amd64
+          cache-to: type=gha,mode=max,scope=device-amd64
+
+  build-device-arm64:
+    needs: prepare-release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push device image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/device/Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-device:${{ needs.prepare-release.outputs.new_version }}-arm64
+          cache-from: type=gha,scope=device-arm64
+          cache-to: type=gha,mode=max,scope=device-arm64
+
+  # ============================================================================
+  # Device Multi-arch Manifest
+  # Publish ghcr.io/wecode-ai/wegent-device:latest as soon as device builds pass.
+  # ============================================================================
+  create-device-manifest:
+    needs:
+      - prepare-release
+      - build-device-amd64
+      - build-device-arm64
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create and push device multi-arch manifest
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.new_version }}
+          IMAGE_NAME: wegent-device
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools create -t "${IMAGE_PREFIX}/${IMAGE_NAME}:${VERSION}" \
+            "${IMAGE_PREFIX}/${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_PREFIX}/${IMAGE_NAME}:${VERSION}-arm64"
+
+          docker buildx imagetools create -t "${IMAGE_PREFIX}/${IMAGE_NAME}:latest" \
+            "${IMAGE_PREFIX}/${IMAGE_NAME}:${VERSION}-amd64" \
+            "${IMAGE_PREFIX}/${IMAGE_NAME}:${VERSION}-arm64"
+
+          echo "✅ Created manifests for ${IMAGE_PREFIX}/${IMAGE_NAME}:${VERSION} and ${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
+
+  # ============================================================================
   # Frontend Image Build (parallel AMD64 + ARM64)
   # ============================================================================
   build-frontend-amd64:
@@ -436,6 +556,140 @@ jobs:
           cache-to: type=gha,mode=max,scope=chat-shell-arm64
 
   # ============================================================================
+  # Knowledge Runtime Image Build (parallel AMD64 + ARM64)
+  # ============================================================================
+  build-knowledge-runtime-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push knowledge-runtime image (amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/knowledge_runtime/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-amd64
+          cache-from: type=gha,scope=knowledge-runtime-amd64
+          cache-to: type=gha,mode=max,scope=knowledge-runtime-amd64
+
+  build-knowledge-runtime-arm64:
+    needs: prepare-release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push knowledge-runtime image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/knowledge_runtime/Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-runtime:${{ needs.prepare-release.outputs.new_version }}-arm64
+          cache-from: type=gha,scope=knowledge-runtime-arm64
+          cache-to: type=gha,mode=max,scope=knowledge-runtime-arm64
+
+  # ============================================================================
+  # Knowledge Document Converter Image Build (parallel AMD64 + ARM64)
+  # ============================================================================
+  build-knowledge-doc-converter-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push knowledge-doc-converter image (amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/knowledge_doc_converter/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-amd64
+          cache-from: type=gha,scope=knowledge-doc-converter-amd64
+          cache-to: type=gha,mode=max,scope=knowledge-doc-converter-amd64
+
+  build-knowledge-doc-converter-arm64:
+    needs: prepare-release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push knowledge-doc-converter image (arm64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/knowledge_doc_converter/Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.IMAGE_PREFIX }}/wegent-knowledge-doc-converter:${{ needs.prepare-release.outputs.new_version }}-arm64
+          cache-from: type=gha,scope=knowledge-doc-converter-arm64
+          cache-to: type=gha,mode=max,scope=knowledge-doc-converter-arm64
+
+  # ============================================================================
   # Standalone Image Build (parallel AMD64 + ARM64)
   # Single image containing Backend, Frontend, Chat Shell, and Executor
   # ============================================================================
@@ -460,18 +714,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push standalone image (amd64)
+      - name: Build standalone image for verification (amd64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/standalone/Dockerfile
-          push: true
+          load: true
           platforms: linux/amd64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
           cache-from: type=gha,scope=standalone-amd64
           cache-to: type=gha,mode=max,scope=standalone-amd64
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+
+      - name: Verify standalone image startup (amd64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+          CONTAINER_NAME: wegent-standalone-verify-amd64
+        run: bash scripts/verify-standalone-image.sh "$IMAGE"
+
+      - name: Push verified standalone image (amd64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-amd64
+        run: docker push "$IMAGE"
 
   build-standalone-arm64:
     needs: prepare-release
@@ -494,18 +759,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push standalone image (arm64)
+      - name: Build standalone image for verification (arm64)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/standalone/Dockerfile
-          push: true
+          load: true
           platforms: linux/arm64
           tags: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
           cache-from: type=gha,scope=standalone-arm64
           cache-to: type=gha,mode=max,scope=standalone-arm64
           build-args: |
             APP_VERSION=${{ needs.prepare-release.outputs.new_version }}
+
+      - name: Verify standalone image startup (arm64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+          CONTAINER_NAME: wegent-standalone-verify-arm64
+        run: bash scripts/verify-standalone-image.sh "$IMAGE"
+
+      - name: Push verified standalone image (arm64)
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/wegent-standalone:${{ needs.prepare-release.outputs.new_version }}-arm64
+        run: docker push "$IMAGE"
 
   # ============================================================================
   # Executor Local Binary Build (macOS)
@@ -521,21 +797,19 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Install dependencies and build
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -566,26 +840,21 @@ jobs:
             sudo softwareupdate --install-rosetta --agree-to-license || true
           fi
 
-      - name: Set up Python (x86_64 via Rosetta)
-        run: |
-          # Download and install Python for x86_64
-          curl -L -o python-installer.pkg "https://www.python.org/ftp/python/3.11.9/python-3.11.9-macos11.pkg"
-          sudo installer -pkg python-installer.pkg -target /
-          rm python-installer.pkg
-
-      - name: Install uv (x86_64)
-        run: |
-          arch -x86_64 /usr/local/bin/python3.11 -m pip install --upgrade pip
-          arch -x86_64 /usr/local/bin/python3.11 -m pip install uv
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: x86_64-apple-darwin
 
       - name: Install dependencies and build (x86_64)
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          # Use x86_64 Python and uv to install dependencies and build
-          arch -x86_64 /usr/local/bin/python3.11 -m uv sync --group build
-          arch -x86_64 /usr/local/bin/python3.11 -m uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -615,21 +884,22 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Install dependencies and build
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -653,21 +923,22 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Install dependencies and build
         working-directory: executor
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/wegent-executor dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          WEGENT_EXECUTOR_VERSION="${APP_VERSION}" dist/wegent-executor --version
 
       - name: Rename binary with platform suffix
         run: |
@@ -695,22 +966,20 @@ jobs:
         with:
           ref: ${{ env.GIT_REF }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Install dependencies and build
         working-directory: executor
         shell: pwsh
         env:
-          GITHUB_REPO: ${{ github.repository }}
+          APP_VERSION: ${{ needs.prepare-release.outputs.new_version }}
         run: |
-          uv sync --group build
-          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }}
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/wegent-executor.exe dist/wegent-executor.exe
+          $env:WEGENT_EXECUTOR_VERSION = "$env:APP_VERSION"
+          & "dist/wegent-executor.exe" --version
 
       - name: Rename binary with platform suffix
         shell: pwsh
@@ -740,6 +1009,10 @@ jobs:
       - build-frontend-arm64
       - build-chat-shell-amd64
       - build-chat-shell-arm64
+      - build-knowledge-runtime-amd64
+      - build-knowledge-runtime-arm64
+      - build-knowledge-doc-converter-amd64
+      - build-knowledge-doc-converter-arm64
       - build-standalone-amd64
       - build-standalone-arm64
     runs-on: ubuntu-latest
@@ -787,6 +1060,8 @@ jobs:
           create_manifest "wegent-executor-manager"
           create_manifest "wegent-web"
           create_manifest "wegent-chat-shell"
+          create_manifest "wegent-knowledge-runtime"
+          create_manifest "wegent-knowledge-doc-converter"
           create_manifest "wegent-standalone"
 
           echo "🎉 All multi-arch manifests created successfully!"
@@ -797,6 +1072,7 @@ jobs:
   create-release-tag:
     needs:
       - prepare-release
+      - create-device-manifest
       - create-manifests
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64

@@ -15,11 +15,15 @@ import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
+  KnowledgeBaseSummaryResponse,
   KnowledgeBaseUpdate,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
   KnowledgeDocumentListResponse,
   KnowledgeDocumentUpdate,
+  KnowledgeFolder,
+  KnowledgeFolderCreate,
+  KnowledgeFolderUpdate,
   KnowledgeResourceScope,
   TableUrlValidationResponse,
   WebScrapeResponse,
@@ -73,9 +77,9 @@ export async function deleteKnowledgeBase(id: number): Promise<void> {
 }
 
 /**
- * Update the knowledge base type (notebook <-> classic conversion)
+ * Update the knowledge base default opening view.
  * @param id Knowledge base ID
- * @param kbType New type: 'notebook' or 'classic'
+ * @param kbType New default view value: 'notebook' or 'classic'
  * @returns Updated knowledge base
  */
 export async function updateKnowledgeBaseType(
@@ -87,14 +91,49 @@ export async function updateKnowledgeBaseType(
 
 // ============== Knowledge Document APIs ==============
 
+/** Parameters for listing documents in a knowledge base */
+export interface ListDocumentsParams {
+  limit?: number
+  offset?: number
+  folder_id?: number
+  include_subfolders?: boolean
+  keyword?: string
+  sort_by?: 'name' | 'size' | 'createdAt' | 'updatedAt'
+  sort_order?: 'asc' | 'desc'
+}
+
 /**
  * List documents in a knowledge base
  */
 export async function listDocuments(
-  knowledgeBaseId: number
+  knowledgeBaseId: number,
+  params?: ListDocumentsParams
 ): Promise<KnowledgeDocumentListResponse> {
+  const searchParams = new URLSearchParams()
+  if (params?.limit !== undefined) {
+    searchParams.set('limit', String(params.limit))
+  }
+  if (params?.offset !== undefined) {
+    searchParams.set('offset', String(params.offset))
+  }
+  if (params?.folder_id !== undefined) {
+    searchParams.set('folder_id', String(params.folder_id))
+  }
+  if (params?.include_subfolders !== undefined) {
+    searchParams.set('include_subfolders', String(params.include_subfolders))
+  }
+  if (params?.keyword) {
+    searchParams.set('keyword', params.keyword)
+  }
+  if (params?.sort_by) {
+    searchParams.set('sort_by', params.sort_by)
+  }
+  if (params?.sort_order) {
+    searchParams.set('sort_order', params.sort_order)
+  }
+  const query = searchParams.toString()
   return apiClient.get<KnowledgeDocumentListResponse>(
-    `/knowledge-bases/${knowledgeBaseId}/documents`
+    `/knowledge-bases/${knowledgeBaseId}/documents${query ? `?${query}` : ''}`
   )
 }
 
@@ -164,12 +203,49 @@ export async function migrateKnowledgeBaseToGroup(
 }
 
 /**
- * Trigger re-indexing for a document
+ * Optional body for document re-index (supports "modify prompt & re-analyze").
+ */
+export interface DocumentReindexBody {
+  /** Per-document multimodal prompt override; blank = clear override */
+  multimodal_analysis_prompt?: string | null
+}
+
+/**
+ * System default multimodal analysis prompts (single source of truth from
+ * shared.models.multimodal_prompts). Used to prefill prompt editors.
+ *
+ * `enabled` mirrors the backend global KNOWLEDGE_MULTIMODAL_ENABLED switch —
+ * when false the frontend hides the entire multimodal UI.
+ */
+export interface MultimodalDefaultPrompts {
+  enabled: boolean
+  video_prompt: string
+  image_prompt: string
+}
+
+/**
+ * Fetch the system default multimodal analysis prompts.
+ */
+export async function getMultimodalDefaultPrompts(): Promise<MultimodalDefaultPrompts> {
+  return apiClient.get<MultimodalDefaultPrompts>('/knowledge-bases/multimodal-default-prompts')
+}
+
+/**
+ * Trigger re-indexing for a document, optionally overriding its multimodal
+ * analysis prompt (the "modify prompt & re-analyze" flow).
  * @param documentId The document ID to reindex
+ * @param body Optional body carrying a multimodal prompt override; omit for a
+ *   plain reindex.
  * @returns Success message indicating reindex has started
  */
-export async function reindexDocument(documentId: number): Promise<DocumentReindexResponse> {
-  return apiClient.post<DocumentReindexResponse>(`/knowledge-documents/${documentId}/reindex`)
+export async function reindexDocument(
+  documentId: number,
+  body?: DocumentReindexBody
+): Promise<DocumentReindexResponse> {
+  return apiClient.post<DocumentReindexResponse>(
+    `/knowledge-documents/${documentId}/reindex`,
+    body ?? {}
+  )
 }
 
 // ============== Batch Document Operations ==============
@@ -256,12 +332,14 @@ export interface WebDocumentRefreshResponse {
 export async function createWebDocument(
   url: string,
   knowledgeBaseId: number,
-  name?: string
+  name?: string,
+  folderId?: number
 ): Promise<WebDocumentCreateResponse> {
   return apiClient.post<WebDocumentCreateResponse>('/web-scraper/create-document', {
     url,
     knowledge_base_id: knowledgeBaseId,
     name,
+    folder_id: folderId || 0,
   })
 }
 
@@ -298,6 +376,21 @@ export async function refreshKnowledgeBaseSummary(
   return apiClient.post<KnowledgeBaseSummaryRefreshResponse>(
     `/knowledge-bases/${kbId}/summary/refresh`
   )
+}
+
+export async function updateKnowledgeBaseSummary(
+  kbId: number,
+  longSummary: string
+): Promise<KnowledgeBaseSummaryResponse> {
+  return apiClient.put<KnowledgeBaseSummaryResponse>(`/knowledge-bases/${kbId}/summary`, {
+    long_summary: longSummary,
+  })
+}
+
+export async function resetKnowledgeBaseSummary(
+  kbId: number
+): Promise<KnowledgeBaseSummaryResponse> {
+  return apiClient.post<KnowledgeBaseSummaryResponse>(`/knowledge-bases/${kbId}/summary/reset`)
 }
 
 // ============== Configuration APIs ==============
@@ -375,4 +468,105 @@ export async function getDocumentChunk(
  */
 export async function getDocumentDetail(documentId: number): Promise<DocumentDetailResponse> {
   return apiClient.get<DocumentDetailResponse>(`/knowledge-documents/${documentId}/detail`)
+}
+
+// ============== Knowledge Folder APIs ==============
+
+/**
+ * Get the folder tree for a knowledge base
+ */
+export async function getFolderTree(knowledgeBaseId: number): Promise<KnowledgeFolder[]> {
+  return apiClient.get<KnowledgeFolder[]>(`/knowledge-bases/${knowledgeBaseId}/folders`)
+}
+
+/**
+ * Create a new folder in a knowledge base
+ */
+export async function createFolder(
+  knowledgeBaseId: number,
+  data: KnowledgeFolderCreate
+): Promise<KnowledgeFolder> {
+  return apiClient.post<KnowledgeFolder>(`/knowledge-bases/${knowledgeBaseId}/folders`, data)
+}
+
+/**
+ * Update a folder (rename and/or move)
+ */
+export async function updateFolder(
+  knowledgeBaseId: number,
+  folderId: number,
+  data: KnowledgeFolderUpdate
+): Promise<KnowledgeFolder> {
+  return apiClient.put<KnowledgeFolder>(
+    `/knowledge-bases/${knowledgeBaseId}/folders/${folderId}`,
+    data
+  )
+}
+
+/**
+ * Delete a folder and move its documents to root level
+ */
+export async function deleteFolder(
+  knowledgeBaseId: number,
+  folderId: number
+): Promise<{ deleted_folder_count: number; moved_document_count: number }> {
+  return apiClient.delete(`/knowledge-bases/${knowledgeBaseId}/folders/${folderId}`)
+}
+
+/**
+ * Move a document to a different folder
+ */
+export async function moveDocument(
+  documentId: number,
+  folderId: number
+): Promise<KnowledgeDocument> {
+  return apiClient.put<KnowledgeDocument>(`/knowledge-documents/${documentId}/move`, {
+    folder_id: folderId,
+  })
+}
+
+/**
+ * Batch move multiple documents to a target folder
+ */
+export async function batchMoveDocuments(
+  documentIds: number[],
+  folderId: number
+): Promise<BatchOperationResult> {
+  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/move', {
+    document_ids: documentIds,
+    folder_id: folderId,
+  })
+}
+
+// ============== Document Transfer Between KBs ==============
+
+export interface TransferDocumentsRequest {
+  document_ids: number[]
+  folder_ids: number[]
+  target_kb_id: number
+}
+
+export interface TransferDocumentsResponse {
+  success: boolean
+  message: string
+  transferred_document_count: number
+  transferred_folder_count: number
+  deleted_folder_count: number
+  source_kb_id: number
+  target_kb_id: number
+}
+
+/**
+ * Transfer documents and/or folders from one knowledge base to another
+ * @param sourceKbId Source knowledge base ID
+ * @param data Transfer request with document IDs, folder IDs, and target KB ID
+ */
+export async function transferDocuments(
+  sourceKbId: number,
+  data: TransferDocumentsRequest
+): Promise<TransferDocumentsResponse> {
+  return apiClient.post<TransferDocumentsResponse>(
+    `/knowledge-bases/${sourceKbId}/transfer-documents`,
+    data
+  )
 }

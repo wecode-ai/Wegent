@@ -8,6 +8,7 @@ Model resolver for Chat Shell.
 Resolves model configuration from Bot's bound model or task-level override.
 """
 
+import base64
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Model
+from app.services.runtime_codex_model import get_enabled_codex_runtime_model_spec
 from shared.models.execution import ExecutionRequest
 from shared.utils.crypto import decrypt_api_key
 
@@ -223,6 +225,82 @@ def build_default_headers_with_placeholders(
     return result_headers
 
 
+# Substring marker identifying the agent/team identity header group forwarded to the
+# model backend (e.g. wegent-agent-namespace, wegent-agent-name). Any header whose
+# name *contains* this substring shares the empty-strip and encoding behaviors.
+WEGENT_IDENTITY_HEADER_MARKER = "wegent-agent-"
+
+
+def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop headers whose name contains 'wegent-agent-' and whose value is empty.
+
+    Placeholder resolution yields "" when a data source is missing (e.g.
+    non-Team execution paths such as wizard/correction that carry no team
+    context). Emitting blank identity headers is undesirable, so any header
+    whose name contains WEGENT_IDENTITY_HEADER_MARKER is removed when its
+    value is empty; all other headers (including the legacy ``user`` header)
+    keep their existing behavior.
+
+    Args:
+        headers: Default headers after placeholder replacement.
+
+    Returns:
+        Headers with empty wegent-agent-* entries removed.
+    """
+    return {
+        key: value
+        for key, value in headers.items()
+        if not (
+            WEGENT_IDENTITY_HEADER_MARKER in key.lower()
+            and (value is None or (isinstance(value, str) and not value.strip()))
+        )
+    }
+
+
+def _encode_wegent_header_value(value: str) -> str:
+    """Encode a header value that may contain non-ASCII characters.
+
+    HTTP headers must be ASCII (RFC 7230). Team names may contain non-ASCII
+    characters (e.g. Chinese). If the value is already ASCII-safe it is
+    returned unchanged; otherwise it is base64-encoded and prefixed with
+    'b64:' so the receiver can detect and decode it.
+
+    Args:
+        value: The resolved header value string.
+
+    Returns:
+        The original string if ASCII-safe, otherwise 'b64:<base64>'.
+    """
+    try:
+        value.encode("ascii")
+        return value
+    except UnicodeEncodeError:
+        return "b64:" + base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def encode_wegent_header_values(headers: Dict[str, Any]) -> Dict[str, Any]:
+    """Base64-encode non-ASCII values in wegent-agent-* headers.
+
+    Applies _encode_wegent_header_value to every header whose name contains
+    WEGENT_IDENTITY_HEADER_MARKER so non-ASCII team names (e.g. Chinese)
+    are transmitted as ASCII-safe 'b64:<base64>' strings.
+
+    Args:
+        headers: Resolved headers after placeholder replacement and empty-strip.
+
+    Returns:
+        Headers with non-ASCII wegent-agent-* values base64-encoded.
+    """
+    return {
+        key: (
+            _encode_wegent_header_value(value)
+            if WEGENT_IDENTITY_HEADER_MARKER in key.lower() and isinstance(value, str)
+            else value
+        )
+        for key, value in headers.items()
+    }
+
+
 def _process_model_config_placeholders(
     model_config: Dict[str, Any],
     user_id: int,
@@ -268,6 +346,18 @@ def _process_model_config_placeholders(
     if "user" not in effective_task_data:
         effective_task_data = {**effective_task_data, "user": user_info}
 
+    # Expose Team (UI "Agent") identity as a nested object so placeholders can use
+    # the same dotted style as ${task_data.user.name}, e.g. ${task_data.team.name}.
+    # Derived from the flat ExecutionRequest fields; absent context resolves to "".
+    if "team" not in effective_task_data:
+        effective_task_data = {
+            **effective_task_data,
+            "team": {
+                "name": effective_task_data.get("team_name") or "",
+                "namespace": effective_task_data.get("team_namespace") or "",
+            },
+        }
+
     # Build data_sources for placeholder replacement
     # This mirrors the chat.py logic for handling ${user.name}, ${task_data.user.name}, etc.
     data_sources = {
@@ -294,6 +384,11 @@ def _process_model_config_placeholders(
         processed_headers = build_default_headers_with_placeholders(
             raw_default_headers, data_sources
         )
+        # Drop wegent-agent-* identity headers that resolved to empty (e.g. paths
+        # without Team context), so we never emit blank identity headers.
+        processed_headers = strip_empty_wegent_headers(processed_headers)
+        # Encode non-ASCII values (e.g. Chinese team names) to ASCII-safe base64.
+        processed_headers = encode_wegent_header_values(processed_headers)
         model_config["default_headers"] = processed_headers
         logger.info(f"[model_resolver] Processed default_headers with placeholders")
 
@@ -542,6 +637,7 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
     1. User's private models (kinds table)
     2. Group models (kinds table in user's groups)
     3. Public models (kinds table with user_id=0)
+    4. Runtime-only models derived from user execution config
 
     Args:
         db: Database session
@@ -565,6 +661,7 @@ def _find_model_with_namespace(
     1. User's private models (kinds table)
     2. Group models (kinds table in user's groups)
     3. Public models (kinds table with user_id=0)
+    4. Runtime-only models derived from user execution config
 
     Args:
         db: Database session
@@ -632,6 +729,11 @@ def _find_model_with_namespace(
             f"Found model '{model_name}' in public models (namespace: {public_model.namespace})"
         )
         return public_model, public_model.json.get("spec", {})
+
+    runtime_model_spec = get_enabled_codex_runtime_model_spec(db, user_id, model_name)
+    if runtime_model_spec:
+        logger.info("Found model '%s' as runtime-only Codex model", model_name)
+        return None, runtime_model_spec
 
     logger.warning(f"Model '{model_name}' not found in any source")
     return None, None
@@ -762,6 +864,11 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     # Video generation config (when modelType='video')
     video_config = model_spec.get("videoConfig")
+    model_capabilities = model_spec.get("modelCapabilities") or None
+    if model_capabilities:
+        logger.info(
+            f"[model_resolver] _extract_model_config: modelCapabilities={model_capabilities}"
+        )
 
     # Thinking/reasoning config (provider-native passthrough)
     # Only read from env - this is the single source of truth
@@ -778,7 +885,7 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: temperature={temperature}"
         )
 
-    return {
+    result = {
         "api_key": api_key,
         "base_url": base_url,
         "model_id": model_id,
@@ -799,6 +906,9 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         # User-configured temperature override
         "temperature": temperature,
     }
+    if model_capabilities:
+        result["modelCapabilities"] = model_capabilities
+    return result
 
 
 def get_bot_system_prompt(

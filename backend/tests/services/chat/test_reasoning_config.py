@@ -35,6 +35,8 @@ class TestReasoningConfigSchema:
         ReasoningConfig(effort="medium")
         ReasoningConfig(effort="high")
         ReasoningConfig(effort="xhigh")
+        ReasoningConfig(effort="max")
+        ReasoningConfig(effort="ultra")
         ReasoningConfig(summary="auto")
         ReasoningConfig(summary="concise")
         ReasoningConfig(summary="detailed")
@@ -99,3 +101,57 @@ class TestExecutionRequestReasoningConfig:
         }
         request = ExecutionRequest.from_dict(data)
         assert request.reasoning_config == {"effort": "low", "summary": "concise"}
+
+
+class TestModelOptionsReasoningConfig:
+    """Tests for UI model options reasoning normalization."""
+
+    def test_model_options_reasoning_object_preserves_summary(self):
+        """Test object-shaped UI reasoning does not become effort text."""
+        from app.services.chat.trigger.unified import _reasoning_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {"reasoning": {"summary": "detailed"}}
+
+        assert _reasoning_from_model_options(payload) == {"summary": "detailed"}
+
+    def test_model_options_reasoning_object_maps_effort_and_summary(self):
+        """Test object-shaped UI reasoning maps supported fields separately."""
+        from app.services.chat.trigger.unified import _reasoning_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {
+            "reasoning": {"effort": "high", "summary": "concise"},
+        }
+
+        assert _reasoning_from_model_options(payload) == {
+            "effort": "high",
+            "summary": "concise",
+        }
+
+    @pytest.mark.parametrize(
+        ("speed", "service_tier"),
+        [
+            ("fast", "priority"),
+            ("快速", "priority"),
+            ("standard", "default"),
+            ("标准", "default"),
+        ],
+    )
+    def test_model_options_speed_maps_to_service_tier(self, speed, service_tier):
+        """Test UI speed options map to Codex service tier values."""
+        from app.services.chat.trigger.unified import _service_tier_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {"speed": speed}
+
+        assert _service_tier_from_model_options(payload) == service_tier
+
+    def test_model_options_speed_object_maps_to_service_tier(self):
+        """Test object-shaped UI speed maps to Codex service tier values."""
+        from app.services.chat.trigger.unified import _service_tier_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {"speed": {"value": "fast"}}
+
+        assert _service_tier_from_model_options(payload) == "priority"

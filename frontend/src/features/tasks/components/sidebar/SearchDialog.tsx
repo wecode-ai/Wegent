@@ -21,11 +21,11 @@ import {
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { Task } from '@/types/api'
 import { taskApis } from '@/apis/tasks'
 import { paths } from '@/config/paths'
+import { getTaskTargetHref } from '@/utils/taskRouting'
 
 interface SearchDialogProps {
   open: boolean
@@ -42,8 +42,7 @@ export default function SearchDialog({
 }: SearchDialogProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
-  const { tasks, setSelectedTask } = useTaskContext()
+  const { tasks, selectTask } = useTaskSession()
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [dialogSearchTerm, setDialogSearchTerm] = useState('')
@@ -123,24 +122,15 @@ export default function SearchDialog({
   // Handle task click in dialog
   const handleDialogTaskClick = (task: Task) => {
     handleCloseSearchDialog()
-    setSelectedTask(task)
-    // Navigate to task with taskId parameter
-    let targetPath = paths.chat.getHref() // default to chat
-    if (task.task_type === 'code') {
-      targetPath = paths.code.getHref()
-    } else if (task.task_type === 'video' || task.task_type === 'image') {
-      targetPath = paths.generate.getHref()
-    }
-    router.push(`${targetPath}?taskId=${task.id}`)
+    router.push(getTaskTargetHref(task))
   }
 
   // Handle new conversation click
   const handleNewAgentClick = () => {
     handleCloseSearchDialog()
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     // Navigate to appropriate page based on pageType
-    const targetPath = pageType === 'code' ? paths.code.getHref() : paths.chat.getHref()
+    const targetPath = pageType === 'code' ? paths.chat.getCodeHref() : paths.chat.getHref()
     router.replace(targetPath)
   }
 

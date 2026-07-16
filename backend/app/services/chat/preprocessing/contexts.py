@@ -16,20 +16,23 @@ eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 """
 
 import logging
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from fastapi import HTTPException, status
 from langchain_core.tools import BaseTool
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
 from app.models.knowledge import KnowledgeDocument
-from app.models.subtask import Subtask
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
+from app.services.knowledge.folder_service import KnowledgeFolderService
+from app.services.rag.sources import ExternalRefValidationError
 from shared.models.db import ContextStatus as DBContextStatus
 from shared.models.knowledge import (
     ChatContextsResult,
+    KnowledgeBaseScope,
     KnowledgeBaseToolAccessMode,
     KnowledgeBaseToolsResult,
 )
@@ -38,6 +41,7 @@ from shared.prompts import (
     KB_PROMPT_RESTRICTED_ANALYST,
     KB_PROMPT_STRICT,
 )
+from shared.utils.attachment_block import build_attachment_header
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +268,7 @@ def _process_attachment_context(
     image_contents: List[dict],
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    inline_attachment_content: bool = True,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -275,32 +280,37 @@ def _process_attachment_context(
         image_contents: List to append image content to
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        inline_attachment_content: Whether to include parsed text/image content.
     """
+    if not inline_attachment_content:
+        header = _build_attachment_metadata_header(
+            context=context,
+            task_id=task_id,
+            subtask_id=subtask_id,
+        )
+        if header:
+            text_contents.append(f"[Attachment {idx}]\n{header}\n\n")
+        return
+
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = context_service.format_file_size(file_size)
         url = context_service.build_attachment_url(attachment_id)
 
         # Build sandbox path if task_id and subtask_id are provided
         sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
 
-        # Build image metadata header with optional sandbox path
-        if sandbox_path:
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]"
-            )
-        else:
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
-            )
+        # Build image metadata header (shared with chat_shell loader)
+        image_header = build_attachment_header(
+            attachment_id=attachment_id,
+            filename=filename,
+            mime_type=context.mime_type or "unknown",
+            file_size=context.file_size or 0,
+            sandbox_path=sandbox_path,
+            is_image=True,
+        )
 
         image_contents.append(
             {
@@ -322,6 +332,27 @@ def _process_attachment_context(
         )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
+
+
+def _build_attachment_metadata_header(
+    context: SubtaskContext,
+    task_id: Optional[int] = None,
+    subtask_id: Optional[int] = None,
+) -> Optional[str]:
+    """Build attachment metadata without parsed text or image content."""
+    if context.context_type != ContextType.ATTACHMENT.value:
+        return None
+
+    filename = context.original_filename
+    sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
+    return build_attachment_header(
+        attachment_id=context.id,
+        filename=filename,
+        mime_type=context.mime_type or "unknown",
+        file_size=context.file_size or 0,
+        sandbox_path=sandbox_path,
+        is_image=context_service.is_image_context(context),
+    )
 
 
 async def process_attachments(
@@ -416,10 +447,10 @@ def _validate_attachment_ownership(
 
     # Add cross-subtask validation if task_id is provided
     if task_id:
-        task_subtask_ids = (
-            select(Subtask.id)
-            .filter(Subtask.task_id == task_id, Subtask.user_id == user_id)
-            .scalar_subquery()
+        task_subtask_ids = task_stores.subtask_store.list_ids_by_task(
+            db,
+            task_id=task_id,
+            user_id=user_id,
         )
         filters.append(
             or_(
@@ -432,8 +463,8 @@ def _validate_attachment_ownership(
         filters.append(SubtaskContext.subtask_id == 0)
 
     # Query with row locking
-    valid_rows = db.query(SubtaskContext.id).filter(*filters).with_for_update().all()
-    valid_ids = [row[0] for row in valid_rows]
+    valid_contexts = db.query(SubtaskContext).filter(*filters).with_for_update().all()
+    valid_ids = [context.id for context in valid_contexts]
 
     # Check for invalid IDs
     invalid_ids = set(attachment_ids) - set(valid_ids)
@@ -443,7 +474,37 @@ def _validate_attachment_ownership(
             detail=f"Invalid or unauthorized attachment IDs: {sorted(invalid_ids)}",
         )
 
-    return valid_ids
+    ordinary_attachment_ids = [
+        context.id
+        for context in valid_contexts
+        if not _is_quick_launch_preset_attachment(context)
+    ]
+    if ordinary_attachment_ids and len(ordinary_attachment_ids) < len(valid_ids):
+        return _order_attachment_ids(attachment_ids, set(ordinary_attachment_ids))
+
+    return _order_attachment_ids(attachment_ids, set(valid_ids))
+
+
+def _is_quick_launch_preset_attachment(context: SubtaskContext) -> bool:
+    """Return whether an attachment was copied from a quick launch preset."""
+    return (
+        isinstance(context.type_data, dict)
+        and context.type_data.get("source") == "quick_launch_preset"
+    )
+
+
+def _order_attachment_ids(
+    requested_ids: List[int],
+    valid_ids: set[int],
+) -> List[int]:
+    """Return valid attachment IDs in request order without duplicates."""
+    ordered_ids: List[int] = []
+    seen_ids: set[int] = set()
+    for attachment_id in requested_ids:
+        if attachment_id in valid_ids and attachment_id not in seen_ids:
+            ordered_ids.append(attachment_id)
+            seen_ids.add(attachment_id)
+    return ordered_ids
 
 
 def link_contexts_to_subtask(
@@ -458,15 +519,18 @@ def link_contexts_to_subtask(
     """
     Link attachments and create knowledge base/table contexts for a subtask.
 
-    This function handles three types of contexts in a single database transaction:
+    This function handles display and retrieval contexts in a single database transaction:
     1. Attachments: Pre-uploaded files with existing context IDs, batch update subtask_id
     2. Knowledge bases: Selected at send time, batch create SubtaskContext records
        (without extracted_text - RAG retrieval is done later via tools/Service)
     3. Tables: Selected at send time, batch create SubtaskContext records
        (table context is used for MCP tool injection)
+    4. External knowledge refs: Selected at send time, batch create SubtaskContext
+       records and sync them to task-level externalKnowledgeRefs.
 
-    When knowledge bases are created, they are automatically synced to the task-level
-    knowledgeBaseRefs for future use across all subtasks.
+    When knowledge bases or external knowledge refs are created, they are
+    automatically synced to the task-level binding spec for future use across all
+    subtasks.
 
     SECURITY NOTE: When attachment_ids is provided, ownership validation is ALWAYS
     performed to prevent attachment hijacking across users/tasks.
@@ -505,6 +569,7 @@ def link_contexts_to_subtask(
         kb_contexts_to_create,
         table_contexts_to_create,
         selected_docs_contexts_to_create,
+        external_knowledge_contexts_to_create,
     ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id)
 
     # Combine all contexts to create
@@ -512,6 +577,7 @@ def link_contexts_to_subtask(
         kb_contexts_to_create
         + table_contexts_to_create
         + selected_docs_contexts_to_create
+        + external_knowledge_contexts_to_create
     )
 
     # Execute all database operations in a single transaction
@@ -524,6 +590,15 @@ def link_contexts_to_subtask(
             task_id=task.id if task else None,
         )
         linked_context_ids.extend(created_context_ids)
+
+        # External knowledge validation must happen before any task-level sync can
+        # commit through legacy internal KB helpers.
+        if task and external_knowledge_contexts_to_create:
+            _sync_external_contexts_to_task(
+                db,
+                external_knowledge_contexts_to_create,
+                task,
+            )
 
         # Sync subtask-level knowledge bases to task level
         if task and kb_contexts_to_create and user_name:
@@ -540,6 +615,19 @@ def link_contexts_to_subtask(
                 attachment_ids=valid_attachment_ids,
             )
 
+        db.commit()
+
+    except ExternalRefValidationError as e:
+        db.rollback()
+        logger.warning(
+            "Failed to link external knowledge contexts to subtask %s: %s",
+            subtask_id,
+            e,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except Exception as e:
         db.rollback()
         logger.exception(f"Failed to link contexts to subtask {subtask_id}: {e}")
@@ -577,15 +665,34 @@ def _sync_kb_contexts_to_task(
         )
         if not knowledge_id:
             continue
+        type_data = (
+            kb_context.type_data if isinstance(kb_context.type_data, dict) else {}
+        )
+        scope_restricted = bool(type_data.get("scope_restricted", False))
+        document_ids = _normalize_document_ids(type_data.get("document_ids", []))
+        folder_ids = _normalize_folder_ids(type_data.get("folder_ids", []))
+        include_subfolders = bool(type_data.get("include_subfolders", True))
 
         try:
-            synced = task_kb_service.sync_subtask_kb_to_task(
-                db=db,
-                task=task,
-                knowledge_id=knowledge_id,
-                user_id=user_id,
-                user_name=user_name,
-            )
+            if scope_restricted:
+                synced = task_kb_service.sync_subtask_kb_scope_to_task(
+                    db=db,
+                    task=task,
+                    knowledge_id=knowledge_id,
+                    document_ids=document_ids,
+                    folder_ids=folder_ids,
+                    include_subfolders=include_subfolders,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
+            else:
+                synced = task_kb_service.sync_subtask_kb_to_task(
+                    db=db,
+                    task=task,
+                    knowledge_id=knowledge_id,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
             if synced:
                 logger.info(
                     f"[_sync_kb_contexts_to_task] Synced KB {knowledge_id} "
@@ -603,6 +710,57 @@ def _sync_kb_contexts_to_task(
                 f"[_sync_kb_contexts_to_task] Failed to sync KB {knowledge_id} "
                 f"to task {task.id}: {e}"
             )
+
+
+def _sync_external_contexts_to_task(
+    db: Session,
+    external_contexts: List[SubtaskContext],
+    task: "TaskResource",
+) -> list[dict[str, Any]]:
+    """Sync message-level external knowledge contexts to task-level refs."""
+    from app.services.chat.external_knowledge_refs import (
+        sync_task_external_knowledge_refs,
+        validate_external_knowledge_refs,
+    )
+
+    refs: list[dict[str, Any]] = []
+    for external_context in external_contexts:
+        type_data = (
+            external_context.type_data
+            if isinstance(external_context.type_data, dict)
+            else {}
+        )
+        provider = type_data.get("provider")
+        mode = type_data.get("mode")
+        external_id = type_data.get("id")
+        if not provider or not mode:
+            continue
+
+        ref = {
+            "provider": provider,
+            "mode": mode,
+            "id": external_id,
+            "name": type_data.get("name") or external_context.name or external_id,
+            "scope": type_data.get("scope"),
+            "target_type": type_data.get("target_type"),
+            "node_id": type_data.get("node_id"),
+            "document_id": type_data.get("document_id"),
+            "parent_id": type_data.get("parent_id"),
+            "target_name": type_data.get("target_name"),
+        }
+        refs.append({key: value for key, value in ref.items() if value is not None})
+
+    if not refs:
+        return []
+
+    validate_external_knowledge_refs(refs, binding_level="conversation")
+    next_refs = sync_task_external_knowledge_refs(db, task, refs)
+    logger.info(
+        "[_sync_external_contexts_to_task] Synced %d external refs to task %s",
+        len(next_refs),
+        task.id,
+    )
+    return next_refs
 
 
 def _schedule_attachment_sync_to_sandbox(
@@ -719,7 +877,12 @@ def _prepare_contexts_for_creation(
     contexts: List[Any] | None,
     subtask_id: int,
     user_id: int,
-) -> Tuple[List[SubtaskContext], List[SubtaskContext], List[SubtaskContext]]:
+) -> tuple[
+    List[SubtaskContext],
+    List[SubtaskContext],
+    List[SubtaskContext],
+    List[SubtaskContext],
+]:
     """
     Prepare knowledge base, table, and selected_documents contexts for batch creation.
 
@@ -729,17 +892,20 @@ def _prepare_contexts_for_creation(
         user_id: User ID
 
     Returns:
-        Tuple of (kb_contexts, table_contexts, selected_docs_contexts) ready for insertion
+        Tuple of (kb_contexts, table_contexts, selected_docs_contexts,
+        external_knowledge_contexts) ready for insertion
     """
     kb_contexts_to_create: List[SubtaskContext] = []
     table_contexts_to_create: List[SubtaskContext] = []
     selected_docs_contexts_to_create: List[SubtaskContext] = []
+    external_knowledge_contexts_to_create: List[SubtaskContext] = []
 
     if not contexts:
         return (
             kb_contexts_to_create,
             table_contexts_to_create,
             selected_docs_contexts_to_create,
+            external_knowledge_contexts_to_create,
         )
 
     for ctx in contexts:
@@ -749,17 +915,32 @@ def _prepare_contexts_for_creation(
                 knowledge_id = kb_data.get("knowledge_id")
                 kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
                 document_count = kb_data.get("document_count")
-                # Get document_ids if user referenced specific documents
-                document_ids = kb_data.get("document_ids", [])
+                # Get scoped selectors if user referenced specific documents/folders.
+                # Explicit scope_restricted=True with an empty list means an
+                # intentionally empty scope, not unrestricted full-KB access.
+                document_ids = kb_data.get("document_ids") or []
+                folder_ids = kb_data.get("folder_ids") or []
+                folder_names = kb_data.get("folder_names") or []
+                include_subfolders = bool(kb_data.get("include_subfolders", True))
+                explicit_scope_restricted = bool(kb_data.get("scope_restricted"))
+                scope_restricted = (
+                    explicit_scope_restricted or bool(document_ids) or bool(folder_ids)
+                )
 
                 # Build type_data
                 type_data_dict = {
                     "knowledge_id": int(knowledge_id) if knowledge_id else 0,
                     "document_count": document_count,
+                    "scope_restricted": scope_restricted,
                 }
-                # Only add document_ids if provided
-                if document_ids:
+                # Preserve explicit empty scoped ranges as document_ids=[].
+                if scope_restricted:
                     type_data_dict["document_ids"] = document_ids
+                    if folder_ids:
+                        type_data_dict["folder_ids"] = folder_ids
+                        type_data_dict["include_subfolders"] = include_subfolders
+                    if folder_names:
+                        type_data_dict["folder_names"] = folder_names
 
                 # Create SubtaskContext object (not yet committed)
                 kb_context = SubtaskContext(
@@ -831,10 +1012,47 @@ def _prepare_contexts_for_creation(
                 logger.warning(f"Failed to prepare selected_documents context: {e}")
                 continue
 
+        elif ctx.type == "external_knowledge":
+            try:
+                external_data = ctx.data
+                provider = external_data.get("provider")
+                mode = external_data.get("mode")
+                external_id = external_data.get("id")
+                external_name = external_data.get("name") or external_id or provider
+                if not provider or not mode:
+                    logger.warning(
+                        "Skipped external_knowledge context without provider/mode"
+                    )
+                    continue
+
+                external_context = SubtaskContext(
+                    subtask_id=subtask_id,
+                    user_id=user_id,
+                    context_type=ContextType.EXTERNAL_KNOWLEDGE.value,
+                    name=str(external_name),
+                    status=ContextStatus.READY.value,
+                    type_data={
+                        "provider": str(provider),
+                        "mode": str(mode),
+                        "id": str(external_id) if external_id is not None else None,
+                        "scope": external_data.get("scope"),
+                        "target_type": external_data.get("target_type"),
+                        "node_id": external_data.get("node_id"),
+                        "document_id": external_data.get("document_id"),
+                        "parent_id": external_data.get("parent_id"),
+                        "target_name": external_data.get("target_name"),
+                    },
+                )
+                external_knowledge_contexts_to_create.append(external_context)
+            except Exception as e:
+                logger.warning(f"Failed to prepare external knowledge context: {e}")
+                continue
+
     return (
         kb_contexts_to_create,
         table_contexts_to_create,
         selected_docs_contexts_to_create,
+        external_knowledge_contexts_to_create,
     )
 
 
@@ -870,8 +1088,9 @@ def _batch_update_and_insert_contexts(
 
         # Add task-level validation if task_id is provided
         if task_id:
-            task_subtask_ids = (
-                select(Subtask.id).filter(Subtask.task_id == task_id).scalar_subquery()
+            task_subtask_ids = task_stores.subtask_store.list_ids_by_task(
+                db,
+                task_id=task_id,
             )
             update_filters.append(
                 or_(
@@ -897,8 +1116,7 @@ def _batch_update_and_insert_contexts(
     if contexts_to_create:
         db.add_all(contexts_to_create)
 
-    # Single commit for all operations
-    db.commit()
+    db.flush()
 
     # Refresh contexts to get their IDs
     for ctx in contexts_to_create:
@@ -949,6 +1167,7 @@ async def prepare_contexts_for_chat(
     task_id: Optional[int] = None,
     context_window: Optional[int] = None,
     model_config: Optional[dict[str, Any]] = None,
+    inline_attachment_content: bool = True,
 ) -> ChatContextsResult:
     """
     Unified context processing based on user_subtask_id.
@@ -972,6 +1191,9 @@ async def prepare_contexts_for_chat(
             Used for selected_documents injection threshold calculation.
             If None, uses default value (128000).
         model_config: Optional model configuration used by restricted KB safe summary.
+        inline_attachment_content: Whether to inject parsed attachment contents
+            into the prompt. Executor runtimes set this to False because they can
+            parse/read downloaded files inside the runtime.
     Returns:
         ChatContextsResult with processed message, table info, and KB results.
     """
@@ -1018,6 +1240,7 @@ async def prepare_contexts_for_chat(
         message,
         task_id=task_id,
         subtask_id=user_subtask_id,
+        inline_attachment_content=inline_attachment_content,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1124,6 +1347,7 @@ async def prepare_contexts_for_chat(
         knowledge_base_ids=kb_result.knowledge_base_ids,
         is_user_selected_kb=kb_result.is_user_selected_kb,
         document_ids=kb_result.document_ids,
+        knowledge_base_scopes=kb_result.knowledge_base_scopes,
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
     )
     return ChatContextsResult(
@@ -1139,6 +1363,7 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    inline_attachment_content: bool = True,
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1148,6 +1373,8 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        inline_attachment_content: Whether parsed attachment content should be
+            injected. When False, only attachment metadata is included.
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
         format vision content list for images
@@ -1167,6 +1394,7 @@ async def _process_attachment_contexts_for_message(
                 image_contents,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                inline_attachment_content=inline_attachment_content,
             )
         except Exception as e:
             logger.exception(f"Error processing attachment context {context.id}: {e}")
@@ -1239,17 +1467,27 @@ def _prepare_kb_tools_from_contexts(
     # Track whether KB is user-selected (strict mode) or inherited from task (relaxed mode)
     is_user_selected_kb = bool(subtask_kb_ids)
 
+    knowledge_base_scopes: List[KnowledgeBaseScope] = []
+
     # Determine which knowledge bases to use based on priority
     if subtask_kb_ids:
         # Use subtask-level KBs only (user's explicit selection takes precedence)
         knowledge_base_ids = subtask_kb_ids
+        knowledge_base_scopes = _build_scopes_from_kb_contexts(
+            kb_contexts,
+            db=db,
+            user_id=user_id,
+        )
         logger.info(
             f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
             f"subtask-level knowledge bases (priority 1, strict mode): {knowledge_base_ids}"
         )
     elif task_id:
         # Priority 2: Fall back to task-level bound knowledge bases
-        knowledge_base_ids = _get_bound_knowledge_base_ids(db, task_id)
+        knowledge_base_scopes = _get_bound_knowledge_base_scopes(db, task_id, user_id)
+        knowledge_base_ids = [
+            scope.knowledge_base_id for scope in knowledge_base_scopes
+        ] or _get_bound_knowledge_base_ids(db, task_id)
         if knowledge_base_ids:
             logger.info(
                 f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
@@ -1265,22 +1503,12 @@ def _prepare_kb_tools_from_contexts(
         seen_doc_ids: set[int] = set()
         for c in kb_contexts:
             if c.type_data and isinstance(c.type_data, dict):
-                raw_doc_ids = c.type_data.get("document_ids", [])
-                if isinstance(raw_doc_ids, list):
-                    for doc_id in raw_doc_ids:
-                        try:
-                            normalized = int(doc_id)
-                        except (TypeError, ValueError):
-                            logger.warning(
-                                "[_prepare_kb_tools_from_contexts] Ignore invalid "
-                                "document_id=%s in context_id=%s",
-                                doc_id,
-                                getattr(c, "id", None),
-                            )
-                            continue
-                        if normalized not in seen_doc_ids:
-                            seen_doc_ids.add(normalized)
-                            document_ids.append(normalized)
+                for normalized in _normalize_document_ids(
+                    c.type_data.get("document_ids", [])
+                ):
+                    if normalized not in seen_doc_ids:
+                        seen_doc_ids.add(normalized)
+                        document_ids.append(normalized)
 
     if not knowledge_base_ids:
         return KnowledgeBaseToolsResult(
@@ -1290,6 +1518,7 @@ def _prepare_kb_tools_from_contexts(
             knowledge_base_ids=[],
             is_user_selected_kb=False,
             document_ids=[],
+            knowledge_base_scopes=[],
             kb_tool_access_mode=KnowledgeBaseToolAccessMode.FULL,
         )
 
@@ -1314,14 +1543,24 @@ def _prepare_kb_tools_from_contexts(
         f"{len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}"
     )
 
-    # Import KnowledgeBaseTool
-    from chat_shell.tools.builtin import KnowledgeBaseTool
+    # Import knowledge base tools
+    from chat_shell.tools.builtin import KnowledgeBaseTool, ScopedKnowledgeBaseTool
 
     # Create KnowledgeBaseTool with the specified knowledge bases
     # KB configs (max_calls, exempt_calls, name) are now fetched from Backend API
-    kb_tool = KnowledgeBaseTool(
+    has_restricted_scope = any(
+        scope.scope_restricted for scope in knowledge_base_scopes
+    )
+    kb_tool_class = (
+        ScopedKnowledgeBaseTool if has_restricted_scope else KnowledgeBaseTool
+    )
+    # Restricted scopes must be represented only by knowledge_base_scopes.
+    # The legacy document_ids field is for non-scoped document filters.
+    legacy_document_ids = [] if has_restricted_scope else document_ids
+    kb_tool = kb_tool_class(
         knowledge_base_ids=knowledge_base_ids,
-        document_ids=document_ids or [],
+        document_ids=legacy_document_ids,
+        knowledge_base_scopes=knowledge_base_scopes,
         user_id=user_id,
         db_session=db,
         user_subtask_id=user_subtask_id,
@@ -1370,9 +1609,108 @@ def _prepare_kb_tools_from_contexts(
         kb_meta_prompt=kb_meta_prompt,
         knowledge_base_ids=knowledge_base_ids,
         is_user_selected_kb=is_user_selected_kb,
-        document_ids=document_ids,
+        document_ids=legacy_document_ids,
+        knowledge_base_scopes=knowledge_base_scopes,
         kb_tool_access_mode=kb_tool_access_mode,
     )
+
+
+def _build_scopes_from_kb_contexts(
+    kb_contexts: List[SubtaskContext],
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
+) -> List[KnowledgeBaseScope]:
+    """Build per-KB scopes from subtask KB context type_data."""
+    scopes: List[KnowledgeBaseScope] = []
+    for context in kb_contexts:
+        knowledge_id = context.knowledge_id
+        if knowledge_id is None:
+            continue
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        document_ids = _normalize_document_ids(type_data.get("document_ids", []))
+        folder_ids = _normalize_folder_ids(type_data.get("folder_ids", []))
+        include_subfolders = bool(type_data.get("include_subfolders", True))
+        scope_restricted = bool(type_data.get("scope_restricted", False))
+        if (document_ids or folder_ids) and "scope_restricted" not in type_data:
+            scope_restricted = True
+        resolved_document_ids = document_ids
+        if scope_restricted and (document_ids or folder_ids):
+            if db is None or user_id is None:
+                raise ValueError(
+                    "db and user_id are required to resolve knowledge scope"
+                )
+            try:
+                resolved_document_ids = (
+                    KnowledgeFolderService.resolve_document_ids_for_scope(
+                        db,
+                        knowledge_base_id=knowledge_id,
+                        user_id=user_id,
+                        folder_ids=folder_ids or None,
+                        document_ids=document_ids or None,
+                        include_subfolders=include_subfolders,
+                    )
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+        scopes.append(
+            KnowledgeBaseScope(
+                knowledge_base_id=knowledge_id,
+                scope_restricted=scope_restricted,
+                document_ids=resolved_document_ids if scope_restricted else [],
+            )
+        )
+    return scopes
+
+
+def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:
+    """Normalize document IDs, skipping invalid values while preserving order."""
+    if not isinstance(raw_doc_ids, list):
+        return []
+    normalized_ids: List[int] = []
+    seen_doc_ids: set[int] = set()
+    for doc_id in raw_doc_ids:
+        try:
+            normalized = int(doc_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[_prepare_kb_tools_from_contexts] Ignore invalid document_id=%s",
+                doc_id,
+            )
+            continue
+        if normalized not in seen_doc_ids:
+            seen_doc_ids.add(normalized)
+            normalized_ids.append(normalized)
+    return normalized_ids
+
+
+def _normalize_folder_ids(raw_folder_ids: Any) -> List[int]:
+    """Normalize folder IDs, skipping invalid values while preserving order."""
+    if not isinstance(raw_folder_ids, list):
+        return []
+    normalized_ids: List[int] = []
+    seen_folder_ids: set[int] = set()
+    for folder_id in raw_folder_ids:
+        try:
+            normalized = int(folder_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[_prepare_kb_tools_from_contexts] Ignore invalid folder_id=%s",
+                folder_id,
+            )
+            continue
+        if normalized < 0:
+            logger.warning(
+                "[_prepare_kb_tools_from_contexts] Ignore invalid folder_id=%s",
+                folder_id,
+            )
+            continue
+        if normalized not in seen_folder_ids:
+            seen_folder_ids.add(normalized)
+            normalized_ids.append(normalized)
+    return normalized_ids
 
 
 def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
@@ -1410,6 +1748,54 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
         # Catch all exceptions to ensure robustness - this function should
         # never block chat functionality even if KB lookup fails
         logger.warning(f"Failed to get bound KB IDs for task {task_id}: {e}")
+        return []
+
+
+def _get_bound_knowledge_base_scopes(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> List[KnowledgeBaseScope]:
+    """Resolve task-level API KB scopes for follow-up requests."""
+    from app.services.knowledge.task_knowledge_base_service import (
+        task_knowledge_base_service,
+    )
+    from app.services.openapi.kb_context import get_task_knowledge_base_scope_refs
+    from app.services.openapi.kb_resolver import KnowledgeBaseNameResolver
+
+    try:
+        task = task_knowledge_base_service.get_task(db, task_id)
+        if task is None:
+            return []
+        scope_refs = get_task_knowledge_base_scope_refs(task)
+        if not scope_refs:
+            return []
+
+        resolver = KnowledgeBaseNameResolver(db, user_id)
+        resolution = resolver.resolve(scope_refs, raise_on_error=True)
+        scopes = [
+            KnowledgeBaseScope(
+                knowledge_base_id=ref.kb_id,
+                scope_restricted=ref.scope_restricted,
+                document_ids=ref.resolved_document_ids if ref.scope_restricted else [],
+            )
+            for ref in resolution.resolved
+        ]
+        logger.info(
+            "[_get_bound_knowledge_base_scopes] Resolved %d task scope refs for task_id=%d",
+            len(scopes),
+            task_id,
+        )
+        return scopes
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Failed to get bound KB scopes for task %s: %s",
+            task_id,
+            exc,
+            exc_info=True,
+        )
         return []
 
 
@@ -1479,7 +1865,11 @@ def _build_kb_meta_prompt(
             topics: list[str] = []
             try:
                 summary_data = kb_spec.get("summary", {})
-                if (
+                manual_summary = summary_data.get("manual_long_summary")
+                if manual_summary:
+                    summary_text = manual_summary
+                    topics = summary_data.get("topics", []) or []
+                elif (
                     kb_spec.get("summaryEnabled")
                     and summary_data.get("status") == "completed"
                 ):

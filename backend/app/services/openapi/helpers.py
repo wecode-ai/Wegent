@@ -18,6 +18,7 @@ from app.schemas.openapi_response import (
     InputItem,
     WegentTool,
 )
+from app.schemas.scope_validation import validate_document_ids, validate_folder_ids
 from app.services.readers.kinds import KindType, kindReader
 
 
@@ -81,6 +82,7 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
         - preload_skills: list (skills to preload for the bot)
         - workspace: dict (git workspace info for code tasks, contains git_url, branch, git_repo, git_domain)
         - knowledge_base_names: list (knowledge base names in 'namespace#name' format)
+        - knowledge_base_refs: list (normalized knowledge base refs with optional scope)
     """
     result: Dict[str, Any] = {
         "enable_chat_bot": False,
@@ -88,6 +90,7 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
         "preload_skills": [],
         "workspace": None,
         "knowledge_base_names": [],
+        "knowledge_base_refs": [],
     }
     if tools:
         for tool in tools:
@@ -126,12 +129,98 @@ def parse_wegent_tools(tools: Optional[List[WegentTool]]) -> Dict[str, Any]:
             elif tool.type == "skill" and tool.preload_skills:
                 # Add skills to preload_skills list
                 result["preload_skills"].extend(tool.preload_skills)
-            elif tool.type == "knowledge_base" and tool.knowledge_base_names:
-                # Parse and validate knowledge base names
-                for kb_name in tool.knowledge_base_names:
-                    parsed = parse_knowledge_base_name(kb_name)
-                    result["knowledge_base_names"].append(parsed)
+            elif tool.type == "knowledge_base":
+                refs = _parse_knowledge_base_tool(tool)
+                result["knowledge_base_refs"].extend(refs)
+                result["knowledge_base_names"].extend(
+                    {
+                        "namespace": ref["namespace"],
+                        "name": ref["name"],
+                    }
+                    for ref in refs
+                )
     return result
+
+
+def _parse_knowledge_base_tool(tool: WegentTool) -> list[Dict[str, Any]]:
+    """Parse and normalize a knowledge_base tool configuration."""
+    has_names = bool(tool.knowledge_base_names)
+    has_refs = bool(tool.knowledge_base_refs)
+    has_top_level_scope = tool.folder_ids is not None or tool.document_ids is not None
+
+    if has_names and has_refs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="knowledge_base_names and knowledge_base_refs are mutually exclusive",
+        )
+    if not has_names and not has_refs and not has_top_level_scope:
+        return []
+    if not has_names and not has_refs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="knowledge_base tool requires knowledge_base_names or knowledge_base_refs",
+        )
+    if has_refs and has_top_level_scope:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Top-level folder_ids/document_ids are only valid with knowledge_base_names",
+        )
+
+    refs: list[Dict[str, Any]] = []
+    if has_refs:
+        for ref in tool.knowledge_base_refs or []:
+            parsed = parse_knowledge_base_name(ref.name)
+            folder_ids = _validate_scope_field("folder_ids", ref.folder_ids)
+            document_ids = _validate_scope_field("document_ids", ref.document_ids)
+            refs.append(
+                {
+                    **parsed,
+                    "folder_ids": folder_ids,
+                    "document_ids": document_ids,
+                    "include_subfolders": ref.include_subfolders,
+                    "scope_specified": (
+                        folder_ids is not None or document_ids is not None
+                    ),
+                }
+            )
+        return refs
+
+    names = tool.knowledge_base_names or []
+    if has_top_level_scope and len(names) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Top-level folder_ids/document_ids can only be used with one knowledge_base_names entry",
+        )
+
+    folder_ids = _validate_scope_field("folder_ids", tool.folder_ids)
+    document_ids = _validate_scope_field("document_ids", tool.document_ids)
+    for kb_name in names:
+        parsed = parse_knowledge_base_name(kb_name)
+        refs.append(
+            {
+                **parsed,
+                "folder_ids": folder_ids,
+                "document_ids": document_ids,
+                "include_subfolders": tool.include_subfolders,
+                "scope_specified": folder_ids is not None or document_ids is not None,
+            }
+        )
+    return refs
+
+
+def _validate_scope_field(
+    field_name: str, value: Optional[list[int]]
+) -> Optional[list[int]]:
+    """Validate one optional knowledge scope field and expose 400 errors."""
+    try:
+        if field_name == "folder_ids":
+            return validate_folder_ids(value)
+        return validate_document_ids(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 def parse_knowledge_base_name(kb_name: str) -> Dict[str, str]:
@@ -350,4 +439,3 @@ def get_team_shell_type(db: Session, team: Kind) -> str:
 
     shell_crd = Shell.model_validate(shell.json)
     return shell_crd.spec.shellType
-    return True

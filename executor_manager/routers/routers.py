@@ -14,6 +14,7 @@ to backend's callback endpoint without processing.
 """
 
 import asyncio
+import json
 import os
 import time
 import uuid
@@ -23,7 +24,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import APIRouter, Body, FastAPI, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
@@ -32,6 +33,7 @@ from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
+from shared.models.attachment_sync import AttachmentSyncRequest, AttachmentSyncResponse
 from shared.models.execution import ExecutionRequest
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import (
@@ -46,6 +48,8 @@ from shared.utils.ip_util import get_host_ip
 # Setup logger
 logger = setup_logger(__name__)
 
+WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
+
 # In-memory registry: validation task_id -> {validation_id, shell_type, image, created_at}
 # Used by callback_handler to update Redis validation status when validation completes.
 # Entries are cleaned up on terminal callback events or after TTL (5 min).
@@ -53,6 +57,7 @@ _validation_task_registry: Dict[int, Dict[str, Any]] = {}
 
 # Maximum age for validation registry entries before cleanup (seconds)
 _VALIDATION_REGISTRY_MAX_AGE = 300
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -89,6 +94,7 @@ task_processor = TaskProcessor()
 
 # Health check paths that should skip logging to reduce overhead
 HEALTH_CHECK_PATHS = {"/", "/health"}
+SENSITIVE_BODY_CAPTURE_PATHS = {f"{ROUTE_PREFIX}/callback", "/callback"}
 
 
 @app.middleware("http")
@@ -114,12 +120,14 @@ async def log_requests(request: Request, call_next):
 
     # Get OTEL config
     otel_config = get_otel_config()
+    should_capture_body = request.url.path not in SENSITIVE_BODY_CAPTURE_PATHS
 
     # Capture request body if OTEL is enabled and body capture is configured
     request_body = None
     if (
         otel_config.enabled
         and otel_config.capture_request_body
+        and should_capture_body
         and request.method in ("POST", "PUT", "PATCH")
     ):
         try:
@@ -186,7 +194,7 @@ async def log_requests(request: Request, call_next):
                             )
 
                     # Capture response body (only for non-streaming responses)
-                    if otel_config.capture_response_body:
+                    if otel_config.capture_response_body and should_capture_body:
                         if not isinstance(response, StreamingResponse):
                             try:
                                 response_body_chunks = []
@@ -261,6 +269,10 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             f"[Callback] Received from {client_ip}: "
             f"event_type={event_type}, task_id={task_id}, subtask_id={subtask_id}"
         )
+        logger.info(
+            f"[Callback] Summary: event_type={event_type}, task_id={task_id}, "
+            f"subtask_id={subtask_id}, keys={sorted(event_data.keys())}"
+        )
 
         # Set task context for tracing
         set_task_context(task_id=task_id, subtask_id=subtask_id)
@@ -274,7 +286,8 @@ async def callback_handler(event_data: dict = Body(...), http_request: Request =
             if response.status_code != 200:
                 logger.warning(
                     f"[Callback] Backend returned error: "
-                    f"{response.status_code} {response.text}"
+                    f"status_code={response.status_code}, "
+                    f"body_preview={_to_log_preview(response.text)}"
                 )
 
         # Handle terminal events - remove from RunningTaskTracker
@@ -645,7 +658,7 @@ async def get_executor_workspace_file(
     legacy_url = f"{base_url}/filesystem/file"
     rest_file_url = f"{base_url}/files"
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
         legacy_response = await client.get(legacy_url, params={"path": path})
         if legacy_response.status_code < 400:
             return StreamingResponse(
@@ -653,6 +666,11 @@ async def get_executor_workspace_file(
                 media_type=legacy_response.headers.get(
                     "content-type", "application/octet-stream"
                 ),
+            )
+        if legacy_response.status_code in {408, 413, 429}:
+            raise HTTPException(
+                status_code=legacy_response.status_code,
+                detail=_to_log_preview(legacy_response.text),
             )
 
         logger.info(
@@ -669,6 +687,11 @@ async def get_executor_workspace_file(
                 media_type=fallback_response.headers.get(
                     "content-type", "application/octet-stream"
                 ),
+            )
+        if fallback_response.status_code in {408, 413, 429}:
+            raise HTTPException(
+                status_code=fallback_response.status_code,
+                detail=_to_log_preview(fallback_response.text),
             )
 
         logger.warning(
@@ -688,7 +711,7 @@ async def get_executor_workspace_file(
 
 
 class CancelTaskRequest(BaseModel):
-    task_id: int
+    task_id: int = Field(..., strict=True)
 
 
 class ValidateImageRequest(BaseModel):
@@ -851,7 +874,8 @@ async def _update_validation_status_from_callback(
             else:
                 logger.warning(
                     f"[Callback] Failed to update validation status: "
-                    f"{response.status_code} {response.text}"
+                    f"status_code={response.status_code}, "
+                    f"body_preview={_to_log_preview(response.text)}"
                 )
     except Exception as e:
         logger.error(
@@ -1110,8 +1134,8 @@ class OpenAIResponsesRequest(BaseModel):
 class CancelRequest(BaseModel):
     """Request model for /v1/cancel endpoint."""
 
-    task_id: int
-    subtask_id: Optional[int] = None
+    task_id: int = Field(..., strict=True)
+    subtask_id: Optional[int] = Field(None, strict=True)
     executor_name: Optional[str] = None
 
 
@@ -1266,6 +1290,124 @@ async def prepare_executor(request: ExecutionRequest, http_request: Request):
             f"[executors/prepare] Error preparing executor for task {request.task_id}: {e}"
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/tasks/{task_id}/attachments/sync")
+async def sync_task_attachments(
+    task_id: int, payload: Dict[str, Any], http_request: Request
+):
+    """Prepare task attachments inside the target executor runtime."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    sync_request = AttachmentSyncRequest.from_dict({**payload, "task_id": task_id})
+    logger.info(
+        "[attachments/sync] Received request: task_id=%s, subtask_id=%s, "
+        "attachments=%d, executor_name=%s from %s",
+        sync_request.task_id,
+        sync_request.subtask_id,
+        len(sync_request.attachments),
+        sync_request.executor_name,
+        client_ip,
+    )
+
+    set_task_context(task_id=sync_request.task_id, subtask_id=sync_request.subtask_id)
+
+    if not sync_request.attachments:
+        return AttachmentSyncResponse(
+            task_id=sync_request.task_id,
+            subtask_id=sync_request.subtask_id,
+            executor_name=sync_request.executor_name,
+            executor_namespace=sync_request.executor_namespace,
+        ).to_dict()
+
+    executor_type = sync_request.executor_type or EXECUTOR_DISPATCHER_MODE
+    executor = ExecutorDispatcher.get_executor(executor_type)
+    task_dict = sync_request.to_dict()
+    task_dict["prepare_only"] = True
+
+    try:
+        prepare_result = await asyncio.to_thread(
+            executor.submit_executor,
+            task_dict,
+            None,
+        )
+        if not prepare_result or prepare_result.get("status") != "success":
+            error = (
+                prepare_result.get("error_msg", "Failed to prepare executor")
+                if prepare_result
+                else "No executor prepare result returned"
+            )
+            logger.error(
+                "[attachments/sync] Executor prepare failed: task_id=%s, error=%s",
+                sync_request.task_id,
+                error,
+            )
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request, error
+            ).to_dict()
+
+        executor_name = (
+            prepare_result.get("executor_name") or sync_request.executor_name
+        )
+        executor_namespace = (
+            prepare_result.get("executor_namespace") or sync_request.executor_namespace
+        )
+        sync_request.executor_name = executor_name
+        sync_request.executor_namespace = executor_namespace
+        if not executor_name:
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request, "Executor name is unavailable after prepare"
+            ).to_dict()
+
+        if not hasattr(executor, "get_container_address"):
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request, "Executor address lookup is not supported"
+            ).to_dict()
+
+        address = await asyncio.to_thread(
+            executor.get_container_address,
+            executor_name,
+            executor_namespace,
+        )
+        if address.get("status") != "success" or not address.get("base_url"):
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request,
+                address.get("error_msg") or "Executor runtime is unavailable",
+            ).to_dict()
+
+        endpoint = f"{str(address['base_url']).rstrip('/')}/v1/attachments/sync"
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                endpoint,
+                json=sync_request.to_dict(),
+                headers={"Content-Type": "application/json"},
+            )
+        if response.status_code >= 400:
+            body_preview = response.text[:200]
+            return AttachmentSyncResponse.failed_for_request(
+                sync_request,
+                f"Executor sync failed: HTTP {response.status_code}; body={body_preview}",
+            ).to_dict()
+
+        data = response.json()
+        data["executor_name"] = executor_name
+        data["executor_namespace"] = executor_namespace
+        logger.info(
+            "[attachments/sync] Completed: task_id=%s, subtask_id=%s, "
+            "executor_name=%s, success_count=%s, failed_count=%s",
+            sync_request.task_id,
+            sync_request.subtask_id,
+            executor_name,
+            data.get("success_count"),
+            data.get("failed_count"),
+        )
+        return data
+    except Exception as e:
+        logger.exception(
+            "[attachments/sync] Error syncing attachments: task_id=%s, subtask_id=%s",
+            sync_request.task_id,
+            sync_request.subtask_id,
+        )
+        return AttachmentSyncResponse.failed_for_request(sync_request, str(e)).to_dict()
 
 
 async def _cleanup_task_heartbeat(task_id: int) -> None:
@@ -1424,7 +1566,8 @@ class ArchiveExecutorRequest(BaseModel):
     upload_url: str  # Presigned MinIO upload URL
     executor_name: str
     executor_namespace: str
-    max_size_mb: int = 500
+    max_size_mb: int = 2048
+    runtime_type: str = "executor"
 
 
 class RestoreExecutorRequest(BaseModel):
@@ -1434,6 +1577,7 @@ class RestoreExecutorRequest(BaseModel):
     download_url: str  # Presigned MinIO download URL
     executor_name: str
     executor_namespace: str
+    runtime_type: str = "executor"
 
 
 @api_router.post("/executor/archive")
@@ -1480,6 +1624,7 @@ async def archive_executor_workspace(
             "task_id": request.task_id,
             "upload_url": request.upload_url,
             "max_size_mb": request.max_size_mb,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Archive] Forwarding to executor: {archive_url}")
@@ -1553,6 +1698,7 @@ async def restore_executor_workspace(
         payload = {
             "task_id": request.task_id,
             "download_url": request.download_url,
+            "runtime_type": request.runtime_type,
         }
 
         logger.info(f"[Restore] Forwarding to executor: {restore_url}")

@@ -17,6 +17,7 @@ from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
+from app.services.auth import create_skill_identity_token, create_task_token
 
 
 def _create_user(test_db: Session, username: str, email: str) -> User:
@@ -55,7 +56,8 @@ def _add_group_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=group.id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=group.owner_user_id,
@@ -103,8 +105,175 @@ tags: ["api", "test"]
         data = response.json()
         assert data["metadata"]["name"] == "api-test-skill"
         assert data["spec"]["description"] == "API test skill"
+        assert "enabled" not in data["spec"]
         assert data["spec"]["version"] == "1.0.0"
         assert data["status"]["state"] == "Available"
+
+        skill_id = data["metadata"]["labels"]["id"]
+        bindings_response = test_client.get(
+            "/api/v1/kinds/skills/bindings/me",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert bindings_response.status_code == 200
+        assert any(
+            item["skill_ref"]["skill_id"] == int(skill_id)
+            for item in bindings_response.json()
+        )
+
+    def test_upload_skill_with_skill_identity_token(
+        self, test_client: TestClient, test_user: User
+    ):
+        """Skill identity tokens should be accepted when creating skills."""
+        skill_md = """---
+description: "Skill identity upload skill"
+version: "1.0.0"
+author: "Skill Identity"
+tags: ["skill-identity"]
+---
+
+"""
+        zip_content = self.create_test_zip(skill_md)
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+            data={"name": "skill-identity-upload-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["metadata"]["name"] == "skill-identity-upload-skill"
+        assert data["spec"]["description"] == "Skill identity upload skill"
+
+    def test_update_skill_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Skill identity tokens should be accepted when updating skills."""
+        initial_skill_md = "---\ndescription: Initial skill\n---\n"
+        initial_zip = self.create_test_zip(initial_skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-update-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(initial_zip), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        updated_skill_md = """---
+description: "Updated with skill identity token"
+version: "1.1.0"
+---
+
+"""
+        updated_zip = self.create_test_zip(updated_skill_md)
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.put(
+            f"/api/v1/kinds/skills/{skill_id}",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+            files={"file": ("test.zip", io.BytesIO(updated_zip), "application/zip")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["spec"]["description"] == "Updated with skill identity token"
+        assert data["spec"]["version"] == "1.1.0"
+
+    def test_list_skills_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Skill identity tokens should be accepted when listing skills."""
+        skill_md = "---\ndescription: Skill identity list skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-list-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.get(
+            "/api/v1/kinds/skills?limit=1",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+        )
+
+        assert response.status_code == 200
+        assert "items" in response.json()
+
+    def test_exact_match_skill_lookup_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Skill identity tokens should support publish duplicate checks."""
+        skill_md = "---\ndescription: Skill identity exact match skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-exact-match", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.get(
+            "/api/v1/kinds/skills?name=skill-identity-exact-match"
+            "&namespace=default&exact_match=true",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["items"][0]["metadata"]["name"] == "skill-identity-exact-match"
+
+    def test_upload_skill_rejects_task_token(
+        self, test_client: TestClient, test_user: User
+    ):
+        """Skill publishing should not accept generic task auth tokens."""
+        skill_md = "---\ndescription: Task token should fail\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        task_token = create_task_token(
+            task_id=551,
+            subtask_id=1,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+        )
+
+        response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {task_token}"},
+            data={"name": "task-token-rejected-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+
+        assert response.status_code == 401
 
     def test_upload_skill_without_auth(self, test_client: TestClient):
         """Test upload fails without authentication"""
@@ -259,6 +428,108 @@ tags: ["api", "test"]
         assert response.status_code == 200
         data = response.json()
         assert data["metadata"]["name"] == "get-by-id-api"
+
+    def test_remove_and_add_my_default_binding(
+        self, test_client: TestClient, test_token: str
+    ):
+        """Test removing and adding a personal skill default binding."""
+        skill_md = "---\ndescription: Binding API test\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "binding-api-test", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        remove_response = test_client.delete(
+            f"/api/v1/kinds/skills/{skill_id}/bindings/me",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert remove_response.status_code == 204
+
+        bindings_response = test_client.get(
+            "/api/v1/kinds/skills/bindings/me",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert bindings_response.status_code == 200
+        assert all(
+            item["skill_ref"]["skill_id"] != int(skill_id)
+            for item in bindings_response.json()
+        )
+
+        add_response = test_client.post(
+            f"/api/v1/kinds/skills/{skill_id}/bindings/me",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        assert add_response.status_code == 200
+        assert add_response.json()["skill_ref"]["skill_id"] == int(skill_id)
+
+    def test_update_my_default_binding_exceptions(
+        self, test_client: TestClient, test_token: str
+    ):
+        """Test updating automatic Skill exceptions for the current user."""
+        skill_md = "---\ndescription: Binding exception API test\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "binding-exception-api-test", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        update_response = test_client.patch(
+            f"/api/v1/kinds/skills/{skill_id}/bindings/me",
+            headers={"Authorization": f"Bearer {test_token}"},
+            json={
+                "exceptions": [
+                    {"type": "mode", "value": "code"},
+                    {"type": "agent", "value": "100"},
+                ],
+                "force_preload": True,
+            },
+        )
+
+        assert update_response.status_code == 200
+        assert update_response.json()["skill_ref"]["skill_id"] == int(skill_id)
+        assert update_response.json()["exceptions"] == [
+            {"type": "mode", "value": "code"},
+            {"type": "agent", "value": "100"},
+        ]
+        assert update_response.json()["force_preload"] is True
+
+        bindings_response = test_client.get(
+            "/api/v1/kinds/skills/bindings/me",
+            headers={"Authorization": f"Bearer {test_token}"},
+        )
+        matching = [
+            item
+            for item in bindings_response.json()
+            if item["skill_ref"]["skill_id"] == int(skill_id)
+        ]
+        assert matching[0]["exceptions"] == [
+            {"type": "mode", "value": "code"},
+            {"type": "agent", "value": "100"},
+        ]
+        assert matching[0]["force_preload"] is True
+
+    def test_skill_enabled_endpoint_removed(
+        self, test_client: TestClient, test_token: str
+    ):
+        """Test the old Skill enabled endpoint is no longer part of the API."""
+        response = test_client.put(
+            "/api/v1/kinds/skills/1/enabled",
+            headers={"Authorization": f"Bearer {test_token}"},
+            json={"enabled": False},
+        )
+
+        assert response.status_code == 404
 
     def test_get_skill_not_found(self, test_client: TestClient, test_token: str):
         """Test getting non-existent skill returns 404"""

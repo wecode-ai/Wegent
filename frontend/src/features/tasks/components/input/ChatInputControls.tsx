@@ -4,18 +4,15 @@
 
 'use client'
 
-import React from 'react'
+import React, { type Dispatch, type SetStateAction } from 'react'
 import { CircleStop } from 'lucide-react'
 import ModelSelector, { Model } from '../selector/ModelSelector'
-import TeamSelectorButton from '../selector/TeamSelectorButton'
 import UnifiedRepositorySelector from '../selector/UnifiedRepositorySelector'
-import ClarificationToggle from '../clarification/ClarificationToggle'
-import CorrectionModeToggle from '../CorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
 import AttachmentButton from '../AttachmentButton'
 import SendButton from './SendButton'
 import LoadingDots from '../message/LoadingDots'
-import QuotaUsage from '../params/QuotaUsage'
+import ChatToolbarStatus from './ChatToolbarStatus'
 import { ActionButton } from '@/components/ui/action-button'
 import type {
   Team,
@@ -27,11 +24,15 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { canUseChatContexts, isChatShell } from '../../service/messageService'
+import {
+  canSwitchModelAfterMessages,
+  canUseChatContexts,
+  isChatShell,
+} from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
-import SkillSelectorPopover, { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+import { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 import {
   ImageSizeSelector,
   GenerateModeSelector,
@@ -39,10 +40,17 @@ import {
   VideoSettingsPopover,
 } from '../selector'
 import type { GenerateMode } from '../selector'
+import { ProjectSelectorTab } from '@/features/projects/components/ProjectSelectorTab'
+import { getChatSendState } from './chatSendState'
+import AgentSkillSelectorMenu from './AgentSkillSelectorMenu'
+import InputMoreActionsMenu from './InputMoreActionsMenu'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
   taskType?: TaskType
+  /** Mode used to filter visible teams in selectors. */
+  teamModeFilter?: TeamModeFilter
   // Team and Model
   selectedTeam: Team | null
   /** Available teams for team selector */
@@ -88,7 +96,7 @@ export interface ChatInputControlsProps {
 
   // Context selection (knowledge bases)
   selectedContexts: ContextItem[]
-  setSelectedContexts: (contexts: ContextItem[]) => void
+  setSelectedContexts: Dispatch<SetStateAction<ContextItem[]>>
 
   // Attachment (multi-attachment)
   attachmentState: MultiAttachmentUploadState
@@ -96,22 +104,24 @@ export interface ChatInputControlsProps {
   onAttachmentRemove: (attachmentId: number) => void
 
   // State flags
-  isLoading: boolean
   isStreaming: boolean
-  isAwaitingResponseStart?: boolean
   isStopping: boolean
   hasMessages: boolean
   shouldCollapseSelectors: boolean
-  shouldHideQuotaUsage: boolean
+  shouldHideToolbarStatus: boolean
   shouldHideChatInput: boolean
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
-  isSubtaskStreaming: boolean
+  canQueueMessage?: boolean
+  canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
+  onCancelTask?: () => void
   onSendMessage: () => void
+  onSendGuidance?: () => void
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
@@ -152,8 +162,11 @@ export interface ChatInputControlsProps {
   /** Callback when user switches between video and image mode */
   onGenerateModeChange?: (mode: GenerateMode) => void
 
-  /** When true, hide all selectors - only show send button + quota */
+  /** When true, hide all selectors - only show send button and toolbar status */
   hideSelectors?: boolean
+
+  /** Project ID for project selector (workspace projects) */
+  projectId?: number | null
 }
 
 /**
@@ -165,7 +178,7 @@ export interface ChatInputControlsProps {
  * - Model selector
  * - Repository selector (for code tasks)
  * - Branch selector (for code tasks)
- * - Quota usage display
+ * - Toolbar status display
  * - Deep thinking toggle
  * - Send/Stop button
  *
@@ -174,6 +187,7 @@ export interface ChatInputControlsProps {
  */
 export function ChatInputControls({
   taskType,
+  teamModeFilter = taskType ?? 'chat',
   selectedTeam,
   teams = [],
   onTeamChange,
@@ -201,23 +215,25 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
-  attachmentState: _attachmentState,
+  attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
-  isLoading,
   isStreaming,
-  isAwaitingResponseStart = false,
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
-  shouldHideQuotaUsage,
+  shouldHideToolbarStatus,
   shouldHideChatInput,
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
-  isSubtaskStreaming,
+  canQueueMessage = false,
+  canSendGuidance = false,
+  canCancelTask,
   onStopStream,
+  onCancelTask,
   onSendMessage,
+  onSendGuidance,
   hasNoTeams = false,
   availableSkills = [],
   teamSkillNames = [],
@@ -249,6 +265,8 @@ export function ChatInputControls({
   onGenerateModeChange,
   // Hide all selectors (for OpenClaw devices)
   hideSelectors,
+  // Project context
+  projectId,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
@@ -256,76 +274,100 @@ export function ChatInputControls({
   // Check if we're in generation mode (video or image)
   const isGenerationMode = isVideoMode || isImageMode
   // Always use compact mode (icon only) to save space
-  const shouldUseCompactQuota = true
+  const shouldUseCompactToolbarStatus = true
   const isMobile = useIsMobile()
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
 
   // Determine the send button state
   const renderSendButton = () => {
-    const isDisabled =
-      isLoading ||
-      isStreaming ||
-      isModelSelectionRequired ||
-      !isAttachmentReadyToSend ||
-      hasNoTeams ||
-      (shouldHideChatInput ? false : !taskInputMessage.trim())
+    const sendState = getChatSendState({
+      isStreaming,
+      isStopping,
+      isModelSelectionRequired,
+      isAttachmentReadyToSend,
+      hasNoTeams,
+      shouldHideChatInput,
+      taskInputMessage,
+      hasAttachments: attachmentState.attachments.length > 0,
+      canQueueMessage,
+      canCancelTask,
+    })
 
-    if (isStreaming || isAwaitingResponseStart || isStopping) {
-      if (isStopping) {
-        return (
-          <ActionButton
-            variant="loading"
-            icon={
-              <>
-                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                <CircleStop className="h-4 w-4 text-orange-500" />
-              </>
-            }
-          />
-        )
-      }
+    const renderStopAction = () => (
+      <ActionButton
+        onClick={onStopStream}
+        title="Stop generating"
+        icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+        className="hover:bg-orange-100"
+        data-testid="stop-stream-button"
+      />
+    )
+
+    const renderStoppingAction = () => (
+      <ActionButton
+        variant="loading"
+        icon={
+          <>
+            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+            <CircleStop className="h-4 w-4 text-orange-500" />
+          </>
+        }
+      />
+    )
+
+    const renderCancelTaskAction = () => {
       return (
         <ActionButton
-          onClick={onStopStream}
-          title="Stop generating"
+          onClick={onCancelTask}
+          title="Cancel task"
           icon={<CircleStop className="h-4 w-4 text-orange-500" />}
           className="hover:bg-orange-100"
+          data-testid="cancel-task-button"
         />
       )
     }
 
-    // For group chat: if task status is PENDING but no AI subtask is running,
-    // show normal send button instead of loading animation.
-    if (
-      selectedTaskDetail?.status === 'PENDING' &&
-      !isSubtaskStreaming &&
-      selectedTaskDetail?.is_group_chat
-    ) {
-      return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
-    }
+    if (sendState.primaryAction === 'loading') {
+      if (sendState.showStopAction) {
+        return renderStoppingAction()
+      }
 
-    // For non-group-chat tasks with PENDING status, show loading animation
-    if (selectedTaskDetail?.status === 'PENDING') {
+      if (sendState.showPendingAction) {
+        return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
+      }
+
       return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
     }
 
-    // CANCELLING status
-    if (selectedTaskDetail?.status === 'CANCELLING') {
+    if (sendState.primaryAction === 'stop') {
+      return renderStopAction()
+    }
+
+    if (sendState.primaryAction === 'cancel') {
+      return renderCancelTaskAction()
+    }
+
+    if (sendState.primaryAction === 'queue') {
       return (
-        <ActionButton
-          variant="loading"
-          icon={
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-              <CircleStop className="h-4 w-4 text-orange-500" />
-            </>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {renderStopAction()}
+          <SendButton
+            onClick={onSendMessage}
+            disabled={sendState.isPrimaryDisabled}
+            isLoading={false}
+            ariaLabel="Queue message"
+          />
+        </div>
       )
     }
 
-    // Default send button
-    return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
+    return (
+      <SendButton
+        onClick={onSendMessage}
+        disabled={sendState.isPrimaryDisabled}
+        isLoading={false}
+      />
+    )
   }
 
   // Mobile: delegate to MobileChatInputControls
@@ -336,6 +378,7 @@ export function ChatInputControls({
         teams={teams}
         onTeamChange={onTeamChange}
         taskType={taskType}
+        teamModeFilter={teamModeFilter}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
         forceOverride={forceOverride}
@@ -360,7 +403,6 @@ export function ChatInputControls({
         selectedContexts={selectedContexts}
         setSelectedContexts={setSelectedContexts}
         onFileSelect={onFileSelect}
-        isLoading={isLoading}
         isStreaming={isStreaming}
         isStopping={isStopping}
         hasMessages={hasMessages}
@@ -368,9 +410,14 @@ export function ChatInputControls({
         isModelSelectionRequired={isModelSelectionRequired}
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
-        isSubtaskStreaming={isSubtaskStreaming}
+        hasAttachments={attachmentState.attachments.length > 0}
+        canQueueMessage={canQueueMessage}
+        canSendGuidance={canSendGuidance}
+        canCancelTask={canCancelTask}
         onStopStream={onStopStream}
+        onCancelTask={onCancelTask}
         onSendMessage={onSendMessage}
+        onSendGuidance={onSendGuidance}
         hasNoTeams={hasNoTeams}
         availableSkills={availableSkills}
         teamSkillNames={teamSkillNames}
@@ -382,13 +429,17 @@ export function ChatInputControls({
     )
   }
 
-  // Desktop layout: original full layout
+  const selectorsDisabled = isStreaming
+  const showClarificationAction = isChatShell(selectedTeam)
+  const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
+
+  // Desktop layout
   return (
     <div
-      className={`flex items-center justify-between px-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
+      className={`flex items-center justify-between gap-2 px-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-visible flex items-center gap-0 flex-wrap"
+        className="flex-1 min-w-0 overflow-visible flex items-center gap-1 flex-wrap"
         data-tour="input-controls"
         data-testid="input-controls"
       >
@@ -397,18 +448,14 @@ export function ChatInputControls({
           <GenerateModeSelector
             selectedMode={taskType as GenerateMode}
             onModeChange={onGenerateModeChange}
-            disabled={isLoading || isStreaming || hasMessages}
+            disabled={isStreaming || hasMessages}
           />
         )}
 
         {/* Reference image upload button - show for image and video generation modes,
             placed between the mode toggle and the model selector */}
         {isGenerationMode && (
-          <AttachmentButton
-            onFileSelect={onFileSelect}
-            disabled={isLoading || isStreaming}
-            accept="image/*"
-          />
+          <AttachmentButton onFileSelect={onFileSelect} disabled={isStreaming} accept="image/*" />
         )}
 
         {/* Video Mode Controls - show when taskType is 'video' */}
@@ -422,7 +469,7 @@ export function ChatInputControls({
                 forceOverride={false}
                 setForceOverride={() => {}}
                 selectedTeam={null}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
                 isLoading={isVideoModelsLoading}
                 modelCategoryType="video"
               />
@@ -440,7 +487,7 @@ export function ChatInputControls({
                 selectedResolution={selectedResolution}
                 onResolutionChange={onResolutionChange}
                 availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
               />
             )}
           </>
@@ -457,7 +504,7 @@ export function ChatInputControls({
                 forceOverride={false}
                 setForceOverride={() => {}}
                 selectedTeam={null}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
                 isLoading={isImageModelsLoading}
                 modelCategoryType="image"
               />
@@ -468,7 +515,7 @@ export function ChatInputControls({
               <ImageSizeSelector
                 selectedSize={selectedImageSize}
                 onSizeChange={onImageSizeChange}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
               />
             )}
           </>
@@ -477,82 +524,67 @@ export function ChatInputControls({
         {/* Non-generation mode controls (chat, code, etc.) */}
         {!isGenerationMode && (
           <div
-            className={
-              hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'
-            }
+            className={`flex items-center gap-1 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+            data-testid="input-left-actions"
           >
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
-              <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
+              <AttachmentButton onFileSelect={onFileSelect} disabled={isStreaming} />
             )}
 
             {/* Divider between attachment and other controls */}
             {supportsAttachments(selectedTeam) && selectedTeam && (
-              <div className="w-px h-4 bg-border mx-1 flex-shrink-0" />
-            )}
-
-            {/* Team Selector - show when teams are available, onTeamChange is provided, and no messages yet */}
-            {teams.length > 0 && onTeamChange && !hasMessages && (
-              <TeamSelectorButton
-                selectedTeam={selectedTeam}
-                setSelectedTeam={(team: Team | null) => {
-                  if (team) {
-                    onTeamChange(team)
-                  }
-                }}
-                teams={teams}
-                disabled={isLoading || isStreaming}
-                taskDetail={selectedTaskDetail}
-                hideSettingsLink={false}
-                currentMode={taskType}
-                onTeamsRefresh={onTeamsRefresh}
+              <div
+                className="w-px h-4 bg-border mx-1 flex-shrink-0"
+                data-testid="attachment-actions-divider"
               />
             )}
 
-            {/* Skill Selector - show when skills are available */}
-            {/* Skill selection is read-only after task creation (hasMessages) */}
-            {availableSkills.length > 0 && onToggleSkill && (
-              <SkillSelectorPopover
-                ref={skillSelectorRef}
-                skills={availableSkills}
-                teamSkillNames={teamSkillNames}
-                preloadedSkillNames={preloadedSkillNames}
-                selectedSkillNames={selectedSkillNames}
-                onToggleSkill={onToggleSkill}
-                isChatShell={isChatShell(selectedTeam)}
-                disabled={isLoading || isStreaming}
-                readOnly={hasMessages}
-              />
-            )}
+            <AgentSkillSelectorMenu
+              selectedTeam={selectedTeam}
+              teams={teams}
+              onTeamChange={onTeamChange}
+              onTeamsRefresh={onTeamsRefresh}
+              selectedTaskDetail={selectedTaskDetail}
+              taskType={taskType}
+              teamModeFilter={teamModeFilter}
+              hasMessages={hasMessages}
+              isLoading={false}
+              isStreaming={isStreaming}
+              hasNoTeams={hasNoTeams}
+            />
 
-            {/* Context Selection - only show for chat shell */}
             {showChatContexts && (
               <ChatContextInput
                 selectedContexts={selectedContexts}
                 onContextsChange={setSelectedContexts}
                 excludeKnowledgeBaseId={knowledgeBaseId}
+                iconOnly
               />
             )}
 
-            {/* Clarification Toggle Button - only show for chat shell */}
-            {isChatShell(selectedTeam) && (
-              <ClarificationToggle
-                enabled={enableClarification}
-                onToggle={setEnableClarification}
-                disabled={isLoading || isStreaming}
-              />
-            )}
+            <InputMoreActionsMenu
+              showClarification={showClarificationAction}
+              enableClarification={enableClarification}
+              setEnableClarification={setEnableClarification}
+              showCorrection={showCorrectionAction}
+              enableCorrectionMode={enableCorrectionMode}
+              onCorrectionModeToggle={onCorrectionModeToggle}
+              correctionModelName={correctionModelName}
+              taskId={selectedTaskDetail?.id ?? null}
+              disabled={selectorsDisabled}
+              selectedTeam={selectedTeam}
+              hasMessages={hasMessages}
+              availableSkills={availableSkills}
+              teamSkillNames={teamSkillNames}
+              preloadedSkillNames={preloadedSkillNames}
+              selectedSkillNames={selectedSkillNames}
+              onToggleSkill={onToggleSkill}
+              skillSelectorRef={skillSelectorRef}
+            />
 
-            {/* Correction Mode Toggle Button - only show for chat shell */}
-            {isChatShell(selectedTeam) && onCorrectionModeToggle && (
-              <CorrectionModeToggle
-                enabled={enableCorrectionMode}
-                onToggle={onCorrectionModeToggle}
-                disabled={isLoading || isStreaming}
-                correctionModelName={correctionModelName}
-                taskId={selectedTaskDetail?.id ?? null}
-              />
-            )}
+            {/* Project Selector - show when in project context */}
+            {projectId && <ProjectSelectorTab projectId={projectId} disabled={hasMessages} />}
 
             {/* Repository and Branch Unified Selector - show when repository selector is enabled */}
             {/* Always show when showRepositorySelector is true, let component handle the display */}
@@ -569,32 +601,40 @@ export function ChatInputControls({
                 onRequiresWorkspaceChange={hasMessages ? undefined : onRequiresWorkspaceChange}
               />
             )}
-
-            {/* Model Selector - placed at the end of left side buttons */}
-            {selectedTeam && (
-              <div className={hideSelectors ? 'hidden' : ''}>
-                <ModelSelector
-                  selectedModel={selectedModel}
-                  setSelectedModel={setSelectedModel}
-                  forceOverride={forceOverride}
-                  setForceOverride={setForceOverride}
-                  selectedTeam={selectedTeam}
-                  disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
-                  compact={shouldCollapseSelectors}
-                  teamId={teamId}
-                  taskId={taskId}
-                  taskModelId={taskModelId}
-                />
-              </div>
-            )}
           </div>
         )}
       </div>
 
-      <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-        {/* Quota Usage */}
-        {!shouldHideQuotaUsage && (
-          <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+      <div
+        className="ml-auto flex items-center gap-1.5 flex-shrink-0"
+        data-testid="input-right-actions"
+      >
+        {!isGenerationMode && (
+          <div
+            className={`flex items-center gap-1.5 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+          >
+            {selectedTeam && (
+              <ModelSelector
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                forceOverride={forceOverride}
+                setForceOverride={setForceOverride}
+                selectedTeam={selectedTeam}
+                disabled={
+                  isStreaming || (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+                }
+                compact={shouldCollapseSelectors}
+                teamId={teamId}
+                taskId={taskId}
+                taskModelId={taskModelId}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Toolbar Status */}
+        {!shouldHideToolbarStatus && (
+          <ChatToolbarStatus className="flex-shrink-0" compact={shouldUseCompactToolbarStatus} />
         )}
 
         {/* Send/Stop Button */}

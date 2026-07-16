@@ -6,6 +6,7 @@ import pytest
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
+    RetrievalScope,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
@@ -113,7 +114,7 @@ def test_build_query_runtime_spec_maps_runtime_budget():
     assert spec.query == "release checklist"
     assert spec.max_results == 3
     assert spec.route_mode == "auto"
-    assert spec.document_ids == [10]
+    assert spec.scope == RetrievalScope(document_ids=[10])
     assert spec.user_id == 5
     assert spec.user_name == "alice"
     assert spec.restricted_mode is True
@@ -182,6 +183,40 @@ def test_build_query_runtime_spec_resolves_configs_for_forced_rag_route():
             route_mode="rag_retrieval",
         )
 
+    assert spec.knowledge_base_configs == resolved_configs
+
+
+def test_build_query_runtime_spec_reuses_provided_rag_configs():
+    resolver = RagRuntimeResolver()
+    resolved_configs = [
+        RemoteKnowledgeBaseQueryConfig(
+            knowledge_base_id=1,
+            index_owner_user_id=5,
+            retriever_config=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={"type": "qdrant"},
+            ),
+            embedding_model_config=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+            retrieval_config=RuntimeRetrievalConfig(top_k=20),
+        )
+    ]
+
+    with patch.object(resolver, "_build_query_knowledge_base_configs") as build_configs:
+        spec = resolver.build_query_runtime_spec(
+            db=MagicMock(),
+            knowledge_base_ids=[1],
+            query="release checklist",
+            max_results=3,
+            route_mode="rag_retrieval",
+            knowledge_base_configs=resolved_configs,
+        )
+
+    build_configs.assert_not_called()
     assert spec.knowledge_base_configs == resolved_configs
 
 
@@ -492,6 +527,15 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
         current_user_id=9,
     )
     assert spec.knowledge_base_configs[0].index_owner_user_id == 7
+    assert len(spec.knowledge_base_retrieval_overrides) == 1
+    assert spec.knowledge_base_retrieval_overrides[0].knowledge_base_id == 7
+    assert spec.knowledge_base_retrieval_overrides[0].retrieval_config == (
+        RuntimeRetrievalConfig(
+            top_k=5,
+            score_threshold=0.7,
+            retrieval_mode="vector",
+        )
+    )
 
 
 def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> None:
@@ -510,6 +554,7 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
                         "model_name": "embed-a",
                         "model_namespace": "default",
                     },
+                    "retrieval_mode": "vector",
                 }
             }
         },
@@ -569,6 +614,7 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
         user_name="alice",
     )
     assert spec.knowledge_base_configs[0].index_owner_user_id == 42
+    assert spec.knowledge_base_configs[0].retrieval_config.retrieval_mode == "vector"
 
 
 def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> None:

@@ -5,10 +5,9 @@
 'use client'
 import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Tag } from '@/components/ui/tag'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
 import {
   CircleStackIcon,
@@ -19,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import RetrieverEditDialog from './RetrieverEditDialog'
 import {
@@ -32,21 +32,53 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { retrieverApis, UnifiedRetriever } from '@/apis/retrievers'
-import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import type { BaseRole } from '@/types/base-role'
+import type { Group } from '@/types/group'
+import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
+import {
+  hasResourceCreateTargets,
+  ResourceCreateButton,
+  type ResourceCreateTarget,
+} from '@/features/resource-library/components/ResourceCreateButton'
+import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
 interface RetrieverListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
+  sourceControls?: ReactNode
+  sortControls?: ReactNode
+  sourceFilter?: ManagedResourceSourceFilter
+  groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Retriever (knowledge base retriever) resources grouped by ownership.
+ * Unlike other List components, allows creation in personal/all scope if the user
+ * has Owner or Maintainer role in any group, because Retrievers must belong to a group.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 const RetrieverList: React.FC<RetrieverListProps> = ({
   scope = 'personal',
   groupName,
   groupRoleMap,
   onEditResource,
+  sourceControls,
+  sortControls,
+  sourceFilter = 'all',
+  groups = [],
+  sortMode = 'default',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -59,6 +91,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   )
   const [isDeleting, setIsDeleting] = useState(false)
   const [testingRetrieverName, setTestingRetrieverName] = useState<string | null>(null)
+  const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
 
   const fetchRetrievers = useCallback(async () => {
     setLoading(true)
@@ -81,56 +114,53 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   }, [fetchRetrievers, scope, groupName])
 
   // Categorize retrievers by type
-  const { groupRetrievers, userRetrievers, publicRetrievers } = React.useMemo(() => {
-    const group: UnifiedRetriever[] = []
-    const user: UnifiedRetriever[] = []
-    const publicList: UnifiedRetriever[] = []
-
-    for (const retriever of retrievers) {
-      if (retriever.type === 'group') {
-        group.push(retriever)
-      } else if (retriever.type === 'public') {
-        publicList.push(retriever)
-      } else {
-        user.push(retriever)
-      }
+  const sourceFilteredRetrievers = React.useMemo(() => {
+    if (sourceFilter === 'personal') {
+      return retrievers.filter(retriever => retriever.type === 'user')
     }
-
-    return {
-      groupRetrievers: group,
-      userRetrievers: user,
-      publicRetrievers: publicList,
+    if (sourceFilter === 'group') {
+      return retrievers.filter(retriever => retriever.type === 'group')
     }
-  }, [retrievers])
+    if (sourceFilter === 'system') {
+      return retrievers.filter(retriever => retriever.type === 'public')
+    }
+    return retrievers
+  }, [retrievers, sourceFilter])
 
-  const totalRetrievers = groupRetrievers.length + userRetrievers.length + publicRetrievers.length
+  const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
+  const getRetrieverSource = React.useCallback(
+    (retriever: UnifiedRetriever): ResourceLibrarySortSource => {
+      if (retriever.type === 'public') return 'system'
+      if (retriever.type === 'group') return 'group'
+      return 'personal'
+    },
+    []
+  )
 
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
+  const sortedRetrievers = React.useMemo(
+    () =>
+      sortResourceLibraryItems(sourceFilteredRetrievers, {
+        sortMode,
+        groupDisplayNames,
+        getSource: getRetrieverSource,
+        getName: retriever => retriever.name,
+        getDisplayName: retriever => retriever.displayName,
+        getNamespace: retriever => retriever.namespace,
+        getCreatedAt: retriever => retriever.created_at,
+        getUpdatedAt: retriever => retriever.updated_at,
+        getStableId: retriever => `${retriever.type}-${retriever.namespace}-${retriever.name}`,
+      }),
+    [sourceFilteredRetrievers, sortMode, groupDisplayNames, getRetrieverSource]
+  )
 
-  // Check if user can create in the current group (when scope is 'group')
-  const canCreateInGroup = (targetGroupName: string | undefined): boolean => {
-    if (!targetGroupName || !groupRoleMap) return false
-    const role = groupRoleMap.get(targetGroupName)
-    return role === 'Owner' || role === 'Maintainer'
-  }
+  const totalRetrievers = sortedRetrievers.length
 
-  // For group scope, check specific group; otherwise check any group
-  const canCreateInCurrentContext =
-    scope === 'group'
-      ? canCreateInGroup(groupName)
-      : groupRoleMap &&
-        Array.from(groupRoleMap.values()).some(role => role === 'Owner' || role === 'Maintainer')
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
 
   const handleTestConnection = async (retriever: UnifiedRetriever) => {
     setTestingRetrieverName(retriever.name)
@@ -208,10 +238,12 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   const handleEditClose = () => {
     setEditingRetriever(null)
     setDialogOpen(false)
+    setCreateTarget({ scope: 'personal' })
     fetchRetrievers()
   }
 
-  const handleCreate = () => {
+  const handleCreate = (target: ResourceCreateTarget) => {
+    setCreateTarget(target)
     setEditingRetriever(null)
     setDialogOpen(true)
   }
@@ -227,26 +259,58 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
     }
   }
 
-  return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('common:retrievers.title')}
-        </h2>
-        <p className="text-sm text-text-muted mb-1">{t('common:retrievers.description')}</p>
-      </div>
+  const getSourceLabel = (retriever: UnifiedRetriever) => {
+    if (retriever.type === 'public') return t('retrievers.public')
+    if (retriever.type === 'group') return t('common:retrievers.group')
+    return t('common:retrievers.my_retrievers')
+  }
 
-      {/* Content Container */}
-      <div className="bg-base border border-border rounded-md p-2 w-full max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
-        {/* Loading State */}
+  const canEditRetriever = (retriever: UnifiedRetriever) => {
+    if (retriever.type === 'public') return false
+    if (retriever.type === 'group') return canEditGroupResource(retriever.namespace)
+    return true
+  }
+
+  const canDeleteRetriever = (retriever: UnifiedRetriever) => {
+    if (retriever.type === 'public') return false
+    if (retriever.type === 'group') return canDeleteGroupResource(retriever.namespace)
+    return true
+  }
+
+  const createAction = hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
+    <ResourceCreateButton
+      label={t('common:retrievers.create')}
+      scope={scope}
+      groupName={groupName}
+      sourceFilter={sourceFilter}
+      groups={groups}
+      onCreate={handleCreate}
+      data-testid="create-retriever-button"
+    />
+  ) : null
+
+  const filters =
+    sourceControls || sortControls ? (
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">{sourceControls}</div>
+        {sortControls}
+      </div>
+    ) : null
+
+  return (
+    <>
+      <ResourceManagementLayout
+        title={t('common:retrievers.title')}
+        description={t('common:retrievers.description')}
+        actions={createAction}
+        filters={filters}
+      >
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
           </div>
         )}
 
-        {/* Empty State */}
         {!loading && totalRetrievers === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CircleStackIcon className="w-12 h-12 text-text-muted mb-4" />
@@ -257,191 +321,102 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
           </div>
         )}
 
-        {/* Retriever List - Categorized */}
         {!loading && totalRetrievers > 0 && (
-          <>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 p-1">
-              {/* User Retrievers Section */}
-              {userRetrievers.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:retrievers.my_retrievers')} ({userRetrievers.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {userRetrievers.map(retriever => (
-                      <Card
-                        key={`user-${retriever.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors"
+          <div className="space-y-3" data-testid="retriever-list-items">
+            {sortedRetrievers.map(retriever => (
+              <Card
+                key={`${retriever.type}-${retriever.namespace}-${retriever.name}`}
+                className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"
+              >
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <ResourceListItem
+                    name={retriever.name}
+                    displayName={retriever.displayName || undefined}
+                    description={retriever.description}
+                    showId={true}
+                    isPublic={retriever.type === 'public'}
+                    publicLabel={t('retrievers.public')}
+                    icon={
+                      retriever.type === 'public' ? (
+                        <GlobeAltIcon className="w-5 h-5 text-primary" />
+                      ) : (
+                        <CircleStackIcon className="w-5 h-5 text-primary" />
+                      )
+                    }
+                    tags={[
+                      {
+                        key: 'source',
+                        label: getSourceLabel(retriever),
+                        variant:
+                          retriever.type === 'public'
+                            ? 'info'
+                            : retriever.type === 'group'
+                              ? 'success'
+                              : 'default',
+                      },
+                      ...(retriever.type === 'group'
+                        ? [
+                            {
+                              key: 'namespace',
+                              label: retriever.namespace,
+                              variant: 'info' as const,
+                            },
+                          ]
+                        : []),
+                      {
+                        key: 'storage-type',
+                        label: getStorageTypeLabel(retriever.storageType),
+                        variant: 'default',
+                        className: 'capitalize',
+                      },
+                    ]}
+                  />
+                  <div className="flex flex-shrink-0 items-center gap-1 self-end sm:ml-3 sm:self-auto">
+                    {retriever.type !== 'public' && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleTestConnection(retriever)}
+                        disabled={testingRetrieverName === retriever.name}
+                        title={t('common:retrievers.test_connection')}
                       >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={retriever.name}
-                            displayName={retriever.displayName || undefined}
-                            showId={true}
-                            icon={<CircleStackIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'storage-type',
-                                label: getStorageTypeLabel(retriever.storageType),
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                            ]}
-                          />
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleTestConnection(retriever)}
-                              disabled={testingRetrieverName === retriever.name}
-                              title={t('common:retrievers.test_connection')}
-                            >
-                              {testingRetrieverName === retriever.name ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <BeakerIcon className="w-4 h-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleEdit(retriever)}
-                              title={t('common:retrievers.edit')}
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 hover:text-error"
-                              onClick={() => setDeleteConfirmRetriever(retriever)}
-                              title={t('common:retrievers.delete')}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
+                        {testingRetrieverName === retriever.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <BeakerIcon className="w-4 h-4" />
+                        )}
+                      </Button>
+                    )}
+                    {canEditRetriever(retriever) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleEdit(retriever)}
+                        title={t('common:retrievers.edit')}
+                      >
+                        <PencilIcon className="w-4 h-4" />
+                      </Button>
+                    )}
+                    {canDeleteRetriever(retriever) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:text-error"
+                        onClick={() => setDeleteConfirmRetriever(retriever)}
+                        title={t('common:retrievers.delete')}
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Group Retrievers Section */}
-              {groupRetrievers.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:retrievers.group_retrievers')} ({groupRetrievers.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {groupRetrievers.map(retriever => (
-                      <Card
-                        key={`group-${retriever.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-                      >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={retriever.name}
-                            displayName={retriever.displayName || undefined}
-                            showId={true}
-                            icon={<CircleStackIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'storage-type',
-                                label: getStorageTypeLabel(retriever.storageType),
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                            ]}
-                          >
-                            <Tag variant="success" className="text-xs">
-                              {t('common:retrievers.group')}
-                            </Tag>
-                          </ResourceListItem>
-                          {/* Action buttons for group resources */}
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            {canEditGroupResource(retriever.namespace) && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => handleEdit(retriever)}
-                                title={t('common:retrievers.edit')}
-                              >
-                                <PencilIcon className="w-4 h-4" />
-                              </Button>
-                            )}
-                            {canDeleteGroupResource(retriever.namespace) && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 hover:text-error"
-                                onClick={() => setDeleteConfirmRetriever(retriever)}
-                                title={t('common:retrievers.delete')}
-                              >
-                                <TrashIcon className="w-4 h-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Public Retrievers Section */}
-              {publicRetrievers.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('retrievers.public_retrievers')} ({publicRetrievers.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {publicRetrievers.map(retriever => (
-                      <Card
-                        key={`public-${retriever.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-                      >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={retriever.name}
-                            displayName={retriever.displayName || undefined}
-                            showId={true}
-                            isPublic={true}
-                            publicLabel={t('retrievers.public')}
-                            icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'storage-type',
-                                label: getStorageTypeLabel(retriever.storageType),
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                            ]}
-                          />
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Add Button */}
-        {!loading && (scope === 'personal' || canCreateInCurrentContext) && (
-          <div className="border-t border-border pt-3 mt-3 bg-base">
-            <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleCreate}>
-                {t('common:retrievers.create')}
-              </UnifiedAddButton>
-            </div>
+              </Card>
+            ))}
           </div>
         )}
-      </div>
+      </ResourceManagementLayout>
 
       {/* Retriever Edit/Create Dialog */}
       <RetrieverEditDialog
@@ -449,8 +424,8 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
         retriever={editingRetriever}
         onClose={handleEditClose}
         toast={toast}
-        scope={scope}
-        groupName={groupName}
+        scope={editingRetriever ? scope : createTarget.scope}
+        groupName={editingRetriever ? groupName : createTarget.groupName}
       />
 
       {/* Delete Confirmation Dialog */}
@@ -507,7 +482,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   )
 }
 

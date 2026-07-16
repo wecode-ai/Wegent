@@ -1,0 +1,835 @@
+name: Wework App
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional Wework version override, for example 0.1.0 or v0.1.0. If empty, auto-increment from latest wework-vX.Y.Z tag"
+        type: string
+        required: false
+      publish_release:
+        description: "Create the formal GitHub Release. Leave disabled to build test artifacts only."
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "wework-v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Prepare build
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      release_sha: ${{ steps.version-files.outputs.release_sha }}
+      version: ${{ steps.version.outputs.value }}
+      publish_release: ${{ steps.version.outputs.publish_release }}
+
+    steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.release-app-token.outputs.token }}
+
+      - name: Resolve Wework release version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || github.event.inputs.publish_release == 'true' }}
+        run: |
+          set -euo pipefail
+
+          validate_version() {
+            local version="$1"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid Wework version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
+              exit 1
+            fi
+          }
+
+          bump_patch() {
+            local version="$1"
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "${major}.${minor}.$((patch + 1))"
+          }
+
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            version="${INPUT_VERSION#v}"
+            validate_version "$version"
+          elif [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
+            version="${GITHUB_REF_NAME#wework-v}"
+            validate_version "$version"
+          else
+            latest_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
+            if [ -z "$latest_tag" ]; then
+              version="0.0.1"
+            else
+              latest_version="${latest_tag#wework-v}"
+              validate_version "$latest_version"
+              version="$(bump_patch "$latest_version")"
+            fi
+          fi
+
+          publish_release="${PUBLISH_RELEASE:-false}"
+          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
+            publish_release="true"
+          fi
+
+          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="wework-v$version"
+          fi
+
+          {
+            echo "value=$version"
+            echo "release_tag=$release_tag"
+            echo "publish_release=$publish_release"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit Wework version files
+        id: version-files
+        shell: bash
+        env:
+          PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          sync_version_files() {
+            python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["RELEASE_VERSION"]
+
+          package_path = Path("wework/package.json")
+          package_data = json.loads(package_path.read_text(encoding="utf-8"))
+          package_data["version"] = version
+          package_path.write_text(
+              json.dumps(package_data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          tauri_config_path = Path("wework/src-tauri/tauri.conf.json")
+          tauri_config = json.loads(tauri_config_path.read_text(encoding="utf-8"))
+          tauri_config["version"] = version
+          tauri_config_path.write_text(
+              json.dumps(tauri_config, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          cargo_toml_path = Path("wework/src-tauri/Cargo.toml")
+          cargo_toml = cargo_toml_path.read_text(encoding="utf-8")
+          cargo_toml = re.sub(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo_toml,
+              count=1,
+          )
+          cargo_toml_path.write_text(cargo_toml, encoding="utf-8")
+
+          cargo_lock_path = Path("wework/src-tauri/Cargo.lock")
+          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
+          cargo_lock = re.sub(
+              r'(?ms)(\[\[package\]\]\nname = "app"\nversion = ")[^"]+(")',
+              rf'\g<1>{version}\2',
+              cargo_lock,
+              count=1,
+          )
+          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
+          PY
+          }
+
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            sync_version_files
+            if ! git diff --quiet -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock; then
+              echo "Error: tag release version files do not match ${RELEASE_VERSION}. Update the files before creating the tag." >&2
+              git diff -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock >&2
+              exit 1
+            fi
+            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${PUBLISH_RELEASE}" != "true" ]]; then
+            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" != "branch" ]]; then
+            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sync_version_files
+          if git diff --quiet -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock; then
+            echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          app_user_id="$(gh api "/users/${{ steps.release-app-token.outputs.app-slug }}[bot]" --jq .id)"
+          git config user.name "${{ steps.release-app-token.outputs.app-slug }}[bot]"
+          git config user.email "${app_user_id}+${{ steps.release-app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+          git add wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock
+          git commit -m "chore(wework): bump app version to ${RELEASE_VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        if: steps.version.outputs.publish_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          release_title="Wework $RELEASE_VERSION"
+          release_notes="$(mktemp)"
+          generated_notes="$(mktemp)"
+          previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
+
+          if [ -n "$previous_tag" ]; then
+            log_range="${previous_tag}..${RELEASE_SHA}"
+          else
+            log_range="$RELEASE_SHA"
+          fi
+
+          git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
+
+          if [ ! -s "$generated_notes" ]; then
+            echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"
+          fi
+
+          {
+            echo "## Changes"
+            echo ""
+            if [ -n "$previous_tag" ]; then
+              echo "Changes under \`wework/\` or \`executor/\` since \`$previous_tag\`."
+            else
+              echo "Initial Wework release changes under \`wework/\` or \`executor/\`."
+            fi
+            echo ""
+            cat "$generated_notes"
+            echo ""
+            echo "## macOS Distribution Notes"
+            echo ""
+            echo "Wework macOS DMG build."
+            echo ""
+            echo "This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway."
+            echo ""
+            echo "## Windows Distribution Notes"
+            echo ""
+            echo "Wework Windows x64 NSIS installer."
+          } > "$release_notes"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$release_title" \
+              --notes-file "$release_notes"
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --title "$release_title" \
+              --notes-file "$release_notes" \
+              --draft
+          fi
+
+  build-macos:
+    name: Build macOS ${{ matrix.arch }}
+    runs-on: macos-14
+    timeout-minutes: 45
+    needs: prepare-release
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+          - arch: x64
+            rust_target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
+
+      - name: Install Rosetta 2
+        if: matrix.arch == 'x64'
+        run: |
+          if ! /usr/bin/pgrep -q oahd; then
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+          fi
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ runner.os }}-wework-app-${{ matrix.rust_target }}-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-app-${{ matrix.rust_target }}-
+
+      - name: Build local executor sidecar
+        working-directory: executor
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --target "${{ matrix.rust_target }}"
+          binary="target/${{ matrix.rust_target }}/release/wegent-executor"
+          mkdir -p dist
+          cp "$binary" dist/wegent-executor
+          chmod 0755 dist/wegent-executor
+          dist/wegent-executor --version
+
+      - name: Prepare bundled Codex
+        working-directory: wework
+        env:
+          WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
+        run: pnpm run prepare:codex
+
+      - name: Sync Wework version files
+        working-directory: wework
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["RELEASE_VERSION"]
+
+          package_path = Path("package.json")
+          package_data = json.loads(package_path.read_text(encoding="utf-8"))
+          package_data["version"] = version
+          package_path.write_text(
+              json.dumps(package_data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          tauri_config_path = Path("src-tauri/tauri.conf.json")
+          tauri_config = json.loads(tauri_config_path.read_text(encoding="utf-8"))
+          tauri_config["version"] = version
+          tauri_config_path.write_text(
+              json.dumps(tauri_config, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          cargo_toml_path = Path("src-tauri/Cargo.toml")
+          cargo_toml = cargo_toml_path.read_text(encoding="utf-8")
+          cargo_toml = re.sub(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo_toml,
+              count=1,
+          )
+          cargo_toml_path.write_text(cargo_toml, encoding="utf-8")
+
+          cargo_lock_path = Path("src-tauri/Cargo.lock")
+          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
+          cargo_lock = re.sub(
+              r'(?ms)(\[\[package\]\]\nname = "app"\nversion = ")[^"]+(")',
+              rf'\g<1>{version}\2',
+              cargo_lock,
+              count=1,
+          )
+          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
+          PY
+
+      - name: Build Wework app bundle
+        working-directory: wework
+        env:
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          VITE_API_BASE_URL: https://api.wecode.ai/api
+          VITE_SOCKET_BASE_URL: https://api.wecode.ai
+          VITE_WEGENT_BACKEND_URL: http://localhost:8000
+        run: |
+          set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY" >&2
+            exit 1
+          fi
+          if [ -z "${TAURI_UPDATER_PUBKEY:-}" ]; then
+            echo "Missing GitHub secret: TAURI_UPDATER_PUBKEY" >&2
+            exit 1
+          fi
+
+          config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
+          cleanup() {
+            rm -f "$config_override"
+          }
+          trap cleanup EXIT
+          CONFIG_OVERRIDE="$config_override" \
+          VERSION="${{ needs.prepare-release.outputs.version }}" \
+          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/latest/download/latest.json" \
+          TAURI_UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
+          python3 - <<'PY'
+          import json
+          import os
+
+          config = {
+              "version": os.environ["VERSION"],
+              "bundle": {
+                  "createUpdaterArtifacts": True,
+                  "macOS": {
+                      "signingIdentity": "-",
+                      "hardenedRuntime": True,
+                  },
+              },
+              "plugins": {
+                  "updater": {
+                      "endpoints": [os.environ["UPDATER_ENDPOINT"]],
+                      "pubkey": os.environ["TAURI_UPDATER_PUBKEY"],
+                  },
+              },
+          }
+
+          with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
+              json.dump(config, handle, indent=2)
+              handle.write("\n")
+          PY
+          pnpm exec tauri build \
+            --target "${{ matrix.rust_target }}" \
+            --bundles app,dmg \
+            --config "$config_override"
+
+      - name: Verify and collect release assets
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -name '*.app.tar.gz' -type f | sort | tail -1)"
+          if [ -z "$archive_source" ]; then
+            echo "No updater .app.tar.gz archive found" >&2
+            exit 1
+          fi
+          signature_source="$archive_source.sig"
+          if [ ! -f "$signature_source" ]; then
+            echo "No updater signature found: $signature_source" >&2
+            exit 1
+          fi
+
+          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
+          if [ -z "$dmg_source" ]; then
+            echo "No .dmg bundle found" >&2
+            exit 1
+          fi
+          hdiutil verify "$dmg_source"
+
+          mount_dir="$RUNNER_TEMP/wework-dmg-${{ matrix.arch }}"
+          rm -rf "$mount_dir"
+          mkdir -p "$mount_dir"
+          cleanup_mount() {
+            hdiutil detach "$mount_dir" -quiet || true
+          }
+          trap cleanup_mount EXIT
+
+          hdiutil attach "$dmg_source" -mountpoint "$mount_dir" -nobrowse -readonly
+          app_path="$(find "$mount_dir" -maxdepth 1 -name '*.app' -type d | sort | tail -1)"
+          if [ -z "$app_path" ]; then
+            echo "No .app bundle found inside DMG" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign --display --verbose=4 "$app_path"
+          if spctl --assess --type execute --verbose "$app_path"; then
+            echo "Gatekeeper accepted the app bundle."
+          else
+            echo "::warning::Gatekeeper rejected this ad-hoc signed, non-notarized build. Users must click Done if macOS shows Move to Trash, then force-open it from System Settings > Privacy & Security > Open Anyway."
+          fi
+          cleanup_mount
+          trap - EXIT
+
+          artifact_dir="$RUNNER_TEMP/wework-macos-${{ matrix.arch }}"
+          mkdir -p "$artifact_dir"
+          dmg_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}.dmg"
+          archive_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}.app.tar.gz"
+          signature_path="$archive_path.sig"
+          cp "$dmg_source" "$dmg_path"
+          cp "$archive_source" "$archive_path"
+          cp "$signature_source" "$signature_path"
+          shasum -a 256 "$dmg_path"
+          shasum -a 256 "$archive_path"
+          {
+            echo "### Wework macOS ${{ matrix.arch }} release asset"
+            echo ""
+            echo "- DMG: $(basename "$dmg_path")"
+            echo "- Updater archive: $(basename "$archive_path")"
+            echo "- This build is ad-hoc signed and not Apple notarized."
+            echo "- If the first launch dialog shows Move to Trash, click Done instead."
+            echo "- Then force-open from System Settings > Privacy & Security > Open Anyway."
+            echo "- If macOS keeps the quarantine flag: \`xattr -dr com.apple.quarantine /Applications/WeWork.app\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "dmg_path=$dmg_path"
+            echo "archive_path=$archive_path"
+            echo "signature_path=$signature_path"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release app token
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Upload macOS assets to GitHub Release
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.package.outputs.dmg_path }}" \
+            "${{ steps.package.outputs.archive_path }}" \
+            "${{ steps.package.outputs.signature_path }}" \
+            --clobber
+          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+          {
+            echo ""
+            echo "- Direct DMG and updater downloads are available from: $release_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload macOS test artifacts
+        if: needs.prepare-release.outputs.publish_release != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-${{ needs.prepare-release.outputs.version }}-macos-${{ matrix.arch }}
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.archive_path }}
+            ${{ steps.package.outputs.signature_path }}
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+    needs: prepare-release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ runner.os }}-wework-app-x86_64-pc-windows-msvc-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-app-x86_64-pc-windows-msvc-
+
+      - name: Build local executor sidecar
+        shell: pwsh
+        working-directory: executor
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
+          cargo build --release --locked --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force ../wework/src-tauri/binaries | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/wegent-executor.exe ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe
+          & ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe --version
+
+      - name: Prepare bundled Codex
+        working-directory: wework
+        env:
+          WEWORK_CODEX_TARGET: x86_64-pc-windows-msvc
+        run: pnpm run prepare:codex
+
+      - name: Build Wework app bundle
+        shell: pwsh
+        working-directory: wework
+        env:
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          VITE_API_BASE_URL: https://api.wecode.ai/api
+          VITE_SOCKET_BASE_URL: https://api.wecode.ai
+          VITE_WEGENT_BACKEND_URL: http://localhost:8000
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY' }
+          if (-not $env:TAURI_UPDATER_PUBKEY) { throw 'Missing GitHub secret: TAURI_UPDATER_PUBKEY' }
+
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $package.version = $env:RELEASE_VERSION
+          $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
+
+          $configPath = Join-Path $env:RUNNER_TEMP 'tauri-windows-ci.json'
+          @{
+            version = $env:RELEASE_VERSION
+            bundle = @{ createUpdaterArtifacts = $true }
+            plugins = @{
+              updater = @{
+                endpoints = @("https://github.com/$env:GH_REPO/releases/latest/download/latest.json")
+                pubkey = $env:TAURI_UPDATER_PUBKEY
+              }
+            }
+          } | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
+
+          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $configPath
+
+      - name: Verify and collect release assets
+        id: package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundleDir = 'wework/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis'
+          $installer = Get-ChildItem $bundleDir -Filter '*.exe' | Sort-Object LastWriteTime | Select-Object -Last 1
+          if (-not $installer) { throw 'No Windows NSIS installer found' }
+          $signature = Get-Item "$($installer.FullName).sig" -ErrorAction Stop
+
+          $artifactDir = Join-Path $env:RUNNER_TEMP 'wework-windows-x64'
+          New-Item -ItemType Directory -Force $artifactDir | Out-Null
+          $installerPath = Join-Path $artifactDir 'WeWork_${{ needs.prepare-release.outputs.version }}_windows_x64-setup.exe'
+          $signaturePath = "$installerPath.sig"
+          Copy-Item $installer.FullName $installerPath
+          Copy-Item $signature.FullName $signaturePath
+          Get-FileHash $installerPath -Algorithm SHA256
+
+          "installer_path=$installerPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "signature_path=$signaturePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Create release app token
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Upload Windows assets to GitHub Release
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: gh release upload $env:RELEASE_TAG '${{ steps.package.outputs.installer_path }}' '${{ steps.package.outputs.signature_path }}' --clobber
+
+      - name: Upload Windows test artifacts
+        if: needs.prepare-release.outputs.publish_release != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-${{ needs.prepare-release.outputs.version }}-windows-x64
+          path: |
+            ${{ steps.package.outputs.installer_path }}
+            ${{ steps.package.outputs.signature_path }}
+          if-no-files-found: error
+
+  publish-updater-manifest:
+    name: Publish updater manifest
+    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
+    needs:
+      - prepare-release
+      - build-macos
+      - build-windows
+
+    steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Generate latest.json
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" \
+            --pattern "WeWork_${RELEASE_VERSION}_macos_*.app.tar.gz.sig" \
+            --dir "$work_dir"
+          gh release download "$RELEASE_TAG" \
+            --pattern "WeWork_${RELEASE_VERSION}_windows_x64-setup.exe.sig" \
+            --dir "$work_dir"
+
+          arm64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_macos_arm64.app.tar.gz.sig"
+          x64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_macos_x64.app.tar.gz.sig"
+          windows_x64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_windows_x64-setup.exe.sig"
+          if [ ! -f "$arm64_sig_path" ] || [ ! -f "$x64_sig_path" ] || [ ! -f "$windows_x64_sig_path" ]; then
+            echo "Missing updater signatures for latest.json" >&2
+            ls -la "$work_dir" >&2
+            exit 1
+          fi
+
+          export LATEST_JSON="$work_dir/latest.json"
+          export RELEASE_NOTES
+          RELEASE_NOTES="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
+          export ARM64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_macos_arm64.app.tar.gz"
+          export X64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_macos_x64.app.tar.gz"
+          export WINDOWS_X64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_windows_x64-setup.exe"
+          export ARM64_SIGNATURE
+          export X64_SIGNATURE
+          export WINDOWS_X64_SIGNATURE
+          ARM64_SIGNATURE="$(cat "$arm64_sig_path")"
+          X64_SIGNATURE="$(cat "$x64_sig_path")"
+          WINDOWS_X64_SIGNATURE="$(cat "$windows_x64_sig_path")"
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          data = {
+              "version": os.environ["RELEASE_VERSION"],
+              "notes": os.environ["RELEASE_NOTES"],
+              "pub_date": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": os.environ["ARM64_SIGNATURE"],
+                      "url": os.environ["ARM64_URL"],
+                  },
+                  "darwin-x86_64": {
+                      "signature": os.environ["X64_SIGNATURE"],
+                      "url": os.environ["X64_URL"],
+                  },
+                  "windows-x86_64": {
+                      "signature": os.environ["WINDOWS_X64_SIGNATURE"],
+                      "url": os.environ["WINDOWS_X64_URL"],
+                  },
+              },
+          }
+
+          with open(os.environ["LATEST_JSON"], "w", encoding="utf-8") as handle:
+              json.dump(data, handle, ensure_ascii=False, indent=2)
+              handle.write("\n")
+          PY
+
+          gh release upload "$RELEASE_TAG" "$work_dir/latest.json" --clobber
+          {
+            echo "### Wework updater manifest"
+            echo ""
+            echo "- Endpoint: https://github.com/${GH_REPO}/releases/latest/download/latest.json"
+            echo "- Version: ${RELEASE_VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
+    needs:
+      - prepare-release
+      - build-macos
+      - build-windows
+      - publish-updater-manifest
+
+    steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
+          gh api \
+            --method PATCH \
+            "repos/${GH_REPO}/releases/${release_id}" \
+            --field draft=false \
+            --field prerelease=false \
+            --raw-field make_latest=true >/dev/null
+          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+          echo "Published Wework release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"

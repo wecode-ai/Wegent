@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import React from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import ModelSelector from '@/features/tasks/components/selector/ModelSelector'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 
@@ -21,6 +21,7 @@ const mockSelectModelByKey = jest.fn()
 const mockSelectDefaultModel = jest.fn()
 const mockRefreshModels = jest.fn()
 const mockSetShowAdvancedModels = jest.fn()
+let mockModelSelectionOverrides: Record<string, unknown> = {}
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -77,13 +78,13 @@ jest.mock('@/features/tasks/hooks/useModelSelection', () => {
             return 'Select model'
           }
 
-          const displayText = selectedModel.displayName || selectedModel.name
-          return forceOverride ? `${displayText}(覆盖)` : displayText
+          return selectedModel.displayName || selectedModel.name
         },
         getBoundModelDisplayNames: () => [],
         getModelKey,
         getModelDisplayText: (model: { displayName?: string | null; name: string }) =>
           model.displayName || model.name,
+        ...mockModelSelectionOverrides,
       }
     },
   }
@@ -97,9 +98,25 @@ const mockModel: Model = {
   type: 'shared' as Model['type'],
 }
 
+const mockAdvancedModel: Model = {
+  name: 'claude-opus-4-advanced',
+  displayName: 'Claude Opus 4 Advanced',
+  provider: 'anthropic',
+  modelId: 'claude-opus-4-advanced',
+  type: 'shared' as Model['type'],
+  isAdvanced: true,
+}
+
+const mockDefaultModel: Model = {
+  name: '__default__',
+  provider: '',
+  modelId: '',
+}
+
 describe('ModelSelector', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockModelSelectionOverrides = {}
   })
 
   it('syncs an externally selected model into the selector display', async () => {
@@ -135,7 +152,7 @@ describe('ModelSelector', () => {
     })
   })
 
-  it('syncs an external forceOverride change into the selector display', async () => {
+  it('does not show override wording when external forceOverride is true', async () => {
     const externalSetSelectedModel = jest.fn()
     const externalSetForceOverride = jest.fn()
 
@@ -166,7 +183,176 @@ describe('ModelSelector', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('model-selector')).toHaveTextContent('Claude 3.5 Sonnet(覆盖)')
+      expect(screen.getByTestId('model-selector')).toHaveTextContent('Claude 3.5 Sonnet')
+      expect(screen.getByTestId('model-selector')).not.toHaveTextContent('覆盖')
     })
+  })
+
+  it('does not show an override control in the dropdown', async () => {
+    render(
+      <ModelSelector
+        selectedModel={mockModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={true}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('model-selector')).toHaveTextContent('Claude 3.5 Sonnet')
+    })
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    await waitFor(() => {
+      expect(screen.queryByText('覆盖默认模型')).not.toBeInTheDocument()
+    })
+  })
+
+  it('keeps model settings left aligned and the advanced model toggle on the right', async () => {
+    mockModelSelectionOverrides = {
+      hasAdvancedModels: true,
+      showAdvancedModels: false,
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={mockModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    const footer = await screen.findByTestId('model-selector-footer')
+    const settingsButton = screen.getByTestId('model-settings-button')
+    const advancedToggle = screen.getByTestId('show-advanced-models-toggle')
+
+    expect(footer).toHaveClass('flex')
+    expect(footer).toHaveClass('justify-between')
+    expect(
+      settingsButton.compareDocumentPosition(advancedToggle) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(advancedToggle).toHaveClass('ml-auto')
+    expect(settingsButton).toHaveTextContent('Model settings')
+    expect(advancedToggle).toHaveTextContent('Show advanced models')
+  })
+
+  it('marks advanced models with a distinct badge when they are visible', async () => {
+    mockModelSelectionOverrides = {
+      filteredModels: [mockAdvancedModel],
+      hasAdvancedModels: true,
+      showAdvancedModels: true,
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    const advancedBadge = await screen.findByTestId('model-advanced-badge')
+
+    expect(screen.getByText('Claude Opus 4 Advanced')).toBeInTheDocument()
+    expect(advancedBadge).toHaveTextContent('Advanced')
+    expect(advancedBadge).toHaveClass('bg-warning/10')
+    expect(advancedBadge).toHaveClass('text-warning')
+  })
+
+  it('shows advanced models by default when the current selection is advanced', async () => {
+    mockModelSelectionOverrides = {
+      selectedModel: mockAdvancedModel,
+      filteredModels: [mockModel],
+      hasAdvancedModels: true,
+      showAdvancedModels: false,
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={mockAdvancedModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    await waitFor(() => {
+      expect(mockSetShowAdvancedModels).toHaveBeenCalledWith(true)
+    })
+  })
+
+  it('shows advanced models by default when the bot preset model is advanced', async () => {
+    mockModelSelectionOverrides = {
+      selectedModel: mockDefaultModel,
+      boundDefaultModel: mockAdvancedModel,
+      filteredModels: [mockModel],
+      hasAdvancedModels: true,
+      showAdvancedModels: false,
+      showDefaultOption: true,
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={mockDefaultModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    await waitFor(() => {
+      expect(mockSetShowAdvancedModels).toHaveBeenCalledWith(true)
+    })
+  })
+
+  it('highlights the actual bot preset model when the default selection resolves to a model', async () => {
+    mockModelSelectionOverrides = {
+      selectedModel: mockDefaultModel,
+      boundDefaultModel: mockAdvancedModel,
+      filteredModels: [mockAdvancedModel],
+      hasAdvancedModels: true,
+      showAdvancedModels: true,
+      showDefaultOption: true,
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={mockDefaultModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    const modelOption = await screen.findByTestId('model-option-claude-opus-4-advanced')
+
+    expect(modelOption).toHaveClass('bg-primary/10')
+    expect(modelOption).toHaveClass('text-primary')
+    expect(screen.getByTestId('model-special-option-__default__')).toHaveClass('bg-primary/10')
   })
 })

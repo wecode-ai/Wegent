@@ -15,27 +15,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useRetrievers } from '../hooks/useRetrievers'
 import { useEmbeddingModels } from '../hooks/useEmbeddingModels'
 import { useRetrievalMethods } from '../hooks/useRetrievalMethods'
+import type { RetrievalConfigDraft } from '@/types/knowledge'
 import Link from 'next/link'
 
-export interface RetrievalConfig {
-  retriever_name?: string
-  retriever_namespace?: string
-  embedding_config?: {
-    model_name?: string
-    model_namespace?: string
-  }
-  retrieval_mode?: 'vector' | 'keyword' | 'hybrid'
-  top_k?: number
-  score_threshold?: number
-  hybrid_weights?: {
-    vector_weight: number
-    keyword_weight: number
-  }
-}
-
 interface RetrievalSettingsSectionProps {
-  config: Partial<RetrievalConfig>
-  onChange: (config: Partial<RetrievalConfig>) => void
+  config: RetrievalConfigDraft
+  onChange: (config: RetrievalConfigDraft) => void
   readOnly?: boolean
   partialReadOnly?: boolean // When true, only retriever and embedding model are read-only
   scope?: 'personal' | 'group' | 'organization' | 'all'
@@ -56,7 +41,7 @@ export function RetrievalSettingsSection({
   const { methods: retrievalMethods, loading: loadingMethods } = useRetrievalMethods()
 
   const [topK, setTopK] = useState(config.top_k ?? 5)
-  const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.7)
+  const [scoreThreshold, setScoreThreshold] = useState(config.score_threshold ?? 0.5)
   const [vectorWeight, setVectorWeight] = useState(config.hybrid_weights?.vector_weight ?? 0.7)
 
   // Use ref to store the latest config to avoid stale closure issues in useEffect
@@ -71,7 +56,7 @@ export function RetrievalSettingsSection({
   }, [config.top_k])
 
   useEffect(() => {
-    setScoreThreshold(config.score_threshold ?? 0.7)
+    setScoreThreshold(config.score_threshold ?? 0.5)
   }, [config.score_threshold])
 
   useEffect(() => {
@@ -283,7 +268,7 @@ export function RetrievalSettingsSection({
               {t('document.retrieval.ragUnavailableHint')}
             </p>
             <Link
-              href="/settings?section=personal&tab=personal-retrievers"
+              href="/resource-library?tab=mine&type=retriever&scope=personal"
               className="text-xs text-primary hover:underline"
             >
               {t('document.goToSettings')}

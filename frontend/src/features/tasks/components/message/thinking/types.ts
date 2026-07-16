@@ -84,7 +84,13 @@ export interface ThinkingStep {
 /**
  * Tool execution status
  */
-export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
+export type ToolStatus =
+  | 'generating_arguments'
+  | 'pending'
+  | 'streaming'
+  | 'invoking'
+  | 'done'
+  | 'error'
 
 /**
  * Base interface for all message blocks.
@@ -92,7 +98,17 @@ export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
  */
 interface BaseBlock {
   id: string // Unique block identifier
-  status?: 'pending' | 'streaming' | 'done' | 'error' // Block status
+  status?:
+    | 'pending'
+    | 'generating_arguments'
+    | 'streaming'
+    | 'done'
+    | 'error'
+    | 'queued'
+    | 'sending'
+    | 'failed'
+    | 'applied'
+    | 'expired' // Block status
   timestamp?: number // Block creation timestamp
 }
 
@@ -114,6 +130,8 @@ export interface ToolBlock extends BaseBlock {
   display_name?: string // Display name for tool (optional)
   tool_input?: Record<string, unknown> // Tool input parameters
   tool_output?: unknown // Tool execution result
+  render_payload?: unknown // UI-only renderer payload
+  argument_status?: 'streaming' | 'done'
   metadata?: Record<string, unknown> // Additional metadata
 }
 
@@ -123,6 +141,18 @@ export interface ToolBlock extends BaseBlock {
 export interface ThinkingBlock extends BaseBlock {
   type: 'thinking'
   content: string // Thinking content
+}
+
+/**
+ * Applied guidance block
+ */
+export interface GuidanceBlock extends BaseBlock {
+  type: 'guidance'
+  guidance_id: string
+  content: string
+  status: NonNullable<BaseBlock['status']>
+  loop_index?: number
+  applied_at?: string
 }
 
 /**
@@ -237,6 +267,7 @@ export type MessageBlock =
   | TextBlock
   | ToolBlock
   | ThinkingBlock
+  | GuidanceBlock
   | ErrorBlock
   | VideoBlock
   | ImageBlock
@@ -258,6 +289,13 @@ export function isToolBlock(block: MessageBlock): block is ToolBlock {
 }
 
 /**
+ * Type guard for ThinkingBlock
+ */
+export function isThinkingBlock(block: MessageBlock): block is ThinkingBlock {
+  return block.type === 'thinking'
+}
+
+/**
  * Type guard for VideoBlock
  */
 export function isVideoBlock(block: MessageBlock): block is VideoBlock {
@@ -269,6 +307,13 @@ export function isVideoBlock(block: MessageBlock): block is VideoBlock {
  */
 export function isImageBlock(block: MessageBlock): block is ImageBlock {
   return block.type === 'image'
+}
+
+/**
+ * Type guard for GuidanceBlock
+ */
+export function isGuidanceBlock(block: MessageBlock): block is GuidanceBlock {
+  return block.type === 'guidance'
 }
 
 /**

@@ -58,6 +58,7 @@ graph TB
         KnowledgeOrch["🎼 KnowledgeOrchestrator<br/>Unified Knowledge Management"]
         RAG["🔍 RAG<br/>Retrieval Augmented Generation"]
         Embedding["📊 Embedding<br/>Vectorization Service"]
+        DocConverter["📄 Doc Converter<br/>Document Conversion"]
     end
 
     %% System Interactions
@@ -82,6 +83,7 @@ graph TB
     %% Knowledge Layer Integration
     KnowledgeOrch --> RAG
     KnowledgeOrch --> Embedding
+    KnowledgeOrch --> DocConverter
     ChatShell --> KnowledgeOrch
 
     %% Styling
@@ -95,7 +97,7 @@ graph TB
     class MySQL,Redis,Celery data
     class ExecutorManager,Executor1,Executor2,ExecutorN,LocalDevice execution
     class Claude,Agno,Dify agent
-    class KnowledgeOrch,RAG,Embedding knowledge
+    class KnowledgeOrch,RAG,Embedding,DocConverter knowledge
 ```
 
 ### Architecture Layers
@@ -104,9 +106,9 @@ graph TB
 |-------|-----------------|-------------------|
 | **Management Platform Layer** | User interaction, resource management, API services, chat processing | Next.js 15, FastAPI, React 19, Chat Shell |
 | **Data Layer** | Data persistence, cache management, async task scheduling | MySQL 9.4, Redis 7, Celery |
-| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Python, WebSocket |
+| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Rust Executor, WebSocket, App IPC |
 | **Agent Layer** | AI capabilities, code execution, chat processing, external API integration | Claude Code, Agno, Dify |
-| **Knowledge Layer** | Knowledge base management, RAG retrieval, vectorization | KnowledgeOrchestrator, Embedding |
+| **Knowledge Layer** | Knowledge base management, RAG retrieval, vectorization, document format conversion | KnowledgeOrchestrator, Embedding, Doc Converter |
 
 ---
 
@@ -349,6 +351,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 
 **Technology Stack**:
 - **Container**: Docker
+- **Executor**: Rust (`executor/`)
 - **Runtime**: Claude Code, Agno, Dify
 - **Version Control**: Git
 
@@ -361,6 +364,12 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 | **Dify** | external_api | Proxy to Dify platform |
 | **ImageValidator** | validator | Custom base image validation |
 
+Rust executor is the only executor runtime implementation. Backend Chat shell work may still use an in-process path, while other tasks run through standalone/local executor. In Wework packaged App local-first mode, the app does not start a local Backend; it calls the executor sidecar directly over Tauri app IPC. Codex runtime control uses `codex app-server --stdio` JSON-RPC to create, continue, read, archive, and rename threads. The executor stores only the local task index and the required `localTaskId -> threadId` mapping.
+
+Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Tauri instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.
+
+When Codex uses a shared app-server thread, cancelling an active turn must await acknowledgement of `turn/interrupt` before reporting cancellation to the caller. A retry can then start only after the previous turn has stopped, preventing an interrupt and a new request from interleaving and replaying cancelled input or dropping the retry message.
+
 **Core Features**:
 - 🔒 Fully isolated execution environment
 - 💼 Independent workspace
@@ -368,6 +377,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 - 📝 Real-time log output
 - 🛠️ MCP tool support
 - 📚 Dynamic skill loading
+- 🪝 [Pre-execute hooks](./pre-execute-hooks.md) for custom task initialization before execution
 
 **Lifecycle**:
 ```mermaid
@@ -440,6 +450,7 @@ wegent_db/
 **Responsibilities**:
 - Knowledge base document indexing (async)
 - Document summary generation
+- Document format conversion (PDF/PPTX → Markdown)
 - Long-running task processing
 
 **Core Tasks**:
@@ -448,6 +459,14 @@ wegent_db/
 |------|---------|
 | `index_document_task` | Document vectorization indexing |
 | `generate_document_summary_task` | Document summary generation |
+| `convert_document_task` | Document format conversion (consumed by Knowledge Doc Converter) |
+
+**Task Queues**:
+
+| Queue | Purpose | Consumer |
+|-------|---------|----------|
+| `celery` (default) | Document indexing, summary generation | Backend Worker |
+| `knowledge_conversion` | PDF/PPTX document conversion to Markdown | Knowledge Doc Converter |
 
 ---
 
@@ -474,6 +493,58 @@ Celery Tasks (async processing)
 - 🤖 Auto model selection: Task → Team → Bot → Model chain resolution
 - 📚 Multi-scope support: Personal, group, organization knowledge bases
 - ⚡ Async indexing: Handle large documents via Celery
+
+---
+
+### 10. 📄 Knowledge Doc Converter
+
+**Responsibilities**:
+- Convert PDF/PPTX documents to Markdown via MinerU OCR
+- Upload conversion results to S3 storage
+- Notify Backend of conversion status via callback endpoints
+
+**Technology Stack**:
+- **Task Queue**: Celery + Redis
+- **OCR Engine**: MinerU
+- **Object Storage**: S3
+- **Monitoring**: Prometheus (port 9090, multiprocess mode)
+
+**Core Features**:
+- 🔧 Standalone Celery Worker listening on the `knowledge_conversion` queue
+- 📊 Prometheus metrics exposure (multiprocess mode)
+- 🔄 Callback-driven async conversion flow
+
+**Internal API**:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/internal/conversion/callback/status` | Conversion status callback |
+| `POST /api/internal/conversion/callback/completed` | Conversion completed callback |
+| `POST /api/internal/conversion/callback/failed` | Conversion failed callback |
+| `GET /api/internal/attachments/{id}/download` | Attachment download |
+
+**Document Conversion Flow**:
+
+```mermaid
+sequenceDiagram
+    participant Backend as ⚙️ Backend
+    participant Queue as ⚡ Celery Queue
+    participant Converter as 📄 Doc Converter
+    participant MinerU as 🔍 MinerU OCR
+    participant S3 as ☁️ S3
+
+    Backend->>Backend: 1. Set attachment status to pending_conversion
+    Backend->>Queue: 2. Send conversion task to knowledge_conversion queue
+    Queue->>Converter: 3. Worker consumes task
+    Converter->>Backend: 4. Download original file (GET /api/internal/attachments/{id}/download)
+    Converter->>MinerU: 5. Invoke MinerU OCR engine for conversion
+    MinerU-->>Converter: 6. Return Markdown content and images
+    Converter->>S3: 7. Upload Markdown and images to S3
+    S3-->>Converter: 8. Return S3 URLs
+    Converter->>Backend: 9. Callback notification (callback/completed or callback/failed)
+    Backend->>Backend: 10. Update attachment status, trigger indexing
+    Backend->>Backend: 11. Conversion succeeded
+```
 
 ---
 
@@ -862,6 +933,7 @@ logger.info("task.created",
 - [CRD Architecture](./crd-architecture.md) - CRD design details
 - [Skill System](../concepts/skill-system.md) - Skill development and integration
 - [Local Device Architecture](./local-device-architecture.md) - Local device support
+- [Pre-execute Hooks](./pre-execute-hooks.md) - Custom Executor initialization before task execution
 
 ---
 

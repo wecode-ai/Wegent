@@ -10,6 +10,7 @@ import { updateTeam } from '@/features/settings/services/teams'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 
 const mockRefreshTeams = jest.fn()
+const mockTeamModeEditor = jest.fn((_props: Record<string, unknown>) => null)
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -44,6 +45,11 @@ jest.mock('@/features/settings/services/teams', () => ({
 }))
 
 jest.mock('@/features/settings/components/team-modes', () => ({
+  getAllowedAgentsForTeamMode: (mode: string) => {
+    if (mode === 'pipeline' || mode === 'coordinate') return ['ClaudeCode']
+    if (mode === 'route' || mode === 'collaborate') return []
+    return undefined
+  },
   getFilteredBotsForMode: (bots: Bot[]) => bots,
   getActualShellType: (shellType: string) => shellType,
 }))
@@ -59,11 +65,16 @@ jest.mock('@/contexts/TeamContext', () => ({
   }),
 }))
 
-jest.mock('@/apis/shells', () => ({
-  shellApis: {
-    getUnifiedShells: jest.fn().mockResolvedValue({ data: [] }),
-  },
-}))
+jest.mock('@/apis/shells', () => {
+  const actual = jest.requireActual('@/apis/shells')
+  return {
+    ...actual,
+    shellApis: {
+      ...actual.shellApis,
+      getUnifiedShells: jest.fn().mockResolvedValue({ data: [] }),
+    },
+  }
+})
 
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -97,10 +108,15 @@ jest.mock('@/features/settings/components/team-edit/TeamModeSelector', () => ({
 
 jest.mock('@/features/settings/components/team-edit/TeamModeEditor', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: Record<string, unknown>) => mockTeamModeEditor(props),
 }))
 
 jest.mock('@/features/settings/components/team-edit/TeamModeChangeDialog', () => ({
+  __esModule: true,
+  default: () => null,
+}))
+
+jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => ({
   __esModule: true,
   default: () => null,
 }))
@@ -140,6 +156,7 @@ describe('TeamEditDialog display name', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockRefreshTeams.mockResolvedValue(undefined)
+    mockTeamModeEditor.mockImplementation(() => null)
   })
 
   it('edits and saves the team display name', async () => {
@@ -171,6 +188,73 @@ describe('TeamEditDialog display name', () => {
         expect.objectContaining({
           name: 'dev-team',
           displayName: 'Spec Dev Team',
+        })
+      )
+    })
+  })
+
+  it('restricts the executor to ClaudeCode when code or task mode is selected', async () => {
+    const team = makeTeam()
+    team.bind_mode = ['code']
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    // 'code' alone is enough to restrict to ClaudeCode
+    await screen.findByRole('button', { name: 'Task' })
+    expect(mockTeamModeEditor).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        allowedAgentsForMode: ['ClaudeCode'],
+      })
+    )
+
+    // Adding 'task' keeps the ClaudeCode restriction
+    fireEvent.click(screen.getByRole('button', { name: 'Task' }))
+
+    await waitFor(() => {
+      expect(mockTeamModeEditor).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          allowedAgentsForMode: ['ClaudeCode'],
+        })
+      )
+    })
+  })
+
+  it('preserves existing non-simple bind modes when saving advanced teams', async () => {
+    const team = makeTeam()
+    team.bind_mode = ['knowledge']
+    mockedUpdateTeam.mockResolvedValue(team)
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({
+          bind_mode: ['knowledge'],
         })
       )
     })

@@ -18,9 +18,10 @@ Execution API:
 Note: sandbox_id is derived from task_id internally (sandbox_id = str(task_id))
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from executor_manager.models.sandbox import SandboxStatus
 from executor_manager.schemas.sandbox import (
@@ -50,6 +51,21 @@ router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
 # =============================================================================
 # Sandbox Lifecycle Endpoints
 # =============================================================================
+
+
+class CleanupStaleSandboxesRequest(BaseModel):
+    """Request body for stale sandbox cleanup."""
+
+    inactive_hours: float = Field(default=24, gt=0, le=720)
+    dry_run: bool = False
+
+
+class CleanupSandboxByTaskRequest(BaseModel):
+    """Request body for targeted sandbox cleanup by task ID."""
+
+    task_id: int = Field(ge=1)
+    dry_run: bool = False
+    archive_before_delete: bool = True
 
 
 @router.post("", response_model=CreateSandboxResponse)
@@ -116,6 +132,51 @@ async def create_sandbox(request: CreateSandboxRequest, http_request: Request):
         created_at=sandbox.created_at,
         expires_at=sandbox.expires_at,
         message="Sandbox created successfully",
+    )
+
+
+@router.post("/cleanup-stale")
+async def cleanup_stale_sandboxes(
+    request: CleanupStaleSandboxesRequest,
+    http_request: Request,
+):
+    """Clean up sandboxes inactive longer than the requested threshold."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        "[SandboxAPI] Cleanup stale sandboxes: inactive_hours=%s dry_run=%s from %s",
+        request.inactive_hours,
+        request.dry_run,
+        client_ip,
+    )
+
+    manager = get_sandbox_manager()
+    return await manager.cleanup_stale_sandboxes(
+        inactive_hours=request.inactive_hours,
+        dry_run=request.dry_run,
+    )
+
+
+@router.post("/cleanup-by-task", response_model=Dict[str, Any])
+async def cleanup_sandbox_by_task_id(
+    request: CleanupSandboxByTaskRequest,
+    http_request: Request,
+):
+    """Clean up one sandbox runtime by task ID without a stale-age check."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        "[SandboxAPI] Cleanup sandbox by task: task_id=%s dry_run=%s "
+        "archive_before_delete=%s from %s",
+        request.task_id,
+        request.dry_run,
+        request.archive_before_delete,
+        client_ip,
+    )
+
+    manager = get_sandbox_manager()
+    return await manager.cleanup_sandbox_by_task_id(
+        task_id=request.task_id,
+        dry_run=request.dry_run,
+        archive_before_delete=request.archive_before_delete,
     )
 
 

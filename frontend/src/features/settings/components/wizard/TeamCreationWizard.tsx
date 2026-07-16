@@ -444,7 +444,6 @@ export default function TeamCreationWizard({
             isLoading={false}
           />
         )
-        return null
     }
   }
 

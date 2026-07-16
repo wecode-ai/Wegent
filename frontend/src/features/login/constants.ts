@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const POST_LOGIN_REDIRECT_KEY = 'postLoginRedirectPath'
+export const ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE = 'ADMIN_PASSWORD_SETUP_REQUIRED'
+export const INITIAL_ADMIN_USERNAME = 'admin'
 
 /**
  * Sanitizes redirect paths to prevent open redirect vulnerabilities

@@ -17,6 +17,7 @@ export interface CreateTeamRequest {
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library
+  quick_phrases?: string[]
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
 }
 
@@ -37,6 +38,7 @@ export interface TeamShareInfoResponse {
   user_name: string
   team_id: number
   team_name: string
+  bind_mode?: string[]
 }
 
 // Team Share Join Request Type
@@ -69,6 +71,34 @@ export interface TeamSkillsResponse {
   preload_skills: string[] // Skills to preload
 }
 
+export interface TeamResourceMember {
+  id: number
+  resource_type: string
+  resource_id: number
+  user_id: number | null
+  display_name: string | null
+  user_email: string | null
+  role: string
+  status: string
+  entity_type?: string | null
+  entity_id?: string | null
+  source_type?: string | null
+  invited_by_user_id: number
+  invited_by_user_name: string | null
+  reviewed_by_user_id: number | null
+  reviewed_by_user_name: string | null
+  reviewed_at: string | null
+  copied_resource_id: number | null
+  requested_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TeamMemberListResponse {
+  members: TeamResourceMember[]
+  total: number
+}
+
 // Team Copy Preflight Response Type
 export interface CopyPreflightResponse {
   personal_skills: Array<{ id: number; name: string; description: string }>
@@ -79,7 +109,7 @@ export const teamApis = {
    * Get teams list
    * @param params - Pagination parameters
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    */
   async getTeams(
     params?: PaginationParams,
@@ -135,6 +165,23 @@ export const teamApis = {
   },
   async getTeamInputParameters(teamId: number): Promise<TeamInputParametersResponse> {
     return apiClient.get(`/teams/${teamId}/input-parameters`)
+  },
+  async listTeamMembers(teamId: number): Promise<TeamMemberListResponse> {
+    return apiClient.get(`/share/Team/${teamId}/members`)
+  },
+  async addTeamNamespaceAuthorization(
+    teamId: number,
+    namespaceId: number
+  ): Promise<TeamResourceMember> {
+    return apiClient.post(`/share/Team/${teamId}/members`, {
+      user_id: 0,
+      role: 'Reporter',
+      entity_type: 'namespace',
+      entity_id: String(namespaceId),
+    })
+  },
+  async removeTeamMember(teamId: number, memberId: number): Promise<void> {
+    await apiClient.delete(`/share/Team/${teamId}/members/${memberId}`)
   },
   async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
     return apiClient.get(`/teams/${id}/running-tasks`)

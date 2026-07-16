@@ -6,6 +6,7 @@
 
 from types import SimpleNamespace
 
+from app.core.config import settings
 from app.services.auth import verify_skill_identity_token
 from app.services.execution.request_builder import TaskRequestBuilder
 
@@ -13,8 +14,13 @@ from app.services.execution.request_builder import TaskRequestBuilder
 def test_build_generates_skill_identity_token(test_db, mocker):
     """Builder should attach skill identity token to the execution request."""
     builder = TaskRequestBuilder(test_db)
-    subtask = SimpleNamespace(id=2, message_id=33, executor_name="executor-1")
-    task = SimpleNamespace(id=1, json={"spec": {}})
+    subtask = SimpleNamespace(
+        id=2,
+        message_id=33,
+        executor_name="executor-1",
+        executor_namespace="default",
+    )
+    task = SimpleNamespace(id=1, json={"spec": {}}, project_id=None)
     user = SimpleNamespace(id=7, user_name="alice")
     team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
     bot = SimpleNamespace(id=9)
@@ -51,6 +57,9 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     )
 
     assert result.skill_identity_token == "skill-jwt"
+    assert result.executor_name == "executor-1"
+    assert result.executor_namespace == "default"
+    assert result.backend_url == settings.BACKEND_INTERNAL_URL
 
 
 def test_generate_skill_identity_token_uses_sandbox_task_type(test_db):

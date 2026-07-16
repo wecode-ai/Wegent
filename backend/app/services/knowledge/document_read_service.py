@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument
-from app.models.subtask_context import SubtaskContext
+from app.models.subtask_context import ContextType, SubtaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,12 @@ class DocumentReadService:
             return {}
 
         contexts = (
-            db.query(SubtaskContext).filter(SubtaskContext.id.in_(attachment_ids)).all()
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.id.in_(attachment_ids),
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            )
+            .all()
         )
         return {context.id: context for context in contexts}
 
@@ -56,6 +61,7 @@ class DocumentReadService:
         *,
         document: KnowledgeDocument,
         attachment: Optional[SubtaskContext],
+        converted_attachment: Optional[SubtaskContext] = None,
         offset: int,
         limit: int,
     ) -> Dict[str, Any]:
@@ -64,8 +70,12 @@ class DocumentReadService:
         total_length = 0
         actual_start = 0
 
-        if attachment and attachment.extracted_text:
-            full_content = attachment.extracted_text
+        # Prefer converted attachment content (high-quality Markdown)
+        # Fall back to original attachment's extracted_text
+        source_attachment = converted_attachment or attachment
+
+        if source_attachment and source_attachment.extracted_text:
+            full_content = source_attachment.extracted_text
             total_length = len(full_content)
             actual_start = min(offset, total_length)
             end = min(actual_start + limit, total_length)
@@ -152,14 +162,20 @@ class DocumentReadService:
             return []
 
         documents_by_id = self._load_documents(db, document_ids)
-        attachments_by_id = self._load_attachment_contexts(
-            db,
-            {
-                document.attachment_id
-                for document in documents_by_id.values()
-                if document.attachment_id > 0
-            },
-        )
+
+        # Collect all attachment_ids to load (original + converted)
+        all_attachment_ids: set[int] = set()
+        converted_id_map: dict[int, int] = {}  # document_id -> converted_attachment_id
+        for document in documents_by_id.values():
+            if document.attachment_id > 0:
+                all_attachment_ids.add(document.attachment_id)
+            # Use getattr for compatibility with test mocks (SimpleNamespace)
+            converted_id = getattr(document, "converted_attachment_id", None)
+            if converted_id:
+                all_attachment_ids.add(converted_id)
+                converted_id_map[document.id] = converted_id
+
+        attachments_by_id = self._load_attachment_contexts(db, all_attachment_ids)
         allowed_kb_ids = set(knowledge_base_ids or [])
         results: list[Dict[str, Any]] = []
         document_ids_by_kb: dict[int, list[int]] = {}
@@ -193,10 +209,16 @@ class DocumentReadService:
                 continue
 
             attachment = attachments_by_id.get(document.attachment_id)
+            converted_attachment = (
+                attachments_by_id.get(converted_id_map[document.id])
+                if document.id in converted_id_map
+                else None
+            )
             results.append(
                 self._build_document_result(
                     document=document,
                     attachment=attachment,
+                    converted_attachment=converted_attachment,
                     offset=offset,
                     limit=limit,
                 )

@@ -55,6 +55,49 @@ async def test_dispatch_websocket_schedules_socket_emit_in_main_loop():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_websocket_start_event_includes_current_bot_name():
+    """WebSocket dispatch should identify the bot that owns the current subtask."""
+    dispatcher = ExecutionDispatcher()
+    request = MagicMock()
+    request.task_id = 1
+    request.subtask_id = 2
+    request.message_id = 3
+    request.user = {"id": 9}
+    request.bot_name = ""
+    request.bot = [{"name": "pipeline-bot", "shell_type": "ClaudeCode"}]
+    request.to_dict.return_value = {"task_id": 1}
+
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        namespace="/local-executor",
+        event="task:execute",
+        room="device:9:device-1",
+    )
+    emitter = AsyncMock()
+
+    with (
+        patch.object(
+            dispatcher,
+            "_set_subtask_executor",
+            AsyncMock(),
+        ),
+        patch.object(
+            dispatcher,
+            "_emit_socketio_in_main_loop",
+            AsyncMock(),
+        ),
+    ):
+        await dispatcher._dispatch_websocket(request, target, emitter)
+
+    emitter.emit_start.assert_awaited_once_with(
+        task_id=1,
+        subtask_id=2,
+        message_id=3,
+        data={"shell_type": "ClaudeCode", "bot_name": "pipeline-bot"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_dispatch_websocket_passes_skill_identity_token_in_payload():
     """WebSocket dispatch should forward skill identity token to device payload."""
     dispatcher = ExecutionDispatcher()

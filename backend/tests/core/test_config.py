@@ -122,7 +122,7 @@ class TestSettings:
 
         assert s.WORKSPACE_ARCHIVE_RETENTION_DAYS == 30
         assert s.WORKSPACE_ARCHIVE_BUCKET == "wegent-archives"
-        assert s.WORKSPACE_ARCHIVE_MAX_SIZE_MB == 500
+        assert s.WORKSPACE_ARCHIVE_MAX_SIZE_MB == 2048
         assert s.WORKSPACE_ARCHIVE_ENABLED is True
         assert s.WORKSPACE_ARCHIVE_TIMEZONE == "Asia/Shanghai"
 

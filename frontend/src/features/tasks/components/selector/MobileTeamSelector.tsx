@@ -14,6 +14,7 @@ import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import { Tag } from '@/components/ui/tag'
 import type { Team } from '@/types/api'
+import { isNamespaceAuthorizedTeam } from '@/utils/team-permissions'
 import SystemTeamTag from './SystemTeamTag'
 import { useTeamFavorites } from './useTeamFavorites'
 
@@ -94,7 +95,7 @@ export default function MobileTeamSelector({
           type="button"
           disabled={isDisabled}
           className={cn(
-            'flex items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
+            'flex w-full items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
             'border border-border bg-base text-text-primary transition-colors overflow-hidden',
             isLoading ? 'animate-pulse' : '',
             'focus:outline-none focus:ring-0',
@@ -110,7 +111,7 @@ export default function MobileTeamSelector({
               className="text-text-muted flex-shrink-0"
             />
           )}
-          <span className="truncate text-xs min-w-0">
+          <span className="flex-1 truncate text-xs min-w-0">
             {triggerText || selectedTeamDisplayName || t('common:teams.select_team')}
           </span>
           {triggerText && <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />}
@@ -164,7 +165,9 @@ export default function MobileTeamSelector({
                 const displayName = getTeamDisplayName(team)
                 const isSelected = selectedTeam?.id === team.id
                 const isSystemTeam = team.user_id === 0
-                const isSharedTeam = team.share_status === 2 && team.user?.user_name
+                const isNamespaceAuthorized = isNamespaceAuthorizedTeam(team)
+                const isSharedTeam =
+                  team.share_status === 2 && team.user?.user_name && !isNamespaceAuthorized
                 const isGroupTeam = team.namespace && team.namespace !== 'default'
                 const isLast = index === searchFilteredTeams.length - 1
 
@@ -193,15 +196,18 @@ export default function MobileTeamSelector({
                         className="flex-shrink-0 text-text-muted"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[15px] text-text-primary truncate">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-[15px] text-text-primary truncate flex-1 min-w-0">
                             {displayName}
                           </span>
-                          {isSystemTeam && <SystemTeamTag className="text-[11px] py-0 px-1.5" />}
+                          {isSystemTeam && (
+                            <SystemTeamTag className="text-[11px] py-0 px-1.5 flex-shrink-0" />
+                          )}
                           {isGroupTeam && (
                             <Tag
-                              className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5"
+                              className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5 max-w-[120px] truncate"
                               variant="info"
+                              title={team.namespace}
                             >
                               {team.namespace}
                             </Tag>
@@ -210,6 +216,13 @@ export default function MobileTeamSelector({
                         {isSharedTeam && (
                           <div className="text-[13px] text-[#8e8e93] mt-0.5 truncate">
                             {t('common:teams.shared_by', { author: team.user?.user_name })}
+                          </div>
+                        )}
+                        {isNamespaceAuthorized && team.namespace && (
+                          <div className="text-[13px] text-[#8e8e93] mt-0.5 truncate">
+                            {t('common:teams.authorized_from_group', {
+                              group: team.namespace,
+                            })}
                           </div>
                         )}
                       </div>

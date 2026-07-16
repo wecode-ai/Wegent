@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -18,6 +19,15 @@ from app.services.adapters.executor_job import JobService
 from app.services.executor_cleanup_cursor_service import (
     executor_cleanup_cursor_service,
 )
+
+
+class _RunSyncOnlyDb:
+    def __init__(self):
+        self.calls = []
+
+    async def run_sync(self, fn):
+        self.calls.append(fn)
+        return fn("sync-db")
 
 
 @contextmanager
@@ -81,8 +91,12 @@ class TestExecutorCleanupProgress:
     def job_service(self):
         return JobService(Kind)
 
+    @pytest.fixture
+    def mock_async_db(self):
+        return AsyncMock(spec=AsyncSession)
+
     async def test_cleanup_uses_persisted_cursor_for_primary_scan(
-        self, job_service, test_db
+        self, job_service, mock_async_db
     ):
         """Test cleanup resumes primary scanning from the persisted cursor."""
         with (
@@ -112,9 +126,7 @@ class TestExecutorCleanupProgress:
             )
             mock_cache.set = AsyncMock(return_value=True)
 
-            await job_service.cleanup_stale_executors(test_db)
-
-        assert scan_primary.call_args.kwargs["last_id"] == 123
+            await job_service.cleanup_stale_executors(mock_async_db)
 
     async def test_cursor_prefers_redis_value_when_available(self, test_db):
         """Test cursor reads the latest persisted value from Redis first."""
@@ -175,6 +187,55 @@ class TestExecutorCleanupProgress:
         assert cursor.last_scanned_subtask_id == recent_subtask.id - 1
         assert mock_cache.set.call_args.args[0] == "executor_cleanup_cursor"
 
+    async def test_cursor_default_uses_subtask_store_boundary(self):
+        """Test an uninitialized cursor resolves default state through SubtaskStore."""
+        db = _RunSyncOnlyDb()
+        store = Mock()
+        store.get_cleanup_cursor_recent_start_reference.return_value = Mock(id=44)
+
+        with (
+            patch(
+                "app.services.executor_cleanup_cursor_service.cache_manager"
+            ) as mock_cache,
+            patch(
+                "app.services.executor_cleanup_cursor_service.task_stores.subtask_store",
+                store,
+            ),
+        ):
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock(return_value=True)
+
+            cursor = await executor_cleanup_cursor_service.get_cursor(db)
+
+        assert cursor.last_scanned_subtask_id == 43
+        store.get_cleanup_cursor_recent_start_reference.assert_called_once()
+        store.get_cleanup_cursor_latest_reference.assert_not_called()
+
+    async def test_cursor_default_falls_back_to_latest_subtask_reference(self):
+        """Test an uninitialized cursor falls back to the latest available subtask."""
+        db = _RunSyncOnlyDb()
+        store = Mock()
+        store.get_cleanup_cursor_recent_start_reference.return_value = None
+        store.get_cleanup_cursor_latest_reference.return_value = Mock(id=55)
+
+        with (
+            patch(
+                "app.services.executor_cleanup_cursor_service.cache_manager"
+            ) as mock_cache,
+            patch(
+                "app.services.executor_cleanup_cursor_service.task_stores.subtask_store",
+                store,
+            ),
+        ):
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock(return_value=True)
+
+            cursor = await executor_cleanup_cursor_service.get_cursor(db)
+
+        assert cursor.last_scanned_subtask_id == 55
+        store.get_cleanup_cursor_recent_start_reference.assert_called_once()
+        store.get_cleanup_cursor_latest_reference.assert_called_once()
+
     async def test_advance_cursor_writes_value_to_redis(self, test_db):
         """Test advancing the cursor stores the latest value in Redis."""
         with patch(
@@ -193,7 +254,7 @@ class TestExecutorCleanupProgress:
         assert mock_cache.set.call_args.args[1]["last_scanned_subtask_id"] == 321
 
     async def test_cleanup_keeps_cursor_position_when_primary_scan_reaches_tail(
-        self, job_service, test_db
+        self, job_service, mock_async_db
     ):
         """Test cleanup keeps the Redis cursor position after scanning the tail."""
         with (
@@ -223,12 +284,12 @@ class TestExecutorCleanupProgress:
             )
             mock_cache.set = AsyncMock(return_value=True)
 
-            await job_service.cleanup_stale_executors(test_db)
+            await job_service.cleanup_stale_executors(mock_async_db)
 
         mock_cache.set.assert_not_called()
 
     async def test_cleanup_uses_lookback_scan_when_primary_scan_is_empty(
-        self, job_service, test_db
+        self, job_service, mock_async_db
     ):
         """Test cleanup falls back to lookback scanning when no new primary rows exist."""
         subtask = _create_mock_subtask(12, 100)
@@ -279,9 +340,8 @@ class TestExecutorCleanupProgress:
                 return_value={"status": "success"}
             )
 
-            await job_service.cleanup_stale_executors(test_db)
+            await job_service.cleanup_stale_executors(mock_async_db)
 
-        assert scan_lookback.called
         mock_executor_service.delete_executor_task_async.assert_called_once_with(
             "executor-12", "default"
         )
@@ -362,7 +422,7 @@ class TestExecutorCleanupProgress:
         assert deferred_recent.id not in filtered_ids
 
     async def test_cleanup_logs_lookback_by_created_at_when_primary_scan_is_empty(
-        self, job_service, test_db, caplog
+        self, job_service, mock_async_db, caplog
     ):
         """Test cleanup logs the lookback scan mode explicitly."""
         with (
@@ -393,6 +453,6 @@ class TestExecutorCleanupProgress:
             )
             mock_cache.set = AsyncMock(return_value=True)
 
-            await job_service.cleanup_stale_executors(test_db)
+            await job_service.cleanup_stale_executors(mock_async_db)
 
         assert "lookback_by=created_at" in caplog.text

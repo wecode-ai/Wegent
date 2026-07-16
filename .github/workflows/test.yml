@@ -20,21 +20,18 @@ jobs:
   test-backend:
     name: Test Backend
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12']
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('backend/pyproject.toml') }}
@@ -67,45 +64,50 @@ jobs:
     name: Test Executor
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+      - name: Free executor runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
 
-      - name: Cache Python dependencies
-        uses: actions/cache@v3
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-executor-${{ hashFiles('executor/pyproject.toml') }}
+          components: rustfmt, clippy
+
+      - name: Install executor Rust system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-executor-v2-${{ hashFiles('executor/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-uv-executor-
+            ${{ runner.os }}-cargo-executor-v2-
 
-      - name: Install dependencies
+      - name: Run executor Rust format check
         working-directory: ./executor
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-          uv sync --dev
+        run: cargo fmt --check
 
-      - name: Run executor tests
+      - name: Run executor Rust tests
         working-directory: ./executor
-        env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/executor
-        run: |
-          source $HOME/.cargo/env
-          uv run pytest tests/ --cov=agents --cov-report=xml --cov-report=term-missing -v
+        run: cargo test --all-features
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./executor/coverage.xml
-          flags: executor
-          name: executor-coverage
+      - name: Run executor Rust clippy
+        working-directory: ./executor
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   test-executor-manager:
     name: Test Executor Manager
@@ -121,7 +123,7 @@ jobs:
           python-version: '3.11'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-executor-manager-${{ hashFiles('executor_manager/pyproject.toml') }}
@@ -167,7 +169,7 @@ jobs:
           python-version: '3.10'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-shared-${{ hashFiles('shared/pyproject.toml') }}
@@ -225,7 +227,7 @@ jobs:
           python-version: '3.12'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-knowledge-engine-${{ hashFiles('knowledge_engine/pyproject.toml', 'shared/pyproject.toml') }}
@@ -264,32 +266,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
-          cache: 'npm'
-          cache-dependency-path: ./frontend/package-lock.json
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
 
       - name: Cache Next.js build
         uses: actions/cache@v4
         with:
           path: |
             ./frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('./frontend/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('./pnpm-lock.yaml') }}-
             ${{ runner.os }}-nextjs-
 
       - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
+        run: pnpm install --frozen-lockfile
+
+      - name: Run chat core tests
+        run: pnpm --filter @wegent/chat-core test
 
       - name: Run frontend tests
-        working-directory: ./frontend
         env:
           NEXT_TELEMETRY_DISABLED: 1
-        run: npm test -- --coverage --passWithNoTests
+        run: pnpm --filter wecode-ai-assistant run test --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
@@ -297,6 +303,39 @@ jobs:
           files: ./frontend/coverage/coverage-final.json
           flags: frontend
           name: frontend-coverage
+
+  test-wework:
+    name: Test Wework
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: ./pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run wework tests
+        env:
+          TZ: Asia/Shanghai
+        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./wework/coverage/coverage-final.json
+          flags: wework
+          name: wework-coverage
 
   test-wegent-cli:
     name: Test wegent CLI
@@ -312,7 +351,7 @@ jobs:
           python-version: '3.10'
 
       - name: Cache Python dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-wegent-cli-${{ hashFiles('wegent-cli/requirements.txt') }}
@@ -370,6 +409,12 @@ jobs:
           --health-retries=5
 
     steps:
+      - name: Generate internal service token
+        run: |
+          token=$(openssl rand -hex 32)
+          echo "::add-mask::$token"
+          echo "INTERNAL_SERVICE_TOKEN=$token" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -430,7 +475,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wegent-cli, test-wegent-cli-integration]
+    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, test-wegent-cli, test-wegent-cli-integration]
     if: always()
 
     steps:
@@ -443,6 +488,7 @@ jobs:
              [[ "${{ needs.test-shared.result }}" == "failure" ]] || \
              [[ "${{ needs.test-knowledge-engine.result }}" == "failure" ]] || \
              [[ "${{ needs.test-frontend.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-wework.result }}" == "failure" ]] || \
              [[ "${{ needs.test-wegent-cli.result }}" == "failure" ]] || \
              [[ "${{ needs.test-wegent-cli-integration.result }}" == "failure" ]]; then
             echo "One or more test jobs failed"

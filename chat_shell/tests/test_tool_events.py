@@ -8,7 +8,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from chat_shell.tools.events import create_tool_event_handler
+from chat_shell.tools.deferred_input import DeferredUserInputExit
+from chat_shell.tools.events import (
+    _extract_retrieval_summary,
+    create_tool_event_handler,
+)
 
 
 class _State:
@@ -23,6 +27,57 @@ class _AgentBuilder:
     def __init__(self, tool_instance):
         self.tool_registry = {"search_docs": tool_instance}
         self.all_tools = [tool_instance]
+
+
+def test_extract_retrieval_summary_preserves_provider_source_pairs():
+    output = {
+        "source_summaries": [
+            {
+                "provider": "alpha",
+                "searched_source_ids": ["same-source"],
+                "ignored_source_ids": [],
+            },
+            {
+                "provider": "beta",
+                "searched_source_ids": [],
+                "ignored_source_ids": ["same-source"],
+            },
+        ]
+    }
+
+    summary = _extract_retrieval_summary("knowledge_base_search", output)
+
+    assert summary == {
+        "searched_source_ids": ["same-source"],
+        "ignored_source_ids": ["same-source"],
+        "searched_sources": [{"provider": "alpha", "source_id": "same-source"}],
+        "ignored_sources": [{"provider": "beta", "source_id": "same-source"}],
+        "source_statuses": [],
+    }
+
+
+def test_streaming_state_aggregates_retrieval_summary_by_provider_pair():
+    from chat_shell.services.streaming.core import StreamingState
+
+    state = StreamingState(task_id=1, subtask_id=2, user_id=3, user_name="tester")
+    state.add_retrieval_summary(
+        {
+            "searched_sources": [{"provider": "alpha", "source_id": "same-source"}],
+            "ignored_sources": [{"provider": "beta", "source_id": "same-source"}],
+        }
+    )
+    state.add_retrieval_summary(
+        {
+            "searched_sources": [{"provider": "beta", "source_id": "same-source"}],
+            "ignored_sources": [{"provider": "alpha", "source_id": "same-source"}],
+        }
+    )
+
+    assert state.get_retrieval_summary() == {
+        "searched_source_ids": ["same-source", "same-source"],
+        "ignored_source_ids": [],
+        "source_statuses": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -72,4 +127,64 @@ async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
         server_label="wegent-knowledge",
         status="failed",
         error=error_output,
+    )
+
+
+@pytest.mark.asyncio
+async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkeypatch):
+    emitter = AsyncMock()
+    tool = SimpleNamespace(
+        name="interactive_form_question",
+        _wegent_tool_protocol="mcp",
+        _wegent_mcp_server_label="wegent-interactive-form-question",
+    )
+    agent_builder = _AgentBuilder(tool)
+    state = _State()
+    pending = []
+
+    def run_immediately(coro):
+        pending.append(asyncio.create_task(coro))
+
+    monkeypatch.setattr("chat_shell.tools.events._run_async", run_immediately)
+
+    handler = create_tool_event_handler(
+        state=state,
+        emitter=emitter,
+        agent_builder=agent_builder,
+    )
+    output = {
+        "__deferred_user_input__": True,
+        "success": True,
+        "status": "waiting_for_user_response",
+    }
+
+    with pytest.raises(DeferredUserInputExit) as exc_info:
+        handler(
+            "tool_end",
+            {
+                "run_id": "run_123",
+                "tool_use_id": "mcp_123",
+                "name": "interactive_form_question",
+                "data": {
+                    "input": {"questions": [{"id": "q1", "question": "Q?"}]},
+                    "output": output,
+                },
+            },
+        )
+
+    assert str(exc_info.value) == "Waiting for user input"
+    assert state.is_deferred_user_input is True
+    assert state.deferred_user_input_tool_use_id == "mcp_123"
+
+    await asyncio.gather(*pending)
+
+    emitter.tool_done.assert_awaited_once_with(
+        call_id="mcp_123",
+        name="interactive_form_question",
+        arguments=None,
+        output=output,
+        tool_protocol="mcp_call",
+        server_label="wegent-interactive-form-question",
+        status="completed",
+        error=None,
     )

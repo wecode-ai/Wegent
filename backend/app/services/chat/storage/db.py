@@ -20,13 +20,15 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
+import app.stores.tasks as task_stores
 from app.models.subtask import Subtask
+from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
 from app.services.adapters.collaboration_strategy import CollaborationStrategy
 
@@ -40,6 +42,23 @@ _db_executor = ThreadPoolExecutor(max_workers=20)
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
 
 T = TypeVar("T")
+
+
+@dataclass
+class PipelineAutoAdvanceIntent:
+    """Intent to continue a pipeline through the shared chat send path."""
+
+    task_id: int
+    user_id: int
+    completed_subtask_id: int
+    advance_info: dict[str, Any]
+
+
+@dataclass
+class TaskStatusUpdateResult:
+    """Post-commit work discovered while updating task status."""
+
+    auto_advance: Optional[PipelineAutoAdvanceIntent] = None
 
 
 @contextmanager
@@ -75,7 +94,7 @@ class DatabaseHandler:
         executor_namespace: str | None = None,
     ) -> None:
         """Update subtask status asynchronously."""
-        await self._run_in_executor(
+        update_result = await self._run_in_executor(
             self._update_subtask_sync,
             subtask_id,
             status,
@@ -84,6 +103,14 @@ class DatabaseHandler:
             executor_name,
             executor_namespace,
         )
+        if update_result and update_result.auto_advance:
+            from app.services.chat.pipeline_advance import (
+                advance_pipeline_stage_from_auto_completion,
+            )
+
+            await advance_pipeline_stage_from_auto_completion(
+                update_result.auto_advance
+            )
 
     def _update_subtask_sync(
         self,
@@ -93,19 +120,18 @@ class DatabaseHandler:
         error: str | None = None,
         executor_name: str | None = None,
         executor_namespace: str | None = None,
-    ) -> None:
+    ) -> Optional[TaskStatusUpdateResult]:
         """Synchronous subtask update (runs in thread pool)."""
-        from app.models.subtask import Subtask, SubtaskStatus
+        from app.models.subtask import SubtaskStatus
         from app.utils.thinking_sanitizer import sanitize_result_for_storage
 
         try:
             with _db_session() as db:
-                subtask = db.get(Subtask, subtask_id)
+                subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
                 if not subtask:
-                    return
+                    return None
 
-                subtask.status = SubtaskStatus(status)
-                subtask.updated_at = datetime.now()
+                fields: dict[str, Any] = {"status": SubtaskStatus(status)}
 
                 if result is not None:
                     # Preserve silent_exit fields if they were set by MCP tool
@@ -151,17 +177,17 @@ class DatabaseHandler:
                             sanitized_loaded_skills,
                         )
 
-                    subtask.result = sanitized_result
+                    fields["result"] = sanitized_result
                 if error is not None:
-                    subtask.error_message = error
+                    fields["error_message"] = error
                 if status in _TERMINAL_STATUSES:
-                    subtask.completed_at = datetime.now()
+                    fields["completed_at"] = datetime.now()
 
                 # Save executor info for container reuse in follow-up tasks
                 # Only update if provided and subtask doesn't already have executor_name
                 if executor_name and not subtask.executor_name:
-                    subtask.executor_name = executor_name
-                    subtask.executor_namespace = executor_namespace or ""
+                    fields["executor_name"] = executor_name
+                    fields["executor_namespace"] = executor_namespace or ""
                     logger.info(
                         "[DB] Saved executor info for subtask %s: "
                         "executor_name=%s, executor_namespace=%s",
@@ -170,50 +196,59 @@ class DatabaseHandler:
                         executor_namespace,
                     )
 
+                task_stores.subtask_store.update_fields(db, subtask=subtask, **fields)
                 task_id = subtask.task_id
             # Context manager commits here, then update task status
-            self._update_task_status_sync(task_id)
+            return self._update_task_status_sync(task_id, changed_subtask_id=subtask_id)
         except Exception:
             logger.exception("Error updating subtask %s status", subtask_id)
+            return None
 
-    def _update_task_status_sync(self, task_id: int) -> None:
+    def _update_task_status_sync(
+        self, task_id: int, changed_subtask_id: int | None = None
+    ) -> TaskStatusUpdateResult:
         """Update task status based on subtask status using collaboration strategy."""
-        from app.models.subtask import Subtask, SubtaskRole
-        from app.models.task import TaskResource
         from app.schemas.kind import Task
         from app.services.adapters.collaboration_strategy import (
             CollaborationStrategy,
             CollaborationStrategyFactory,
         )
 
+        update_result = TaskStatusUpdateResult()
         try:
             with _db_session() as db:
-                task = (
-                    db.query(TaskResource)
-                    .filter(
-                        TaskResource.id == task_id,
-                        TaskResource.kind == "Task",
-                        TaskResource.is_active,
-                    )
-                    .first()
+                task = task_stores.task_store.get_task_by_states(
+                    db,
+                    task_id=task_id,
+                    states=TaskResource.is_active_query(),
                 )
                 if not task:
-                    return
+                    return update_result
 
-                subtasks = (
-                    db.query(Subtask)
-                    .filter(
-                        Subtask.task_id == task_id,
-                        Subtask.role == SubtaskRole.ASSISTANT,
-                    )
-                    .order_by(Subtask.message_id.asc())
-                    .all()
+                subtasks = task_stores.subtask_store.list_assistant_by_task(
+                    db,
+                    task_id=task_id,
+                    owner_user_id=task.user_id,
                 )
                 if not subtasks:
-                    return
+                    return update_result
 
                 task_crd = Task.model_validate(task.json)
                 last_subtask = subtasks[-1]
+                changed_subtask = None
+                if changed_subtask_id is not None:
+                    changed_subtask = next(
+                        (
+                            subtask
+                            for subtask in subtasks
+                            if subtask.id == changed_subtask_id
+                        ),
+                        None,
+                    )
+                    if changed_subtask is None:
+                        changed_subtask = task_stores.subtask_store.get_by_id(
+                            db, subtask_id=changed_subtask_id
+                        )
 
                 if task_crd.status:
                     # Use collaboration strategy to determine task status
@@ -225,12 +260,33 @@ class DatabaseHandler:
                     )
                     task_crd.status.updatedAt = datetime.now()
 
-                task.json = task_crd.model_dump(mode="json")
-                task.updated_at = datetime.now()
-                flag_modified(task, "json")
+                    # Check if pipeline should auto-advance to next stage
+                    advance_subtask = changed_subtask or last_subtask
+                    advance_info = strategy.get_auto_advance_info(
+                        db,
+                        task_id,
+                        advance_subtask.id,
+                        advance_subtask.status.value,
+                    )
+                    if advance_info:
+                        task_crd.status.status = "PENDING"
+                        task_crd.status.progress = 0
+                        update_result.auto_advance = PipelineAutoAdvanceIntent(
+                            task_id=task.id,
+                            user_id=task.user_id,
+                            completed_subtask_id=advance_subtask.id,
+                            advance_info=advance_info,
+                        )
+
+                task_stores.task_store.update_json(
+                    db, task=task, payload=task_crd.model_dump(mode="json")
+                )
 
         except Exception:
             logger.exception("Error updating task %s status", task_id)
+            return TaskStatusUpdateResult()
+
+        return update_result
 
     def _apply_status_update(
         self,
@@ -284,13 +340,16 @@ class DatabaseHandler:
         self, subtask_id: int, content: str, is_streaming: bool
     ) -> None:
         """Synchronous partial response save."""
-        from app.models.subtask import Subtask
-
         try:
             with _db_session() as db:
-                if subtask := db.get(Subtask, subtask_id):
-                    subtask.result = {"value": content, "streaming": is_streaming}
-                    subtask.updated_at = datetime.now()
+                if subtask := task_stores.subtask_store.get_by_id(
+                    db, subtask_id=subtask_id
+                ):
+                    task_stores.subtask_store.update_result(
+                        db,
+                        subtask=subtask,
+                        result={"value": content, "streaming": is_streaming},
+                    )
         except Exception:
             logger.exception("Error saving partial response for subtask %s", subtask_id)
 
@@ -309,11 +368,11 @@ class DatabaseHandler:
 
     def _get_subtask_message_id_sync(self, subtask_id: int) -> int | None:
         """Synchronous get subtask message_id."""
-        from app.models.subtask import Subtask
-
         try:
             with _db_session() as db:
-                if subtask := db.get(Subtask, subtask_id):
+                if subtask := task_stores.subtask_store.get_by_id(
+                    db, subtask_id=subtask_id
+                ):
                     return subtask.message_id
         except Exception:
             logger.exception("Error getting message_id for subtask %s", subtask_id)

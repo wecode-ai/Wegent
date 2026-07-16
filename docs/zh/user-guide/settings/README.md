@@ -10,12 +10,15 @@ sidebar_position: 6
 
 ## 📋 本模块文档
 
-| 文档 | 说明 |
-|------|------|
-| [智能体设置](./agent-settings.md) | 配置智能体（Agent）、机器人（Bot）、提示词和协作模式 |
-| [配置模型](./configuring-models.md) | 配置 AI 模型（Anthropic Claude、OpenAI GPT 等） |
-| [配置执行器](./configuring-shells.md) | 配置运行时环境（ClaudeCode、Agno、Dify） |
-| [管理 Skills](./managing-skills.md) | 上传、管理和使用 Skills 能力扩展包 |
+| 文档                                         | 说明                                                 |
+| -------------------------------------------- | ---------------------------------------------------- |
+| [智能体设置](./agent-settings.md)            | 配置智能体（Agent）、机器人（Bot）、提示词和协作模式 |
+| [配置模型](./configuring-models.md)          | 配置 AI 模型（Anthropic Claude、OpenAI GPT 等）      |
+| [配置执行器](./configuring-shells.md)        | 配置运行时环境（ClaudeCode、Dify、Chat）             |
+| [管理 Skills](./managing-skills.md)          | 上传、管理和使用 Skills 能力扩展包                   |
+| [键盘快捷键](./keyboard-shortcuts.md)        | 管理 Wework 桌面版本机快捷键                         |
+| [桌面应用偏好](./desktop-app-preferences.md) | 配置 Wework 桌面版启动、后台运行和托盘行为           |
+| [浏览器设置](./browser-settings.md)          | 配置内置浏览器的链接、隐私和下载行为                 |
 
 ---
 
@@ -31,31 +34,31 @@ sidebar_position: 6
 ```
 
 **协作模式**：
+
 - **Solo**：单个机器人独立工作
 - **Pipeline**：顺序执行，形成处理流水线
-- **Route**：领导者根据内容路由到合适的专家
 - **Coordinate**：领导者协调并行执行，汇总结果
-- **Collaborate**：所有成员自由讨论，共享上下文
+
+Web 界面当前在新建或编辑智能体时提供 Solo、Pipeline 和 Coordinate。
 
 ### 模型配置
 
 支持多种 AI 模型提供商：
 
-| 提供商 | 支持的模型 |
-|--------|-----------|
+| 提供商        | 支持的模型                                   |
+| ------------- | -------------------------------------------- |
 | **Anthropic** | Claude Haiku 4、Claude Sonnet 4、Claude Opus |
-| **OpenAI** | GPT-4、GPT-4 Turbo、GPT-3.5 Turbo |
+| **OpenAI**    | GPT-4、GPT-4 Turbo、GPT-3.5 Turbo            |
 
 ### 执行器配置
 
 支持多种运行时环境：
 
-| 执行器 | 说明 | 适用场景 |
-|--------|------|----------|
+| 执行器         | 说明                                    | 适用场景           |
+| -------------- | --------------------------------------- | ------------------ |
 | **ClaudeCode** | Claude Code SDK，支持代码执行和文件操作 | 代码开发、文件处理 |
-| **Agno** | Agno 框架，支持多种协作模式 | 对话、多智能体协作 |
-| **Dify** | 外部 Dify API 代理 | Dify 工作流集成 |
-| **Chat** | 直接 LLM API（无 Docker） | 轻量级对话 |
+| **Dify**       | 外部 Dify API 代理                      | Dify 工作流集成    |
+| **Chat**       | 直接 LLM API（无 Docker）               | 轻量级对话         |
 
 ### Skills 管理
 
@@ -64,6 +67,25 @@ Skills 是 Claude Code 的能力扩展包：
 - **上传 Skills**：打包为 ZIP 文件上传
 - **管理 Skills**：查看、下载、更新、删除
 - **使用 Skills**：在 Bot 中引用 Skills
+
+### 已归档聊天管理
+
+桌面版 Wework 的设置中可以查看已归档的 Project 和 Conversation 聊天。删除单个已归档聊天或执行“删除全部”时，界面会先显示确认弹窗；确认后才会永久删除对应的本地运行时会话记录。批量删除只作用于当前归档列表中的项目，不会影响未归档聊天。
+
+### 桌面应用偏好
+
+桌面版 Wework 的“通用”设置可以控制界面语言、启动后是否显示主界面，以及关闭主窗口后是否继续在后台运行。后台运行开启时，关闭主窗口会释放主界面 WebView 资源，但不会停止正在执行的任务；用户可以单击系统托盘图标重新打开主界面。
+
+桌面版 Wework 的“集成 → 应用快照”提供 macOS Appshots 状态和声音偏好。默认快捷键 `⌘⇧2` 会截取最前面的应用窗口，并把 PNG 快照添加到当前 Wework 输入框。
+
+### Wework 上下文设置
+
+桌面版 Wework 的左侧设置菜单将 **通用**、**云端连接**、**外观**、**上下文**、**模型**、**代理**、**键盘快捷键** 和 **关于** 归入 **个人** 分组。移动端设置首页保留 **个人** 入口，进入后可以访问通用、外观、上下文、模型和关于设置。
+
+在 **设置 → 个人 → 上下文** 中可以配置两类本机上下文行为：
+
+- **终端上下文注入**：控制新任务是否自动携带当前终端上下文。
+- **Wework 自定义指令**：保存本机的 Wework 指令内容，并影响之后启动的新任务。清空内容并保存会移除该本机指令配置。
 
 ---
 

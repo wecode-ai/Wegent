@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const EXECUTOR_REGRESSION_SPEC = /tasks\/agent-conversation-regression\.spec\.ts/
+
 /**
  * Playwright configuration for Wegent E2E testing
  * Optimized for faster execution while maintaining test reliability
@@ -16,8 +18,8 @@ export default defineConfig({
   /* Fail the build on CI if you accidentally left test.only in the source code */
   forbidOnly: !!process.env.CI,
 
-  /* Retry once on CI to handle flaky tests, reduce from 2 to 1 for speed */
-  retries: process.env.CI ? 1 : 0,
+  /* Do not retry E2E tests. Flaky tests should fail so they can be fixed. */
+  retries: 0,
 
   /* Reporter to use - use blob reporter for sharded runs */
   reporter: process.env.CI
@@ -32,8 +34,8 @@ export default defineConfig({
     /* Base URL to use in actions like `await page.goto('/')` */
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
 
-    /* Collect trace only on first retry to save time */
-    trace: 'on-first-retry',
+    /* Collect trace for failed CI runs without requiring retries. */
+    trace: process.env.CI ? 'retain-on-failure' : 'on-first-retry',
 
     /* Capture screenshot only on failure */
     screenshot: 'only-on-failure',
@@ -68,14 +70,17 @@ export default defineConfig({
     },
     {
       name: 'chromium',
-      testIgnore: /api\/.*\.spec\.ts/, // Exclude API tests from chromium project
+      testIgnore: [
+        /api\/.*\.spec\.ts/,
+        EXECUTOR_REGRESSION_SPEC, // Run executor-heavy coverage in a dedicated CI job.
+      ],
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
       },
       dependencies: ['setup'],
     },
-    /* API tests - no browser needed, no setup dependency */
+    /* API tests - no browser needed, but setup provisions isolated E2E users */
     {
       name: 'api',
       testMatch: /api\/.*\.spec\.ts/,
@@ -83,6 +88,16 @@ export default defineConfig({
         // API tests don't need a browser
         baseURL: process.env.E2E_API_URL || 'http://localhost:8000',
       },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'executor-chromium',
+      testMatch: EXECUTOR_REGRESSION_SPEC,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
+      },
+      dependencies: ['setup'],
     },
     /* Performance tests */
     {
@@ -127,7 +142,7 @@ export default defineConfig({
 
   /* Run local dev server before starting the tests (optional for CI) */
   // webServer: {
-  //   command: 'npm run dev',
+  //   command: 'pnpm run dev',
   //   url: 'http://localhost:3000',
   //   reuseExistingServer: !process.env.CI,
   // },

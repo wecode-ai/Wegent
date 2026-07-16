@@ -15,6 +15,7 @@ Note: Agent creation is NOT handled here - it belongs to the service layer.
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,6 +46,56 @@ class ChatContextResult:
     system_prompt: str = ""
     kb_meta_prompt: str = ""
     mcp_clients: list = field(default_factory=list)
+
+
+# A document attachment header is ``[Attachment: …]``; images use
+# ``[Image Attachment: …]`` and videos ``[Video Attachment: …]``. The
+# ``\[Attachment:`` anchor (a bracket immediately before the colon-terminated
+# label) matches only documents — not image/video headers, and not the
+# ``[Attachment N]`` index label (no colon).
+_DOCUMENT_ATTACHMENT = re.compile(r"\[Attachment:")
+
+
+def _attachments_have_document(attachments: Any) -> bool:
+    """Return True if the structured request payload includes a document attachment.
+
+    Preferred, format-independent signal for the current turn: the backend sets
+    ``request.attachments`` with each attachment's ``mime_type``. A document is
+    anything that is not an image or a video — only those carry extracted text
+    for read_attachment to serve.
+    """
+    if not isinstance(attachments, list):
+        return False
+    for att in attachments:
+        # ExecutionRequest.attachments is untyped: entries may be plain dicts or
+        # attachment objects that expose mime_type as an attribute.
+        if isinstance(att, dict):
+            mime = str(att.get("mime_type") or "").lower()
+        else:
+            mime = str(getattr(att, "mime_type", "") or "").lower()
+        if mime and not mime.startswith("image/") and not mime.startswith("video/"):
+            return True
+    return False
+
+
+def _content_has_readable_attachment(content: Any) -> bool:
+    """Return True if rendered content carries a document attachment block.
+
+    Header-text fallback used for history (prior turns are not in
+    ``request.attachments``) and as a safety net for the current turn. Only
+    document attachments have extracted text; image/video blocks do not, so a
+    conversation with only those must NOT get the read_attachment tool.
+    """
+    if isinstance(content, str):
+        return bool(_DOCUMENT_ATTACHMENT.search(content))
+    if isinstance(content, list):
+        return any(
+            isinstance(block, dict)
+            and isinstance(block.get("text"), str)
+            and _DOCUMENT_ATTACHMENT.search(block["text"])
+            for block in content
+        )
+    return False
 
 
 class ChatContext:
@@ -162,19 +213,48 @@ class ChatContext:
                 self._load_skill_tool.restore_from_history(history)
                 restored_skills = self._load_skill_tool.get_loaded_skills()
                 if restored_skills:
+                    restored_skill_tools = (
+                        await self._load_skill_tool.ensure_loaded_skill_tools_loaded()
+                    )
+                    restored_tool_count = sum(
+                        len(tools) for tools in restored_skill_tools.values()
+                    )
                     add_span_event(
                         "skill_state_restored",
-                        {"restored_skills": list(restored_skills)},
+                        {
+                            "restored_skills": list(restored_skills),
+                            "restored_tool_count": restored_tool_count,
+                        },
                     )
                     logger.info(
-                        "[CHAT_CONTEXT] Restored %d skills from history: %s",
+                        "[CHAT_CONTEXT] Restored %d skills from history: %s "
+                        "(materialized_tool_count=%d)",
                         len(restored_skills),
                         list(restored_skills),
+                        restored_tool_count,
                     )
+
+            # Only offer read_attachment when the conversation carries a document
+            # attachment whose text the tool can serve. Prefer the structured
+            # request payload (mime_type) for the current turn — robust to header
+            # format changes — then fall back to a header scan of the prompt and
+            # history (prior turns aren't in request.attachments). Image/video-only
+            # conversations and plain chats don't get it (it would return "empty").
+            has_attachments = (
+                _attachments_have_document(self._request.attachments)
+                or _content_has_readable_attachment(self._request.prompt)
+                or any(
+                    _content_has_readable_attachment(message.get("content"))
+                    for message in history
+                    if isinstance(message, dict)
+                )
+            )
 
             # Build extra_tools from all sources (including builtin tools)
             add_span_event("building_extra_tools")
-            extra_tools = self._build_extra_tools(kb_result, skill_tools, mcp_result)
+            extra_tools = self._build_extra_tools(
+                kb_result, skill_tools, mcp_result, has_attachments=has_attachments
+            )
 
             # Process KB tools result for system prompt
             system_prompt = self._request.system_prompt or ""
@@ -217,12 +297,17 @@ class ChatContext:
         This method should be called after chat completion to release resources.
         """
         add_span_event("cleanup_started", {"mcp_clients_count": len(self._mcp_clients)})
-        if self._mcp_clients:
-            logger.debug(
-                "[CHAT_CONTEXT] Cleaning up %d MCP clients", len(self._mcp_clients)
-            )
+        dynamic_mcp_clients = []
+        if self._load_skill_tool and hasattr(
+            self._load_skill_tool, "drain_deferred_mcp_clients"
+        ):
+            dynamic_mcp_clients = self._load_skill_tool.drain_deferred_mcp_clients()
+
+        clients = self._mcp_clients + dynamic_mcp_clients
+        if clients:
+            logger.debug("[CHAT_CONTEXT] Cleaning up %d MCP clients", len(clients))
             await asyncio.gather(
-                *[self._close_mcp_client(c) for c in self._mcp_clients if c],
+                *[self._close_mcp_client(c) for c in clients if c],
                 return_exceptions=True,
             )
             self._mcp_clients = []
@@ -313,6 +398,9 @@ class ChatContext:
         tracer_name="chat_shell.services",
         extract_attributes=lambda self, db, *args, **kwargs: {
             "context.kb_ids_count": len(self._request.knowledge_base_ids or []),
+            "context.external_refs_count": len(
+                self._request.external_knowledge_refs or []
+            ),
         },
     )
     async def _prepare_kb_tools(self, db: AsyncSession):
@@ -326,8 +414,9 @@ class ChatContext:
         from shared.models.knowledge import KnowledgeBaseToolsResult
 
         base_system_prompt = self._request.system_prompt or ""
-        if not self._request.knowledge_base_ids:
-            add_span_event("no_kb_ids_skipped")
+        external_refs = self._request.external_knowledge_refs or []
+        if not self._request.knowledge_base_ids and not external_refs:
+            add_span_event("no_kb_targets_skipped")
             return KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt=base_system_prompt,
@@ -336,7 +425,10 @@ class ChatContext:
 
         add_span_event(
             "preparing_kb_tools",
-            {"kb_ids_count": len(self._request.knowledge_base_ids)},
+            {
+                "kb_ids_count": len(self._request.knowledge_base_ids or []),
+                "external_refs_count": len(external_refs),
+            },
         )
         model_id = (
             self._request.model_config.get("model_id")
@@ -363,6 +455,7 @@ class ChatContext:
         # KB configs (max_calls, exempt_calls, name) are now fetched by KnowledgeBaseTool from Backend API
         result = await prepare_knowledge_base_tools(
             knowledge_base_ids=self._request.knowledge_base_ids,
+            external_knowledge_refs=external_refs,
             user_id=self._request.user_id,
             db=db,
             base_system_prompt=base_system_prompt,
@@ -370,6 +463,7 @@ class ChatContext:
             user_subtask_id=self._request.user_subtask_id,  # Use user_subtask_id for RAG persistence
             is_user_selected=self._request.is_user_selected_kb,
             document_ids=self._request.document_ids,
+            knowledge_base_scopes=self._request.knowledge_base_scopes,
             model_id=model_id,
             context_window=context_window,
             model_config=self._request.model_config,
@@ -704,6 +798,7 @@ class ChatContext:
         kb_result,
         skill_tools: list,
         mcp_result: tuple[list, list],
+        has_attachments: bool = False,
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
@@ -799,6 +894,24 @@ class ChatContext:
                 len(self._request.table_contexts),
             )
 
+        # Add ReadAttachmentTool when the conversation carries an attachment, so
+        # the model can page the full extracted text beyond the inline preview.
+        if has_attachments:
+            from chat_shell.compression.token_counter import TokenCounter
+            from chat_shell.tools.builtin import ReadAttachmentTool
+
+            model_id = (self._request.model_config or {}).get("model_id")
+            extra_tools.append(
+                ReadAttachmentTool(
+                    task_id=self._request.task_id,
+                    token_counter=TokenCounter(model_name=model_id),
+                )
+            )
+            logger.info(
+                "[CHAT_CONTEXT] Added ReadAttachmentTool for task_id=%d",
+                self._request.task_id,
+            )
+
         # Note: Subscription tools (preview_subscription, create_subscription) have been moved
         # to Backend MCP Server and are now provided via the subscription-manager skill.
         # They are automatically injected by Backend into skill_configs for all non-subscription tasks.
@@ -811,27 +924,6 @@ class ChatContext:
             self._request.task_id,
             self._request.subtask_id,
         )
-
-        # Add SandboxImageViewerTool when a task sandbox is available
-        if self._request.task_id:
-            import os
-
-            from chat_shell.tools.builtin import SandboxImageViewerTool
-
-            executor_manager_url = os.getenv(
-                "EXECUTOR_MANAGER_URL", "http://localhost:8001"
-            )
-            extra_tools.append(
-                SandboxImageViewerTool(
-                    task_id=self._request.task_id,
-                    executor_manager_url=executor_manager_url,
-                    auth_token=self._request.auth_token,
-                )
-            )
-            logger.debug(
-                "[CHAT_CONTEXT] Added SandboxImageViewerTool for task_id=%d",
-                self._request.task_id,
-            )
 
         # === External Tools ===
 

@@ -25,10 +25,10 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { Task } from '@/types/api'
-import { paths } from '@/config/paths'
 import { taskApis } from '@/apis/tasks'
+import { getTaskTargetHref } from '@/utils/taskRouting'
 
 // History filter type: online (chat), offline (code), flow
 export type HistoryFilterType = 'online' | 'offline' | 'flow'
@@ -75,7 +75,7 @@ const PAGE_SIZE = 20
 export default function HistoryManageDialog({ open, onOpenChange }: HistoryManageDialogProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { setSelectedTask, refreshPersonalTasks } = useTaskContext()
+  const { refreshPersonalTasks } = useTaskSession()
 
   // Filter types state
   const [filterTypes, setFilterTypes] = useState<HistoryFilterType[]>(['online', 'offline'])
@@ -247,14 +247,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
   // Handle task click (navigate to task)
   const handleTaskClick = (task: Task) => {
     onOpenChange(false)
-    setSelectedTask(task)
-    let targetPath = paths.chat.getHref() // default to chat
-    if (task.task_type === 'code') {
-      targetPath = paths.code.getHref()
-    } else if (task.task_type === 'video' || task.task_type === 'image') {
-      targetPath = paths.generate.getHref()
-    }
-    router.push(`${targetPath}?taskId=${task.id}`)
+    router.push(getTaskTargetHref(task))
   }
 
   // Format time ago

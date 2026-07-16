@@ -21,14 +21,19 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, List, Optional
 
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+)
+
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
-from app.models.subtask import Subtask
-from app.models.task import TaskResource
 from app.services.task_status import extract_task_error
+from app.stores.tasks import subtask_store, task_store
 from shared.models import (
     EventType,
     ExecutionEvent,
@@ -38,6 +43,7 @@ from shared.models import (
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.utils.http_client import traced_async_client
 
+from .attachment_sync import apply_attachment_sync_response, sync_executor_attachments
 from .emitters import (
     ResultEmitter,
     ResultEmitterFactory,
@@ -97,6 +103,26 @@ def _extract_shell_call_input(item: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _extract_reasoning_event_content(
+    event_type: str, data: dict[str, Any]
+) -> Optional[str]:
+    if event_type == ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value:
+        delta = data.get("delta")
+        if delta is None:
+            return ""
+        return delta if isinstance(delta, str) else str(delta)
+
+    if event_type == ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value:
+        part = data.get("part", {})
+        if isinstance(part, dict) and part.get("type") == "reasoning":
+            text = part.get("text")
+            if text is None:
+                return ""
+            return text if isinstance(text, str) else str(text)
+
+    return None
+
+
 def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "protocol": "shell_call",
@@ -108,29 +134,54 @@ def _build_shell_call_context(item: dict[str, Any]) -> dict[str, Any]:
 def extract_completed_result(response_data: dict) -> dict:
     """Build a result dict from a ``response.completed`` payload.
 
-    Shared by :class:`ResponsesAPIEventParser` and
-    :class:`EmitterBridgeTransport` so the field list is maintained in one
-    place.
+    Shared by :class:`ResponsesAPIEventParser` and response bridge transport so
+    the field list is maintained in one place.
     """
     # Extract text content from response output
     value = ""
+    reasoning_parts: list[str] = []
     for item in response_data.get("output", []):
         if isinstance(item, dict):
             for content_block in item.get("content", []):
-                if isinstance(content_block, dict) and content_block.get("text"):
-                    value += content_block["text"]
+                if not isinstance(content_block, dict):
+                    continue
+                text = content_block.get("text")
+                if not text:
+                    continue
+                block_type = content_block.get("type")
+                if block_type == "reasoning":
+                    reasoning_parts.append(text)
+                elif block_type in (None, "output_text", "text"):
+                    value += text
+
+    reasoning_content = response_data.get("reasoning_content")
+    if reasoning_content is None and reasoning_parts:
+        reasoning_content = "".join(reasoning_parts)
 
     return {
         "value": value,
         "usage": response_data.get("usage"),
         "sources": response_data.get("sources"),
+        "retrieval_summary": response_data.get("retrieval_summary"),
         "blocks": response_data.get("blocks"),
         "silent_exit": response_data.get("silent_exit"),
         "silent_exit_reason": response_data.get("silent_exit_reason"),
+        "deferred_user_input": response_data.get("deferred_user_input"),
+        "deferred_user_input_tool_use_id": response_data.get(
+            "deferred_user_input_tool_use_id"
+        ),
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
+        "termination_reason": response_data.get("termination_reason"),
         "messages_chain": response_data.get("messages_chain"),
-        "reasoning_content": response_data.get("reasoning_content"),
+        "context_metrics": response_data.get("context_metrics"),
+        "context_compactions": response_data.get("context_compactions"),
+        "standalone_chat_workspace_path": response_data.get(
+            "standalone_chat_workspace_path"
+        ),
+        "file_changes": response_data.get("file_changes"),
+        "executor_session": response_data.get("executor_session"),
+        "reasoning_content": reasoning_content,
     }
 
 
@@ -143,17 +194,24 @@ class ResponsesAPIEventParser:
 
     def __init__(self) -> None:
         self._tool_contexts: dict[str, dict[str, Any]] = {}
+        self._reasoning_buffers: dict[str, str] = {}
 
     @staticmethod
     def _tool_key(task_id: int, subtask_id: int, tool_use_id: str) -> str:
         """Build a stable context key scoped to the request lifecycle."""
         return f"{task_id}:{subtask_id}:{tool_use_id}"
 
+    @staticmethod
+    def _request_key(task_id: int, subtask_id: int) -> str:
+        """Build a stable request key for stream-scoped state."""
+        return f"{task_id}:{subtask_id}"
+
     def _clear_task_contexts(self, task_id: int, subtask_id: int) -> None:
         prefix = f"{task_id}:{subtask_id}:"
         stale_keys = [key for key in self._tool_contexts if key.startswith(prefix)]
         for key in stale_keys:
             self._tool_contexts.pop(key, None)
+        self._reasoning_buffers.pop(self._request_key(task_id, subtask_id), None)
 
     def parse(
         self,
@@ -176,6 +234,19 @@ class ResponsesAPIEventParser:
             Parsed ExecutionEvent or None if event should be skipped
         """
         # Map OpenAI Responses API events to internal EventType
+        if event_type == ResponsesAPIStreamEvents.RESPONSE_CREATED.value:
+            start_data = {}
+            for key in ("shell_type", "bot_name"):
+                if data.get(key) is not None:
+                    start_data[key] = data.get(key)
+            return ExecutionEvent(
+                type=EventType.START,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data=start_data,
+                message_id=message_id,
+            )
+
         if event_type == ResponsesAPIStreamEvents.OUTPUT_TEXT_DELTA.value:
             # response.output_text.delta -> CHUNK
             # Wegent extension: offset field tracks cumulative text position
@@ -193,16 +264,59 @@ class ResponsesAPIEventParser:
                 message_id=message_id,
             )
 
+        elif event_type == ResponsesAPIStreamEvents.STATUS_UPDATED.value:
+            return ExecutionEvent(
+                type=EventType.STATUS_UPDATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={
+                    "phase": data.get("phase"),
+                    "context_metrics": data.get("context_metrics") or {},
+                    "context_compaction": data.get("context_compaction"),
+                },
+                message_id=message_id,
+            )
+
         elif event_type == ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value:
             # response.completed -> DONE
             response_data = data.get("response", {})
+            result = extract_completed_result(response_data)
+            request_key = self._request_key(task_id, subtask_id)
+            buffered_reasoning = self._reasoning_buffers.get(request_key)
+            if not result.get("reasoning_content") and buffered_reasoning:
+                result["reasoning_content"] = buffered_reasoning
             self._clear_task_contexts(task_id, subtask_id)
             return ExecutionEvent(
                 type=EventType.DONE,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 content="",
-                result=extract_completed_result(response_data),
+                result=result,
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.BLOCK_CREATED.value:
+            block = data.get("block")
+            if not isinstance(block, dict):
+                return None
+            return ExecutionEvent(
+                type=EventType.BLOCK_CREATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={"block": block},
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.BLOCK_UPDATED.value:
+            block_id = data.get("block_id")
+            updates = data.get("updates")
+            if not block_id or not isinstance(updates, dict):
+                return None
+            return ExecutionEvent(
+                type=EventType.BLOCK_UPDATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={"block_id": str(block_id), "updates": updates},
                 message_id=message_id,
             )
 
@@ -229,58 +343,98 @@ class ResponsesAPIEventParser:
             )
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value:
-            # function_call_arguments.delta -> incremental arguments update
-            # Standard OpenAI protocol: this event only contains delta, no status field
-            # Tool start is signaled by response.output_item.added with type=function_call
-            # We skip this event as it's just incremental argument streaming
-            return None
+            tool_use_id = _require_non_empty_tool_use_id(
+                data.get("call_id") or data.get("item_id"),
+                context="function_call_arguments.delta",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
+            tool_context = self._tool_contexts.get(tool_key)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing function_call context for %s during arguments.delta",
+                    tool_key,
+                )
+                tool_context = {}
+            arguments_summary = data.get("arguments_summary")
+            if isinstance(arguments_summary, dict):
+                tool_context["arguments"] = arguments_summary
+            return ExecutionEvent(
+                type=EventType.TOOL_ARGUMENT_DELTA,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=tool_use_id,
+                tool_input=(
+                    arguments_summary if isinstance(arguments_summary, dict) else None
+                ),
+                data={
+                    "tool_protocol": "function_call",
+                    "argument_status": "streaming",
+                    "delta": data.get("delta", ""),
+                },
+                message_id=message_id,
+            )
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value:
-            # function_call_arguments.done -> TOOL_RESULT
+            # function_call_arguments.done marks argument generation complete.
+            # The execution result is emitted by response.output_item.done.
             tool_use_id = _require_non_empty_tool_use_id(
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
             tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
-            tool_context = self._tool_contexts.pop(tool_key, None)
+            tool_context = self._tool_contexts.get(tool_key)
             if tool_context is None:
                 logger.warning(
-                    "[ResponsesAPIEventParser] Missing function_call context for %s",
+                    "[ResponsesAPIEventParser] Missing function_call context for %s; "
+                    "continuing with self-contained completion payload",
                     tool_key,
                 )
-                return None
+                tool_context = {}
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
-            tool_input = None
-            if arguments_str:
+            tool_input = data.get("arguments_summary")
+            if not isinstance(tool_input, dict) and arguments_str:
                 try:
                     tool_input = json.loads(arguments_str)
                 except (json.JSONDecodeError, TypeError):
                     pass
+            if isinstance(tool_input, dict):
+                tool_context["arguments"] = tool_input
             return ExecutionEvent(
-                type=EventType.TOOL_RESULT,
+                type=EventType.TOOL_ARGUMENT_DONE,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 tool_name=tool_context.get("name"),
                 tool_use_id=tool_use_id,
-                tool_input=tool_input or tool_context.get("arguments"),
-                tool_output=data.get("output"),
+                tool_input=(
+                    tool_input
+                    if tool_input is not None
+                    else tool_context.get("arguments")
+                ),
                 data={
                     "blocks": data.get("blocks", []),
                     "tool_protocol": "function_call",
+                    "argument_status": "done",
                 },
                 message_id=message_id,
             )
 
-        elif event_type == ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value:
-            # response.reasoning_summary_part.added -> THINKING
-            part = data.get("part", {})
-            if part.get("type") == "reasoning":
+        elif event_type in (
+            ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value,
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+        ):
+            reasoning_content = _extract_reasoning_event_content(event_type, data)
+            if reasoning_content is not None:
+                request_key = self._request_key(task_id, subtask_id)
+                self._reasoning_buffers[request_key] = (
+                    self._reasoning_buffers.get(request_key, "") + reasoning_content
+                )
                 return ExecutionEvent(
                     type=EventType.THINKING,
                     task_id=task_id,
                     subtask_id=subtask_id,
-                    content=part.get("text", ""),
+                    content=reasoning_content,
                     message_id=message_id,
                 )
             return None
@@ -305,10 +459,15 @@ class ResponsesAPIEventParser:
                     except (json.JSONDecodeError, TypeError):
                         pass
                 tool_key = self._tool_key(task_id, subtask_id, call_id)
+                arguments_summary = data.get("arguments_summary")
                 self._tool_contexts[tool_key] = {
                     "protocol": "function_call",
                     "name": name,
-                    "arguments": arguments,
+                    "arguments": (
+                        arguments_summary
+                        if isinstance(arguments_summary, dict)
+                        else arguments
+                    ),
                 }
 
                 return ExecutionEvent(
@@ -317,11 +476,16 @@ class ResponsesAPIEventParser:
                     subtask_id=subtask_id,
                     tool_use_id=call_id,
                     tool_name=name,
-                    tool_input=arguments,
+                    tool_input=(
+                        arguments_summary
+                        if isinstance(arguments_summary, dict)
+                        else arguments
+                    ),
                     data={
                         "blocks": data.get("blocks", []),
                         "display_name": data.get("display_name"),
                         "tool_protocol": "function_call",
+                        "argument_status": data.get("argument_status"),
                     },
                     message_id=message_id,
                 )
@@ -424,11 +588,17 @@ class ResponsesAPIEventParser:
             tool_context = self._tool_contexts.pop(tool_key, None)
             if tool_context is None:
                 logger.warning(
-                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s",
+                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s; "
+                    "continuing with self-contained completion payload",
                     tool_key,
                 )
-                return None
+                tool_context = {}
             failure_reason = data.get("failure_reason")
+            tool_output = (
+                failure_reason
+                if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
+                else data.get("output")
+            )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
@@ -436,7 +606,7 @@ class ResponsesAPIEventParser:
                 tool_name=tool_context.get("name"),
                 tool_use_id=item_id,
                 tool_input=tool_context.get("arguments"),
-                tool_output=failure_reason,
+                tool_output=tool_output,
                 data={
                     "tool_protocol": "mcp_call",
                     "server_label": tool_context.get("server_label", ""),
@@ -452,6 +622,43 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
             item = data.get("item", {})
+            if item.get("type") == "function_call":
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.done(function_call)",
+                )
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                tool_context = self._tool_contexts.pop(tool_key, None)
+                if tool_context is None:
+                    logger.warning(
+                        "[ResponsesAPIEventParser] Missing function_call completion context for %s; "
+                        "continuing with self-contained completion payload",
+                        tool_key,
+                    )
+                    tool_context = {}
+                arguments_str = item.get("arguments", "")
+                tool_input = tool_context.get("arguments")
+                if not isinstance(tool_input, dict) and arguments_str:
+                    try:
+                        tool_input = json.loads(arguments_str)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                status = item.get("status", "completed")
+                return ExecutionEvent(
+                    type=EventType.TOOL_RESULT,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_name=tool_context.get("name") or item.get("name"),
+                    tool_use_id=call_id,
+                    tool_input=tool_input,
+                    tool_output=item.get("output"),
+                    data={
+                        "tool_protocol": "function_call",
+                        "status": status,
+                        "error": item.get("error"),
+                    },
+                    message_id=message_id,
+                )
             if item.get("type") != "shell_call":
                 return None
             call_id = _require_non_empty_tool_use_id(
@@ -462,18 +669,20 @@ class ResponsesAPIEventParser:
             tool_context = self._tool_contexts.pop(tool_key, None)
             if tool_context is None:
                 logger.warning(
-                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s",
+                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s; "
+                    "continuing with self-contained completion payload",
                     tool_key,
                 )
-                return None
-            tool_input = _extract_shell_call_input(item) or tool_context.get(
-                "arguments"
+                tool_context = {}
+            extracted = _extract_shell_call_input(item)
+            tool_input = (
+                extracted if extracted is not None else tool_context.get("arguments")
             )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
-                tool_name=tool_context.get("name"),
+                tool_name=tool_context.get("name") or item.get("name"),
                 tool_use_id=call_id,
                 tool_input=tool_input,
                 data={
@@ -484,7 +693,6 @@ class ResponsesAPIEventParser:
             )
 
         elif event_type in (
-            ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
@@ -558,7 +766,7 @@ class ExecutionDispatcher:
         """
         wrapped_emitter = None
         try:
-            await self._recover_executor_if_needed(request)
+            await self._recover_executor_if_needed(request, device_id=device_id)
 
             # Route to execution target
             target = self.router.route(request, device_id)
@@ -654,43 +862,48 @@ class ExecutionDispatcher:
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
                     )
 
-    async def _recover_executor_if_needed(self, request: ExecutionRequest) -> None:
+    async def _recover_executor_if_needed(
+        self,
+        request: ExecutionRequest,
+        device_id: Optional[str] = None,
+    ) -> None:
         """Recover executor state for deleted runtime instances before dispatching."""
         shell_type = self._get_shell_type(request)
-        if shell_type not in {"ClaudeCode", "Agno"}:
+        if shell_type not in {"ClaudeCode", "Agno", "CodeX", "Codex"}:
+            return
+        if device_id and self._has_fork_workspace_archive(request):
             return
 
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == request.subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=request.subtask_id)
             if not subtask:
                 return
 
             # Save reference to current subtask for later update
             current_subtask = subtask
 
-            if not subtask.executor_deleted_at:
+            restore_fork_workspace = self._has_fork_workspace_archive(request)
+            if not subtask.executor_deleted_at and not restore_fork_workspace:
                 return
 
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == request.task_id,
-                    TaskResource.kind == "Task",
-                )
-                .first()
-            )
+            task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:
                 raise RuntimeError(
                     f"Task {request.task_id} not found for executor recovery"
                 )
 
             logger.info(
-                "[ExecutionDispatcher] Recovering deleted executor: "
-                "task_id=%s, subtask_id=%s, executor=%s",
+                "[ExecutionDispatcher] Recovering executor workspace: "
+                "task_id=%s, subtask_id=%s, executor=%s, reason=%s",
                 request.task_id,
                 request.subtask_id,
                 subtask.executor_name,
+                (
+                    "deleted_executor"
+                    if subtask.executor_deleted_at
+                    else "fork_workspace_archive"
+                ),
             )
 
             recovered_info = await recovery_service.recover(
@@ -713,10 +926,13 @@ class ExecutionDispatcher:
                 raise RuntimeError(error_message)
 
             # Update the current subtask to reflect the recovered executor.
-            current_subtask.executor_name = recovered_info["executor_name"]
-            current_subtask.executor_namespace = recovered_info["executor_namespace"]
-            current_subtask.executor_deleted_at = False
-            db.add(current_subtask)
+            subtask_store.update_fields(
+                db,
+                subtask=current_subtask,
+                executor_name=recovered_info["executor_name"],
+                executor_namespace=recovered_info["executor_namespace"],
+                executor_deleted_at=False,
+            )
             db.commit()
 
             request.executor_name = recovered_info["executor_name"]
@@ -731,6 +947,17 @@ class ExecutionDispatcher:
             )
         finally:
             db.close()
+
+    @staticmethod
+    def _has_fork_workspace_archive(request: ExecutionRequest) -> bool:
+        fork_runtime = getattr(request, "fork_runtime", None)
+        if not isinstance(fork_runtime, dict):
+            return False
+        workspace_archive = fork_runtime.get("workspaceArchive")
+        if not isinstance(workspace_archive, dict):
+            return False
+        storage_key = workspace_archive.get("storageKey")
+        return isinstance(storage_key, str) and bool(storage_key.strip())
 
     async def _update_subtask_to_running(self, subtask_id: int) -> None:
         """Update subtask status to RUNNING in database.
@@ -769,15 +996,16 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        from app.db.session import SessionLocal
-        from app.models.subtask import Subtask
-
         db = SessionLocal()
         try:
-            subtask = db.query(Subtask).filter(Subtask.id == subtask_id).first()
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
             if subtask:
-                subtask.executor_name = f"device-{device_id}"
-                subtask.executor_namespace = f"user-{user_id}" if user_id else None
+                subtask_store.update_executor_info(
+                    db,
+                    subtask=subtask,
+                    executor_name=f"device-{device_id}",
+                    executor_namespace=f"user-{user_id}" if user_id else "",
+                )
                 db.commit()
                 logger.info(
                     f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
@@ -818,6 +1046,34 @@ class ExecutionDispatcher:
         if request.bot and len(request.bot) > 0:
             return request.bot[0].get("shell_type", "Chat")
         return "Chat"
+
+    @staticmethod
+    def _get_bot_name(request: ExecutionRequest) -> Optional[str]:
+        """Extract the current bot name from an execution request."""
+        request_bot_name = getattr(request, "bot_name", "")
+        if isinstance(request_bot_name, str) and request_bot_name.strip():
+            return request_bot_name
+
+        bots = getattr(request, "bot", None)
+        if isinstance(bots, list) and bots:
+            first_bot = bots[0]
+            if isinstance(first_bot, dict):
+                bot_name = first_bot.get("name")
+                if isinstance(bot_name, str) and bot_name.strip():
+                    return bot_name
+
+        return None
+
+    @classmethod
+    def _build_start_event_data(
+        cls, request: ExecutionRequest, shell_type: Optional[str] = None
+    ) -> dict[str, str]:
+        """Build common data for chat:start events."""
+        data = {"shell_type": shell_type or cls._get_shell_type(request)}
+        bot_name = cls._get_bot_name(request)
+        if bot_name:
+            data["bot_name"] = bot_name
+        return data
 
     @staticmethod
     def _get_model_type(request: ExecutionRequest) -> str:
@@ -880,6 +1136,16 @@ class ExecutionDispatcher:
 
         await self.dispatch(request, device_id, emitter)
 
+    @trace_async(
+        span_name="dispatcher.dispatch_sse",
+        tracer_name="backend.execution",
+        extract_attributes=lambda self, request, target, emitter: {
+            "task.id": str(request.task_id),
+            "subtask.id": str(request.subtask_id),
+            "target.url": target.url,
+            "shell.type": self._get_shell_type(request),
+        },
+    )
     async def _dispatch_sse(
         self,
         request: ExecutionRequest,
@@ -931,7 +1197,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
+            data=self._build_start_event_data(request),
         )
 
         # Lazy import OpenAI SDK for memory optimization
@@ -969,6 +1235,15 @@ class ExecutionDispatcher:
             f"[ExecutionDispatcher] About to call client.responses.create: "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
+        add_span_event(
+            "sse.openai_request_start",
+            {
+                "model": openai_request.get("model"),
+                "base_url": base_url,
+                "tools_count": len(tools),
+                "request_id": request_id,
+            },
+        )
         # Use async with to ensure stream is properly closed on exit.
         # Without this, breaking out of the stream loop leaves the underlying
         # httpx Response open. When GC eventually collects it, httpcore's
@@ -993,6 +1268,14 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Stream created, starting to iterate events: "
                 f"task_id={request.task_id}, subtask_id={request.subtask_id}"
             )
+            add_span_event(
+                "sse.openai_stream_created",
+                {
+                    "task_id": str(request.task_id),
+                    "subtask_id": str(request.subtask_id),
+                    "request_id": request_id,
+                },
+            )
 
             event_count = 0
             last_cancel_check = 0
@@ -1001,6 +1284,13 @@ class ExecutionDispatcher:
 
             try:
                 # Process streaming events
+                add_span_event(
+                    "sse.openai_event_iteration_start",
+                    {
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
                 async for event in stream:
                     event_count += 1
 
@@ -1040,6 +1330,16 @@ class ExecutionDispatcher:
                             f"[ExecutionDispatcher] SSE event #{event_count}: type={event_type}, "
                             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
                         )
+                        # Add trace event for first few events and terminal events
+                        add_span_event(
+                            "sse.openai_event_received",
+                            {
+                                "event_type": event_type,
+                                "event_number": event_count,
+                                "task_id": str(request.task_id),
+                                "subtask_id": str(request.subtask_id),
+                            },
+                        )
 
                     # Convert event to dict for parsing
                     event_data = (
@@ -1058,7 +1358,12 @@ class ExecutionDispatcher:
                     )
 
                     if parsed_event:
-                        logger.info(
+                        log_fn = (
+                            logger.debug
+                            if parsed_event.type == EventType.TOOL_ARGUMENT_DELTA.value
+                            else logger.info
+                        )
+                        log_fn(
                             "[ExecutionDispatcher] Parsed SSE event -> internal event: "
                             "task_id=%d, subtask_id=%d, request_id=%s, sse_event=%s, internal_event=%s",
                             request.task_id,
@@ -1083,6 +1388,15 @@ class ExecutionDispatcher:
                             f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
                             f"event_type={event_type}, request_id={request_id}"
                         )
+                        add_span_event(
+                            "sse.openai_terminal_event",
+                            {
+                                "event_type": event_type,
+                                "total_events": event_count,
+                                "task_id": str(request.task_id),
+                                "subtask_id": str(request.subtask_id),
+                            },
+                        )
                         break
 
                 # If cancelled, emit CANCELLED event
@@ -1097,6 +1411,10 @@ class ExecutionDispatcher:
                     )
 
                 if not cancelled and not terminal_event_type:
+                    error_message = (
+                        "Chat Shell SSE stream ended without terminal event "
+                        f"after {event_count} events"
+                    )
                     logger.warning(
                         "[ExecutionDispatcher] SSE stream ended without terminal event: "
                         "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
@@ -1104,6 +1422,25 @@ class ExecutionDispatcher:
                         request.subtask_id,
                         request_id,
                         event_count,
+                    )
+                    add_span_event(
+                        "sse.openai_stream_no_terminal",
+                        {
+                            "warning": True,
+                            "total_events": event_count,
+                            "task_id": str(request.task_id),
+                            "subtask_id": str(request.subtask_id),
+                        },
+                    )
+                    await emitter.emit(
+                        ExecutionEvent(
+                            type=EventType.ERROR,
+                            task_id=request.task_id,
+                            subtask_id=request.subtask_id,
+                            message_id=request.message_id,
+                            error=error_message,
+                            error_code="sse_stream_no_terminal",
+                        )
                     )
 
                 # Log when stream iteration completes
@@ -1113,9 +1450,26 @@ class ExecutionDispatcher:
                     f"total_events={event_count}, cancelled={cancelled}, "
                     f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
                 )
+                add_span_event(
+                    "sse.openai_event_iteration_complete",
+                    {
+                        "total_events": event_count,
+                        "cancelled": cancelled,
+                        "terminal_event_type": terminal_event_type or "none",
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
             finally:
                 # Unregister stream to clean up
                 await session_manager.unregister_stream(request.subtask_id)
+                add_span_event(
+                    "sse.stream_unregistered",
+                    {
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
 
     async def _dispatch_image_generation(
         self,
@@ -1188,7 +1542,7 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
+            data=self._build_start_event_data(request),
         )
 
         # Send task to specified room
@@ -1234,8 +1588,9 @@ class ExecutionDispatcher:
     ) -> None:
         """Dispatch task via in-process execution (standalone mode).
 
-        Directly executes tasks within the Backend process. For Chat shell type,
-        uses chat_shell module. For ClaudeCode/Agno, uses executor module.
+        Directly executes Chat tasks within the Backend process when chat_shell
+        package mode is enabled. ClaudeCode/Agno are executed by the Rust
+        executor through HTTP callback mode.
 
         Args:
             request: Execution request
@@ -1255,18 +1610,17 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": shell_type},
+            data=self._build_start_event_data(request, shell_type),
         )
 
         if shell_type == "Chat":
             # Use chat_shell module for Chat type
             await self._dispatch_inprocess_chat(request, emitter)
         else:
-            # Use executor module for ClaudeCode/Agno
-            from .inprocess_executor import InprocessExecutor
-
-            executor = InprocessExecutor()
-            await executor.execute(request, emitter)
+            raise RuntimeError(
+                "Non-Chat standalone execution must be routed to the Rust "
+                "local executor device"
+            )
 
         logger.info(
             f"[ExecutionDispatcher] In-process dispatch completed: "
@@ -1367,6 +1721,8 @@ class ExecutionDispatcher:
             f"base_url={base_url}"
         )
 
+        await self._sync_attachments_before_executor_dispatch(request)
+
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
@@ -1416,7 +1772,37 @@ class ExecutionDispatcher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
             message_id=request.message_id,
-            data={"shell_type": self._get_shell_type(request)},
+            data=self._build_start_event_data(request),
+        )
+
+    async def _sync_attachments_before_executor_dispatch(
+        self, request: ExecutionRequest
+    ) -> None:
+        """Prepare attachments in executor runtime before formal dispatch."""
+        if not request.attachments:
+            return
+        shell_type = self._get_shell_type(request)
+        if shell_type not in {"ClaudeCode", "Agno", "CodeX", "Codex"}:
+            return
+
+        logger.info(
+            "[ExecutionDispatcher] Syncing attachments before executor dispatch: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d",
+            request.task_id,
+            request.subtask_id,
+            shell_type,
+            len(request.attachments),
+        )
+        sync_response = await sync_executor_attachments(request)
+        apply_attachment_sync_response(request, sync_response)
+        logger.info(
+            "[ExecutionDispatcher] Attachment sync applied: task_id=%s, "
+            "subtask_id=%s, executor_name=%s, success_count=%d, failed_count=%d",
+            request.task_id,
+            request.subtask_id,
+            request.executor_name,
+            sync_response.success_count,
+            sync_response.failed_count,
         )
 
     def parse_callback_event(
@@ -1472,43 +1858,9 @@ class ExecutionDispatcher:
         elif target.mode == CommunicationMode.POLLING:
             return await self._cancel_sse(request, target)
         elif target.mode == CommunicationMode.INPROCESS:
-            return await self._cancel_inprocess(request, target)
+            return False
         else:
             return await self._cancel_http(request, target)
-
-    async def _cancel_inprocess(
-        self,
-        request: ExecutionRequest,
-        target: ExecutionTarget,
-    ) -> bool:
-        """Cancel in-process task.
-
-        For in-process mode, we directly call the executor's cancel method.
-
-        Args:
-            request: Execution request
-            target: Execution target configuration (not used, kept for interface consistency)
-
-        Returns:
-            True if cancel was successful
-        """
-        from .inprocess_executor import InprocessExecutor
-
-        try:
-            executor = InprocessExecutor()
-            success = await executor.cancel(request.task_id)
-            if success:
-                logger.info(
-                    f"[ExecutionDispatcher] In-process task cancelled: "
-                    f"task_id={request.task_id}"
-                )
-            return success
-        except Exception as e:
-            logger.error(
-                f"[ExecutionDispatcher] Failed to cancel in-process task: "
-                f"task_id={request.task_id}, error={e}"
-            )
-            return False
 
     async def _cancel_sse(
         self,

@@ -4,8 +4,16 @@
 
 'use client'
 
-import React, { useMemo, useState } from 'react'
-import { CircleStop, Plus } from 'lucide-react'
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
+import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
@@ -29,15 +37,26 @@ import type {
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
 import {
+  canSwitchModelAfterMessages,
   canUseChatContexts,
   isChatShell,
   teamRequiresWorkspace,
 } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
+import { getChatSendState } from './chatSendState'
+import { useTranslation } from '@/hooks/useTranslation'
+import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
+
+const MOBILE_ACTION_MENU_WIDTH = 224
+const MOBILE_ACTION_MENU_MARGIN = 12
+const MOBILE_ACTION_MENU_GAP = 8
+const MOBILE_ACTION_MENU_MAX_HEIGHT = 288
+const MOBILE_ACTION_MENU_MIN_HEIGHT = 44
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
+  teamModeFilter?: TeamModeFilter
   // Team and Model
   selectedTeam: Team | null
   teams?: Team[]
@@ -75,26 +94,29 @@ export interface MobileChatInputControlsProps {
 
   // Context selection
   selectedContexts: ContextItem[]
-  setSelectedContexts: (contexts: ContextItem[]) => void
+  setSelectedContexts: Dispatch<SetStateAction<ContextItem[]>>
 
   // Attachment
   onFileSelect: (files: File | File[]) => void
 
   // State flags
-  isLoading: boolean
   isStreaming: boolean
-  isAwaitingResponseStart?: boolean
   isStopping: boolean
   hasMessages: boolean
   shouldHideChatInput: boolean
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
-  isSubtaskStreaming: boolean
+  hasAttachments?: boolean
+  canQueueMessage?: boolean
+  canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
+  onCancelTask?: () => void
   onSendMessage: () => void
+  onSendGuidance?: () => void
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
@@ -116,6 +138,7 @@ export interface MobileChatInputControlsProps {
  */
 export function MobileChatInputControls({
   taskType,
+  teamModeFilter = taskType ?? 'chat',
   selectedTeam,
   teams = [],
   onTeamChange,
@@ -143,18 +166,21 @@ export function MobileChatInputControls({
   selectedContexts,
   setSelectedContexts,
   onFileSelect,
-  isLoading,
   isStreaming,
-  isAwaitingResponseStart = false,
   isStopping,
   hasMessages,
   shouldHideChatInput,
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
-  isSubtaskStreaming,
+  hasAttachments = false,
+  canQueueMessage = false,
+  canSendGuidance = false,
+  canCancelTask,
   onStopStream,
+  onCancelTask,
   onSendMessage,
+  onSendGuidance,
   hasNoTeams = false,
   availableSkills = [],
   teamSkillNames = [],
@@ -163,16 +189,17 @@ export function MobileChatInputControls({
   onToggleSkill,
   hideSelectors,
 }: MobileChatInputControlsProps) {
+  const { t } = useTranslation('chat')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const showAttachmentAction = supportsAttachments(selectedTeam)
   const showSkillAction = availableSkills.length > 0 && Boolean(onToggleSkill)
-  const currentMode = taskType ?? 'chat'
-  const filteredTeams = useMemo(() => {
-    return teams
-      .filter(team => !(Array.isArray(team.bind_mode) && team.bind_mode.length === 0))
-      .filter(team => !team.bind_mode || team.bind_mode.includes(currentMode))
-  }, [teams, currentMode])
+  const filteredTeams = useMemo(
+    () => filterTeamsByMode(teams, teamModeFilter),
+    [teams, teamModeFilter]
+  )
   const selectedTeamForDisplay = useMemo(() => {
     if (!selectedTeam) return null
     return filteredTeams.find(team => team.id === selectedTeam.id) ?? selectedTeam
@@ -186,6 +213,7 @@ export function MobileChatInputControls({
     taskType !== 'video'
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
+  const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
   const showRepositoryAction =
     showRepositorySelector &&
     teamRequiresWorkspace(selectedTeam) &&
@@ -193,76 +221,148 @@ export function MobileChatInputControls({
   const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
   const hasSecondaryActions = showAttachmentAction || showChatContexts || showSkillAction
 
+  const updateMoreMenuPosition = useCallback(() => {
+    const button = moreMenuButtonRef.current
+    if (!button) return
+
+    const rect = button.getBoundingClientRect()
+    const viewport = window.visualViewport
+    const viewportTop = viewport?.offsetTop ?? 0
+    const viewportWidth = viewport?.width ?? window.innerWidth
+    const topBoundary = viewportTop + MOBILE_ACTION_MENU_MARGIN
+    const menuBottom = Math.max(
+      topBoundary + MOBILE_ACTION_MENU_MIN_HEIGHT,
+      rect.top - MOBILE_ACTION_MENU_GAP
+    )
+    const availableHeight = Math.max(MOBILE_ACTION_MENU_MIN_HEIGHT, menuBottom - topBoundary)
+    const menuHeight = Math.min(MOBILE_ACTION_MENU_MAX_HEIGHT, availableHeight)
+    const maxLeft = Math.max(
+      MOBILE_ACTION_MENU_MARGIN,
+      viewportWidth - MOBILE_ACTION_MENU_WIDTH - MOBILE_ACTION_MENU_MARGIN
+    )
+
+    setMoreMenuStyle({
+      left: Math.min(Math.max(rect.left, MOBILE_ACTION_MENU_MARGIN), maxLeft),
+      top: menuBottom - menuHeight,
+      maxHeight: menuHeight,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!moreMenuOpen) return
+
+    updateMoreMenuPosition()
+    const viewport = window.visualViewport
+    window.addEventListener('resize', updateMoreMenuPosition)
+    window.addEventListener('scroll', updateMoreMenuPosition, true)
+    viewport?.addEventListener('resize', updateMoreMenuPosition)
+    viewport?.addEventListener('scroll', updateMoreMenuPosition)
+
+    return () => {
+      window.removeEventListener('resize', updateMoreMenuPosition)
+      window.removeEventListener('scroll', updateMoreMenuPosition, true)
+      viewport?.removeEventListener('resize', updateMoreMenuPosition)
+      viewport?.removeEventListener('scroll', updateMoreMenuPosition)
+    }
+  }, [moreMenuOpen, updateMoreMenuPosition])
+
   // Render send button based on state
   const renderSendButton = () => {
-    const isDisabled =
-      isLoading ||
-      isStreaming ||
-      isModelSelectionRequired ||
-      !isAttachmentReadyToSend ||
-      hasNoTeams ||
-      (shouldHideChatInput ? false : !taskInputMessage.trim())
+    const sendState = getChatSendState({
+      isStreaming,
+      isStopping,
+      isModelSelectionRequired,
+      isAttachmentReadyToSend,
+      hasNoTeams,
+      shouldHideChatInput,
+      taskInputMessage,
+      hasAttachments,
+      canQueueMessage,
+      canCancelTask,
+    })
 
-    if (isStreaming || isAwaitingResponseStart || isStopping) {
-      if (isStopping) {
-        return (
-          <ActionButton
-            variant="loading"
-            icon={
-              <>
-                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                <CircleStop className="h-4 w-4 text-orange-500" />
-              </>
-            }
-          />
-        )
-      }
+    const renderStopAction = () => (
+      <ActionButton
+        onClick={onStopStream}
+        title="Stop generating"
+        icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+        className="hover:bg-orange-100"
+        data-testid="stop-stream-button"
+      />
+    )
+
+    const renderStoppingAction = () => (
+      <ActionButton
+        variant="loading"
+        icon={
+          <>
+            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+            <CircleStop className="h-4 w-4 text-orange-500" />
+          </>
+        }
+      />
+    )
+
+    const renderCancelTaskAction = () => {
       return (
         <ActionButton
-          onClick={onStopStream}
-          title="Stop generating"
+          onClick={onCancelTask}
+          title="Cancel task"
           icon={<CircleStop className="h-4 w-4 text-orange-500" />}
           className="hover:bg-orange-100"
+          data-testid="cancel-task-button"
         />
       )
     }
 
-    if (
-      selectedTaskDetail?.status === 'PENDING' &&
-      !isSubtaskStreaming &&
-      selectedTaskDetail?.is_group_chat
-    ) {
-      return (
-        <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
-      )
-    }
+    if (sendState.primaryAction === 'loading') {
+      if (sendState.showStopAction) {
+        return renderStoppingAction()
+      }
 
-    if (selectedTaskDetail?.status === 'PENDING') {
+      if (sendState.showPendingAction) {
+        return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
+      }
+
       return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
     }
 
-    if (selectedTaskDetail?.status === 'CANCELLING') {
+    if (sendState.primaryAction === 'stop') {
+      return renderStopAction()
+    }
+
+    if (sendState.primaryAction === 'cancel') {
+      return renderCancelTaskAction()
+    }
+
+    if (sendState.primaryAction === 'queue') {
       return (
-        <ActionButton
-          variant="loading"
-          icon={
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-              <CircleStop className="h-4 w-4 text-orange-500" />
-            </>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {renderStopAction()}
+          <SendButton
+            onClick={onSendMessage}
+            disabled={sendState.isPrimaryDisabled}
+            isLoading={false}
+            ariaLabel="Queue message"
+            compact
+          />
+        </div>
       )
     }
 
     return (
-      <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+      <SendButton
+        onClick={onSendMessage}
+        disabled={sendState.isPrimaryDisabled}
+        isLoading={false}
+        compact
+      />
     )
   }
 
   return (
     <div
-      className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
+      className={`flex items-center px-3 gap-2 min-w-0 overflow-visible ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       {/* Left: secondary actions menu - hidden when hideSelectors is true */}
       <div
@@ -271,11 +371,13 @@ export function MobileChatInputControls({
       >
         {/* Secondary actions menu */}
         <Button
+          ref={moreMenuButtonRef}
           type="button"
           variant="ghost"
           size="sm"
           aria-expanded={moreMenuOpen}
           aria-label="More actions"
+          data-testid="mobile-input-more-actions-button"
           title="More actions"
           onClick={() => setMoreMenuOpen(open => !open)}
           className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
@@ -284,13 +386,17 @@ export function MobileChatInputControls({
         </Button>
 
         {moreMenuOpen && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          <div
+            data-testid="mobile-input-more-actions-menu"
+            className="fixed z-50 w-56 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+            style={moreMenuStyle}
+          >
             {hasSecondaryActions && (
               <div className="flex flex-col">
                 {showAttachmentAction && (
                   <AttachmentButton
                     onFileSelect={onFileSelect}
-                    disabled={isLoading || isStreaming}
+                    disabled={isStreaming}
                     triggerVariant="menu-item"
                   />
                 )}
@@ -310,7 +416,7 @@ export function MobileChatInputControls({
                     selectedSkillNames={selectedSkillNames}
                     onToggleSkill={onToggleSkill}
                     isChatShell={isChatShell(selectedTeam)}
-                    disabled={isLoading || isStreaming}
+                    disabled={isStreaming}
                     readOnly={hasMessages}
                     triggerVariant="menu-item"
                   />
@@ -323,7 +429,7 @@ export function MobileChatInputControls({
               <MobileClarificationToggle
                 enabled={enableClarification}
                 onToggle={setEnableClarification}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
               />
             )}
 
@@ -332,10 +438,24 @@ export function MobileChatInputControls({
               <MobileCorrectionModeToggle
                 enabled={enableCorrectionMode}
                 onToggle={onCorrectionModeToggle}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
                 correctionModelName={correctionModelName}
                 taskId={selectedTaskDetail?.id ?? null}
               />
+            )}
+
+            {showGuidanceAction && onSendGuidance && (
+              <Button
+                type="button"
+                variant="ghost"
+                data-testid="send-guidance-button"
+                onClick={onSendGuidance}
+                disabled={!canSendGuidance || !taskInputMessage.trim()}
+                className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
+              >
+                <Hand className="h-4 w-4 text-primary" />
+                <span>{t('guidance.send')}</span>
+              </Button>
             )}
 
             {/* Repository Selector - full row clickable, only show if team requires workspace */}
@@ -362,25 +482,25 @@ export function MobileChatInputControls({
         )}
       </div>
 
-      {/* Right: Model selector, Send button */}
-      <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+      {/* Right: Agent selector, Model selector, Send button */}
+      <div className="ml-auto flex flex-1 items-center justify-end gap-2 min-w-0 overflow-hidden">
         {canSwitchTeam && selectedTeamForDisplay && onTeamChange && (
           <div
-            className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           >
             <MobileTeamSelector
               selectedTeam={selectedTeamForDisplay}
               teams={filteredTeams}
               onTeamSelect={onTeamChange}
-              disabled={isLoading || isStreaming}
-              isLoading={isLoading}
+              disabled={isStreaming}
+              isLoading={false}
               hideTriggerIcon={false}
             />
           </div>
         )}
         {selectedTeam && (
           <div
-            className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           >
             <MobileModelSelector
               selectedModel={selectedModel}
@@ -388,7 +508,7 @@ export function MobileChatInputControls({
               forceOverride={forceOverride}
               setForceOverride={setForceOverride}
               selectedTeam={selectedTeam}
-              disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+              disabled={isStreaming || (hasMessages && !canSwitchModelAfterMessages(selectedTeam))}
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}

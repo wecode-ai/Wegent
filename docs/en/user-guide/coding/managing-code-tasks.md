@@ -15,6 +15,7 @@ This guide explains how to create, execute, and manage code-type tasks in Wegent
 - [Task Execution Flow](#task-execution-flow)
 - [Task Status Management](#task-status-management)
 - [Advanced Features](#advanced-features)
+- [Cleaning Stale Runtimes](#cleaning-stale-runtimes)
 - [Common Issues](#common-issues)
 
 ---
@@ -42,9 +43,9 @@ Code Task = User Prompt + Code Agent + Git Repository + Branch
 
 ## Creating a Code Task
 
-### Step 1: Navigate to Code Page
+### Step 1: Open the Code Entry
 
-1. Click **"Code"** in the left navigation bar
+1. Click **"Code"** in the left navigation bar to enter coding mode at `/chat?agent=code`
 2. The system displays the code task list and input area
 
 ### Step 2: Select a Code Agent
@@ -52,7 +53,7 @@ Code Task = User Prompt + Code Agent + Git Repository + Branch
 Above the input area, click the agent selector:
 
 1. **Click the agent dropdown** - Shows available agents
-2. **Select a code-type agent** - Choose an agent configured with ClaudeCode or Agno Shell
+2. **Select a code-type agent** - Choose an agent configured with a ClaudeCode Shell
 
 > ⚠️ Only agents configured with a code-type Shell can execute code tasks
 
@@ -204,6 +205,28 @@ Export task conversation history and code changes:
 1. **Click export button** - In the task menu
 2. **Choose format** - Markdown or JSON
 3. **Download file** - Save to local
+
+---
+
+## Cleaning Stale Runtimes
+
+Admins can manually clean up code task runtimes that have not been updated for a long time to release execution container resources. Cleanup only deletes runtime Pods or containers. It does not delete Task records, conversation history, or code changes.
+
+Use this when:
+
+- A task has stopped or finished, but its execution environment still consumes resources
+- A runtime has had no activity for a long time and should be reclaimed by Task ID
+- You want to run a dry run first, then perform the actual cleanup
+
+Cleanup rules:
+
+- Cleanup targets one Task ID at a time and is not a full cleanup action from the user interface
+- Runtimes newer than the configured inactive duration are not deleted
+- Tasks with `preserveExecutor` enabled are not cleaned up
+- Device executors are not deleted by this cleanup entrypoint
+- Task history remains available after cleanup, but rerunning work allocates a new runtime
+
+For API details, see [Runtime Cleanup](../../developer-guide/runtime-cleanup.md) in the developer documentation.
 
 ---
 

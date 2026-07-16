@@ -12,7 +12,7 @@ Supported retrieval modes:
 """
 
 import logging
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch, helpers
 from elasticsearch.helpers.vectorstore._async.strategies import (
@@ -29,11 +29,17 @@ from llama_index.core.vector_stores.types import (
 from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 
 from knowledge_engine.retrieval.filters import (
+    build_elasticsearch_filters,
     filter_chunk_records,
-    parse_metadata_filters,
+)
+from knowledge_engine.retrieval.search_hints import (
+    ResolvedSearchQueries,
+    format_sparse_query_for_elasticsearch,
+    resolve_search_queries,
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+from shared.models import RetrievalScope
 from shared.telemetry.decorators import add_span_event
 
 logger = logging.getLogger(__name__)
@@ -54,6 +60,10 @@ class ElasticsearchBackend(BaseStorageBackend):
 
     # Class-level constant defining supported retrieval methods
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    TEXT_FIELD: ClassVar[str] = "content"
+    PHRASE_HINT_BOOST: ClassVar[float] = 3.0
+    KEYWORD_HINT_BOOST: ClassVar[float] = 1.0
+    supports_retrieval_scope: ClassVar[bool] = True
 
     # Uses default INDEX_PREFIX = "index" from base class
 
@@ -174,8 +184,9 @@ class ElasticsearchBackend(BaseStorageBackend):
             },
         )
 
+        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
         VectorStoreIndex(
-            nodes,
+            nodes_for_embedding,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
@@ -203,6 +214,7 @@ class ElasticsearchBackend(BaseStorageBackend):
         query: str,
         embed_model,
         retrieval_setting: Dict[str, Any],
+        scope: Optional[RetrievalScope] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Dict:
@@ -235,63 +247,227 @@ class ElasticsearchBackend(BaseStorageBackend):
         score_threshold = retrieval_setting.get("score_threshold", 0.7)
         retrieval_mode = retrieval_setting.get("retrieval_mode", "vector")
 
+        metadata_filter_clauses = build_elasticsearch_filters(
+            knowledge_id,
+            metadata_condition,
+        )
+        scope_filter_clauses = self._build_scope_filters(scope)
+        native_filter_clauses = [*metadata_filter_clauses, *scope_filter_clauses]
+
         # Create vector store with appropriate retrieval strategy
         vector_store = self.create_vector_store(index_name, retrieval_mode)
 
-        # Build metadata filters
-        filters = self._build_metadata_filters(knowledge_id, metadata_condition)
-
         # Determine query mode and parameters
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
+        custom_query = self._build_custom_query(
+            resolved_queries=resolved_queries,
+            retrieval_mode=retrieval_mode,
+            native_filter_clauses=native_filter_clauses,
+        )
         if retrieval_mode == "keyword":
             # Pure BM25 keyword search - no embedding needed
             query_mode = VectorStoreQueryMode.TEXT_SEARCH
             query_embedding = None
+            query_str = format_sparse_query_for_elasticsearch(resolved_queries)
             alpha = None
         elif retrieval_mode == "hybrid":
             # Hybrid search - needs embedding
             # alpha: 0 = pure keyword, 1 = pure vector, default 0.7 (70% vector)
             query_mode = VectorStoreQueryMode.HYBRID
-            query_embedding = embed_model.get_query_embedding(query)
-            # Convert vector_weight to alpha (they have the same meaning)
-            alpha = retrieval_setting.get(
-                "alpha", retrieval_setting.get("vector_weight", 0.7)
+            query_embedding = embed_model.get_query_embedding(
+                resolved_queries.dense_query
             )
+            query_str = format_sparse_query_for_elasticsearch(resolved_queries)
+            alpha = self._resolve_hybrid_alpha(retrieval_setting)
         else:
             # Default: Pure vector search
             query_mode = VectorStoreQueryMode.DEFAULT
-            query_embedding = embed_model.get_query_embedding(query)
+            query_embedding = embed_model.get_query_embedding(
+                resolved_queries.dense_query
+            )
+            query_str = resolved_queries.dense_query
             alpha = None
 
         # Create VectorStoreQuery
         vs_query = VectorStoreQuery(
-            query_str=query,
+            query_str=query_str,
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=query_mode,
-            filters=filters,
+            filters=None,
             alpha=alpha,
         )
 
+        logger.info(
+            "[Elasticsearch] retrieve: index=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, alpha=%s, hints_applied=%s, scope_filter_count=%s, phrase_count=%s, keyword_count=%s, dense_query=%s, sparse_query=%s",
+            index_name,
+            retrieval_mode,
+            query_mode,
+            top_k,
+            score_threshold,
+            alpha,
+            custom_query is not None,
+            len(scope_filter_clauses),
+            len(resolved_queries.phrases),
+            len(resolved_queries.keywords),
+            resolved_queries.dense_query,
+            query_str,
+        )
+
         # Execute query
-        result = vector_store.query(vs_query)
+        result = vector_store.query(vs_query, custom_query=custom_query)
+
+        logger.info(
+            "[Elasticsearch] query result: index=%s, nodes_count=%d, top_scores=%s",
+            index_name,
+            len(result.nodes) if result.nodes else 0,
+            result.similarities[:5] if result.similarities else None,
+        )
 
         # Process results
         return self._process_query_results(result, score_threshold)
 
-    def _build_metadata_filters(
-        self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Build metadata filters from condition dict.
+    def _resolve_hybrid_alpha(self, retrieval_setting: Dict[str, Any]) -> float:
+        """Resolve the hybrid alpha from the configured retrieval weights."""
+        vector_weight = retrieval_setting.get("vector_weight")
+        keyword_weight = retrieval_setting.get("keyword_weight")
 
-        Args:
-            knowledge_id: Knowledge base ID (always filtered)
-            metadata_condition: Optional additional metadata conditions
+        if vector_weight is not None and keyword_weight is not None:
+            total = vector_weight + keyword_weight
+            if total > 0:
+                return vector_weight / total
 
-        Returns:
-            MetadataFilters object
-        """
-        return parse_metadata_filters(knowledge_id, metadata_condition)
+        if vector_weight is not None:
+            return float(vector_weight)
+
+        if keyword_weight is not None:
+            return max(0.0, 1.0 - float(keyword_weight))
+
+        return float(retrieval_setting.get("alpha", 0.7))
+
+    def _build_scope_filters(
+        self,
+        scope: Optional[RetrievalScope],
+    ) -> List[Dict[str, Any]]:
+        if not scope or not scope.document_ids:
+            return []
+
+        doc_refs = [str(doc_id) for doc_id in scope.document_ids]
+        return [{"terms": {"metadata.doc_ref.keyword": doc_refs}}]
+
+    def _build_custom_query(
+        self,
+        *,
+        resolved_queries: ResolvedSearchQueries,
+        retrieval_mode: str,
+        native_filter_clauses: List[Dict[str, Any]],
+    ) -> Callable[[Dict[str, Any], Any], Dict[str, Any]] | None:
+        should_clauses = (
+            self._build_search_hint_should_clauses(resolved_queries)
+            if retrieval_mode in {"keyword", "hybrid"}
+            else []
+        )
+        if not should_clauses and not native_filter_clauses:
+            return None
+
+        def custom_query(
+            query_body: Dict[str, Any],
+            _: Any,
+        ) -> Dict[str, Any]:
+            self._append_knn_filter_clauses(query_body, native_filter_clauses)
+
+            original_query = query_body.get("query")
+            if not original_query and not should_clauses:
+                return query_body
+
+            if isinstance(original_query, dict) and "bool" in original_query:
+                bool_query = dict(original_query["bool"])
+            elif original_query:
+                bool_query = {"must": [original_query]}
+            else:
+                bool_query = {}
+
+            if should_clauses:
+                bool_query["should"] = should_clauses
+                bool_query["minimum_should_match"] = 1
+
+            if native_filter_clauses:
+                bool_query["filter"] = self._merge_filter_clauses(
+                    bool_query.get("filter"),
+                    native_filter_clauses,
+                )
+
+            query_body["query"] = {"bool": bool_query}
+            return query_body
+
+        return custom_query
+
+    def _append_knn_filter_clauses(
+        self,
+        query_body: Dict[str, Any],
+        native_filter_clauses: List[Dict[str, Any]],
+    ) -> None:
+        if not native_filter_clauses:
+            return
+
+        knn_query = query_body.get("knn")
+        if isinstance(knn_query, dict):
+            knn_query["filter"] = self._merge_filter_clauses(
+                knn_query.get("filter"),
+                native_filter_clauses,
+            )
+            return
+
+        if isinstance(knn_query, list):
+            for item in knn_query:
+                if not isinstance(item, dict):
+                    continue
+                item["filter"] = self._merge_filter_clauses(
+                    item.get("filter"),
+                    native_filter_clauses,
+                )
+
+    @staticmethod
+    def _merge_filter_clauses(
+        existing_filter: Any,
+        native_filter_clauses: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if existing_filter is None:
+            return list(native_filter_clauses)
+        if isinstance(existing_filter, list):
+            return [*existing_filter, *native_filter_clauses]
+        return [existing_filter, *native_filter_clauses]
+
+    def _build_search_hint_should_clauses(
+        self, resolved_queries: ResolvedSearchQueries
+    ) -> List[Dict[str, Any]]:
+        should_clauses: List[Dict[str, Any]] = []
+
+        for phrase in resolved_queries.phrases:
+            should_clauses.append(
+                {
+                    "match_phrase": {
+                        self.TEXT_FIELD: {
+                            "query": phrase,
+                            "boost": self.PHRASE_HINT_BOOST,
+                        }
+                    }
+                }
+            )
+
+        for keyword in resolved_queries.keywords:
+            should_clauses.append(
+                {
+                    "match": {
+                        self.TEXT_FIELD: {
+                            "query": keyword,
+                            "boost": self.KEYWORD_HINT_BOOST,
+                        }
+                    }
+                }
+            )
+
+        return should_clauses
 
     def _process_query_results(
         self,
@@ -341,7 +517,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             if normalized_score >= score_threshold:
                 results.append(
                     {
-                        "content": node.text,
+                        "content": self.get_node_display_text(node),
                         "score": float(normalized_score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
@@ -553,7 +729,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             chunks.append(
                 {
                     "chunk_index": metadata.get("chunk_index"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "metadata": metadata,
                 }
             )
@@ -732,10 +908,14 @@ class ElasticsearchBackend(BaseStorageBackend):
                 # for robustness we still pass it through extract_chunk_text
                 # to handle potential serialized node payloads.
                 raw_content = source.get("content", "")
+                fallback_content = self.extract_chunk_text(raw_content)
 
                 chunks.append(
                     {
-                        "content": self.extract_chunk_text(raw_content),
+                        "content": self.get_display_text_from_metadata(
+                            metadata,
+                            fallback=fallback_content,
+                        ),
                         "title": metadata.get("source_file", ""),
                         "chunk_id": metadata.get("chunk_index", 0),
                         "doc_ref": metadata.get("doc_ref", ""),
@@ -789,7 +969,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                     "knowledge_id": knowledge_id,
                     "doc_ref": node.metadata.get("doc_ref"),
                     "source_file": node.metadata.get("source_file"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "title": node.metadata.get("source_file", ""),
                     "metadata": node.metadata,
                 },

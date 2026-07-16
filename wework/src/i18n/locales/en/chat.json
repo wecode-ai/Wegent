@@ -1,0 +1,212 @@
+{
+  "message_navigation": {
+    "label": "Previous message navigation",
+    "jump_to_message": "Jump to message {{index}}",
+    "loading_target": "Loading target position...",
+    "gap_missing": "Some history is not loaded",
+    "loading_gap": "Loading missing history..."
+  },
+  "thinking": {
+    "running": "Thinking",
+    "updating": "Organizing thoughts...",
+    "completed": "Thought process",
+    "chars": "chars"
+  },
+  "process_text": {
+    "running": "Working"
+  },
+  "assistant_status": {
+    "stopped": "Stopped",
+    "stopped_after": "You stopped after {{duration}}"
+  },
+  "queue": {
+    "paused": "Queue paused",
+    "resume": "Resume sending",
+    "send_with_paused_title": "Resume the paused queue?",
+    "send_with_paused_description": "Choose whether to keep the queued messages before sending your new message.",
+    "send_with_paused_cancel": "Cancel",
+    "send_with_paused_clear": "Clear queue",
+    "send_with_paused_preserve": "Keep and resume"
+  },
+  "request_user_input": {
+    "asked_count": "Asked {{count}} question(s)",
+    "ignore": "Cancel",
+    "submit": "Submit",
+    "custom_placeholder": "Type your answer"
+  },
+  "plan_card": {
+    "title": "Plan",
+    "generating": "Generating",
+    "download": "Download plan",
+    "copy": "Copy plan",
+    "copy_success": "Copied",
+    "expand": "Open plan full screen",
+    "close": "Close plan"
+  },
+  "codex_context": {
+    "compacting": "Compacting context",
+    "compacted": "Context compacted"
+  },
+  "codex_references": {
+    "title": "Referenced files",
+    "open_label": "Open {{path}}",
+    "open_with": "Open with",
+    "preview_label": "Open preview",
+    "show_more": "Show {{count}} more",
+    "show_less": "Collapse files",
+    "kind": "Document",
+    "kind_with_extension": "Document · {{extension}}"
+  },
+  "memory_citations": {
+    "summary": "{{count}} memory citations",
+    "line_label": "lines {{range}}",
+    "open_label": "Open {{path}}"
+  },
+  "file_changes": {
+    "editing_files": "Editing {{count}} files",
+    "creating_files": "Creating {{count}} files",
+    "deleting_files": "Deleting {{count}} files",
+    "renaming_files": "Renaming {{count}} files",
+    "edited_files": "Edited {{count}} files",
+    "created_files": "Created {{count}} files",
+    "deleted_files": "Deleted {{count}} files",
+    "renamed_files": "Renamed {{count}} files",
+    "edited_file": "Edited {{filename}}",
+    "created_file": "Created {{filename}}",
+    "deleted_file": "Deleted {{filename}}",
+    "renamed_file": "Renamed {{filename}}",
+    "view_changes": "View changes",
+    "show_more": "Show {{count}} more files",
+    "show_less": "Collapse files",
+    "review": "Review",
+    "review_title": "Changes from this turn",
+    "preview_file_label": "Preview file changes for {{path}}",
+    "copy_code": "Copy code",
+    "revert": "Revert",
+    "confirm_revert_title": "Revert this turn's file changes?",
+    "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",
+    "confirm_revert": "Confirm revert",
+    "cancel": "Cancel",
+    "close": "Close",
+    "reverting": "Reverting",
+    "loading_diff": "Loading changes from the device...",
+    "empty_diff": "No text changes to display",
+    "changes_label": "Changes",
+    "unstaged_label": "Unstaged",
+    "staged_label": "Staged",
+    "commit_label": "Commit",
+    "previous_turn_label": "Previous turn",
+    "branch_label": "Branch",
+    "branch_unknown": "Current workspace",
+    "large_diff_single_file_notice": "This diff is large, so only one file is shown at a time",
+    "file_list_label": "Changed files",
+    "file_search_placeholder": "Filter files...",
+    "file_search_empty": "No matching files",
+    "all_files_diff_label": "All file diffs",
+    "actions": {
+      "refresh": "Refresh",
+      "toggle_wrap": "Toggle word wrap",
+      "collapse_all_hunks": "Collapse all hunks",
+      "expand_all_hunks": "Expand all hunks",
+      "collapse_file_diff": "Collapse file diff",
+      "expand_file_diff": "Expand file diff",
+      "copy_git_apply": "Copy git apply command",
+      "hide_files": "Hide files",
+      "show_files": "Show files"
+    },
+    "review_failed": "Failed to load file changes",
+    "revert_failed": "Failed to revert file changes",
+    "device_offline": "The device is offline. Review and revert are unavailable.",
+    "reverted": "Reverted",
+    "conflicted": "Later changes conflict, so the workspace was not modified",
+    "artifact_missing": "The change artifact is no longer available",
+    "binary_file": "Binary file"
+  },
+  "assistant_error": {
+    "details": "Error details",
+    "actions": {
+      "switch_model_retry": "Switch model and retry",
+      "retry": "Retry"
+    },
+    "types": {
+      "context_length_exceeded": {
+        "title": "The conversation is too long for this model's context window",
+        "description": "Try a model with a larger context window, or start a fresh conversation."
+      },
+      "quota_exceeded": {
+        "title": "The model's usage quota has been exhausted",
+        "description": "Switch to another available model, or continue after quota is restored."
+      },
+      "rate_limit": {
+        "title": "Too many requests. Please wait a moment before trying again",
+        "description": "Wait briefly and retry, or switch to another available model."
+      },
+      "payload_too_large": {
+        "title": "Content too large: conversation history or attachment exceeds the limit",
+        "description": "Reduce attachments or context content, then retry."
+      },
+      "network_error": {
+        "title": "Network error: Please check your connection and try again",
+        "description": "The connection was interrupted or the service is temporarily unreachable."
+      },
+      "timeout_error": {
+        "title": "Request timeout: Service response time exceeded",
+        "description": "The service did not respond in time. Try sending the message again later."
+      },
+      "llm_error": {
+        "title": "Model error: The model is temporarily unavailable",
+        "description": "The model service is unavailable. Try again later or switch models."
+      },
+      "llm_unsupported": {
+        "title": "Current model does not support this request",
+        "description": "This input or attachment type is not supported by the model. Switch to a compatible model."
+      },
+      "invalid_parameter": {
+        "title": "Invalid parameter: Request parameters are incorrect",
+        "description": "The request does not match the model requirements. Adjust the input and retry."
+      },
+      "forbidden": {
+        "title": "Access denied: You do not have permission to use this resource",
+        "description": "Check your account, device, or model permissions and retry."
+      },
+      "container_oom": {
+        "title": "Executor out of memory",
+        "description": "Start a new conversation to retry, or contact an administrator to increase memory."
+      },
+      "container_error": {
+        "title": "Task service error",
+        "description": "The container or runtime task service is temporarily unavailable. Try again later."
+      },
+      "content_filter": {
+        "title": "Content triggered security review and was rejected",
+        "description": "Modify the parts that may trigger the safety policy and retry."
+      },
+      "provider_error": {
+        "title": "Model service error. Please try again later",
+        "description": "The upstream model service returned an error. Retry later or switch models."
+      },
+      "image_too_large": {
+        "title": "Image exceeds size limit. Please compress the image and retry",
+        "description": "Compress the image or reduce the number of images, then send again."
+      },
+      "model_protocol_error": {
+        "title": "Model and runtime protocol do not match",
+        "description": "The current model does not support this request format. Switch to a compatible model and retry.",
+        "description_with_model": "{{model}} does not support the current runtime protocol. Switch to a compatible model and retry."
+      },
+      "invalid_role": {
+        "title": "Model parameter error: Message role format is incompatible",
+        "description": "The current model does not support this message format. Switch models and retry."
+      },
+      "permission_denied": {
+        "title": "No permission to use the current model",
+        "description": "Check model access permissions, or switch to a model within your permissions."
+      },
+      "generic_error": {
+        "title": "Message generation failed",
+        "description": "The request could not be completed. Try again later, or view the error details.",
+        "description_without_details": "The request could not be completed. Try again later."
+      }
+    }
+  }
+}

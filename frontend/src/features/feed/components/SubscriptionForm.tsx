@@ -8,7 +8,7 @@
  * Subscription creation/edit form component.
  * Refactored to use sub-components for better maintainability.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Copy, Check, Terminal, AlertTriangle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -38,6 +38,7 @@ import type {
   SubscriptionBindingUpdatePayload,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
+  SubscriptionExecutionTargetType,
   SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
   SubscriptionSkillRef,
@@ -48,6 +49,7 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
 import { useSocket } from '@/contexts/SocketContext'
 import {
   SendAreaSection,
@@ -57,6 +59,7 @@ import {
   type SubscriptionModel,
   validateIntervalTrigger,
 } from './subscription-form'
+import { filterSubscriptionTeamsByExecutionTarget } from './subscription-form/team-selection'
 
 const resolveGitType = (gitDomain?: string): GitRepoInfo['type'] => {
   if (!gitDomain) return 'github'
@@ -257,8 +260,15 @@ const normalizeExecutionTarget = (
   ...(target?.device_id ? { device_id: target.device_id } : {}),
 })
 
-const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
-  [...devices].sort((left, right) => {
+type SubscriptionDeviceType = Extract<DeviceInfo['device_type'], SubscriptionExecutionTargetType>
+type SubscriptionDeviceInfo = DeviceInfo & { device_type: SubscriptionDeviceType }
+
+function isSubscriptionDevice(device: DeviceInfo): device is SubscriptionDeviceInfo {
+  return device.device_type === 'local' || device.device_type === 'cloud'
+}
+
+const sortDevicesForSelection = (devices: DeviceInfo[]): SubscriptionDeviceInfo[] =>
+  devices.filter(isSubscriptionDevice).sort((left, right) => {
     if (left.device_type !== right.device_type) {
       return left.device_type === 'local' ? -1 : 1
     }
@@ -268,7 +278,7 @@ const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
     return left.name.localeCompare(right.name)
   })
 
-const getPreferredDevice = (devices: DeviceInfo[]): DeviceInfo | null => {
+const getPreferredDevice = (devices: DeviceInfo[]): SubscriptionDeviceInfo | null => {
   const sortedDevices = sortDevicesForSelection(devices)
   return sortedDevices[0] || null
 }
@@ -341,6 +351,7 @@ export function SubscriptionForm({
   // Teams for selection
   const [teams, setTeams] = useState<Team[]>([])
   const [teamsLoading, setTeamsLoading] = useState(false)
+  const [teamsLoaded, setTeamsLoaded] = useState(false)
 
   // Submit state
   const [submitting, setSubmitting] = useState(false)
@@ -397,33 +408,34 @@ export function SubscriptionForm({
     }
   }, [isEditing, subscription, isRental, open])
 
-  // Determine if device mode is selected
-  const isDeviceMode = executionTarget.type !== 'managed'
+  const selectableTeams = useMemo(
+    () => filterSubscriptionTeamsByExecutionTarget(teams, executionTarget),
+    [teams, executionTarget]
+  )
+  const shouldSelectManagedDefaultTeam =
+    !isEditing &&
+    !isRental &&
+    normalizeExecutionTarget(initialData?.executionTarget).type === 'managed'
 
   // Load teams
   useEffect(() => {
     const loadTeams = async () => {
       setTeamsLoading(true)
+      setTeamsLoaded(false)
       try {
         const response = await teamApis.getTeams({ page: 1, limit: 100 })
-        const filteredTeams = response.items.filter(team => {
-          const bindMode = team.bind_mode
-          if (!bindMode || bindMode.length === 0) {
-            return !isDeviceMode
-          }
-          if (isDeviceMode) {
-            return bindMode.includes('task')
-          }
-          return bindMode.includes('chat') || bindMode.includes('code')
-        })
-        setTeams(filteredTeams)
+        const loadedTeams = response.items || []
+        setTeams(loadedTeams)
 
-        if (!isEditing && !isRental && filteredTeams.length > 0 && !isDeviceMode) {
+        if (shouldSelectManagedDefaultTeam && loadedTeams.length > 0) {
           try {
             const defaultTeams = await userApis.getDefaultTeams()
             const chatDefault = defaultTeams.chat
             if (chatDefault) {
-              const matchedTeam = filteredTeams.find(
+              const managedTeams = filterSubscriptionTeamsByExecutionTarget(loadedTeams, {
+                type: 'managed',
+              })
+              const matchedTeam = managedTeams.find(
                 team =>
                   team.name === chatDefault.name &&
                   (team.namespace || 'default') === chatDefault.namespace
@@ -439,13 +451,14 @@ export function SubscriptionForm({
       } catch (error) {
         console.error('Failed to load teams:', error)
       } finally {
+        setTeamsLoaded(true)
         setTeamsLoading(false)
       }
     }
     if (open) {
       loadTeams()
     }
-  }, [open, isEditing, isRental, isDeviceMode])
+  }, [open, shouldSelectManagedDefaultTeam])
 
   // Load models
   useEffect(() => {
@@ -459,6 +472,8 @@ export function SubscriptionForm({
           provider: m.provider || undefined,
           modelId: m.modelId || undefined,
           type: m.type,
+          modelGroup: m.modelGroup,
+          modelSubGroup: m.modelSubGroup,
         }))
         setModels(modelList)
       } catch (error) {
@@ -520,7 +535,7 @@ export function SubscriptionForm({
     const matchedDevice = availableDevices.find(
       device => device.device_id === executionTarget.device_id
     )
-    if (matchedDevice) {
+    if (matchedDevice && isSubscriptionDevice(matchedDevice)) {
       if (matchedDevice.device_type !== executionTarget.type) {
         setExecutionTarget({
           type: matchedDevice.device_type,
@@ -541,8 +556,17 @@ export function SubscriptionForm({
     })
   }, [availableDevices, devicesLoading, executionTarget])
 
+  useEffect(() => {
+    if (!teamId || !teamsLoaded || teamsLoading) return
+    if (selectableTeams.some(team => team.id === teamId)) return
+
+    setTeamId(null)
+    setSelectedRepo(null)
+    setSelectedBranch(null)
+  }, [teamId, selectableTeams, teamsLoaded, teamsLoading])
+
   // Get selected team
-  const selectedTeam = teams.find(t => t.id === teamId)
+  const selectedTeam = selectableTeams.find(t => t.id === teamId)
 
   // Check if selected team is code-type
   const isCodeTypeTeam =
@@ -667,7 +691,7 @@ export function SubscriptionForm({
     if (!selectedModel || !compatibleProvider) return
     const matchedModel = models.find(model => model.name === selectedModel.name)
     const resolvedProvider = matchedModel?.provider || selectedModel.provider
-    if (resolvedProvider && resolvedProvider !== compatibleProvider) {
+    if (resolvedProvider && !compatibleProvider.includes(resolvedProvider as CompatibleProvider)) {
       setSelectedModel(null)
     }
   }, [compatibleProvider, models, selectedModel])
@@ -712,8 +736,13 @@ export function SubscriptionForm({
         return
       }
 
-      const team = teams.find(t => t.id === teamId)
-      const hasTeamModel = team?.bots?.some(teamBot => {
+      const team = selectableTeams.find(t => t.id === teamId)
+      if (!team) {
+        toast.error(t('validation_team_required'))
+        return
+      }
+
+      const hasTeamModel = team.bots?.some(teamBot => {
         const agentConfig = teamBot.bot?.agent_config
         return agentConfig && !!(agentConfig as Record<string, unknown>).bind_model
       })
@@ -883,7 +912,7 @@ export function SubscriptionForm({
     onSuccess,
     onOpenChange,
     t,
-    teams,
+    selectableTeams,
     devNotificationLevel,
     devNotificationChannels,
     channelBindingConfigs,
@@ -999,7 +1028,7 @@ export function SubscriptionForm({
               triggerConfig={triggerConfig}
               teamId={teamId}
               setTeamId={handleTeamChange}
-              teams={teams}
+              teams={selectableTeams}
               teamsLoading={teamsLoading}
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}

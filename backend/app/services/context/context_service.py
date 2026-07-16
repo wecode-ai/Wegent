@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -33,8 +34,18 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
+from app.stores.tasks import subtask_store
 from shared.telemetry.decorators import trace_sync
+from shared.utils.attachment_block import (
+    build_attachment_download_url,
+    build_attachment_header,
+    build_sandbox_path,
+    build_truncation_note,
+    format_file_size,
+    truncate_for_injection,
+)
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
+from shared.utils.multimodal_ext import multimodal_media_type
 
 logger = logging.getLogger(__name__)
 
@@ -69,36 +80,19 @@ class ContextService:
 
     # ==================== Helper Methods ====================
 
+    # File-size / URL / sandbox-path formatting is shared with chat_shell's
+    # history loader (single source of truth in shared.utils.attachment_block)
+    # so the attachment block format stays consistent across first-send and
+    # history replay. These thin wrappers preserve the existing public API.
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
-        """
-        Format file size in bytes to human-readable format.
-
-        Args:
-            size_bytes: File size in bytes
-
-        Returns:
-            Formatted string like "2.5 MB", "156.3 KB", or "512 bytes"
-        """
-        if size_bytes >= 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
-        elif size_bytes >= 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        else:
-            return f"{size_bytes} bytes"
+        """Format file size in bytes to human-readable format."""
+        return format_file_size(size_bytes)
 
     @staticmethod
     def build_attachment_url(attachment_id: int) -> str:
-        """
-        Build the download URL for an attachment.
-
-        Args:
-            attachment_id: Attachment ID
-
-        Returns:
-            Relative URL path for downloading the attachment
-        """
-        return f"/api/attachments/{attachment_id}/download"
+        """Build the download URL for an attachment."""
+        return build_attachment_download_url(attachment_id)
 
     @staticmethod
     def build_sandbox_path(
@@ -106,26 +100,8 @@ class ContextService:
         subtask_id: Optional[int],
         filename: str,
     ) -> Optional[str]:
-        """
-        Build the sandbox file path for an attachment.
-
-        This path corresponds to where the Executor downloads attachments
-        in the sandbox environment.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            filename: Original filename
-
-        Returns:
-            Sandbox path in format: /home/user/{task_id}:executor:attachments/{subtask_id}/{filename}
-            Returns None if task_id or subtask_id is not provided.
-        """
-        if task_id is None or subtask_id is None:
-            return None
-        # Guard against None filename and strip control characters
-        safe_filename = (filename or "document").replace("\n", "").replace("\r", "")
-        return f"/home/user/{task_id}:executor:attachments/{subtask_id}/{safe_filename}"
+        """Build the sandbox file path where the Executor downloads an attachment."""
+        return build_sandbox_path(task_id, subtask_id, filename)
 
     # ==================== Attachment Operations ====================
 
@@ -281,6 +257,28 @@ class ContextService:
         extension: str,
     ) -> Optional[TruncationInfo]:
         """Parse attachment data and update context fields."""
+        # Video attachments are not text-parseable and cannot be inlined as
+        # base64 for the model — skip text extraction and leave the binary
+        # stored as-is. Images are NOT skipped: they go through the parser
+        # below so their base64 is extracted and sent to vision models (chat
+        # image upload). KB multimodal files use a separate context path
+        # (create_knowledge_base_context), so this only governs chat attachments.
+        if multimodal_media_type(extension) == "video":
+            context.extracted_text = ""
+            context.text_length = 0
+            context.image_base64 = ""
+            context.status = ContextStatus.READY.value
+            context.type_data = {
+                **(context.type_data or {}),
+                "is_truncated": False,
+            }
+            logger.info(
+                "Skipping text parse for multimodal file: context=%s ext=%s",
+                context.id,
+                extension,
+            )
+            return None
+
         truncation_info = None
         try:
             parse_result: ParseResult = self.parser.parse(binary_data, extension)
@@ -292,8 +290,29 @@ class ContextService:
             context.image_base64 = (
                 parse_result.image_base64 if parse_result.image_base64 else ""
             )
+            # Sync mime_type when image was converted to a different format during parsing
+            if (
+                parse_result.image_mime_type
+                and parse_result.image_mime_type != context.mime_type
+            ):
+                context.type_data = {
+                    **context.type_data,
+                    "mime_type": parse_result.image_mime_type,
+                }
             context.status = ContextStatus.READY.value
 
+            # Persist the parse-time truncation flag so the injected attachment
+            # block can render a partial-content notice for modes without the
+            # chat_shell preview (executor / device). Always write it (even when
+            # False) so overwriting a previously-truncated attachment with a
+            # smaller, non-truncated file clears the stale True.
+            context.type_data = {
+                **context.type_data,
+                "is_truncated": bool(
+                    parse_result.truncation_info
+                    and parse_result.truncation_info.is_truncated
+                ),
+            }
             if parse_result.truncation_info:
                 truncation_info = TruncationInfo(
                     is_truncated=parse_result.truncation_info.is_truncated,
@@ -410,28 +429,82 @@ class ContextService:
         binary_data: bytes,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
-        Overwrite an existing attachment with new content.
+        Overwrite an existing attachment with owner validation.
 
         Args:
             db: Database session
             context_id: Attachment context ID to overwrite
-            user_id: User ID (ownership validation)
+            user_id: User ID for ownership validation (required)
             filename: New filename
             binary_data: New file binary data
 
         Returns:
             Tuple of (Updated SubtaskContext record, TruncationInfo if truncated)
+
+        Raises:
+            NotFoundException: If context not found or user is not the owner
         """
-        context = self.get_context_optional(db, context_id, user_id)
-        if context is None or context.context_type != ContextType.ATTACHMENT.value:
+        context = self.get_context(db, context_id, user_id)
+        if context.context_type != ContextType.ATTACHMENT.value:
             raise NotFoundException(f"Context {context_id} not found")
 
+        return self._overwrite_attachment_impl(db, context, filename, binary_data)
+
+    def overwrite_attachment_internal(
+        self,
+        db: Session,
+        context_id: int,
+        filename: str,
+        reason: str,
+        binary_data: bytes,
+    ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
+        """
+        Overwrite an existing attachment without owner validation.
+
+        Trusted internal path — caller must enforce business-level authorization
+        before calling. Used by knowledge management and conversion callbacks
+        where the caller has already verified permissions at a higher level.
+
+        Args:
+            db: Database session
+            context_id: Attachment context ID to overwrite
+            filename: New filename
+            reason: Audit reason (e.g. "knowledge_manage", "conversion_callback")
+            binary_data: New file binary data
+
+        Returns:
+            Tuple of (Updated SubtaskContext record, TruncationInfo if truncated)
+
+        Raises:
+            NotFoundException: If context not found
+        """
+        context = self.get_context(db, context_id)
+        if context.context_type != ContextType.ATTACHMENT.value:
+            raise NotFoundException(f"Context {context_id} not found")
+
+        logger.info(
+            f"Internal attachment overwrite: context_id={context_id}, "
+            f"reason={reason}, owner_user_id={context.user_id}"
+        )
+
+        return self._overwrite_attachment_impl(db, context, filename, binary_data)
+
+    def _overwrite_attachment_impl(
+        self,
+        db: Session,
+        context: SubtaskContext,
+        filename: str,
+        binary_data: bytes,
+    ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
+        """Shared implementation for attachment overwrite."""
         extension, file_size, mime_type = self._validate_attachment_input(
             filename, binary_data
         )
 
         storage_backend = get_storage_backend(db)
-        storage_key = context.storage_key or generate_storage_key(context.id, user_id)
+        storage_key = context.storage_key or generate_storage_key(
+            context.id, context.user_id
+        )
 
         self._reset_attachment_context(
             context=context,
@@ -531,6 +604,84 @@ class ContextService:
 
         return binary_data
 
+    def copy_attachment_for_user(
+        self,
+        db: Session,
+        source_context: SubtaskContext,
+        target_user_id: int,
+        source_metadata: Optional[Dict[str, Any]] = None,
+    ) -> SubtaskContext:
+        """Copy a trusted source attachment into a target user's unlinked context.
+
+        This is used for system-owned templates such as quick launch preset
+        attachments. Callers must verify the source context is allowed by their
+        business rules before invoking this method.
+        """
+        if source_context.context_type != ContextType.ATTACHMENT.value:
+            raise ValueError("source_context must be an attachment")
+        if source_context.status != ContextStatus.READY.value:
+            raise ValueError("source attachment must be ready")
+        if target_user_id <= 0:
+            raise ValueError("target_user_id must be positive")
+
+        binary_data = self.get_attachment_binary_data(db, source_context)
+        if binary_data is None:
+            raise StorageError(
+                f"Failed to read source attachment {source_context.id} binary data"
+            )
+
+        storage_backend = get_storage_backend(db)
+        copied_context = self._create_attachment_context(
+            user_id=target_user_id,
+            filename=source_context.original_filename,
+            extension=source_context.file_extension,
+            file_size=source_context.file_size,
+            mime_type=source_context.mime_type,
+            subtask_id=self.UNLINKED_SUBTASK_ID,
+            storage_backend=storage_backend.backend_type,
+        )
+        db.add(copied_context)
+        db.flush()
+
+        storage_key = generate_storage_key(copied_context.id, target_user_id)
+        copied_context.type_data = {
+            **copied_context.type_data,
+            "storage_key": storage_key,
+            "source_attachment_id": source_context.id,
+            **(source_metadata or {}),
+        }
+
+        try:
+            self._store_attachment_binary(
+                storage_backend=storage_backend,
+                context=copied_context,
+                filename=copied_context.original_filename,
+                mime_type=copied_context.mime_type,
+                file_size=copied_context.file_size,
+                binary_data=binary_data,
+            )
+        except StorageError as e:
+            logger.exception(
+                f"Failed to copy source attachment {source_context.id}: {e}"
+            )
+            db.rollback()
+            raise
+
+        copied_context.extracted_text = source_context.extracted_text or ""
+        copied_context.text_length = source_context.text_length or 0
+        copied_context.image_base64 = source_context.image_base64 or ""
+        copied_context.status = ContextStatus.READY.value
+        copied_context.error_message = ""
+
+        db.commit()
+        db.refresh(copied_context)
+
+        logger.info(
+            f"Copied attachment {source_context.id} for user {target_user_id}: "
+            f"new_context_id={copied_context.id}"
+        )
+        return copied_context
+
     def get_attachment_url(
         self,
         db: Session,
@@ -619,44 +770,33 @@ class ContextService:
         if not context.extracted_text:
             return None
 
-        # Check if text was truncated by comparing text_length with max limit
-        max_text_length = DocumentParser.get_max_text_length()
-        is_truncated = context.text_length >= max_text_length
-
-        # Build attachment metadata header
-        attachment_id = context.id
+        # Build attachment metadata header (shared with chat_shell loader).
+        # When the parser truncated the file, prepend a length-free partial-content
+        # notice so modes without the chat_shell preview (executor / device) still
+        # know the text is incomplete and the full file should be read.
         filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = self.format_file_size(file_size)
-        url = self.build_attachment_url(attachment_id)
-
-        # Build sandbox path if task_id and subtask_id are provided
-        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
-
-        # Build the prefix with metadata and optional truncation notice
-        if sandbox_path:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]\n"
-            )
-        else:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-            )
-
-        if is_truncated:
-            prefix += (
-                f"(Note: The file content is too long and has been truncated to "
-                f"{max_text_length} characters. The following is only partial content.)\n"
-            )
-
-        prefix += f"{context.extracted_text}\n\n"
-
-        # Wrap in <attachment> XML tags
-        return prefix
+        sandbox_path = build_sandbox_path(task_id, subtask_id, filename)
+        header = build_attachment_header(
+            attachment_id=context.id,
+            filename=filename,
+            mime_type=context.mime_type or "unknown",
+            file_size=context.file_size or 0,
+            sandbox_path=sandbox_path,
+        )
+        # Bound the inline copy: the injected text is only a preview (the full
+        # file stays reachable via the downloaded file / sandbox, or read_attachment
+        # in chat_shell), so cap it well below the stored length. This is the only
+        # length guard for modes without the chat_shell token preview (executor /
+        # device).
+        inject_text, inj_truncated = truncate_for_injection(
+            context.extracted_text, settings.ATTACHMENT_INJECT_MAX_CHARS
+        )
+        # Single partial-content signal: when the injection was capped, its inline
+        # marker already flags partiality and points to the file. Fall back to a
+        # prefix note only when parsing truncated the stored text but the inject
+        # cap did not re-truncate (rare; e.g. an unusually small cap).
+        note = build_truncation_note(context.is_truncated and not inj_truncated)
+        return f"{header}\n{note}{inject_text}\n\n"
 
     # ==================== Knowledge Base Operations ====================
 
@@ -1182,11 +1322,11 @@ class ContextService:
         Returns:
             List of dicts with kb_name and kb_id
         """
-        from app.models.subtask import Subtask
-
         # Get all subtask IDs for the task
-        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
-        subtask_ids = [s[0] for s in subtask_ids]
+        subtask_ids = [
+            subtask.id
+            for subtask in subtask_store.list_by_task_unfiltered(db, task_id=task_id)
+        ]
 
         if not subtask_ids:
             return []
@@ -1437,11 +1577,11 @@ class ContextService:
         Returns:
             List of attachment SubtaskContext records for all subtasks of the task
         """
-        from app.models.subtask import Subtask
-
         # Get all subtask IDs for this task
-        subtask_ids = db.query(Subtask.id).filter(Subtask.task_id == task_id).all()
-        subtask_ids = [s[0] for s in subtask_ids]
+        subtask_ids = [
+            subtask.id
+            for subtask in subtask_store.list_by_task_unfiltered(db, task_id=task_id)
+        ]
 
         if not subtask_ids:
             return []

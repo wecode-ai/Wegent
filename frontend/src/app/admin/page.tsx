@@ -6,31 +6,18 @@
 
 import { Suspense, useState, useCallback, useEffect, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, ResizableSidebar } from '@/features/tasks/components/sidebar'
-import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav'
+import { AdminTabNav } from '@/features/admin/components/AdminTabNav'
+import type { AdminTabId } from '@/features/admin/components/AdminTabNav'
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
-import UserList from '@/features/admin/components/UserList'
-import PublicModelList from '@/features/admin/components/PublicModelList'
-import PublicRetrieverList from '@/features/admin/components/PublicRetrieverList'
-import PublicSkillList from '@/features/admin/components/PublicSkillList'
-import PublicGhostList from '@/features/admin/components/PublicGhostList'
-import PublicShellList from '@/features/admin/components/PublicShellList'
-import PublicTeamList from '@/features/admin/components/PublicTeamList'
-import PublicBotList from '@/features/admin/components/PublicBotList'
-import TemplateList from '@/features/admin/components/TemplateList'
-import ApiKeyManagement from '@/features/admin/components/ApiKeyManagement'
-import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
-import BackgroundExecutionMonitorPanel from '@/features/admin/components/BackgroundExecutionMonitorPanel'
-import DeviceMonitorPanel from '@/features/admin/components/DeviceMonitorPanel'
-import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
-import IMChannelList from '@/features/admin/components/IMChannelList'
 import { UserProvider, useUser } from '@/features/common/UserContext'
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
+import { ProjectProvider } from '@/features/projects/contexts/projectContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -38,6 +25,53 @@ import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
+
+const UserList = dynamic(() => import('@/features/admin/components/UserList'), { ssr: false })
+const PublicModelList = dynamic(() => import('@/features/admin/components/PublicModelList'), {
+  ssr: false,
+})
+const PublicRetrieverList = dynamic(
+  () => import('@/features/admin/components/PublicRetrieverList'),
+  { ssr: false }
+)
+const PublicSkillList = dynamic(() => import('@/features/admin/components/PublicSkillList'), {
+  ssr: false,
+})
+const PublicGhostList = dynamic(() => import('@/features/admin/components/PublicGhostList'), {
+  ssr: false,
+})
+const PublicShellList = dynamic(() => import('@/features/admin/components/PublicShellList'), {
+  ssr: false,
+})
+const PublicTeamList = dynamic(() => import('@/features/admin/components/PublicTeamList'), {
+  ssr: false,
+})
+const PublicBotList = dynamic(() => import('@/features/admin/components/PublicBotList'), {
+  ssr: false,
+})
+const TemplateList = dynamic(() => import('@/features/admin/components/TemplateList'), {
+  ssr: false,
+})
+const ApiKeyManagement = dynamic(() => import('@/features/admin/components/ApiKeyManagement'), {
+  ssr: false,
+})
+const SystemConfigPanel = dynamic(() => import('@/features/admin/components/SystemConfigPanel'), {
+  ssr: false,
+})
+const BackgroundExecutionMonitorPanel = dynamic(
+  () => import('@/features/admin/components/BackgroundExecutionMonitorPanel'),
+  { ssr: false }
+)
+const DeviceMonitorPanel = dynamic(() => import('@/features/admin/components/DeviceMonitorPanel'), {
+  ssr: false,
+})
+const IMChannelList = dynamic(() => import('@/features/admin/components/IMChannelList'), {
+  ssr: false,
+})
+const GlobalAdminSetupWizard = dynamic(
+  () => import('@/features/admin/components/GlobalAdminSetupWizard'),
+  { ssr: false }
+)
 
 function AccessDenied() {
   const { t } = useTranslation()
@@ -245,13 +279,13 @@ export default function AdminPage() {
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <TaskContextProvider>
-            <ChatStreamProvider>
+          <ProjectProvider>
+            <TaskSessionProvider>
               <Suspense fallback={<div>Loading...</div>}>
                 <AdminContent />
               </Suspense>
-            </ChatStreamProvider>
-          </TaskContextProvider>
+            </TaskSessionProvider>
+          </ProjectProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>

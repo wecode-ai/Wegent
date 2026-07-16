@@ -2,7 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
+import {
+  useState,
+  useRef,
+  useMemo,
+  useCallback,
+  useEffect,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
 import type {
   Team,
   GitRepoInfo,
@@ -15,11 +23,12 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { Model } from '../selector/ModelSelector'
+import type { TeamModeFilter } from '../selector/team-selector-utils'
 import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
-import { useTaskContext } from '../../contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { teamRequiresWorkspace } from '../../service/messageService'
 
@@ -29,7 +38,10 @@ type WelcomeItemWithMode = {
   mode?: string
 }
 
-function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(items: T[], taskType: TaskType): T[] {
+function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(
+  items: T[],
+  taskType: TaskType
+): T[] {
   const getMatchedItems = (mode: TaskType) =>
     items.filter(item => {
       const itemMode = item.mode || 'both'
@@ -53,6 +65,7 @@ function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(items: T[], taskT
 export interface UseChatAreaStateOptions {
   teams: Team[]
   taskType: TaskType
+  teamModeFilter?: TeamModeFilter
   selectedTeamForNewTask?: Team | null
   /**
    * Initial knowledge base to pre-select when starting a new chat from knowledge page.
@@ -107,10 +120,6 @@ export interface ChatAreaState {
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
 
-  // Loading state
-  isLoading: boolean
-  setIsLoading: (value: boolean) => void
-
   // Deep thinking state
   enableDeepThinking: boolean
   setEnableDeepThinking: (value: boolean) => void
@@ -149,7 +158,7 @@ export interface ChatAreaState {
 
   // UI state
   isMobile: boolean
-  shouldHideQuotaUsage: boolean
+  shouldHideToolbarStatus: boolean
   shouldHideChatInput: boolean
   hasRestoredPreferences: boolean
   setHasRestoredPreferences: (value: boolean) => void
@@ -160,7 +169,7 @@ export interface ChatAreaState {
 
   // Context selection state (knowledge bases)
   selectedContexts: ContextItem[]
-  setSelectedContexts: (contexts: ContextItem[]) => void
+  setSelectedContexts: Dispatch<SetStateAction<ContextItem[]>>
   resetContexts: () => void
 
   // Skill selection state
@@ -184,10 +193,10 @@ export interface ChatAreaState {
  * Manages all the state for the ChatArea component, including:
  * - Team, repository, branch, and model selection
  * - Input message and attachment state
- * - Loading and toggle states (deep thinking, clarification)
+ * - Toggle states (deep thinking, clarification)
  * - External API parameters (for Dify teams)
  * - Welcome config and random slogan/tip
- * - UI state (mobile, quota visibility)
+ * - UI state (mobile, toolbar status visibility)
  *
  * This hook extracts all useState calls and related initialization logic
  * from ChatArea to reduce the component size and improve maintainability.
@@ -195,6 +204,7 @@ export interface ChatAreaState {
 export function useChatAreaState({
   teams: _teams,
   taskType,
+  teamModeFilter = taskType,
   selectedTeamForNewTask,
   initialKnowledgeBase,
   maxAttachments: externalMaxAttachments,
@@ -203,7 +213,7 @@ export function useChatAreaState({
   // because it's automatically bound to the task on creation
   const shouldShowInitialKbInContexts = taskType !== 'knowledge'
 
-  const { selectedTaskDetail } = useTaskContext()
+  const { selectedTaskDetail } = useTaskSession()
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null)
@@ -228,7 +238,6 @@ export function useChatAreaState({
 
   // Input state
   const [taskInputMessage, setTaskInputMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
 
   // Toggle states
   const [enableDeepThinking, setEnableDeepThinking] = useState(true)
@@ -391,9 +400,10 @@ export function useChatAreaState({
   const isTeamCompatibleWithMode = useCallback(
     (team: Team): boolean => {
       if (!team.bind_mode || team.bind_mode.length === 0) return false
-      return team.bind_mode.includes(taskType)
+      if (teamModeFilter === 'all') return true
+      return team.bind_mode.includes(teamModeFilter)
     },
-    [taskType]
+    [teamModeFilter]
   )
 
   // Get teams compatible with current mode
@@ -534,7 +544,7 @@ export function useChatAreaState({
   ])
 
   // Compute UI flags
-  const shouldHideQuotaUsage = useMemo(() => {
+  const shouldHideToolbarStatus = useMemo(() => {
     if (!isMobile || !selectedTeam?.name) return false
 
     if (selectedTeam.share_status === 2 && selectedTeam.user?.user_name) {
@@ -591,10 +601,6 @@ export function useChatAreaState({
     taskInputMessage,
     setTaskInputMessage,
 
-    // Loading state
-    isLoading,
-    setIsLoading,
-
     // Deep thinking state
     enableDeepThinking,
     setEnableDeepThinking,
@@ -632,7 +638,7 @@ export function useChatAreaState({
 
     // UI state
     isMobile,
-    shouldHideQuotaUsage,
+    shouldHideToolbarStatus,
     shouldHideChatInput,
     hasRestoredPreferences,
     setHasRestoredPreferences,

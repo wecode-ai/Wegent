@@ -5,6 +5,7 @@
 'use client'
 
 import { Suspense, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
@@ -18,11 +19,13 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { Team } from '@/types/api'
 import { UserProvider } from '@/features/common/UserContext'
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
-import { ChatArea } from '@/features/tasks/components/chat'
+
+const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
+  ssr: false,
+})
 
 function TasksPageContent() {
   // Team state from service
@@ -33,9 +36,6 @@ function TasksPageContent() {
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-
-  // Selected team state for sharing
-  const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null)
 
   const handleRefreshTeams = async (): Promise<Team[]> => {
     return await refreshTeams()
@@ -50,11 +50,7 @@ function TasksPageContent() {
         <DeviceTaskSync />
       </Suspense>
       <Suspense>
-        <TeamShareHandler
-          teams={teams}
-          onTeamSelected={setSelectedTeamForNewTask}
-          onRefreshTeams={handleRefreshTeams}
-        />
+        <TeamShareHandler teams={teams} onRefreshTeams={handleRefreshTeams} />
       </Suspense>
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Responsive sidebar */}
@@ -77,7 +73,7 @@ function TasksPageContent() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
-            selectedTeamForNewTask={selectedTeamForNewTask}
+            selectedTeamForNewTask={null}
             taskType="code"
           />
         </div>
@@ -91,11 +87,9 @@ export default function TasksPage() {
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <TaskContextProvider>
-            <ChatStreamProvider>
-              <TasksPageContent />
-            </ChatStreamProvider>
-          </TaskContextProvider>
+          <TaskSessionProvider>
+            <TasksPageContent />
+          </TaskSessionProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>

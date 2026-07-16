@@ -1,0 +1,61 @@
+[package]
+name = "app"
+version = "0.0.18"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+release-devtools = ["tauri/devtools"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+libc = "0.2"
+ctrlc = { version = "3.4", features = ["termination"] }
+dirs = "5"
+tauri = { version = "2.11.2", features = ["protocol-asset", "tray-icon", "unstable", "image-png"] }
+tauri-plugin-log = "2"
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-http = "2"
+tauri-plugin-opener = "2"
+portable-pty = "0.8"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+reqwest = { version = "0.13", features = ["blocking"] }
+# Keep Wry's devtools API available when its debug assertions are disabled below.
+wry = { version = "0.55.1", features = ["devtools"] }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-global-shortcut = "2.3.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+core-foundation = "0.10.1"
+core-graphics = "0.25.0"
+objc2 = "0.6.3"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["libc", "NSBitmapImageRep", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKSnapshotConfiguration", "WKWebView", "block2", "objc2-app-kit", "std"] }
+
+# Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
+# over a browser download. Keep application debug assertions enabled while
+# suppressing that dependency-only false error in development builds.
+[profile.dev.package.wry]
+debug-assertions = false

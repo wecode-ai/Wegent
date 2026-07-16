@@ -5,13 +5,16 @@
 'use client'
 
 import { Suspense, useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { BookOpen, FileText } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
+import { TaskParamSync } from '@/features/tasks/components/params'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -20,20 +23,36 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  WikiProjectList,
-  AddRepoModal,
-  useWikiProjects,
-  CancelConfirmDialog,
-  SearchBox,
-  KnowledgeTabs,
-  KnowledgeTabType,
-  KnowledgeDocumentPage,
-} from '@/features/knowledge'
+import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
+import { SearchBox } from '@/features/knowledge/SearchBox'
+import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { KnowledgeView } from '@/types/knowledge'
+import type { KnowledgeTabType } from '@/features/knowledge/KnowledgeTabs'
+import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
+
+const WikiProjectList = dynamic(() => import('@/features/knowledge/WikiProjectList'), {
+  ssr: false,
+})
+
+const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
+  ssr: false,
+})
+
+const CancelConfirmDialog = dynamic(() => import('@/features/knowledge/CancelConfirmDialog'), {
+  ssr: false,
+})
+
+const KnowledgeDocumentPage = dynamic(
+  () =>
+    import('@/features/knowledge/document/components/KnowledgeDocumentPage').then(mod => ({
+      default: mod.KnowledgeDocumentPage,
+    })),
+  { ssr: false }
+)
 
 // Storage key for knowledge sidebar collapsed state
 const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
@@ -44,9 +63,12 @@ function KnowledgePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useUser()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
+  const [knowledgeViewState, setKnowledgeViewState] = useState<KnowledgeViewState>({
+    visible: false,
+    currentView: 'notebook',
+  })
 
   // Get initial knowledge type tab from URL parameter
   const getInitialKnowledgeTab = useCallback((): KnowledgeTabType => {
@@ -152,8 +174,42 @@ function KnowledgePageContent() {
   }
 
   const navigateToTask = (taskId: number) => {
-    router.push(`/code?taskId=${taskId}`)
+    router.push(`/chat?taskId=${taskId}`)
   }
+
+  const knowledgeViewSwitcher =
+    activeTab === 'document' && knowledgeViewState.visible ? (
+      <Tabs
+        value={knowledgeViewState.currentView}
+        onValueChange={value => knowledgeViewState.onViewChange?.(value as KnowledgeView)}
+        className="flex-shrink-0"
+      >
+        <TabsList className="h-11 sm:h-8 rounded-md bg-surface/80 p-0 sm:p-0.5">
+          <TabsTrigger
+            value="documents"
+            aria-label={t('knowledge:document.knowledgeBase.typeClassic')}
+            data-testid="knowledge-view-documents-trigger"
+            className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              {t('knowledge:document.knowledgeBase.typeClassic')}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="notebook"
+            aria-label={t('knowledge:document.knowledgeBase.typeNotebook')}
+            data-testid="knowledge-view-notebook-trigger"
+            className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              {t('knowledge:document.knowledgeBase.typeNotebook')}
+            </span>
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+    ) : null
 
   // Filter projects to show only those with user's generations
   // This ensures the knowledge page only shows projects created by the current user
@@ -199,13 +255,17 @@ function KnowledgePageContent() {
   const handleNewTask = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskSessionContext */}
+      <Suspense>
+        <TaskParamSync />
+      </Suspense>
+
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && !isMobile && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
@@ -239,6 +299,7 @@ function KnowledgePageContent() {
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
+          {knowledgeViewSwitcher}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
@@ -275,31 +336,35 @@ function KnowledgePageContent() {
         {/* Document knowledge - no padding, full height */}
         {activeTab === 'document' && (
           <div className="flex-1 flex flex-col min-h-0">
-            <KnowledgeDocumentPage />
+            <KnowledgeDocumentPage onKnowledgeViewStateChange={setKnowledgeViewState} />
           </div>
         )}
       </div>
 
       {/* Add repository modal */}
-      <AddRepoModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        formErrors={formErrors}
-        isSubmitting={isSubmitting}
-        onRepoChange={handleRepoChange}
-        onSubmit={handleSubmit}
-        selectedRepo={selectedRepo}
-        wikiConfig={wikiConfig}
-      />
+      {isModalOpen && (
+        <AddRepoModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          formErrors={formErrors}
+          isSubmitting={isSubmitting}
+          onRepoChange={handleRepoChange}
+          onSubmit={handleSubmit}
+          selectedRepo={selectedRepo}
+          wikiConfig={wikiConfig}
+        />
+      )}
       {/* Cancel confirm dialog */}
-      <CancelConfirmDialog
-        isOpen={confirmDialogOpen}
-        onClose={() => {
-          setConfirmDialogOpen(false)
-          setPendingCancelProjectId(null)
-        }}
-        onConfirm={confirmCancelGeneration}
-      />
+      {confirmDialogOpen && (
+        <CancelConfirmDialog
+          isOpen={confirmDialogOpen}
+          onClose={() => {
+            setConfirmDialogOpen(false)
+            setPendingCancelProjectId(null)
+          }}
+          onConfirm={confirmCancelGeneration}
+        />
+      )}
     </div>
   )
 }

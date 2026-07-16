@@ -18,6 +18,7 @@ import type {
   PermissionReviewRequest,
   PermissionReviewResponse,
   PermissionUpdateRequest,
+  PermissionUserInfo,
   PublicKnowledgeBaseResponse,
   ShareLinkConfig,
   ShareLinkResponse,
@@ -29,10 +30,14 @@ interface ResourceMemberResponse {
   resource_type: string
   resource_id: number
   user_id: number
-  user_name: string | null
+  display_name: string | null
   user_email: string | null
   role: string
   status: string
+  entity_type?: string | null
+  entity_id?: string | null
+  entity_display_name?: string | null
+  source_type?: string | null
   invited_by_user_id: number
   invited_by_user_name: string | null
   reviewed_by_user_id: number | null
@@ -44,6 +49,7 @@ interface ResourceMemberResponse {
   updated_at: string
 }
 import client from './client'
+import { ApiError } from './client'
 
 export const knowledgePermissionApi = {
   /**
@@ -95,55 +101,65 @@ export const knowledgePermissionApi = {
 
     let pending: PermissionListResponse['pending'] = []
     if (options?.includePendingRequests) {
-      const pendingResponse = await client.get<{
-        requests: {
-          id: number
-          user_id: number
-          user_name: string | null
-          user_email: string | null
-          requested_role: string
-          requested_at: string
-        }[]
-        total: number
-      }>(`/share/KnowledgeBase/${kbId}/requests`)
+      try {
+        const pendingResponse = await client.get<{
+          requests: {
+            id: number
+            user_id: number
+            user_name: string | null
+            user_email: string | null
+            requested_role: string
+            requested_at: string
+          }[]
+          total: number
+        }>(`/share/KnowledgeBase/${kbId}/requests`)
 
-      pending = pendingResponse.requests.map(r => {
-        return {
-          id: r.id,
-          user_id: r.user_id,
-          username: r.user_name || '',
-          email: r.user_email || '',
-          role: (r.requested_role as MemberRole) || 'Reporter',
-          requested_at: r.requested_at,
+        pending = pendingResponse.requests.map(r => {
+          return {
+            id: r.id,
+            user_id: r.user_id,
+            username: r.user_name || '',
+            email: r.user_email || '',
+            role: (r.requested_role as MemberRole) || 'Reporter',
+            requested_at: r.requested_at,
+          }
+        })
+      } catch (err) {
+        // Viewer may have just lost manage permission (e.g. removed a group
+        // that granted them Maintainer). Treat as empty list instead of error.
+        if (!(err instanceof ApiError) || err.status !== 403) {
+          throw err
         }
-      })
+      }
     }
 
     // Transform approved members - group by role
-    const approved = membersResponse.members.reduce(
+    const approved = membersResponse.members.reduce<{
+      [K in MemberRole]: PermissionUserInfo[]
+    }>(
       (acc, m) => {
         const role = (m.role as MemberRole) || 'Reporter'
         if (!acc[role]) acc[role] = []
-        const member = {
+        // For entity-type members, backend populates display_name via _get_entity_display_name
+        const isEntity = m.entity_type && m.entity_type !== 'user'
+        const member: PermissionUserInfo = {
           id: m.id,
           user_id: m.user_id,
-          username: m.user_name || '',
-          email: m.user_email || '',
+          display_name:
+            m.display_name || m.entity_display_name || (isEntity ? m.entity_id || '' : ''),
+          email: isEntity ? '' : m.user_email || '',
           role: role,
           requested_at: m.requested_at,
           reviewed_at: m.reviewed_at || undefined,
           reviewed_by: m.reviewed_by_user_id || undefined,
+          entity_type: m.entity_type || undefined,
+          entity_id: m.entity_id || undefined,
+          source_type: m.source_type || undefined,
         }
         acc[role].push(member)
         return acc
       },
-      { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] } as {
-        Owner: typeof pending
-        Maintainer: typeof pending
-        Developer: typeof pending
-        Reporter: typeof pending
-        RestrictedAnalyst: typeof pending
-      }
+      { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] }
     )
     return { pending, approved }
   },
@@ -171,6 +187,23 @@ export const knowledgePermissionApi = {
     const response = await client.post<PermissionResponse>(`/share/KnowledgeBase/${kbId}/members`, {
       user_id: user.id,
       role: request.role,
+    })
+    return response
+  },
+
+  /**
+   * Add permission for a namespace (group-level permission)
+   */
+  addNamespacePermission: async (
+    kbId: number,
+    namespaceId: number,
+    role: string
+  ): Promise<PermissionResponse> => {
+    const response = await client.post<PermissionResponse>(`/share/KnowledgeBase/${kbId}/members`, {
+      user_id: 0,
+      role,
+      entity_type: 'namespace',
+      entity_id: String(namespaceId),
     })
     return response
   },

@@ -79,13 +79,36 @@ class UserMCPService:
         }
 
     @staticmethod
+    def get_provider_service_definition(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, Any] | None:
+        """Return static MCP service metadata."""
+        service = get_mcp_provider_service(provider_id, service_id)
+        if service:
+            return dict(service)
+
+        return None
+
+    @staticmethod
+    def has_provider_services(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+    ) -> bool:
+        """Return whether a provider has static services."""
+        return bool(get_mcp_provider(provider_id))
+
+    @staticmethod
     def list_provider_service_configs(
         preferences: str | dict[str, Any] | None,
         provider_id: str,
     ) -> list[dict[str, Any]]:
         """Return all registered provider services merged with user config."""
         configs = []
-        for service in list_mcp_provider_services(provider_id):
+        services = list_mcp_provider_services(provider_id)
+
+        for service in services:
             config = UserMCPService.get_provider_service_config(
                 preferences, provider_id, service["service_id"]
             )
@@ -165,7 +188,11 @@ class UserMCPService:
         server_name: str | None = None,
     ) -> dict[str, Any] | None:
         """Build a concrete MCP server config for an enabled provider service."""
-        service = get_mcp_provider_service(provider_id, service_id)
+        service = UserMCPService.get_provider_service_definition(
+            preferences,
+            provider_id,
+            service_id,
+        )
         if not service:
             return None
 
@@ -194,7 +221,11 @@ class UserMCPService:
         url: str,
     ) -> dict[str, Any]:
         """Update a provider MCP service config inside user preferences."""
-        if not get_mcp_provider_service(provider_id, service_id):
+        if not UserMCPService.get_provider_service_definition(
+            preferences,
+            provider_id,
+            service_id,
+        ):
             raise ValueError(
                 f"Unsupported MCP provider service: {provider_id}/{service_id}"
             )
@@ -239,10 +270,13 @@ class UserMCPService:
         provider_ids = (
             [provider_id]
             if provider_id
-            else [provider["provider_id"] for provider in list_mcp_providers()]
+            else UserMCPService._configured_provider_ids(preferences)
         )
         for current_provider_id in provider_ids:
-            if not get_mcp_provider(current_provider_id):
+            if not UserMCPService.has_provider_services(
+                preferences,
+                current_provider_id,
+            ):
                 continue
 
             for service in UserMCPService.list_provider_service_configs(
@@ -257,6 +291,13 @@ class UserMCPService:
                     servers.append(server)
 
         return servers
+
+    @staticmethod
+    def _configured_provider_ids(
+        preferences: str | dict[str, Any] | None,
+    ) -> list[str]:
+        provider_ids = [provider["provider_id"] for provider in list_mcp_providers()]
+        return list(dict.fromkeys(provider_ids))
 
 
 user_mcp_service = UserMCPService()

@@ -7,7 +7,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timedelta
-from typing import Generator, Tuple
+from typing import Any, Generator, Tuple
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,6 +28,71 @@ from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
 from app.models.user import User
+
+
+class FakeIMSessionRedisClient:
+    def __init__(self, cache: "FakeIMSessionCache") -> None:
+        self._cache = cache
+
+    async def zadd(self, key: str, mapping: dict[str, float]) -> int:
+        zset = self._cache.zsets.setdefault(key, {})
+        zset.update(mapping)
+        return len(mapping)
+
+    async def zrevrange(self, key: str, start: int, end: int) -> list[bytes]:
+        items = sorted(
+            self._cache.zsets.get(key, {}).items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        if end == -1:
+            selected = items[start:]
+        else:
+            selected = items[start : end + 1]
+        return [member.encode("utf-8") for member, _score in selected]
+
+    async def zrem(self, key: str, *members: str) -> int:
+        zset = self._cache.zsets.get(key, {})
+        removed = 0
+        for member in members:
+            if member in zset:
+                removed += 1
+                del zset[member]
+        return removed
+
+    async def aclose(self) -> None:
+        return None
+
+
+class FakeIMSessionCache:
+    def __init__(self) -> None:
+        self.values: dict[str, Any] = {}
+        self.expires: dict[str, int | None] = {}
+        self.zsets: dict[str, dict[str, float]] = {}
+
+    async def get(self, key: str) -> Any:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: Any, expire: int | None = None) -> bool:
+        self.values[key] = value
+        self.expires[key] = expire
+        return True
+
+    async def delete(self, key: str) -> bool:
+        existed = key in self.values
+        self.values.pop(key, None)
+        self.expires.pop(key, None)
+        return existed
+
+    async def _get_client(self) -> FakeIMSessionRedisClient:
+        return FakeIMSessionRedisClient(self)
+
+
+@pytest.fixture
+def fake_im_session_cache(monkeypatch: pytest.MonkeyPatch) -> FakeIMSessionCache:
+    cache = FakeIMSessionCache()
+    monkeypatch.setattr("app.services.im.session_service.cache_manager", cache)
+    return cache
 
 
 def get_test_database_url(worker_id: str = "master") -> str:
@@ -267,6 +332,21 @@ def test_admin_token(test_admin_user: User) -> str:
     Create a valid JWT token for the test admin user.
     """
     return create_access_token(data={"sub": test_admin_user.user_name})
+
+
+@pytest.fixture(scope="function")
+def test_task_token(test_user: User) -> str:
+    """
+    Create a valid task token for the test user, usable with executor/MCP auth.
+    """
+    from app.services.auth.task_token import create_task_token
+
+    return create_task_token(
+        task_id=1,
+        subtask_id=1,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
 
 
 @pytest.fixture(scope="function")

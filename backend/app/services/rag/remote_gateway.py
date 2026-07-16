@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.subtask_context import ContextType
 from app.services.context import context_service
 from app.services.rag.content_refs import build_content_ref_for_attachment
@@ -135,26 +136,10 @@ class RemoteRagGateway:
         *,
         db: Session | None = None,
     ) -> dict[str, Any]:
-        if db is None:
-            raise ValueError("db is required for RemoteRagGateway.index_document")
         if spec.source.source_type != "attachment" or spec.source.attachment_id is None:
             raise ValueError("RemoteRagGateway only supports attachment sources")
 
-        source_file, file_extension = _get_attachment_source_metadata(
-            db=db,
-            attachment_id=spec.source.attachment_id,
-        )
-        payload = RemoteIndexRequest(
-            knowledge_base_id=spec.knowledge_base_id,
-            user_id=spec.index_owner_user_id,
-            document_id=spec.document_id,
-            source_file=source_file,
-            file_extension=file_extension,
-            content_ref=build_content_ref_for_attachment(
-                db=db,
-                attachment_id=spec.source.attachment_id,
-            ),
-        )
+        payload = _build_remote_index_request(spec, db=db)
         return await self._post_model("/internal/rag/index", payload)
 
     async def query(
@@ -168,8 +153,12 @@ class RemoteRagGateway:
             knowledge_base_ids=spec.knowledge_base_ids,
             user_id=spec.user_id or 0,
             query=spec.query,
+            search_hints=spec.search_hints,
             max_results=spec.max_results,
-            document_ids=spec.document_ids,
+            knowledge_base_retrieval_overrides=(
+                spec.knowledge_base_retrieval_overrides or None
+            ),
+            scope=spec.scope,
             metadata_condition=spec.metadata_condition,
         )
         response_payload = await self._post_model("/internal/rag/query", payload)
@@ -183,7 +172,7 @@ class RemoteRagGateway:
         self,
         spec: DeleteRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict[str, Any]:
         del db
         payload = RemoteDeleteDocumentIndexRequest(
@@ -236,6 +225,36 @@ class RemoteRagGateway:
         response_payload = await self._post_model("/internal/rag/all-chunks", payload)
         response = RemoteListChunksResponse.model_validate(response_payload)
         return response.model_dump()
+
+
+def _build_remote_index_request(
+    spec: IndexRuntimeSpec,
+    *,
+    db: Session | None,
+) -> RemoteIndexRequest:
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        source_file, file_extension = _get_attachment_source_metadata(
+            db=db,
+            attachment_id=spec.source.attachment_id,
+        )
+        return RemoteIndexRequest(
+            knowledge_base_id=spec.knowledge_base_id,
+            user_id=spec.index_owner_user_id,
+            document_id=spec.document_id,
+            source_file=source_file,
+            file_extension=file_extension,
+            content_ref=build_content_ref_for_attachment(
+                db=db,
+                attachment_id=spec.source.attachment_id,
+            ),
+        )
+    finally:
+        if own_session:
+            db.rollback()
+            db.close()
 
 
 def _get_attachment_source_metadata(

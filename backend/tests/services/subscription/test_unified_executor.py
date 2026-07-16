@@ -4,13 +4,18 @@
 
 """Regression tests for subscription unified execution routing."""
 
-from unittest.mock import AsyncMock, patch
+import sys
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.subscription.unified_executor import (
     SubscriptionExecutionData,
+    _build_subscription_execution_request,
     _execute_http_callback,
+    execute_subscription_unified,
 )
 
 
@@ -49,15 +54,18 @@ async def test_http_callback_dispatch_preserves_device_id():
     )
 
     dispatch_mock = AsyncMock(return_value=None)
+    fake_execution_module = SimpleNamespace(
+        execution_dispatcher=SimpleNamespace(dispatch=dispatch_mock)
+    )
+    fake_emitters_module = SimpleNamespace(SSEResultEmitter=_FakeEmitter)
 
     with (
-        patch(
-            "app.services.execution.execution_dispatcher.dispatch",
-            dispatch_mock,
-        ),
-        patch(
-            "app.services.execution.emitters.SSEResultEmitter",
-            _FakeEmitter,
+        patch.dict(
+            sys.modules,
+            {
+                "app.services.execution": fake_execution_module,
+                "app.services.execution.emitters": fake_emitters_module,
+            },
         ),
     ):
         await _execute_http_callback(request=object(), execution_data=execution_data)
@@ -65,3 +73,142 @@ async def test_http_callback_dispatch_preserves_device_id():
     dispatch_mock.assert_awaited_once()
     _, kwargs = dispatch_mock.await_args
     assert kwargs["device_id"] == "local-device-1"
+
+
+@pytest.mark.asyncio
+async def test_subscription_request_includes_selected_device_id():
+    """The request sent to a device must retain its selected device context."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id="local-device-1",
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    objects = SimpleNamespace(
+        task=object(),
+        assistant_subtask=object(),
+        team=object(),
+        user=object(),
+    )
+    db = MagicMock()
+
+    @contextmanager
+    def fake_get_db_session():
+        yield db
+
+    build_request = AsyncMock(return_value=object())
+    with (
+        patch(
+            "app.services.subscription.unified_executor.get_db_session",
+            fake_get_db_session,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._load_subscription_execution_objects",
+            return_value=objects,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._detach_subscription_execution_objects"
+        ),
+        patch(
+            "app.services.chat.trigger.unified.build_execution_request",
+            build_request,
+        ),
+    ):
+        await _build_subscription_execution_request(execution_data)
+
+    assert build_request.await_args.kwargs["device_id"] == "local-device-1"
+
+
+@pytest.mark.asyncio
+async def test_unified_executor_closes_loader_session_before_sse_execution(
+    fake_orm_session_factory,
+):
+    """Long SSE execution must not keep the ORM loading session open."""
+
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id="local-device-1",
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+
+    fake_session = fake_orm_session_factory(
+        task_id=execution_data.task_id,
+        assistant_subtask_id=execution_data.subtask_id,
+        team_id=execution_data.team_id,
+        user_id=execution_data.user_id,
+        device_id=execution_data.device_id,
+    )
+
+    @contextmanager
+    def fake_get_db_session():
+        try:
+            yield fake_session
+        finally:
+            fake_session.close()
+
+    async def fake_execute_sse_sync(request, execution_data):
+        assert fake_session.rolled_back is True
+        assert fake_session.closed is True
+
+    async def fake_build_execution_request(**kwargs):
+        assert fake_session.rolled_back is True
+        assert fake_session.closed is True
+        return object()
+
+    fake_sse_mode = SimpleNamespace(value="SSE")
+    fake_execution_module = SimpleNamespace(
+        CommunicationMode=SimpleNamespace(SSE=fake_sse_mode),
+        ExecutionRouter=lambda: SimpleNamespace(
+            route=lambda request, device_id=None: SimpleNamespace(
+                mode=fake_sse_mode,
+                url="sse://local",
+            )
+        ),
+    )
+
+    with (
+        patch.dict(sys.modules, {"app.services.execution": fake_execution_module}),
+        patch(
+            "app.services.subscription.unified_executor.get_db_session",
+            fake_get_db_session,
+            create=True,
+        ),
+        patch(
+            "app.services.chat.trigger.unified.build_execution_request",
+            AsyncMock(side_effect=fake_build_execution_request),
+        ),
+        patch(
+            "app.services.subscription.unified_executor._execute_sse_sync",
+            AsyncMock(side_effect=fake_execute_sse_sync),
+        ) as sse_mock,
+    ):
+        await execute_subscription_unified(execution_data=execution_data)
+
+    sse_mock.assert_awaited_once()

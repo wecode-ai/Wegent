@@ -1,5 +1,6 @@
 {
   "title": "Chat",
+  "scroll_to_bottom": "Scroll to bottom",
   "placeholder": {
     "input": "Type your message here...",
     "empty": "No messages yet. Start a conversation!"
@@ -44,6 +45,50 @@
     "quoted_text": "Quoted text",
     "remove_quote": "Remove quote"
   },
+  "sourceReferences": {
+    "title": "References",
+    "openSource": "Open source",
+    "unavailableSource": "Unable to open source",
+    "footerCited": "Cited {{documents}} documents from {{sources}} knowledge sources",
+    "footerNoHit": "{{count}} knowledge sources had no hits",
+    "footerSkipped": "Skipped {{count}} unavailable sources",
+    "footerSearchedNoReferences": "Searched {{searched}} knowledge sources, but no citable content was returned",
+    "footerSearched": "Searched {{searched}} knowledge sources",
+    "footerSearchedAndIgnored": "Searched {{searched}} knowledge sources · skipped {{ignored}} unavailable sources"
+  },
+  "guidance": {
+    "send": "Send guidance",
+    "applied": "Guidance applied",
+    "cancel": "Cancel guidance",
+    "send_as_message": "Send as message",
+    "status_queued": "Guidance queued",
+    "status_sending": "Sending guidance",
+    "status_failed": "Guidance failed",
+    "status_expired": "Guidance expired",
+    "expired": "The current response ended before this guidance was applied",
+    "send_failed": "Failed to send guidance",
+    "no_active_stream": "No active response can receive guidance"
+  },
+  "pending_task_confirm": {
+    "eyebrow": "Task handoff confirmation",
+    "title": "Previous task has not started",
+    "description": "Before sending a new message, choose what to do with the task that has not started.",
+    "wait": "Keep waiting",
+    "wait_hint": "Keep the current task",
+    "confirm": "Cancel previous and send",
+    "confirm_hint": "Start this new message",
+    "confirming": "Processing..."
+  },
+  "pending_form_confirm": {
+    "eyebrow": "Form waiting",
+    "title": "The agent is waiting for this form result",
+    "description": "Before sending a new message, submit the current form or cancel it and use this message as the new instruction.",
+    "keep": "Keep editing",
+    "keep_hint": "Keep the current form",
+    "confirm": "Cancel form and send",
+    "confirm_hint": "Continue with this message",
+    "confirming": "Processing..."
+  },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",
@@ -79,6 +124,10 @@
     "status_failed": "Failed",
     "status_cancelled": "Cancelled",
     "status_cancelling": "Cancelling",
+    "status_queued": "Queued",
+    "status_sending": "Sending",
+    "cancel_queued": "Cancel queued message",
+    "queue_failed": "Queued message failed",
     "recovered": "Recovered",
     "content_recovered": "Content Recovered",
     "content_recovered_desc": "Content has been recovered after page refresh",
@@ -104,28 +153,6 @@
     "video_generation": "Video Generation"
   },
   "message_count": "messages",
-  "thinking": {
-    "tool_group": "Tool Group",
-    "tools": "tools",
-    "completed": "Completed",
-    "running": "Running",
-    "has_errors": "Has Errors",
-    "tool_input": "Input",
-    "tool_output": "Output",
-    "tool_error": "Error",
-    "tool_executing": "Executing...",
-    "tools": {
-      "bash": "Execute Command",
-      "read": "Read File",
-      "edit": "Edit File",
-      "write": "Write File",
-      "grep": "Search Code",
-      "glob": "Find Files",
-      "todo": "Update Tasks",
-      "kb_search": "Search Knowledge Base",
-      "web_search": "Web Search"
-    }
-  },
   "shared_task": {
     "share_task": "Share",
     "sharing": "Sharing...",
@@ -218,6 +245,7 @@
     "tool_input": "Input",
     "tool_output": "Output",
     "tool_executing": "Executing...",
+    "no_output": "No output",
     "downloadable": "Downloadable",
     "processing": "Processing...",
     "tools": {
@@ -229,7 +257,8 @@
       "glob": "Find Files",
       "todo": "Update Tasks",
       "kb_search": "Search Knowledge Base",
-      "web_search": "Web Search"
+      "web_search": "Web Search",
+      "load_skill": "Load Skill"
     }
   },
   "send_button": {
@@ -244,6 +273,14 @@
   "send_shortcut": "Enter to send, Shift+Enter for new line",
   "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
   "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",
+  "quick_launch": {
+    "system_functions": "Recommended features",
+    "favorite_agents": "My favorites",
+    "overwrite_confirm_title": "Replace current input?",
+    "overwrite_confirm_description": "The message box already has content. This quick phrase will replace the current input.",
+    "overwrite_confirm_cancel": "Keep current input",
+    "overwrite_confirm_action": "Replace"
+  },
   "errors": {
     "request_failed": "LLM API request failed",
     "request_failed_retry": "LLM API request failed, please click retry",
@@ -360,7 +397,7 @@
   },
   "upload": {
     "attachment": "Attachment",
-    "tooltip": "Supported file types: PDF, Word, PPT, Excel, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
+    "tooltip": "Supported file types: PDF, Word, PPT, Excel, XMind, TXT, Markdown, Images(JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nSupports multiple file uploads",
     "image_tooltip": "Supported file types: Images (JPG, PNG, GIF, BMP, WebP)\nMax file size: {{maxSize}} MB\nUpload reference images for generation",
     "wait_for_upload": "Please wait for file upload to complete"
   },
@@ -376,6 +413,17 @@
     "longer_than_usual": "Response is taking longer than usual",
     "stale_update_10m": "Task is still running, but no stream updates for over 10 minutes. Consider stopping and retrying.",
     "started_over_20m": "Task has been running for over 20 minutes. Please check execution status and consider stopping and retrying."
+  },
+  "knowledgeBinding": {
+    "title": "Knowledge Sources",
+    "count": "{{count}} bound",
+    "externalKnowledge": "External knowledge source",
+    "empty": "No knowledge sources bound",
+    "loadFailed": "Failed to load knowledge sources",
+    "externalLoadFailed": "External knowledge sources could not be loaded. Internal knowledge bases remain available.",
+    "remove": "Remove {{name}}",
+    "removeSuccess": "Removed \"{{name}}\"",
+    "removeFailed": "Failed to remove knowledge source"
   },
   "groupChat": {
     "mentionHint": "In group chat, use @ to mention an agent to get AI responses",
@@ -684,6 +732,17 @@
     "goToConfigure": "Go to configure",
     "docBadgeHint": "DingTalk Doc",
     "searchPlaceholder": "Search documents...",
-    "referencedDocsLabel": "Referenced DingTalk Documents:"
+    "referencedDocsLabel": "Referenced DingTalk Documents:",
+    "myDocsTab": "My Documents",
+    "wikispaceTab": "Knowledge Base",
+    "allDocs": "All Documents",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "wikispaceSync": "Sync",
+    "wikispaceSyncing": "Syncing...",
+    "wikispaceEmpty": "No knowledge base content",
+    "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
+    "wikispaceLastSynced": "Last synced: {{time}}",
+    "wikispaceNeverSynced": "Never synced"
   }
 }

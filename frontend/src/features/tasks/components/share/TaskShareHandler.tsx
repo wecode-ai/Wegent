@@ -8,6 +8,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/use-toast'
+import { buildChatCodeHref } from '@/config/coding-route'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { taskApis, TaskShareInfo } from '@/apis/tasks'
 import { teamApis } from '@/apis/team'
@@ -58,7 +59,6 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
   const [teams, setTeams] = useState<Team[]>([])
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null)
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
-  const [forceOverride, setForceOverride] = useState(false)
   const [isTeamSelectorOpen, setIsTeamSelectorOpen] = useState(false)
   const [teamSearchValue, setTeamSearchValue] = useState('')
   // Repository and branch selection for code tasks
@@ -251,7 +251,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         share_token: shareToken,
         team_id: selectedTeamId,
         model_id: modelId,
-        force_override_bot_model: forceOverride,
+        force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
         git_repo_id: selectedRepo?.git_repo_id,
         git_url: selectedRepo?.git_url,
@@ -273,8 +273,13 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       handleCloseModal()
 
       // Navigate to the appropriate page based on task type
-      const targetPage = isCodeTask ? '/code' : '/chat'
-      router.push(`${targetPage}?taskId=${response.task_id}`)
+      if (isCodeTask) {
+        const params = new URLSearchParams()
+        params.set('taskId', String(response.task_id))
+        router.push(buildChatCodeHref(params))
+      } else {
+        router.push(`/chat?taskId=${response.task_id}`)
+      }
     } catch (err) {
       console.error('Failed to copy shared task:', err)
       const errorMessage = (err as Error)?.message || 'Failed to copy task'
@@ -357,6 +362,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                   <button
                     type="button"
                     role="combobox"
+                    aria-controls="shared-task-team-selector-popover"
                     aria-expanded={isTeamSelectorOpen}
                     disabled={isCopying || teams.length === 0}
                     className={cn(
@@ -389,6 +395,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                 </PopoverTrigger>
 
                 <PopoverContent
+                  id="shared-task-team-selector-popover"
                   className={cn(
                     'p-0 w-[var(--radix-popover-trigger-width)] border border-border bg-background',
                     'shadow-lg rounded-md overflow-hidden'
@@ -460,8 +467,6 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                 selectedTeam={selectedTeam}
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
                 disabled={isCopying}
               />
             )}

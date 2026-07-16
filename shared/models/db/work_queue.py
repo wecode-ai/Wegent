@@ -12,6 +12,7 @@ from sqlalchemy import Index, Integer, String, Text
 
 from .base import Base
 from .enums import QueueMessagePriority, QueueMessageStatus
+from .types import big_integer_id_type
 
 
 def utc_now():
@@ -35,7 +36,10 @@ class QueueMessage(Base):
         Integer, nullable=False, index=True, comment="Recipient user ID (queue owner)"
     )
     source_task_id = Column(
-        Integer, nullable=False, index=True, comment="Original task/conversation ID"
+        big_integer_id_type(),
+        nullable=False,
+        index=True,
+        comment="Original task/conversation ID",
     )
     source_subtask_ids = Column(
         JSON, nullable=False, comment="List of original message IDs (subtask IDs)"
@@ -68,7 +72,7 @@ class QueueMessage(Base):
         JSON, nullable=False, default=dict, comment="AI processing result"
     )
     process_task_id = Column(
-        Integer,
+        big_integer_id_type(),
         nullable=False,
         default=0,
         comment="Task ID created for processing (0 = not processed)",

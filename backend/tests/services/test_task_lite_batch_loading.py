@@ -6,13 +6,29 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
+from app.models.namespace import Namespace
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.task import TaskResource
-from app.services.adapters.task_kinds.helpers import build_lite_task_list
+from app.schemas.task import TaskLite
+from app.services.adapters.task_kinds.helpers import (
+    _batch_query_teams,
+    _get_team_display_name,
+    _get_team_icon,
+    build_lite_task_groups,
+    build_lite_task_list,
+    get_tasks_related_data_batch,
+)
 
 
-def _task_json(title: str) -> dict:
+def _task_json(title: str, team_user_id: int | None = None) -> dict:
+    team_ref = {"name": "team-a", "namespace": "default"}
+    if team_user_id is not None:
+        team_ref["user_id"] = team_user_id
     return {
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Task",
@@ -24,7 +40,7 @@ def _task_json(title: str) -> dict:
         "spec": {
             "title": title,
             "prompt": "test",
-            "teamRef": {"name": "team-a", "namespace": "default"},
+            "teamRef": team_ref,
             "workspaceRef": {"name": "workspace-a", "namespace": "default"},
             "knowledgeBaseRefs": [],
         },
@@ -32,14 +48,40 @@ def _task_json(title: str) -> dict:
     }
 
 
-def _build_task(task_id: int, title: str) -> Mock:
+def _build_task(
+    task_id: int,
+    title: str,
+    project_id: int = 0,
+    team_user_id: int | None = None,
+) -> Mock:
     task = Mock(spec=TaskResource)
     task.id = task_id
-    task.json = _task_json(title)
+    task.project_id = project_id
+    task.json = _task_json(title, team_user_id=team_user_id)
     now = datetime.now()
     task.created_at = now
     task.updated_at = now
     return task
+
+
+def _team_json(
+    name: str, display_name: str, icon: str, namespace: str = "default"
+) -> dict:
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Team",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "displayName": display_name,
+        },
+        "spec": {
+            "members": [],
+            "collaborationModel": "solo",
+            "description": "",
+            "icon": icon,
+        },
+    }
 
 
 @pytest.mark.unit
@@ -56,12 +98,25 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     mock_execute_result.fetchone.return_value = None
     db.execute.return_value = mock_execute_result
 
-    tasks = [_build_task(1, "Task One"), _build_task(2, "Task Two")]
+    tasks = [_build_task(1, "Task One", project_id=42), _build_task(2, "Task Two")]
+    tasks[0].json["metadata"]["labels"]["source"] = "im"
+    tasks[1].json["spec"]["execution"] = {
+        "workspace": {
+            "source": "git_worktree",
+            "path": "/workspace/worktrees/2/repo-b",
+        }
+    }
     now = datetime.now()
     related_data = {
         "1": {
             "workspace_data": {"git_repo": "repo-a"},
             "team_id": 101,
+            "team_name": "team-a",
+            "team_namespace": "default",
+            "team_display_name": "Agent A",
+            "team_icon": "sparkles",
+            "device_id": None,
+            "device_name": None,
             "created_at": now,
             "updated_at": now,
             "completed_at": None,
@@ -70,6 +125,12 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
         "2": {
             "workspace_data": {"git_repo": "repo-b"},
             "team_id": 102,
+            "team_name": "team-b",
+            "team_namespace": "default",
+            "team_display_name": "Agent B",
+            "team_icon": "bot",
+            "device_id": "device-1",
+            "device_name": "Mac Studio",
             "created_at": now,
             "updated_at": now,
             "completed_at": None,
@@ -85,10 +146,424 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
 
     assert len(result) == 2
     assert result[0]["team_id"] == 101
+    assert result[0]["team_name"] == "team-a"
+    assert result[0]["team_namespace"] == "default"
+    assert result[0]["team_display_name"] == "Agent A"
+    assert result[0]["team_icon"] == "sparkles"
+    assert result[0]["project_id"] == 42
+    assert result[0]["device_id"] is None
+    assert result[0]["device_name"] is None
     assert result[0]["git_repo"] == "repo-a"
     assert result[0]["is_group_chat"] is True
+    assert result[0]["source"] == "im"
     assert result[1]["team_id"] == 102
+    assert result[1]["team_name"] == "team-b"
+    assert result[1]["team_namespace"] == "default"
+    assert result[1]["team_display_name"] == "Agent B"
+    assert result[1]["team_icon"] == "bot"
+    assert result[1]["project_id"] == 0
+    assert result[1]["device_id"] == "device-1"
+    assert result[1]["device_name"] == "Mac Studio"
+    assert result[1]["execution_workspace_source"] == "git_worktree"
     assert result[1]["git_repo"] == "repo-b"
     assert result[1]["is_group_chat"] is False
+    assert result[1]["source"] is None
     mock_batch.assert_called_once_with(db, tasks, 7)
     db.execute.assert_not_called()
+
+
+@pytest.mark.unit
+def test_build_lite_task_list_normalizes_missing_and_empty_source_labels():
+    db = Mock(spec=Session)
+    tasks = [
+        _build_task(1, "Empty Labels"),
+        _build_task(2, "Absent Labels"),
+        _build_task(3, "Missing Labels"),
+    ]
+    tasks[0].json["metadata"]["labels"] = {}
+    tasks[1].json["metadata"]["labels"].pop("source", None)
+    tasks[2].json["metadata"].pop("labels")
+
+    with patch(
+        "app.services.adapters.task_kinds.helpers.get_tasks_related_data_batch",
+        return_value={},
+    ):
+        result = build_lite_task_list(db, tasks, user_id=7)
+
+    assert [item["source"] for item in result] == [None, None, None]
+
+
+@pytest.mark.unit
+def test_task_lite_schema_preserves_source():
+    now = datetime.now()
+
+    task = TaskLite(
+        id=1,
+        title="IM Task",
+        status="PENDING",
+        task_type="chat",
+        type="online",
+        source="im",
+        created_at=now,
+        updated_at=now,
+    )
+
+    assert task.source == "im"
+    assert task.model_dump()["source"] == "im"
+
+
+@pytest.mark.unit
+def test_build_lite_task_groups_groups_current_page_by_team_metadata():
+    db = Mock(spec=Session)
+    tasks = [
+        _build_task(1, "Task One"),
+        _build_task(2, "Task Two"),
+        _build_task(3, "Task Three"),
+    ]
+    now = datetime.now()
+    related_data = {
+        "1": {
+            "workspace_data": {"git_repo": "repo-a"},
+            "team_id": 101,
+            "team_name": "team-a",
+            "team_namespace": "default",
+            "team_display_name": "Agent A",
+            "team_icon": "sparkles",
+            "device_id": None,
+            "device_name": None,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+            "is_group_chat": False,
+        },
+        "2": {
+            "workspace_data": {"git_repo": "repo-b"},
+            "team_id": 102,
+            "team_name": "team-b",
+            "team_namespace": "default",
+            "team_display_name": "Agent B",
+            "team_icon": "bot",
+            "device_id": "device-1",
+            "device_name": "Mac Studio",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+            "is_group_chat": False,
+        },
+        "3": {
+            "workspace_data": {"git_repo": "repo-c"},
+            "team_id": 101,
+            "team_name": "team-a",
+            "team_namespace": "default",
+            "team_display_name": "Agent A",
+            "team_icon": "sparkles",
+            "device_id": None,
+            "device_name": None,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+            "is_group_chat": False,
+        },
+    }
+
+    with patch(
+        "app.services.adapters.task_kinds.helpers.get_tasks_related_data_batch",
+        return_value=related_data,
+    ):
+        groups = build_lite_task_groups(db, tasks, user_id=7)
+
+    assert [group["group_type"] for group in groups] == ["team", "device"]
+    assert [group["team_id"] for group in groups] == [101, None]
+    assert groups[0]["team_display_name"] == "Agent A"
+    assert groups[0]["team_icon"] == "sparkles"
+    assert [item["id"] for item in groups[0]["items"]] == [1, 3]
+    assert groups[1]["device_id"] == "device-1"
+    assert groups[1]["device_name"] == "Mac Studio"
+    assert groups[1]["team_icon"] is None
+    assert [item["id"] for item in groups[1]["items"]] == [2]
+
+
+@pytest.mark.unit
+def test_batch_query_teams_includes_public_system_team_metadata(test_db):
+    public_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="wegent-chat",
+        namespace="default",
+        json=_team_json("wegent-chat", "Wegent Chat", "users"),
+        is_active=True,
+    )
+    test_db.add(public_team)
+    test_db.commit()
+
+    teams = _batch_query_teams(test_db, {("wegent-chat", "default")}, user_id=7)
+
+    team = teams["wegent-chat:default"]
+    assert team.user_id == 0
+    assert _get_team_display_name(team) == "Wegent Chat"
+    assert _get_team_icon(team) == "users"
+
+
+@pytest.mark.unit
+def test_get_tasks_related_data_batch_uses_task_team_ref_owner_when_names_overlap(
+    test_db,
+):
+    public_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="team-a",
+        namespace="default",
+        json=_team_json("team-a", "Public Team", "globe"),
+        is_active=True,
+    )
+    personal_team = Kind(
+        user_id=7,
+        kind="Team",
+        name="team-a",
+        namespace="default",
+        json=_team_json("team-a", "Personal Team", "user"),
+        is_active=True,
+    )
+    test_db.add_all([public_team, personal_team])
+    test_db.commit()
+
+    task = _build_task(1, "Task One", team_user_id=0)
+
+    related_data = get_tasks_related_data_batch(test_db, [task], user_id=7)
+
+    assert related_data["1"]["team_id"] == public_team.id
+    assert related_data["1"]["team_display_name"] == "Public Team"
+
+
+@pytest.mark.unit
+def test_batch_query_teams_loads_accessible_scopes_without_subqueries_and_priority(
+    test_db,
+):
+    user_id = 7
+    personal_team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name="priority-team",
+        namespace="default",
+        json=_team_json("priority-team", "Personal Priority", "user"),
+        is_active=True,
+    )
+    shared_priority_team = Kind(
+        user_id=88,
+        kind="Team",
+        name="priority-team",
+        namespace="default",
+        json=_team_json("priority-team", "Shared Priority", "users"),
+        is_active=True,
+    )
+    public_priority_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="priority-team",
+        namespace="default",
+        json=_team_json("priority-team", "Public Priority", "sparkles"),
+        is_active=True,
+    )
+    shared_only_team = Kind(
+        user_id=88,
+        kind="Team",
+        name="shared-only",
+        namespace="default",
+        json=_team_json("shared-only", "Shared Only", "bot"),
+        is_active=True,
+    )
+    public_only_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="public-only",
+        namespace="default",
+        json=_team_json("public-only", "Public Only", "globe"),
+        is_active=True,
+    )
+    test_db.add_all(
+        [
+            personal_team,
+            shared_priority_team,
+            public_priority_team,
+            shared_only_team,
+            public_only_team,
+        ]
+    )
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type=ResourceType.TEAM,
+                resource_id=shared_priority_team.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM,
+                resource_id=shared_only_team.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    statements = []
+
+    def collect_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    connection = test_db.connection()
+    event.listen(connection, "before_cursor_execute", collect_selects)
+    try:
+        teams = _batch_query_teams(
+            test_db,
+            {
+                ("priority-team", "default"),
+                ("shared-only", "default"),
+                ("public-only", "default"),
+            },
+            user_id=user_id,
+        )
+    finally:
+        event.remove(connection, "before_cursor_execute", collect_selects)
+
+    normalized_statements = [statement.upper() for statement in statements]
+    assert all("EXISTS" not in statement for statement in normalized_statements)
+    assert all(" IN (SELECT" not in statement for statement in normalized_statements)
+    assert teams["priority-team:default"].id == personal_team.id
+    assert teams["shared-only:default"].id == shared_only_team.id
+    assert teams["public-only:default"].id == public_only_team.id
+
+
+@pytest.mark.unit
+def test_batch_query_teams_loads_child_namespace_grants_without_subqueries(test_db):
+    user_id = 7
+    parent = Namespace(
+        name="parent",
+        display_name="parent",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    child = Namespace(
+        name="parent/child",
+        display_name="child",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    team = Kind(
+        user_id=1,
+        kind="Team",
+        name="parent-team",
+        namespace="parent",
+        json=_team_json("parent-team", "Parent Team", "bot", namespace="parent"),
+        is_active=True,
+    )
+    test_db.add_all([parent, child, team])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=parent.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM.value,
+                resource_id=team.id,
+                entity_type="namespace",
+                entity_id=str(child.id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    statements = []
+
+    def collect_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement)
+
+    connection = test_db.connection()
+    event.listen(connection, "before_cursor_execute", collect_selects)
+    try:
+        teams = _batch_query_teams(test_db, {("parent-team", "parent")}, user_id)
+    finally:
+        event.remove(connection, "before_cursor_execute", collect_selects)
+
+    normalized_statements = [statement.upper() for statement in statements]
+    assert all("EXISTS" not in statement for statement in normalized_statements)
+    assert all(" IN (SELECT" not in statement for statement in normalized_statements)
+    assert teams["parent-team:parent"].id == team.id
+
+
+@pytest.mark.unit
+def test_batch_query_teams_requires_reporter_for_child_namespace_grants(test_db):
+    user_id = 7
+    parent = Namespace(
+        name="restricted-parent",
+        display_name="restricted-parent",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    child = Namespace(
+        name="restricted-parent/child",
+        display_name="child",
+        owner_user_id=1,
+        visibility="private",
+        description="",
+        is_active=True,
+    )
+    team = Kind(
+        user_id=1,
+        kind="Team",
+        name="restricted-parent-team",
+        namespace="restricted-parent",
+        json=_team_json(
+            "restricted-parent-team",
+            "Restricted Parent Team",
+            "bot",
+            namespace="restricted-parent",
+        ),
+        is_active=True,
+    )
+    test_db.add_all([parent, child, team])
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type="Namespace",
+                resource_id=parent.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                role="RestrictedAnalyst",
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM.value,
+                resource_id=team.id,
+                entity_type="namespace",
+                entity_id=str(child.id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    teams = _batch_query_teams(
+        test_db, {("restricted-parent-team", "restricted-parent")}, user_id
+    )
+
+    assert "restricted-parent-team:restricted-parent" not in teams

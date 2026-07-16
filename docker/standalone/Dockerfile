@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Standalone Dockerfile - All services in one container
-# This builds a single image containing Backend, Frontend, Chat Shell, and Executor
+# This builds a single image containing Backend, Frontend, Wework, Chat Shell, and Executor
 
 # ========== Stage 1: Build Frontend ==========
 FROM node:22-slim AS frontend-builder
@@ -11,8 +11,10 @@ FROM node:22-slim AS frontend-builder
 WORKDIR /app
 
 # Copy dependency files and postinstall scripts
-COPY frontend/package.json frontend/package-lock.json ./
-COPY frontend/scripts ./scripts
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY frontend/package.json ./frontend/package.json
+COPY frontend/scripts ./frontend/scripts
 
 # Font download configuration for internal deployments
 ARG GOOGLE_SANS_CSS_URLS=""
@@ -21,12 +23,17 @@ ARG SKIP_PDF_FONT_DOWNLOAD=""
 ENV GOOGLE_SANS_CSS_URLS=${GOOGLE_SANS_CSS_URLS}
 ENV SKIP_UI_FONT_DOWNLOAD=${SKIP_UI_FONT_DOWNLOAD}
 ENV SKIP_PDF_FONT_DOWNLOAD=${SKIP_PDF_FONT_DOWNLOAD}
+ENV HUSKY=0
 
-# Install dependencies
-RUN npm ci && npm cache clean --force
+# Install workspace dependencies needed by the frontend.
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm install --frozen-lockfile --filter wecode-ai-assistant...
 
 # Copy source code
-COPY frontend .
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY frontend ./frontend
 
 # App version injected at build time (e.g. "0.1.5")
 ARG APP_VERSION="dev"
@@ -34,11 +41,49 @@ ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
 
 # Disable Next.js telemetry
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV HUSKY=0
 
 # Build Next.js application
-RUN npm run build
+WORKDIR /app/frontend
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm run build
 
-# ========== Stage 2: Build Python Base with Tools ==========
+# ========== Stage 2: Build Wework ==========
+FROM node:22-slim AS wework-builder
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/chat-core/package.json ./packages/chat-core/package.json
+COPY wework/package.json ./wework/package.json
+
+ENV HUSKY=0
+
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm install --frozen-lockfile --filter wework...
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY wework ./wework
+
+ARG WEWORK_API_BASE_URL="/wework/api"
+ARG WEWORK_SOCKET_BASE_URL=""
+ARG WEWORK_SOCKET_PATH="/wework/socket.io"
+ARG WEWORK_APP_BASE_PATH="/wework"
+ENV VITE_API_BASE_URL=${WEWORK_API_BASE_URL}
+ENV VITE_SOCKET_BASE_URL=${WEWORK_SOCKET_BASE_URL}
+ENV VITE_SOCKET_PATH=${WEWORK_SOCKET_PATH}
+ENV VITE_APP_BASE_PATH=${WEWORK_APP_BASE_PATH}
+ENV HUSKY=0
+
+WORKDIR /app/wework
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.3 --activate \
+    && pnpm run build
+
+# ========== Stage 3: Build Python Base with Tools ==========
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest AS python-base
 
 WORKDIR /app
@@ -56,9 +101,13 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
+    # Public reverse proxy for the bundled frontend applications
+    nginx \
+    # Development environment and runtime diagnostics
+    procps-ng iproute lsof less tree unzip ripgrep \
     # Redis server for standalone mode (embedded)
     redis \
-    && npm install -g @anthropic-ai/claude-code@2.1.33 \
+    && npm install -g @anthropic-ai/claude-code@2.1.199 @openai/codex@0.142.5 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 
@@ -85,18 +134,37 @@ RUN mkdir -p /usr/share/fonts/truetype/noto && \
         -o /usr/share/fonts/truetype/noto/NotoSansSC.ttf) && \
     fc-cache -f -v
 
-# ========== Stage 3: Runtime ==========
+# ========== Stage 4: Build Rust Executor ==========
+FROM python-base AS executor-builder
+ARG APP_VERSION=dev
+
+WORKDIR /app
+
+RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain stable \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
+
+ENV PATH=/root/.cargo/bin:${PATH}
+
+COPY executor/Cargo.toml executor/Cargo.lock /app/executor/
+COPY executor/src /app/executor/src
+RUN cd /app/executor && APP_VERSION="${APP_VERSION}" cargo build --release --locked
+
+# ========== Stage 5: Runtime ==========
 FROM python-base AS runtime
+ARG APP_VERSION=dev
 
 WORKDIR /app
 
 # Copy all Python modules to /app directory for consistent structure
 # All modules will be under /app: /app/shared, /app/chat_shell,
-# /app/knowledge_engine, /app/executor, /app/backend
+# /app/knowledge_engine, /app/backend
 COPY shared /app/shared
 COPY chat_shell /app/chat_shell
 COPY knowledge_engine /app/knowledge_engine
-COPY executor /app/executor
+COPY --from=executor-builder /app/executor/target/release/wegent-executor /app/wegent-executor
 
 # Install shared module first
 RUN uv pip install --system --no-cache /app/shared
@@ -107,8 +175,7 @@ RUN cd /app/knowledge_engine && uv pip install --system --no-cache -r pyproject.
 # Install chat_shell (depends on shared via ../shared -> /app/shared)
 RUN cd /app/chat_shell && uv pip install --system --no-cache -r pyproject.toml
 
-# Install executor (depends on shared via ../shared -> /app/shared)
-RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
+RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
 
 # Copy and install backend
 # Backend's pyproject.toml references:
@@ -124,9 +191,15 @@ COPY backend/alembic /app/backend/alembic
 COPY backend/alembic.ini /app/backend/alembic.ini
 
 # Copy frontend build (standalone output)
-COPY --from=frontend-builder /app/.next/standalone /app/frontend
-COPY --from=frontend-builder /app/.next/static /app/frontend/.next/static
-COPY --from=frontend-builder /app/public /app/frontend/public
+COPY --from=frontend-builder /app/frontend/.next/standalone /app
+COPY --from=frontend-builder /app/frontend/.next/static /app/frontend/.next/static
+COPY --from=frontend-builder /app/frontend/public /app/frontend/public
+
+# Copy Wework web build
+COPY --from=wework-builder /app/wework/dist /app/wework/dist
+
+# Copy Nginx reverse proxy configuration
+COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy init_data directory with default resources and skills
 COPY backend/init_data /app/init_data
@@ -137,12 +210,15 @@ RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh
 
 # Environment variables for standalone mode
 ENV STANDALONE_MODE=true
+ENV STANDALONE_EXECUTOR_DEVICE_ID=standalone-admin-device
 ENV ENVIRONMENT=development
 # Note: SQLite absolute path requires 4 slashes: sqlite:////path/to/db
 ENV DATABASE_URL=sqlite:////app/data/wegent.db
 ENV CHAT_SHELL_MODE=package
-ENV PYTHONPATH=/app:/app/backend:/app/chat_shell:/app/executor
+ENV CODEX_HOME=/app/data/codex
+ENV PYTHONPATH=/app:/app/backend:/app/chat_shell
 ENV NODE_PATH=/usr/lib/node_modules
+ENV WEGENT_EXECUTOR_VERSION=${APP_VERSION}
 
 # Redis configuration (embedded in standalone mode)
 ENV REDIS_URL=redis://localhost:6379/0
@@ -150,18 +226,22 @@ ENV REDIS_DATA_DIR=/app/data/redis
 
 # Server configuration
 ENV BACKEND_PORT=8000
-ENV FRONTEND_PORT=3000
+ENV FRONTEND_PORT=3002
 ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
+ENV WEGENT_WORKSPACE_ROOT=/workspace
 
-# Expose ports
-EXPOSE 3000 8000
+# Expose the single browser-facing standalone port
+EXPOSE 3000
 
-# Data volume for SQLite database, Redis data, and other persistent data
-VOLUME ["/app/data"]
+# Data volume for service state and workspace artifacts
+VOLUME ["/app/data", "/workspace"]
 
-# Health check - verify both services are running
+# Health check - verify main services are running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health && curl -f http://localhost:3000 || exit 1
+    CMD curl -f http://localhost:8000/health \
+      && curl -f http://localhost:3000 \
+      && curl -f http://localhost:3000/wework/ \
+      || exit 1
 
 # Startup command
 CMD ["/app/start.sh"]

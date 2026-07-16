@@ -12,11 +12,35 @@ when updating task status after subtask completion.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
+from app.services.adapters.pipeline_context import normalize_context_passing
+
 logger = logging.getLogger(__name__)
+
+
+def _get_team_from_task_ref(db: Session, team_ref: Any):
+    """Resolve the exact Team referenced by a Task CRD."""
+    from app.models.kind import Kind
+
+    team_owner_id = getattr(team_ref, "user_id", None)
+    if team_owner_id is None:
+        return None
+
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == team_owner_id,
+            Kind.kind == "Team",
+            Kind.name == team_ref.name,
+            Kind.namespace == team_ref.namespace,
+            Kind.is_active.is_(True),
+        )
+        .first()
+    )
 
 
 class CollaborationStrategy(ABC):
@@ -46,6 +70,35 @@ class CollaborationStrategy(ABC):
             Tuple of (task_status, progress):
                 - task_status: The status to set for the task
                 - progress: Optional progress value (0-100), None to keep current
+        """
+        pass
+
+    @abstractmethod
+    def get_auto_advance_info(
+        self,
+        db: Session,
+        task_id: int,
+        subtask_id: int,
+        subtask_status: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return auto-advance info if pipeline should advance to next stage automatically.
+
+        Called after a subtask completes. If the collaboration mode supports
+        automatic stage advancement (pipeline with requireConfirmation=False),
+        returns info needed to create the next stage subtask.
+
+        Args:
+            db: Database session
+            task_id: Task ID
+            subtask_id: The subtask that just completed
+            subtask_status: The status of the completed subtask
+
+        Returns:
+            Dict with next stage info if auto-advance should happen:
+                - next_stage_index: int
+                - next_bot_id: int
+                - next_bot_name: str
+            Or None if no auto-advance needed.
         """
         pass
 
@@ -80,6 +133,16 @@ class DefaultCollaborationStrategy(CollaborationStrategy):
 
         # Default: keep the subtask status
         return (subtask_status, None)
+
+    def get_auto_advance_info(
+        self,
+        db: Session,
+        task_id: int,
+        subtask_id: int,
+        subtask_status: str,
+    ) -> Optional[Dict[str, Any]]:
+        """No auto-advance for non-pipeline modes."""
+        return None
 
 
 class PipelineCollaborationStrategy(CollaborationStrategy):
@@ -139,6 +202,178 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
             db, task_id, subtask_id
         )
 
+    def get_auto_advance_info(
+        self,
+        db: Session,
+        task_id: int,
+        subtask_id: int,
+        subtask_status: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return next stage info if pipeline should auto-advance (no requireConfirmation).
+
+        Auto-advance occurs when:
+        - Subtask is COMPLETED
+        - Current stage has requireConfirmation=False
+        - A next stage exists
+        """
+        if subtask_status != "COMPLETED":
+            return None
+
+        # If requireConfirmation is set, user must confirm — no auto-advance
+        if self._should_require_confirmation(db, task_id, subtask_id):
+            return None
+
+        try:
+            from app.schemas.kind import Task, Team
+            from app.services.readers.kinds import KindType, kindReader
+
+            subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+            if not subtask:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: subtask not found "
+                    "task=%s subtask=%s",
+                    task_id,
+                    subtask_id,
+                )
+                return None
+
+            task = task_stores.task_store.get_regular_active_task(db, task_id=task_id)
+            if not task:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: task not found task=%s",
+                    task_id,
+                )
+                return None
+
+            task_crd = Task.model_validate(task.json)
+            team_ref = task_crd.spec.teamRef
+            team = _get_team_from_task_ref(db, team_ref)
+            if not team:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: team not found "
+                    "task=%s team=%s/%s owner=%s",
+                    task_id,
+                    team_ref.namespace,
+                    team_ref.name,
+                    getattr(team_ref, "user_id", None),
+                )
+                return None
+
+            team_crd = Team.model_validate(team.json)
+            members = team_crd.spec.members
+            if not members:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: no team members task=%s",
+                    task_id,
+                )
+                return None
+
+            current_stage_index = task_crd.spec.currentStage or 0
+            if (
+                not isinstance(current_stage_index, int)
+                or current_stage_index < 0
+                or current_stage_index >= len(members)
+            ):
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: invalid currentStage "
+                    "task=%s currentStage=%s total=%s",
+                    task_id,
+                    current_stage_index,
+                    len(members),
+                )
+                return None
+
+            subtask_stage_index = None
+            if subtask.bot_ids:
+                bot = kindReader.get_by_id(db, KindType.BOT, subtask.bot_ids[0])
+                if bot:
+                    for i, member in enumerate(members):
+                        if (
+                            member.botRef.name == bot.name
+                            and member.botRef.namespace == bot.namespace
+                        ):
+                            subtask_stage_index = i
+                            break
+
+            if (
+                subtask_stage_index is not None
+                and subtask_stage_index != current_stage_index
+            ):
+                logger.info(
+                    "[PipelineStrategy] Skip stale auto-advance for task %s: "
+                    "subtask_stage=%s, currentStage=%s",
+                    task_id,
+                    subtask_stage_index,
+                    current_stage_index,
+                )
+                return None
+
+            # Check requireConfirmation on current stage
+            current_member = members[current_stage_index]
+            if current_member.requireConfirmation:
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: confirmation required "
+                    "task=%s stage=%s",
+                    task_id,
+                    current_stage_index,
+                )
+                return None
+
+            # Check if a next stage exists
+            next_stage_index = current_stage_index + 1
+            if next_stage_index >= len(members):
+                logger.info(
+                    "[PipelineStrategy] Auto-advance skipped: pipeline complete "
+                    "task=%s stage=%s total=%s",
+                    task_id,
+                    current_stage_index,
+                    len(members),
+                )
+                return None
+
+            # Fetch next stage bot
+            next_member = members[next_stage_index]
+            next_bot = kindReader.get_by_name_and_namespace(
+                db,
+                team.user_id,
+                KindType.BOT,
+                next_member.botRef.namespace,
+                next_member.botRef.name,
+            )
+            if not next_bot:
+                logger.error(
+                    "[PipelineStrategy] Auto-advance: bot not found for stage %s: %s/%s",
+                    next_stage_index,
+                    next_member.botRef.namespace,
+                    next_member.botRef.name,
+                )
+                return None
+
+            logger.info(
+                "[PipelineStrategy] Auto-advance task %s: stage %s -> %s (bot=%s)",
+                task_id,
+                current_stage_index,
+                next_stage_index,
+                next_bot.name,
+            )
+            return {
+                "next_stage_index": next_stage_index,
+                "next_bot_id": next_bot.id,
+                "next_bot_name": next_bot.name,
+                "context_passing": normalize_context_passing(
+                    getattr(current_member, "contextPassing", None)
+                ),
+            }
+
+        except Exception as e:
+            logger.error(
+                "[PipelineStrategy] Error computing auto-advance for task %s: %s",
+                task_id,
+                e,
+                exc_info=True,
+            )
+            return None
+
 
 class CollaborationStrategyFactory:
     """Factory for creating collaboration strategy instances."""
@@ -176,21 +411,11 @@ class CollaborationStrategyFactory:
         Returns:
             CollaborationStrategy instance for the task's team
         """
-        from app.models.kind import Kind
-        from app.models.task import TaskResource
         from app.schemas.kind import Task, Team
 
         try:
             # Get the task
-            task = (
-                db.query(TaskResource)
-                .filter(
-                    TaskResource.id == task_id,
-                    TaskResource.kind == "Task",
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
-            )
+            task = task_stores.task_store.get_regular_active_task(db, task_id=task_id)
             if not task:
                 return DefaultCollaborationStrategy()
 
@@ -198,16 +423,7 @@ class CollaborationStrategyFactory:
 
             # Get the team
             team_ref = task_crd.spec.teamRef
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Team",
-                    Kind.name == team_ref.name,
-                    Kind.namespace == team_ref.namespace,
-                    Kind.is_active.is_(True),
-                )
-                .first()
-            )
+            team = _get_team_from_task_ref(db, team_ref)
             if not team:
                 return DefaultCollaborationStrategy()
 

@@ -12,6 +12,10 @@ const isTurbopack = process.env.TURBOPACK === '1'
 const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname, '..'),
+  turbopack: {
+    root: path.join(__dirname, '..'),
+  },
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
   allowedDevOrigins: ['localhost:3000', '10.37.254.194'],
@@ -29,6 +33,7 @@ const nextConfig = {
     '@codemirror/theme-one-dark',
     '@replit/codemirror-vim',
     'katex',
+    '@wegent/chat-core',
   ],
   // Webpack configuration for production builds
   // Note: In development mode with Turbopack, this is not used
@@ -46,28 +51,10 @@ const nextConfig = {
             'remark-gfm': path.resolve(__dirname, 'src/lib/remark-gfm-safe.ts'),
           }
 
-          // Handle chunk loading issues
+          // Keep Next.js route-aware chunk splitting. A single global vendors
+          // chunk makes every route download dependencies it does not use.
           config.optimization = {
             ...config.optimization,
-            // Prevent over-aggressive code splitting that can cause chunk loading errors
-            splitChunks: {
-              ...config.optimization?.splitChunks,
-              chunks: 'all',
-              cacheGroups: {
-                vendor: {
-                  test: /[\\/]node_modules[\\/]/,
-                  name: 'vendors',
-                  chunks: 'all',
-                  priority: 10,
-                },
-                common: {
-                  name: 'common',
-                  minChunks: 2,
-                  chunks: 'all',
-                  priority: 5,
-                },
-              },
-            },
             // Enable module concatenation to reduce bundle size
             concatenateModules: true,
           }
@@ -159,6 +146,16 @@ const nextConfig = {
       {
         // Public assets (fonts, images) - long-term cache
         source: '/fonts/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+      {
+        // Versioned Flyfish workers, WASM, fonts and vendor assets
+        source: '/file-viewer/:path*',
         headers: [
           {
             key: 'Cache-Control',

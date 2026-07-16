@@ -397,7 +397,8 @@ class RunningTaskTracker:
             subtask_id = int(subtask_id_str)
         except ValueError:
             logger.error(
-                f"[RunningTaskTracker] Invalid task_id or subtask_id: {task_id_str}, {subtask_id_str}"
+                f"[RunningTaskTracker] Invalid task_id or subtask_id: "
+                f"{task_id_str}, {subtask_id_str}"
             )
             return
 

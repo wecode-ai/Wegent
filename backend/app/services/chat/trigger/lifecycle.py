@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -13,21 +14,27 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+import app.stores.tasks as task_stores
+from app.db.session import SessionLocal
 from app.models.kind import Kind
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
+    build_user_subtask_result,
     check_task_status,
-    create_assistant_subtask,
     create_new_task,
     create_user_subtask,
     get_bot_ids_from_team,
     get_task_with_access_check,
 )
+from app.services.chat.task_device_resolution import ensure_task_device_id
 from app.services.readers.kinds import KindType, kindReader
+from app.services.task_fork_history import task_fork_history_resolver
+from app.services.task_status import mark_task_pending_payload
+from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +60,7 @@ def _merge_blocks(
 ) -> list[dict[str, Any]]:
     """Merge persisted and in-memory blocks while preserving first-seen order."""
     merged: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    block_indexes: dict[str, int] = {}
 
     for candidate in (existing_blocks, new_blocks):
         if not isinstance(candidate, list):
@@ -62,13 +69,44 @@ def _merge_blocks(
             if not isinstance(block, dict):
                 continue
             block_id = str(block.get("id") or "")
-            if block_id and block_id in seen_ids:
+            if block_id and block_id in block_indexes:
+                existing = merged[block_indexes[block_id]]
+                merged[block_indexes[block_id]] = {
+                    **existing,
+                    **{key: value for key, value in block.items() if value is not None},
+                }
                 continue
             if block_id:
-                seen_ids.add(block_id)
+                block_indexes[block_id] = len(merged)
             merged.append(block)
 
     return merged
+
+
+def _is_blank_text_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def _extract_text_value_from_blocks(blocks: Any) -> str:
+    if not isinstance(blocks, list):
+        return ""
+
+    text_parts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") not in {"text", "output_text"}:
+            continue
+        content = block.get("content")
+        if not isinstance(content, str) or not content.strip():
+            content = block.get("text")
+        if isinstance(content, str) and content.strip():
+            text_parts.append(content.strip())
+    return "\n".join(text_parts)
 
 
 def _load_team_crd(team: Kind) -> Optional[Team]:
@@ -77,6 +115,38 @@ def _load_team_crd(team: Kind) -> Optional[Team]:
     if team_json is None:
         return None
     return Team.model_validate(team_json)
+
+
+def _build_pipeline_handoff_message(
+    db: Session,
+    *,
+    task_id: int,
+    existing_subtasks: List[Subtask],
+    context_passing: Optional[str],
+) -> str:
+    """Build the user-visible handoff message for a pipeline stage."""
+    if context_passing is None:
+        return ""
+
+    previous_stage = next(
+        (
+            subtask
+            for subtask in existing_subtasks
+            if subtask.role == SubtaskRole.ASSISTANT
+        ),
+        None,
+    )
+    if previous_stage is None:
+        return ""
+
+    from app.services.adapters.pipeline_context import build_pipeline_context_prompt
+
+    return build_pipeline_context_prompt(
+        db,
+        task_id=task_id,
+        current_subtask=previous_stage,
+        context_passing=context_passing,
+    )
 
 
 def prepare_execution_session(
@@ -94,10 +164,9 @@ def prepare_execution_session(
     should_trigger_ai: bool = True,
     bot_ids_override: Optional[List[int]] = None,
     video_config: Optional[Dict[str, Any]] = None,
+    prepared_task: Optional[TaskResource] = None,
 ) -> ExecutionSessionSetup:
     """Create or reuse task/session state before building an execution request."""
-    from app.services.task_status import mark_task_pending
-
     resolved_task_params = task_params
     if resolved_task_params is None:
         if model_info is None:
@@ -162,72 +231,130 @@ def prepare_execution_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
+        if ensure_task_device_id(task, device_id=resolved_task_params.device_id):
+            task_stores.task_store.update_json(db, task=task, payload=task.json)
         if should_trigger_ai:
-            mark_task_pending(task)
-        if resolved_task_params.model_id:
-            from sqlalchemy.orm.attributes import flag_modified
-
+            task_stores.task_store.update_json(
+                db,
+                task=task,
+                payload=mark_task_pending_payload(task.json),
+            )
+        if (
+            resolved_task_params.model_id
+            or resolved_task_params.model_options
+            or resolved_task_params.auto_delete_executor is not None
+        ):
             from app.schemas.kind import Task
 
             task_crd = Task.model_validate(task.json)
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
-            task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
+            if resolved_task_params.model_id:
+                task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
             if resolved_task_params.force_override_bot_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
             if resolved_task_params.force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (
                     resolved_task_params.force_override_bot_model_type
                 )
-            task.json = task_crd.model_dump(mode="json")
-            flag_modified(task, "json")
+            if resolved_task_params.model_options:
+                task_crd.metadata.labels["modelOptions"] = json.dumps(
+                    resolved_task_params.model_options
+                )
+            if resolved_task_params.auto_delete_executor is not None:
+                task_crd.metadata.labels["autoDeleteExecutor"] = (
+                    resolved_task_params.auto_delete_executor
+                )
+            task_stores.task_store.update_json(
+                db, task=task, payload=task_crd.model_dump(mode="json")
+            )
             logger.info(
-                "[prepare_execution_session] Updated model override metadata for existing task %s to modelId=%s",
+                "[prepare_execution_session] Updated metadata for existing task %s to modelId=%s autoDeleteExecutor=%s",
                 task.id,
                 resolved_task_params.model_id,
+                resolved_task_params.auto_delete_executor,
             )
+
+    if not task and prepared_task is not None:
+        task = prepared_task
+        subtask_user_id = user.id
 
     if not task:
         task = create_new_task(db, user, team, resolved_task_params)
         subtask_user_id = user.id
 
-    existing_subtasks = (
-        db.query(Subtask)
-        .filter(Subtask.task_id == task.id, Subtask.user_id == subtask_user_id)
-        .order_by(Subtask.message_id.desc())
-        .all()
-    )
-
-    next_message_id = 1
-    parent_id = 0
-    if existing_subtasks:
-        next_message_id = existing_subtasks[0].message_id + 1
-        parent_id = existing_subtasks[0].message_id
-
-    user_subtask = create_user_subtask(
-        db=db,
-        subtask_user_id=subtask_user_id,
-        sender_user_id=user.id,
+    existing_subtasks = [
+        item.subtask
+        for item in task_fork_history_resolver.resolve_for_task(
+            db,
+            task_id=task.id,
+            user_id=subtask_user_id,
+            current_task=task,
+        )
+    ]
+    next_message_id = task_fork_history_resolver.get_next_message_id(
+        db,
         task_id=task.id,
-        team_id=team.id,
-        bot_ids=bot_ids,
-        message=input_text,
-        next_message_id=next_message_id,
-        parent_id=parent_id,
-        video_config=video_config,
+        user_id=subtask_user_id,
+        current_task=task,
     )
+    parent_id = next_message_id - 1 if next_message_id > 1 else 0
+
+    handoff_message = input_text
+    if (
+        resolved_task_params.pipeline_context_passing is not None
+        and not input_text.strip()
+    ):
+        handoff_message = _build_pipeline_handoff_message(
+            db,
+            task_id=task.id,
+            existing_subtasks=existing_subtasks,
+            context_passing=resolved_task_params.pipeline_context_passing,
+        )
+
     assistant_subtask = None
     if should_trigger_ai:
-        assistant_subtask = create_assistant_subtask(
+        user_subtask, assistant_subtask = (
+            task_stores.subtask_store.create_user_and_assistant_subtasks(
+                db,
+                user_id=subtask_user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title="User message",
+                assistant_title="Assistant response",
+                bot_ids=bot_ids,
+                prompt=handoff_message,
+                user_message_id=next_message_id,
+                user_parent_id=parent_id,
+                assistant_message_id=next_message_id + 1,
+                assistant_parent_id=next_message_id,
+                sender_user_id=user.id,
+                result=build_user_subtask_result(
+                    video_config=video_config,
+                    message_source=resolved_task_params.message_source,
+                ),
+            )
+        )
+    else:
+        user_subtask = create_user_subtask(
             db=db,
             subtask_user_id=subtask_user_id,
+            sender_user_id=user.id,
             task_id=task.id,
             team_id=team.id,
             bot_ids=bot_ids,
-            next_message_id=next_message_id + 1,
-            parent_id=next_message_id,
+            message=handoff_message,
+            next_message_id=next_message_id,
+            parent_id=parent_id,
+            video_config=video_config,
+            message_source=resolved_task_params.message_source,
         )
 
     db.commit()
@@ -251,12 +378,9 @@ def prepare_execution_session(
 
 async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
     """Load the stored subtask result so we can preserve existing fields."""
-    from app.db.session import SessionLocal
-    from app.models.subtask import Subtask
-
     db = SessionLocal()
     try:
-        subtask = db.get(Subtask, subtask_id)
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
         if subtask and isinstance(subtask.result, dict):
             return dict(subtask.result)
         return {}
@@ -287,7 +411,6 @@ async def collect_completed_result(
     accumulated_content = await chat_storage.session_manager.get_accumulated_content(
         subtask_id
     )
-    blocks = await chat_storage.session_manager.finalize_and_get_blocks(subtask_id)
     existing_result = await _get_existing_subtask_result(subtask_id)
 
     if result is not None and not isinstance(result, dict):
@@ -298,6 +421,24 @@ async def collect_completed_result(
         )
 
     runtime_result = dict(result) if isinstance(result, dict) else {}
+    termination_reason = runtime_result.get("termination_reason")
+    if not isinstance(termination_reason, str) or not termination_reason:
+        existing_termination_reason = existing_result.get("termination_reason")
+        termination_reason = (
+            existing_termination_reason
+            if isinstance(existing_termination_reason, str)
+            and existing_termination_reason
+            else None
+        )
+    if termination_reason:
+        runtime_result["termination_reason"] = termination_reason
+    else:
+        runtime_result.pop("termination_reason", None)
+    blocks = await chat_storage.session_manager.finalize_and_get_blocks(
+        subtask_id,
+        termination_reason=termination_reason,
+        terminal_status=normalized_status,
+    )
 
     has_payload = bool(
         runtime_result
@@ -326,11 +467,6 @@ async def collect_completed_result(
         ):
             final_result[key] = value
 
-    if final_result.get("value") is None and (
-        normalized_status == "COMPLETED" or accumulated_content
-    ):
-        final_result["value"] = accumulated_content
-
     if blocks:
         merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
         if merged_blocks:
@@ -341,6 +477,16 @@ async def collect_completed_result(
             normalized_status.lower(),
             subtask_id,
         )
+
+    if _is_blank_text_value(final_result.get("value")) and (
+        normalized_status == "COMPLETED" or accumulated_content.strip()
+    ):
+        text_value = (
+            accumulated_content
+            if accumulated_content.strip()
+            else _extract_text_value_from_blocks(final_result.get("blocks"))
+        )
+        final_result["value"] = text_value
 
     if normalized_status == "FAILED" and error_code:
         final_result["error_type"] = error_code
@@ -370,14 +516,20 @@ async def persist_completed_result(
 
     normalized_status = status.upper()
 
+    update_kwargs = {
+        "result": result,
+        "error": error,
+        "executor_name": executor_name,
+        "executor_namespace": executor_namespace,
+    }
+
     await chat_db.db_handler.update_subtask_status(
         subtask_id,
         normalized_status,
-        result=result,
-        error=error,
-        executor_name=executor_name,
-        executor_namespace=executor_namespace,
+        **update_kwargs,
     )
+    if normalized_status == "COMPLETED":
+        await _persist_standalone_workspace_path(task_id, result)
     try:
         await chat_storage.session_manager.cleanup_streaming_state(
             subtask_id,
@@ -390,6 +542,40 @@ async def persist_completed_result(
             exc,
             exc_info=True,
         )
+
+
+async def _persist_standalone_workspace_path(
+    task_id: int,
+    result: Optional[Dict[str, Any]],
+) -> None:
+    """Persist standalone chat workspace path returned by local executors."""
+
+    from app.db.session import SessionLocal
+    from app.services.chat.standalone_workspace import (
+        extract_workspace_path,
+        persist_standalone_workspace_path,
+    )
+
+    workspace_path = extract_workspace_path(result)
+    if not workspace_path:
+        return
+
+    db = SessionLocal()
+    try:
+        persist_standalone_workspace_path(
+            db,
+            task_id=task_id,
+            workspace_path=workspace_path,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[CompletedResult] Failed to persist standalone workspace path for task %s: %s",
+            task_id,
+            exc,
+            exc_info=True,
+        )
+    finally:
+        db.close()
 
 
 __all__ = [

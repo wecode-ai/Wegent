@@ -10,6 +10,7 @@ This module consolidates the logic from the former ChatConfigBuilder,
 providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
+import json
 import logging
 from typing import Any, List, Optional, Union
 
@@ -17,25 +18,61 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.models.project import Project
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
-from app.schemas.kind import Team
+from app.schemas.kind import Team, TeamMember
+from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
     list_mcp_providers,
 )
 from app.services.readers import KindType, kindReader
-from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
+from app.services.skill_binding_service import (
+    SkillBindingContext,
+    skill_binding_service,
+)
+from app.services.skill_resolution import (
+    build_skill_ref_meta,
+    find_skill_by_name,
+    find_skill_by_ref,
+)
 from app.services.user_mcp_service import user_mcp_service
+from app.stores.tasks import task_store
 from shared.models import ExecutionRequest
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
+WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
+SYSTEM_RESOURCE_USER_ID = 0
+
+
+def _first_present_project_id(*values: Any) -> Optional[int]:
+    """Return the first project id that is explicitly present, preserving 0."""
+
+    for value in values:
+        if value is None:
+            continue
+        return value
+    return None
+
+
+def _is_wework_standalone_chat_project(
+    task: TaskResource,
+    project_id: Optional[int],
+) -> bool:
+    """Return whether the task should use a standalone Wework chat workspace."""
+
+    return (
+        getattr(task, "client_origin", None) == CLIENT_ORIGIN_WEWORK and project_id == 0
+    )
 
 
 class TaskRequestBuilder:
@@ -103,7 +140,9 @@ class TaskRequestBuilder:
         # Model override (from ChatConfigBuilder)
         override_model_name: Optional[str] = None,
         force_override: bool = False,
+        runtime_model_config: Optional[dict[str, Any]] = None,
         team_member_prompt: Optional[str] = None,
+        web_runtime_guidance: bool = False,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -131,7 +170,9 @@ class TaskRequestBuilder:
             trace_context: OpenTelemetry trace context
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
+            runtime_model_config: Optional already-resolved runtime model config
             team_member_prompt: Optional additional prompt from team member
+            web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
 
         Returns:
             ExecutionRequest ready for dispatch
@@ -164,6 +205,8 @@ class TaskRequestBuilder:
             git_repo_id = repo.get("gitRepoId")
             branch_name = repo.get("branchName") or workspace.get("branch")
 
+        project_workspace = workspace.get("project") or {}
+
         # Build user info with git_domain to match correct git account
         user_info = self._build_user_info(user, git_domain)
 
@@ -176,6 +219,9 @@ class TaskRequestBuilder:
             force_override=force_override,
             task_id=task.id,
             team_id=team.id,
+            team_name=team.name,
+            team_namespace=team.namespace,
+            runtime_model_config=runtime_model_config,
         )
 
         # Get base system prompt from Ghost
@@ -190,7 +236,7 @@ class TaskRequestBuilder:
         # Convert preload_skills to the format expected by _get_bot_skills
         effective_preload_skills = list(preload_skills or [])
 
-        # When clarification mode is enabled, auto-inject the interactive-form-question skill.
+        # When clarification mode is enabled, auto-inject the interactive skill.
         # This replaces the old prompt-injection approach with the MCP skill approach,
         # allowing the AI to use the interactive_form_question tool for interactive clarification forms.
         if enable_clarification:
@@ -210,6 +256,17 @@ class TaskRequestBuilder:
         extra_available_skills = self._inject_subscription_manager_skill(
             is_subscription=is_subscription,
         )
+        binding_context = self._build_skill_binding_context(task=task, team=team)
+        user_default_skill_refs = skill_binding_service.list_user_default_skill_refs(
+            self.db,
+            user.id,
+            context=binding_context,
+        )
+        for skill_ref in user_default_skill_refs:
+            if skill_ref.get("force_preload"):
+                effective_preload_skills.append(skill_ref)
+            else:
+                extra_available_skills.append(skill_ref)
 
         user_preload_skills = None
         if effective_preload_skills:
@@ -248,6 +305,7 @@ class TaskRequestBuilder:
             user_id=user.id,
             override_model_name=override_model_name,
             force_override=force_override,
+            runtime_model_config=runtime_model_config,
         )
 
         # Get collaboration model
@@ -261,6 +319,7 @@ class TaskRequestBuilder:
                 if name not in existing_skills:
                     bot_config[0].setdefault("skills", []).append(name)
                     existing_skills.add(name)
+            self._sync_skill_refs_to_bot_configs(bot_config, skill_refs)
 
         # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
         if bot_config:
@@ -307,7 +366,34 @@ class TaskRequestBuilder:
                     current_bot_id,
                 )
 
-        return ExecutionRequest(
+        if web_runtime_guidance:
+            project_workspace = workspace.get("project") or {}
+            task_device_id = self._extract_task_device_id(
+                task
+            ) or project_workspace.get("device_id")
+            device_type = self._get_device_type(user.id, task_device_id)
+            shell_type = bot_config[0].get("shell_type", "") if bot_config else ""
+            system_prompt = self._append_web_runtime_guidance(
+                system_prompt,
+                shell_type=shell_type,
+                device_type=device_type,
+                has_device_id=bool(task_device_id),
+                execution_target_type=project_workspace.get("execution_target_type"),
+                workspace_source=project_workspace.get("workspace_source"),
+                workspace_path=project_workspace.get("project_workspace_path"),
+            )
+
+        request_project_id = _first_present_project_id(
+            project_workspace.get("project_id"), task.project_id
+        )
+        resolved_bot_name = getattr(bot, "name", "") or (
+            bot_config[0].get("name", "") if bot_config else ""
+        )
+        resolved_bot_namespace = getattr(bot, "namespace", None) or "default"
+        fork_runtime = self._extract_task_fork_runtime(task)
+        inherited_sessions = self._extract_inherited_sessions(fork_runtime)
+
+        execution_request = ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
             team_id=team.id,
@@ -317,6 +403,8 @@ class TaskRequestBuilder:
             user_id=user.id,
             user_name=user.user_name,
             bot=bot_config,
+            bot_name=resolved_bot_name,
+            bot_namespace=resolved_bot_namespace,
             model_config=model_config,
             system_prompt=system_prompt,
             prompt=message,
@@ -324,6 +412,7 @@ class TaskRequestBuilder:
             enable_web_search=enable_web_search,
             enable_clarification=enable_clarification,
             enable_deep_thinking=enable_deep_thinking,
+            enable_tool_output_guard=self._is_tool_output_guard_enabled(user),
             skill_names=[s["name"] for s in resolved_skills],
             skill_configs=resolved_skills,
             preload_skills=resolved_preload_skills,
@@ -336,6 +425,13 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
+            project_id=request_project_id,
+            standalone_chat_workspace=_is_wework_standalone_chat_project(
+                task, request_project_id
+            ),
+            workspace_source=project_workspace.get("workspace_source"),
+            project_workspace_path=project_workspace.get("project_workspace_path"),
+            execution_target_type=project_workspace.get("execution_target_type"),
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
             git_domain=git_domain,
@@ -347,8 +443,11 @@ class TaskRequestBuilder:
             is_group_chat=is_group_chat,
             history_limit=history_limit,
             new_session=new_session,
+            fork_runtime=fork_runtime,
+            inherited_sessions=inherited_sessions,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
+            task_mode=self._derive_task_mode(task),
             auth_token=auth_token,
             skill_identity_token=skill_identity_token,
             backend_url=settings.BACKEND_INTERNAL_URL,
@@ -357,8 +456,41 @@ class TaskRequestBuilder:
             system_mcp_config=system_mcp_config,
             task_data=self._build_request_task_data(user),
             trace_context=trace_context,
-            executor_name=subtask.executor_name,
+            executor_name=getattr(subtask, "executor_name", None),
+            executor_namespace=getattr(subtask, "executor_namespace", None),
         )
+        logger.info(
+            "[TaskRequestBuilder] Execution request attachment diagnostics: "
+            "task_id=%s, subtask_id=%s, shell_type=%s, attachments=%d, "
+            "attachment_ids=%s, has_auth_token=%s, backend_url_present=%s",
+            execution_request.task_id,
+            execution_request.subtask_id,
+            bot_config[0].get("shell_type", "") if bot_config else "",
+            len(execution_request.attachments),
+            [attachment.get("id") for attachment in execution_request.attachments],
+            bool(execution_request.auth_token),
+            bool(execution_request.backend_url),
+        )
+        return execution_request
+
+    @staticmethod
+    def _extract_task_fork_runtime(task: TaskResource) -> dict[str, Any] | None:
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        fork = spec.get("fork") if isinstance(spec.get("fork"), dict) else {}
+        runtime = fork.get("runtime")
+        return runtime if isinstance(runtime, dict) else None
+
+    @staticmethod
+    def _extract_inherited_sessions(
+        fork_runtime: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if not fork_runtime:
+            return []
+        sessions = fork_runtime.get("sessions")
+        if not isinstance(sessions, list):
+            return []
+        return [session for session in sessions if isinstance(session, dict)]
 
     def resolve_request_preload_skills(
         self,
@@ -455,6 +587,7 @@ class TaskRequestBuilder:
             if skill_name not in existing_bot_skills:
                 bot_config.setdefault("skills", []).append(skill_name)
                 existing_bot_skills.add(skill_name)
+        self._sync_skill_refs_to_bot_configs(request.bot, skill_refs)
 
         if bot_config.get("shell_type") == "ClaudeCode":
             new_skill_configs = [
@@ -472,6 +605,153 @@ class TaskRequestBuilder:
         )
 
         return request
+
+    def _build_skill_binding_context(
+        self,
+        *,
+        task: TaskResource,
+        team: Kind,
+    ) -> SkillBindingContext:
+        """Build runtime context for filtering user automatic Skill bindings."""
+        return SkillBindingContext(
+            mode=self._derive_task_mode(task),
+            agent_id=team.id,
+            project_id=getattr(task, "project_id", None),
+        )
+
+    def _derive_task_mode(self, task: TaskResource) -> str:
+        payload = task.json if isinstance(task.json, dict) else {}
+        metadata = payload.get("metadata", {})
+        labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+        return str(labels.get("taskType") or labels.get("type") or "chat")
+
+    @staticmethod
+    def _append_web_runtime_guidance(
+        system_prompt: str,
+        *,
+        shell_type: str | None,
+        device_type: str | None,
+        has_device_id: bool,
+        execution_target_type: str | None,
+        workspace_source: str | None,
+        workspace_path: str | None,
+    ) -> str:
+        """Append Wegent web UI runtime guidance to the system prompt."""
+        if WEB_RUNTIME_GUIDANCE_MARKER in (system_prompt or ""):
+            return system_prompt
+
+        environment = TaskRequestBuilder._describe_web_runtime_environment(
+            shell_type=shell_type,
+            device_type=device_type,
+            has_device_id=has_device_id,
+            execution_target_type=execution_target_type,
+        )
+        workspace_details = []
+        if workspace_source:
+            workspace_details.append(f"- workspace source: {workspace_source}")
+        if workspace_path:
+            workspace_details.append(f"- workspace path: {workspace_path}")
+
+        guidance_lines = [
+            WEB_RUNTIME_GUIDANCE_MARKER,
+            "This request was started from the Wegent web UI.",
+            "Runtime environment:",
+            f"- You are running in: {environment}.",
+            *workspace_details,
+            "",
+            "User-facing file access:",
+            "- Do not assume the user can access local paths, container paths, "
+            "terminal sessions, or files you create directly.",
+            "- If you create, edit, or download files for the user, tell the user "
+            'to click "View the task files" / "查看任务文件" in the Wegent task '
+            "page to browse, preview, or download them.",
+            "- Keep paths in your answer as useful context when relevant, but do "
+            "not present a runtime path as the only way for the user to get a file.",
+            "",
+            "Interaction rules:",
+            "- Match Wegent's web interaction model instead of giving generic "
+            "sandbox or local-terminal instructions.",
+            "- If the task runs on a selected device, remember that generated "
+            "files may live on that device or be exposed through Wegent task files.",
+            WEB_RUNTIME_GUIDANCE_CLOSE,
+        ]
+        guidance = "\n".join(guidance_lines)
+        base_prompt = (system_prompt or "").rstrip()
+        if not base_prompt:
+            return guidance
+        return f"{base_prompt}\n\n{guidance}"
+
+    @staticmethod
+    def _describe_web_runtime_environment(
+        *,
+        shell_type: str | None,
+        device_type: str | None,
+        has_device_id: bool,
+        execution_target_type: str | None,
+    ) -> str:
+        """Build a concise execution environment label for web guidance."""
+        if has_device_id:
+            if device_type in {"local", "app"}:
+                return "local device selected in Wegent"
+            if device_type == "cloud":
+                return "cloud device or remote sandbox selected in Wegent"
+            return "selected Wegent device"
+
+        if execution_target_type == "cloud":
+            return "Wegent-managed cloud sandbox"
+        if execution_target_type == "local":
+            return "local device configured for this workspace project"
+
+        if shell_type in {"ClaudeCode", "Agno", "Codex"}:
+            return "Wegent-managed disposable execution sandbox"
+        if shell_type == "Dify":
+            return "external service configured by the selected bot"
+        if shell_type == "Chat":
+            return "Wegent web chat runtime"
+
+        return "Wegent-managed execution runtime"
+
+    @staticmethod
+    def _extract_task_device_id(task: TaskResource) -> str | None:
+        """Extract the selected device ID from task CRD JSON if present."""
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        if not isinstance(spec, dict):
+            return None
+        device_id = spec.get("device_id")
+        if isinstance(device_id, str) and device_id.strip():
+            return device_id.strip()
+        return None
+
+    def _get_device_type(self, user_id: int, device_id: str | None) -> str | None:
+        """Resolve a Device CRD type without making request building depend on it."""
+        if not device_id:
+            return None
+
+        try:
+            device = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.name == device_id,
+                    Kind.is_active,
+                )
+                .first()
+            )
+        except Exception as e:
+            logger.warning(
+                "[TaskRequestBuilder] Failed to resolve device type for %s: %s",
+                device_id,
+                e,
+            )
+            return None
+
+        device_json = device.json if device and isinstance(device.json, dict) else {}
+        spec = device_json.get("spec", {}) if isinstance(device_json, dict) else {}
+        device_type = spec.get("deviceType") if isinstance(spec, dict) else None
+        return device_type if isinstance(device_type, str) else None
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
@@ -570,6 +850,9 @@ class TaskRequestBuilder:
         force_override: bool,
         task_id: int,
         team_id: int,
+        team_name: str = "",
+        team_namespace: str | None = None,
+        runtime_model_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
 
@@ -588,10 +871,16 @@ class TaskRequestBuilder:
             force_override: Whether override takes priority
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
+            team_name: Team (agent) name for identity header placeholder replacement
+            team_namespace: Team (agent) namespace for identity header replacement
+            runtime_model_config: Optional already-resolved runtime model config
 
         Returns:
             Model configuration dictionary
         """
+        if runtime_model_config:
+            return dict(runtime_model_config)
+
         from app.services.chat.config.model_resolver import (
             _process_model_config_placeholders,
             get_model_config_for_bot,
@@ -616,6 +905,8 @@ class TaskRequestBuilder:
         task_data = ExecutionRequest(
             task_id=task_id,
             team_id=team_id,
+            team_name=team_name,
+            team_namespace=team_namespace,
             user=user_info,
         )
 
@@ -638,6 +929,8 @@ class TaskRequestBuilder:
                 user_name=user_name,
                 task_id=task_id,
                 team_id=team_id,
+                team_name=team_name,
+                team_namespace=team_namespace,
             )
             if secondary_model_config:
                 model_config["secondary_model_config"] = secondary_model_config
@@ -651,6 +944,8 @@ class TaskRequestBuilder:
         user_name: str,
         task_id: int,
         team_id: int,
+        team_name: str = "",
+        team_namespace: str | None = None,
     ) -> dict[str, Any] | None:
         """Get secondary model configuration from bot's secondaryModelRef.
 
@@ -663,6 +958,8 @@ class TaskRequestBuilder:
             user_name: User name for placeholder replacement
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
+            team_name: Team (agent) name for identity header placeholder replacement
+            team_namespace: Team (agent) namespace for identity header replacement
 
         Returns:
             Secondary model configuration dictionary or None if not configured
@@ -707,6 +1004,8 @@ class TaskRequestBuilder:
         task_data = ExecutionRequest(
             task_id=task_id,
             team_id=team_id,
+            team_name=team_name,
+            team_namespace=team_namespace,
             user=user_info,
         )
 
@@ -753,38 +1052,43 @@ class TaskRequestBuilder:
         """
         from app.services.chat.config.model_resolver import get_bot_system_prompt
 
-        # Get team member prompt from matching member if not provided
-        # In pipeline mode, each bot has its own member with a specific prompt
-        if team_member_prompt is None and team_crd.spec.members:
-            # Find the member that matches the current bot
-            for member in team_crd.spec.members:
-                if (
-                    member.botRef.name == bot.name
-                    and member.botRef.namespace == bot.namespace
-                ):
-                    team_member_prompt = member.prompt
-                    logger.debug(
-                        "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
-                        bot.name,
-                        team_member_prompt[:50] if team_member_prompt else None,
-                    )
-                    break
-            # Fallback to first member if no match found (for backward compatibility)
-            if team_member_prompt is None:
-                team_member_prompt = team_crd.spec.members[0].prompt
+        if team_member_prompt is None:
+            team_member = self._find_team_member_for_bot(team_crd, bot)
+            if team_member:
+                team_member_prompt = team_member.prompt
                 logger.debug(
-                    "[TaskRequestBuilder] No matching member found for bot=%s, "
-                    "using first member prompt",
+                    "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
                     bot.name,
+                    team_member_prompt[:50] if team_member_prompt else None,
+                )
+            else:
+                logger.warning(
+                    "[TaskRequestBuilder] No team member matched bot=%s in team=%s",
+                    bot.name,
+                    team.name,
                 )
 
-        # Get base system prompt (no enhancements applied here)
-        return get_bot_system_prompt(
-            self.db,
-            bot,
-            team.user_id,
-            team_member_prompt,
+        return get_bot_system_prompt(self.db, bot, team.user_id, team_member_prompt)
+
+    @staticmethod
+    def _team_member_matches_bot(member: TeamMember, bot: Kind) -> bool:
+        return (
+            member.botRef.name == bot.name and member.botRef.namespace == bot.namespace
         )
+
+    @classmethod
+    def _find_team_member_for_bot(cls, team_crd: Team, bot: Kind) -> TeamMember | None:
+        for member in team_crd.spec.members or []:
+            if cls._team_member_matches_bot(member, bot):
+                return member
+        return None
+
+    def _build_runtime_system_prompt(
+        self, bot: Kind, user_id: int, team_member_prompt: str | None
+    ) -> str:
+        from app.services.chat.config.model_resolver import get_bot_system_prompt
+
+        return get_bot_system_prompt(self.db, bot, user_id, team_member_prompt)
 
     # =========================================================================
     # Shell Type Resolution (from ChatConfigBuilder)
@@ -1012,13 +1316,13 @@ class TaskRequestBuilder:
                     # Build skill_refs entry (prefer Ghost stored refs for precision)
                     ghost_skill_ref = ghost_skill_refs.get(skill_name)
                     if ghost_skill_ref:
-                        skill_refs[skill_name] = ghost_skill_ref.model_dump()
+                        ref_meta = ghost_skill_ref.model_dump()
+                        ref_meta["content_hash"] = ref_meta.get("content_hash") or (
+                            build_skill_ref_meta(skill).get("content_hash")
+                        )
+                        skill_refs[skill_name] = ref_meta
                     else:
-                        skill_refs[skill_name] = {
-                            "skill_id": getattr(skill, "id", None),
-                            "namespace": getattr(skill, "namespace", "default"),
-                            "is_public": getattr(skill, "user_id", 1) == 0,
-                        }
+                        skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     # Add to preload and user_selected if configured in Ghost
                     # All preloaded skills are treated as user-selected so the model
@@ -1029,7 +1333,11 @@ class TaskRequestBuilder:
                         ghost_preload_ref = ghost_preload_skill_refs.get(skill_name)
                         if ghost_preload_ref:
                             # Preload explicit reference overrides same-name skill ref
-                            skill_refs[skill_name] = ghost_preload_ref.model_dump()
+                            ref_meta = ghost_preload_ref.model_dump()
+                            ref_meta["content_hash"] = ref_meta.get("content_hash") or (
+                                build_skill_ref_meta(skill).get("content_hash")
+                            )
+                            skill_refs[skill_name] = ref_meta
                         logger.info(
                             "[_get_bot_skills] Skill '%s' added to preload and user_selected (from Ghost)",
                             skill_name,
@@ -1076,16 +1384,9 @@ class TaskRequestBuilder:
                         team_namespace=team_namespace,
                     )
                     if resolved_selected_skill:
-                        skill_refs[skill_name] = {
-                            "skill_id": getattr(resolved_selected_skill, "id", None),
-                            "namespace": getattr(
-                                resolved_selected_skill,
-                                "namespace",
-                                skill_namespace,
-                            ),
-                            "is_public": getattr(resolved_selected_skill, "user_id", 1)
-                            == 0,
-                        }
+                        skill_refs[skill_name] = build_skill_ref_meta(
+                            resolved_selected_skill
+                        )
                     logger.info(
                         "[_get_bot_skills] Skill '%s' added to preload and user_selected (user selected, already in Ghost)",
                         skill_name,
@@ -1108,11 +1409,7 @@ class TaskRequestBuilder:
                     user_selected_skills.append(skill_name)
 
                     # Build skill_refs entry for user-selected skill
-                    skill_refs[skill_name] = {
-                        "skill_id": getattr(skill, "id", None),
-                        "namespace": getattr(skill, "namespace", skill_namespace),
-                        "is_public": getattr(skill, "user_id", 1) == 0,
-                    }
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
 
                     logger.info(
                         "[_get_bot_skills] Added user-selected skill '%s' to skills, preload, and user_selected",
@@ -1161,11 +1458,7 @@ class TaskRequestBuilder:
                     skill_data = self._build_skill_data(skill, user=user)
                     skills.append(skill_data)
                     existing_skill_names.add(skill_name)
-                    skill_refs[skill_name] = {
-                        "skill_id": getattr(skill, "id", None),
-                        "namespace": getattr(skill, "namespace", skill_namespace),
-                        "is_public": getattr(skill, "user_id", 1) == 0,
-                    }
+                    skill_refs[skill_name] = build_skill_ref_meta(skill)
                     logger.info(
                         "[_get_bot_skills] Added available skill '%s' (not preloaded)",
                         skill_name,
@@ -1259,6 +1552,14 @@ class TaskRequestBuilder:
             return None
 
         return {"user_mcps": user_mcps}
+
+    @staticmethod
+    def _is_tool_output_guard_enabled(user: User | None) -> bool:
+        """Return whether source-level tool output truncation is enabled."""
+        # The frontend toggle has been removed. Persisted user preferences are
+        # intentionally ignored so tool-output guarding behaves consistently for
+        # all users unless chat_shell disables it via deployment kill switch.
+        return True
 
     def _build_skill_data(self, skill: Kind, *, user: User | None = None) -> dict:
         """Build skill data dictionary from a Skill Kind object.
@@ -1383,6 +1684,7 @@ Response template:
         user_id: int,
         override_model_name: str | None = None,
         force_override: bool = False,
+        runtime_model_config: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Build bot configuration list.
 
@@ -1393,6 +1695,7 @@ Response template:
             user_id: User ID for model resolution
             override_model_name: Optional model name override from task
             force_override: Whether override takes priority
+            runtime_model_config: Optional already-resolved runtime model config
 
         Returns:
             List of bot configuration dictionaries
@@ -1402,24 +1705,31 @@ Response template:
         )
 
         members = team_crd.spec.members or []
+        collaboration_model = team_crd.spec.collaborationModel or "solo"
+
+        bot_members: list[tuple[Kind, TeamMember | None]] = []
+        if collaboration_model == "pipeline":
+            bot_members.append(
+                (first_bot, self._find_team_member_for_bot(team_crd, first_bot))
+            )
+        else:
+            for member in members:
+                if self._team_member_matches_bot(member, first_bot):
+                    bot = first_bot
+                else:
+                    bot = kindReader.get_by_name_and_namespace(
+                        self.db,
+                        team.user_id,
+                        KindType.BOT,
+                        member.botRef.namespace,
+                        member.botRef.name,
+                    )
+
+                if bot:
+                    bot_members.append((bot, member))
 
         bot_configs = []
-        for i, member in enumerate(members):
-            # For the first bot, use the already resolved one
-            if i == 0:
-                bot = first_bot
-            else:
-                # Query additional bots
-                bot = kindReader.get_by_name_and_namespace(
-                    self.db,
-                    team.user_id,
-                    KindType.BOT,
-                    member.botRef.namespace,
-                    member.botRef.name,
-                )
-
-            if not bot:
-                continue
+        for bot, member in bot_members:
 
             bot_crd = Bot.model_validate(bot.json)
             bot_spec = bot_crd.spec
@@ -1433,8 +1743,7 @@ Response template:
             shell_type = shell_info["shell_type"]
             base_image = shell_info["base_image"]
 
-            # Get ghost info for system_prompt and skills
-            ghost_system_prompt = ""
+            # Get ghost info for MCP servers and skills.
             ghost_mcp_servers = []
             ghost_skills = []
             ghost_skill_refs = {}
@@ -1449,7 +1758,6 @@ Response template:
                 )
                 if ghost and ghost.json:
                     ghost_crd = Ghost.model_validate(ghost.json)
-                    ghost_system_prompt = ghost_crd.spec.systemPrompt or ""
                     # Convert dict format to list format with name field
                     mcp_servers_dict = ghost_crd.spec.mcpServers or {}
                     ghost_mcp_servers = [
@@ -1463,24 +1771,31 @@ Response template:
                     }
 
             # Resolve agent_config from model binding
-            agent_config = build_agent_config_for_bot(
-                self.db,
-                bot,
-                user_id,
-                override_model_name=override_model_name,
-                force_override=force_override,
-            )
+            if runtime_model_config:
+                agent_config = self._build_runtime_agent_config(runtime_model_config)
+            else:
+                agent_config = build_agent_config_for_bot(
+                    self.db,
+                    bot,
+                    user_id,
+                    override_model_name=override_model_name,
+                    force_override=force_override,
+                )
 
             bot_config = {
                 "id": bot.id,
                 "name": bot.name,
                 "shell_type": shell_type,
                 "agent_config": agent_config,
-                "system_prompt": ghost_system_prompt,
+                "system_prompt": self._build_runtime_system_prompt(
+                    bot,
+                    team.user_id,
+                    member.prompt if member else None,
+                ),
                 "mcp_servers": ghost_mcp_servers,
                 "skills": ghost_skills,
                 "skill_refs": ghost_skill_refs,
-                "role": member.role or "worker",
+                "role": member.role if member and member.role else "worker",
                 "base_image": base_image,
             }
             bot_configs.append(bot_config)
@@ -1503,6 +1818,47 @@ Response template:
             )
 
         return bot_configs
+
+    @staticmethod
+    def _sync_skill_refs_to_bot_configs(
+        bot_configs: list[dict], skill_refs: dict[str, dict]
+    ) -> None:
+        """Fill resolved Skill refs for matching Bot skill names."""
+        for bot_config in bot_configs:
+            bot_skills = {
+                skill_name
+                for skill_name in bot_config.get("skills", [])
+                if isinstance(skill_name, str)
+            }
+            if not bot_skills:
+                continue
+            bot_skill_refs = bot_config.setdefault("skill_refs", {})
+            for skill_name in bot_skills:
+                ref = skill_refs.get(skill_name)
+                if not ref:
+                    continue
+                current_ref = bot_skill_refs.get(skill_name)
+                if not current_ref or TaskRequestBuilder._skill_refs_match(
+                    current_ref, ref
+                ):
+                    bot_skill_refs[skill_name] = ref
+
+    @staticmethod
+    def _skill_refs_match(left: dict, right: dict) -> bool:
+        return left.get("skill_id") == right.get("skill_id") and left.get(
+            "namespace", "default"
+        ) == right.get("namespace", "default")
+
+    @staticmethod
+    def _build_runtime_agent_config(model_config: dict[str, Any]) -> dict[str, Any]:
+        agent_config: dict[str, Any] = {"env": dict(model_config)}
+        protocol = model_config.get("protocol")
+        if protocol:
+            agent_config["protocol"] = protocol
+        api_format = model_config.get("api_format") or model_config.get("apiFormat")
+        if api_format:
+            agent_config["apiFormat"] = api_format
+        return agent_config
 
     # =========================================================================
     # MCP Servers Configuration
@@ -1557,6 +1913,11 @@ Response template:
             )
             return []
 
+    @staticmethod
+    def _is_system_agent_team(team: Kind) -> bool:
+        """Return whether the Team is a system-owned public agent."""
+        return getattr(team, "user_id", None) == SYSTEM_RESOURCE_USER_ID
+
     def _build_mcp_servers(
         self,
         bot: Kind,
@@ -1569,7 +1930,7 @@ Response template:
         """Build MCP servers configuration.
 
         Merges MCP servers from multiple sources:
-        1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
+        1. Environment-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
         3. Auto-injected System MCP (for subscription tasks)
 
@@ -1591,8 +1952,16 @@ Response template:
         Returns:
             List of MCP server configuration dictionaries
         """
-        # Load system-level MCP servers first
-        system_mcp_servers = self._load_system_mcp_servers()
+        # Load environment-level MCP servers first. System-owned public agents
+        # should only use their declared capabilities, not deployment-wide extras.
+        if self._is_system_agent_team(team):
+            system_mcp_servers = []
+            logger.info(
+                "[TaskRequestBuilder] Skipping CHAT_MCP_SERVERS for system agent %s",
+                getattr(team, "name", ""),
+            )
+        else:
+            system_mcp_servers = self._load_system_mcp_servers()
 
         # Auto-inject System MCP for subscription tasks (provides silent_exit tool)
         if is_subscription and auth_token:
@@ -1639,6 +2008,15 @@ Response template:
                                 server_entry["args"] = server_config["args"]
                             if "env" in server_config:
                                 server_entry["env"] = server_config["env"]
+                            for timeout_key in (
+                                "timeout",
+                                "timeoutSeconds",
+                                "timeout_seconds",
+                            ):
+                                if timeout_key in server_config:
+                                    server_entry[timeout_key] = server_config[
+                                        timeout_key
+                                    ]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
@@ -1686,14 +2064,14 @@ Response template:
 
     @staticmethod
     def _inject_clarification_skill(preload_skills: list) -> list:
-        """Inject the interactive-form-question skill when clarification mode is enabled.
+        """Inject the interactive skill when clarification mode is enabled.
 
-        When enable_clarification=True, the interactive-form-question skill is automatically added
+        When enable_clarification=True, the interactive skill is automatically added
         to preload_skills. This replaces the old prompt-injection approach
         (CLARIFICATION_PROMPT appended to system prompt) with the MCP skill approach,
         allowing the AI to use the interactive_form_question tool for interactive clarification forms.
 
-        The interactive-form-question skill provides the interactive_form_question MCP tool which:
+        The interactive skill provides the interactive_form_question MCP tool which:
         1. Displays an interactive form card in the frontend
         2. Returns __silent_exit__ immediately (non-blocking)
         3. Waits for user response as a new conversation message
@@ -1702,10 +2080,9 @@ Response template:
             preload_skills: Current list of preload skills
 
         Returns:
-            Updated preload_skills list with interactive-form-question skill injected (if not already present)
+            Updated preload_skills list with interactive skill injected (if not already present)
         """
-        # Clarification skill name (matches backend/init_data/skills/interactive-form-question/SKILL.md)
-        clarification_skill_name = "interactive-form-question"
+        clarification_skill_name = "interactive"
 
         # Check if already present (avoid duplicates)
         existing_names = {
@@ -1934,11 +2311,7 @@ Response template:
 
                 resolved_skills.append(self._build_skill_data(skill, user=user))
                 existing_skill_names.add(skill_name)
-                skill_refs[skill_name] = {
-                    "skill_id": getattr(skill, "id", None),
-                    "namespace": getattr(skill, "namespace", "default"),
-                    "is_public": getattr(skill, "user_id", 1) == 0,
-                }
+                skill_refs[skill_name] = build_skill_ref_meta(skill)
 
     @staticmethod
     def _extract_skill_mcp_to_list(skill_configs: list) -> list:
@@ -2206,22 +2579,17 @@ Response template:
         try:
             task_crd = TaskCRD.model_validate(task_json)
 
-            if not task_crd.spec.workspaceRef:
+            workspace_ref = task_crd.spec.workspaceRef
+            if not workspace_ref:
+                self._merge_task_execution_workspace(task, workspace_data)
                 return workspace_data
 
-            workspace_ref = task_crd.spec.workspaceRef
-
             # Query the actual Workspace resource to get repository info
-            workspace = (
-                self.db.query(TaskResource)
-                .filter(
-                    TaskResource.user_id == task.user_id,
-                    TaskResource.kind == "Workspace",
-                    TaskResource.name == workspace_ref.name,
-                    TaskResource.namespace == workspace_ref.namespace,
-                    TaskResource.is_active == TaskResource.STATE_ACTIVE,
-                )
-                .first()
+            workspace = task_store.get_workspace_by_ref(
+                self.db,
+                user_id=task.user_id,
+                name=workspace_ref.name,
+                namespace=workspace_ref.namespace,
             )
 
             if workspace and workspace.json:
@@ -2249,7 +2617,202 @@ Response template:
         except Exception as e:
             logger.warning("[TaskRequestBuilder] Failed to build workspace: %s", str(e))
 
+        self._merge_task_execution_workspace(task, workspace_data)
         return workspace_data
+
+    def _merge_task_execution_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge project or standalone chat workspace metadata for execution."""
+
+        self._merge_project_workspace(task, workspace_data)
+        if self._merge_task_spec_execution_workspace(task, workspace_data):
+            return
+        if not workspace_data.get("project"):
+            self._merge_standalone_chat_workspace(task, workspace_data)
+
+    def _merge_task_spec_execution_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> bool:
+        """Merge Task spec.execution.workspace as the highest-priority path."""
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        execution = (
+            spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
+        )
+        workspace = (
+            execution.get("workspace")
+            if isinstance(execution.get("workspace"), dict)
+            else {}
+        )
+        workspace_path = workspace.get("path")
+        workspace_source = workspace.get("source")
+        if not isinstance(workspace_source, str) or not workspace_source.strip():
+            workspace_source = "local_path"
+
+        workspace_source = workspace_source.strip()
+        existing_project = workspace_data.get("project") or {}
+        project_id = _first_present_project_id(
+            existing_project.get("project_id"), task.project_id
+        )
+        device_id = existing_project.get("device_id") or spec.get("device_id")
+
+        if (
+            not isinstance(workspace_path, str) or not workspace_path.strip()
+        ) and workspace_source == "git_worktree":
+            workspace_path = self._derive_git_worktree_workspace_path(
+                task=task,
+                project_workspace=existing_project,
+            )
+
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            return False
+
+        workspace_path = workspace_path.strip()
+        workspace_data["project"] = {
+            "project_id": project_id,
+            "workspace_source": workspace_source,
+            "project_workspace_path": workspace_path,
+            "execution_target_type": existing_project.get("execution_target_type")
+            or "local",
+            "device_id": device_id,
+            "checkout_path": None,
+            "local_path": workspace_path,
+        }
+        return True
+
+    def _derive_git_worktree_workspace_path(
+        self,
+        *,
+        task: TaskResource,
+        project_workspace: dict,
+    ) -> Optional[str]:
+        """Derive the deterministic relative path for a task Git worktree."""
+
+        source_path = (
+            project_workspace.get("checkout_path")
+            or project_workspace.get("local_path")
+            or project_workspace.get("project_workspace_path")
+        )
+        if not isinstance(source_path, str) or not source_path.strip():
+            return None
+
+        from app.services import project_service
+
+        return project_service._build_git_worktree_path(source_path, str(task.id))
+
+    def _merge_project_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge workspace project config into execution workspace metadata."""
+
+        project_id = task.project_id or 0
+        if not project_id:
+            labels = (task.json or {}).get("metadata", {}).get("labels", {})
+            label_project_id = labels.get("projectId")
+            project_id = int(label_project_id) if str(label_project_id).isdigit() else 0
+
+        if not project_id:
+            return
+
+        project = (
+            self.db.query(Project)
+            .filter(
+                Project.id == project_id,
+                Project.user_id == task.user_id,
+                Project.is_active == True,
+            )
+            .first()
+        )
+        if not project or not project.config:
+            return
+
+        try:
+            config = ProjectConfig.model_validate(project.config)
+        except Exception as e:
+            logger.warning(
+                "[TaskRequestBuilder] Invalid project config for project %s: %s",
+                project_id,
+                e,
+            )
+            return
+
+        if not config.is_workspace or not config.execution:
+            return
+
+        git = config.git
+        if git:
+            workspace_data["repository"] = {
+                "gitUrl": git.url,
+                "gitRepo": git.repo,
+                "gitRepoId": git.repoId,
+                "gitDomain": git.domain,
+                "branchName": git.branch,
+            }
+            workspace_data["branch"] = git.branch
+
+        workspace = config.workspace
+        if workspace:
+            if workspace.source == "git" and workspace.checkoutPath:
+                project_workspace_path = f"projects/{workspace.checkoutPath}"
+            elif workspace.source == "device_path":
+                project_workspace_path = workspace.devicePath
+            else:
+                project_workspace_path = workspace.localPath or workspace.checkoutPath
+            project_workspace = {
+                "project_id": project_id,
+                "workspace_source": workspace.source,
+                "project_workspace_path": project_workspace_path,
+                "execution_target_type": config.execution.targetType,
+                "device_id": config.execution.deviceId,
+                "checkout_path": workspace.checkoutPath,
+                "local_path": workspace.localPath,
+            }
+            if workspace.source == "device_path":
+                project_workspace["device_path"] = workspace.devicePath
+            workspace_data["project"] = project_workspace
+        else:
+            # Default workspace: use project{id} directory under workspace root
+            default_path = f"project{project_id}"
+            workspace_data["project"] = {
+                "project_id": project_id,
+                "workspace_source": "local_path",
+                "project_workspace_path": default_path,
+                "execution_target_type": config.execution.targetType,
+                "device_id": config.execution.deviceId,
+                "checkout_path": None,
+                "local_path": default_path,
+            }
+
+    def _merge_standalone_chat_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge persisted standalone chat workspace metadata."""
+
+        from app.services.chat.standalone_workspace import (
+            WORKSPACE_PATH_LABEL,
+            WORKSPACE_SOURCE_LABEL,
+        )
+
+        labels = (task.json or {}).get("metadata", {}).get("labels", {})
+        workspace_path = labels.get(WORKSPACE_PATH_LABEL)
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            return
+
+        workspace_source = labels.get(WORKSPACE_SOURCE_LABEL)
+        if not isinstance(workspace_source, str) or not workspace_source.strip():
+            workspace_source = "local_path"
+
+        workspace_data["project"] = {
+            "project_id": _first_present_project_id(getattr(task, "project_id", None)),
+            "workspace_source": workspace_source,
+            "project_workspace_path": workspace_path.strip(),
+            "execution_target_type": "local",
+            "device_id": None,
+            "checkout_path": None,
+            "local_path": workspace_path.strip(),
+        }
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.

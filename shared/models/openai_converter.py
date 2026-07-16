@@ -22,7 +22,7 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from .execution import ExecutionRequest
-from .knowledge import KnowledgeBaseToolAccessMode
+from .knowledge import KnowledgeBaseScope, KnowledgeBaseToolAccessMode
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,34 @@ def get_metadata_field(task: dict, field: str, default=None):
         return value if value is not None else default
     value = task.get(field, default)
     return value if value is not None else default
+
+
+def _coerce_knowledge_base_scopes(value: Any) -> list[KnowledgeBaseScope]:
+    """Coerce metadata scope payloads into KnowledgeBaseScope instances."""
+    scopes: list[KnowledgeBaseScope] = []
+    if not isinstance(value, list):
+        return scopes
+    for item in value:
+        if isinstance(item, KnowledgeBaseScope):
+            scopes.append(item)
+        elif isinstance(item, dict):
+            try:
+                knowledge_base_id = int(item.get("knowledge_base_id"))
+            except (TypeError, ValueError):
+                continue
+            if knowledge_base_id <= 0:
+                continue
+            raw_document_ids = item.get("document_ids") or []
+            if not isinstance(raw_document_ids, list):
+                raw_document_ids = []
+            scopes.append(
+                KnowledgeBaseScope(
+                    knowledge_base_id=knowledge_base_id,
+                    scope_restricted=bool(item.get("scope_restricted", False)),
+                    document_ids=raw_document_ids,
+                )
+            )
+    return scopes
 
 
 class OpenAIRequestConverter:
@@ -161,6 +189,7 @@ class OpenAIRequestConverter:
             "enable_web_search": request.enable_web_search,
             "enable_clarification": request.enable_clarification,
             "enable_deep_thinking": request.enable_deep_thinking,
+            "enable_tool_output_guard": request.enable_tool_output_guard,
             "search_engine": request.search_engine,
             "skill_names": request.skill_names,
             "skill_configs": request.skill_configs,
@@ -170,6 +199,15 @@ class OpenAIRequestConverter:
             "preload_skill_refs": request.preload_skill_refs,
             "knowledge_base_ids": request.knowledge_base_ids,
             "document_ids": request.document_ids,
+            "external_knowledge_refs": request.external_knowledge_refs,
+            "knowledge_base_scopes": [
+                {
+                    "knowledge_base_id": scope.knowledge_base_id,
+                    "scope_restricted": scope.scope_restricted,
+                    "document_ids": scope.document_ids,
+                }
+                for scope in (request.knowledge_base_scopes or [])
+            ],
             "is_user_selected_kb": request.is_user_selected_kb,
             "kb_tool_access_mode": normalize_kb_tool_access_mode(
                 request.kb_tool_access_mode
@@ -177,6 +215,8 @@ class OpenAIRequestConverter:
             "table_contexts": request.table_contexts,
             "kb_meta_prompt": request.kb_meta_prompt,
             "task_data": request.task_data,
+            "interactive_form_answer": request.interactive_form_answer,
+            "attachments": request.attachments,
             "auth_token": request.auth_token,
             "skill_identity_token": request.skill_identity_token,
             "backend_url": request.backend_url,
@@ -184,6 +224,10 @@ class OpenAIRequestConverter:
             "is_subscription": request.is_subscription,
             "request_id": request.request_id,
             "executor_name": request.executor_name,
+            "executor_namespace": request.executor_namespace,
+            "skip_git_clone": request.skip_git_clone,
+            "fork_runtime": request.fork_runtime,
+            "inherited_sessions": request.inherited_sessions,
             # Fields needed by executor-manager for container management
             "executor_image": request.executor_image,
             "executor_type": request.executor_type,
@@ -316,6 +360,7 @@ class OpenAIRequestConverter:
             enable_web_search=metadata.get("enable_web_search", False),
             enable_clarification=metadata.get("enable_clarification", False),
             enable_deep_thinking=metadata.get("enable_deep_thinking", True),
+            enable_tool_output_guard=metadata.get("enable_tool_output_guard", True),
             search_engine=metadata.get("search_engine"),
             skill_names=metadata.get("skill_names", []),
             skill_configs=metadata.get("skill_configs", []),
@@ -326,6 +371,10 @@ class OpenAIRequestConverter:
             mcp_servers=mcp_servers,
             knowledge_base_ids=metadata.get("knowledge_base_ids"),
             document_ids=metadata.get("document_ids"),
+            external_knowledge_refs=metadata.get("external_knowledge_refs"),
+            knowledge_base_scopes=_coerce_knowledge_base_scopes(
+                metadata.get("knowledge_base_scopes")
+            ),
             is_user_selected_kb=metadata.get("is_user_selected_kb", True),
             kb_tool_access_mode=normalize_kb_tool_access_mode(
                 metadata.get("kb_tool_access_mode")
@@ -333,6 +382,8 @@ class OpenAIRequestConverter:
             table_contexts=metadata.get("table_contexts", []),
             kb_meta_prompt=metadata.get("kb_meta_prompt", "") or "",
             task_data=metadata.get("task_data"),
+            interactive_form_answer=metadata.get("interactive_form_answer"),
+            attachments=metadata.get("attachments", []),
             auth_token=metadata.get("auth_token", ""),
             skill_identity_token=metadata.get("skill_identity_token", ""),
             backend_url=metadata.get("backend_url", ""),
@@ -340,6 +391,10 @@ class OpenAIRequestConverter:
             is_subscription=metadata.get("is_subscription", False),
             request_id=metadata.get("request_id", ""),
             executor_name=metadata.get("executor_name"),
+            executor_namespace=metadata.get("executor_namespace"),
+            skip_git_clone=metadata.get("skip_git_clone", False),
+            fork_runtime=metadata.get("fork_runtime"),
+            inherited_sessions=metadata.get("inherited_sessions", []),
             # Fields for executor-manager container management
             executor_image=metadata.get("executor_image"),
             executor_type=metadata.get("executor_type"),
@@ -377,6 +432,7 @@ class OpenAIEventConverter:
         "response.function_call_arguments.delta": "tool_start",
         "response.function_call_arguments.done": "tool_result",
         "response.reasoning_summary_part.added": "thinking",
+        "response.reasoning_summary_text.delta": "thinking",
     }
 
     # Lifecycle events that should be skipped

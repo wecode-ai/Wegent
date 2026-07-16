@@ -137,9 +137,28 @@ class TestDockerExecutor:
         assert any("subtask_id=456" in str(item) for item in cmd)
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
         assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
+        assert "EXECUTOR_MODE=docker" in cmd
         assert not any(
             isinstance(item, str) and item.startswith("TASK_INFO=") for item in cmd
         )
+
+    @patch.dict(os.environ, {"TASK_API_DOMAIN": "http://backend:8000"}, clear=False)
+    @patch.object(docker_executor_module, "find_available_port")
+    @patch.object(docker_executor_module, "build_callback_url")
+    def test_prepare_docker_command_adds_task_api_domain(
+        self, mock_callback, mock_find_port, executor, sample_task
+    ):
+        """Docker containers should expose the task API domain."""
+        mock_find_port.return_value = 8080
+        mock_callback.return_value = "http://callback.url"
+
+        task_info = executor._extract_task_info(sample_task)
+        cmd = executor._prepare_docker_command(
+            sample_task, task_info, "test-executor", "test/executor:latest"
+        )
+
+        assert "TASK_API_DOMAIN=http://backend:8000" in cmd
+        assert "WEGENT_BACKEND_URL=http://backend:8000" not in cmd
 
     @patch.object(docker_executor_module, "find_available_port")
     @patch.object(docker_executor_module, "build_callback_url")
@@ -166,6 +185,7 @@ class TestDockerExecutor:
 
         assert "AUTH_TOKEN=token-123" in cmd
         assert "TASK_ID=123" in cmd
+        assert "EXECUTOR_MODE=docker" in cmd
         assert "WEGENT_SKILL_USER_NAME=test_user" in cmd
         assert "WEGENT_SKILL_IDENTITY_TOKEN=skill-jwt" in cmd
         assert not any(
@@ -201,9 +221,43 @@ class TestDockerExecutor:
 
         assert result["status"] == "success"
         assert result["executor_name"] == "existing-executor"
+        assert task["executor_name"] == "existing-executor"
+        assert task["executor_namespace"] == ""
         mock_wait_ready.assert_called_once_with("existing-executor")
         mock_dispatch.assert_called_once_with(task, "existing-executor", {"port": 8080})
         mock_register.assert_called_once()
+
+    def test_submit_executor_injects_generated_executor_name_into_openai_metadata(
+        self, executor
+    ):
+        """Generated executor names should reach the container callback payload."""
+        task = {
+            "model": "claude-code",
+            "input": "hello",
+            "metadata": {
+                "task_id": 123,
+                "subtask_id": 456,
+                "user": {"name": "test_user"},
+                "type": "online",
+            },
+        }
+
+        with (
+            patch.object(
+                docker_executor_module,
+                "generate_executor_name",
+                return_value="generated-executor",
+            ),
+            patch.object(executor, "_create_new_container") as mock_create,
+        ):
+            result = executor.submit_executor(task)
+
+        assert result["status"] == "success"
+        assert result["executor_name"] == "generated-executor"
+        assert result["executor_namespace"] == ""
+        assert task["metadata"]["executor_name"] == "generated-executor"
+        assert task["metadata"]["executor_namespace"] == ""
+        mock_create.assert_called_once()
 
     def test_submit_executor_existing_container_no_ports(self, executor):
         """Test submitting executor to existing container with no ports"""
@@ -235,7 +289,7 @@ class TestDockerExecutor:
 
     @patch("executor_manager.executors.docker.executor.build_callback_url")
     @patch("executor_manager.executors.docker.executor.find_available_port")
-    @patch("executor_manager.utils.executor_name.generate_executor_name")
+    @patch.object(docker_executor_module, "generate_executor_name")
     def test_submit_executor_docker_error(
         self,
         mock_name,
@@ -260,6 +314,36 @@ class TestDockerExecutor:
 
         assert result["status"] == "failed"
         assert "Docker run error" in result["error_msg"]
+
+    @patch.object(docker_executor_module, "get_running_task_details")
+    def test_cancel_task_uses_running_container_when_task_ids_is_empty(
+        self, mock_running_tasks, executor, mock_requests
+    ):
+        """Solo tasks remain cancellable when subtask_next_id is empty."""
+        mock_running_tasks.return_value = {
+            "status": "success",
+            "task_ids": [],
+            "containers": [
+                {
+                    "task_id": "6258",
+                    "subtask_id": "8664",
+                    "container_name": "wegent-task-admin-test",
+                    "subtask_next_id": "",
+                    "task_type": "online",
+                }
+            ],
+        }
+        mock_requests.post.return_value = MagicMock()
+
+        with patch.object(executor, "_get_container_port", return_value=(10005, None)):
+            result = executor.cancel_task(6258)
+
+        assert result["status"] == "success"
+        mock_requests.post.assert_called_once_with(
+            f"http://{docker_executor_module.DEFAULT_DOCKER_HOST}:10005"
+            "/api/tasks/cancel?task_id=6258",
+            timeout=10,
+        )
 
     def test_create_new_container_dispatches_initial_task_for_regular_tasks(
         self, executor, sample_task, mock_subprocess
@@ -608,6 +692,37 @@ class TestDockerExecutor:
         assert "123" in result["task_ids"]
         assert "456" in result["task_ids"]
         assert len(result["containers"]) == 2
+
+    @patch.object(docker_executor_module, "get_running_task_details")
+    def test_cancel_task_uses_container_details_when_task_ids_empty(
+        self, mock_get_running_task_details, executor
+    ):
+        """Cancel should use matching container details even when task_ids is empty."""
+        mock_get_running_task_details.return_value = {
+            "status": "success",
+            "task_ids": [],
+            "containers": [
+                {
+                    "task_id": "6296",
+                    "subtask_id": "8754",
+                    "container_name": "wegent-task-admin-fe182dcc899e086",
+                    "subtask_next_id": "",
+                    "task_type": "online",
+                }
+            ],
+        }
+        executor.requests.post.return_value = MagicMock(
+            raise_for_status=MagicMock(),
+        )
+
+        with patch.object(executor, "_get_container_port", return_value=(10000, None)):
+            result = executor.cancel_task(6296)
+
+        assert result["status"] == "success"
+        executor.requests.post.assert_called_once_with(
+            f"http://{docker_executor_module.DEFAULT_DOCKER_HOST}:10000/api/tasks/cancel?task_id=6296",
+            timeout=10,
+        )
 
     def test_call_callback_success(self, executor):
         """Test calling callback successfully"""
