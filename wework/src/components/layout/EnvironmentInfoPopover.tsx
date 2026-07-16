@@ -29,6 +29,11 @@ import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import {
+  findWorkbenchDevice,
+  getExecutorOfflineDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
+} from '@/lib/workbench-device'
 import type { DeviceInfo } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
@@ -86,9 +91,7 @@ export function EnvironmentInfoPopover({
   const popoverRef = useRef<HTMLDivElement>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
-  const device = info.deviceId
-    ? devices.find(deviceInfo => deviceInfo.device_id === info.deviceId)
-    : undefined
+  const device = info.deviceId ? findWorkbenchDevice(devices, info.deviceId) : undefined
   const deviceName = device?.name?.trim() || ''
   const executionLabel =
     info.executionTarget === 'cloud'
@@ -98,6 +101,15 @@ export function EnvironmentInfoPopover({
   const deviceLabel = t('workbench.environment_device')
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
   const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
+  const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
+  const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
+  const displayError = offlineDeviceId
+    ? t('workbench.conversation_device_offline_notice', {
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(offlineDevice) ||
+          t('workbench.current_device', '当前设备'),
+      })
+    : info.error
   const hasGitInfo = Boolean(info.branchName?.trim())
   const canShowBranchSelector = Boolean(onListBranches && onCheckoutBranch)
   const hasDiffStats = Boolean(info.additions || info.deletions)
@@ -455,9 +467,9 @@ export function EnvironmentInfoPopover({
               )}
             </div>
 
-            {info.error && (
+            {displayError && (
               <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-                {info.error}
+                {displayError}
               </p>
             )}
             {commitError && (

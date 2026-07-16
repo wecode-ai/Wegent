@@ -227,6 +227,37 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
+  test('replaces a stale cloud device record with the latest same-route status', () => {
+    const staleDevice = device({
+      device_id: 'remote-device',
+      device_type: 'remote',
+      status: 'offline',
+      client_ip: '10.201.3.199',
+    })
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'device-event', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: {
+        status: 'fulfilled',
+        value: [
+          device({
+            device_id: 'remote-device',
+            device_type: 'remote',
+            status: 'online',
+            client_ip: '10.201.3.200',
+          }),
+        ],
+      },
+    })
+
+    expect(selectVisibleDevices([staleDevice], ready)).toEqual([
+      expect.objectContaining({
+        device_id: 'remote-device',
+        status: 'online',
+        client_ip: '10.201.3.200',
+      }),
+    ])
+  })
+
   test('excludes remote routes that resolve to the local runtime from remote project creation', () => {
     const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
     const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {

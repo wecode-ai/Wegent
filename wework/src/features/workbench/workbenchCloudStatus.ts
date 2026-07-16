@@ -486,7 +486,7 @@ function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): D
 }
 
 function preferDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
-  return deviceRoutePriority(incoming) < deviceRoutePriority(existing) ? incoming : existing
+  return deviceRoutePriority(incoming) <= deviceRoutePriority(existing) ? incoming : existing
 }
 
 function deviceRoutePriority(device: DeviceInfo): number {

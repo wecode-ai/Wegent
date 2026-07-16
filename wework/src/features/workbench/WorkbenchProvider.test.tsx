@@ -15,7 +15,7 @@ import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
-import { findRuntimeTask } from './workbenchRuntimeHelpers'
+import { findRuntimeTask, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
@@ -1151,7 +1151,12 @@ function RuntimeOpenProbe() {
         onClick={() => {
           if (fileChangesSubtaskId) {
             void workbench
-              .loadTurnFileChangesDiff(fileChangesSubtaskId, paneSession.messages)
+              .loadTurnFileChangesDiff(
+                fileChangesSubtaskId,
+                paneSession.messages,
+                undefined,
+                currentRuntimeTask
+              )
               .then(setFileChangesDiff)
           }
         }}
@@ -1163,7 +1168,12 @@ function RuntimeOpenProbe() {
         onClick={() => {
           if (fileChangesSubtaskId && fileChangesSummary) {
             void workbench
-              .loadTurnFileChangesDiff(fileChangesSubtaskId, [], fileChangesSummary)
+              .loadTurnFileChangesDiff(
+                fileChangesSubtaskId,
+                [],
+                fileChangesSummary,
+                currentRuntimeTask
+              )
               .then(setFileChangesDiff)
           }
         }}
@@ -1175,7 +1185,12 @@ function RuntimeOpenProbe() {
         onClick={() => {
           if (fileChangesSubtaskId) {
             void workbench
-              .revertTurnFileChanges(fileChangesSubtaskId, paneSession.messages)
+              .revertTurnFileChanges(
+                fileChangesSubtaskId,
+                paneSession.messages,
+                undefined,
+                currentRuntimeTask
+              )
               .then(fileChanges => setFileChangesStatus(fileChanges.status))
           }
         }}
@@ -2449,6 +2464,35 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('starts a new task in the last used project when no project is currently open', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-project-order')).toHaveTextContent('Wegent')
+    )
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    writeLastProjectId(1, 7)
+
+    await userEvent.click(screen.getByText('start new chat'))
+
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+  })
+
+  test('falls back to a standalone new task when the last project no longer exists', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-project-order')).toHaveTextContent('Wegent')
+    )
+    writeLastProjectId(1, 999)
+
+    await userEvent.click(screen.getByText('start new chat'))
+
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+  })
+
   test('does not reopen a newly created task after the user switches tasks', async () => {
     const createResponse = deferred<RuntimeTaskCreateResponse>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
@@ -2802,6 +2846,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
     )
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('goal-objective')).toHaveTextContent('none')
   })
 

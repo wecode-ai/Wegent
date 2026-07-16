@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import { createLocalFileWorkspaceTarget } from '@/lib/workspace-target'
@@ -799,7 +800,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -1155,7 +1158,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             latestPreviousTurnSubtaskId !== null
               ? {
                   loadDiff: () =>
-                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessagesRef.current),
+                    loadTurnFileChangesDiff(
+                      latestPreviousTurnSubtaskId,
+                      paneMessagesRef.current,
+                      undefined,
+                      currentRuntimeTask
+                    ),
                   defaultFileTreeVisible: false,
                   sourceSubtaskId: latestPreviousTurnSubtaskId,
                 }
@@ -1171,6 +1179,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       },
     ],
     [
+      currentRuntimeTask,
       hasPreviousTurnReview,
       latestPreviousTurnSubtaskId,
       loadEnvironmentDiff,
@@ -1671,10 +1680,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
                 onRevertFileChanges={(subtaskId, fileChanges) =>
-                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
                 onOpenFileChangesReview={({
                   subtaskId,

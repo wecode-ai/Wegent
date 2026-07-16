@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { stripAppBasePath } from '@/config/runtime'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
-import { navigateTo } from '@/lib/navigation'
+import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
@@ -24,7 +25,9 @@ import type {
   ModelSelectionConfig,
   PluginPathComponent,
   ProjectExecutionMode,
+  ProjectWithTasks,
   RuntimeContextUsage,
+  RuntimeWorkListResponse,
   RuntimeTaskAddress,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
@@ -73,6 +76,7 @@ import {
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
   getSingleProjectDeviceWorkspaceId,
+  readLastProjectId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
 import { defaultNewChatModelSelection } from './runtimeModelSelection'
@@ -89,6 +93,19 @@ const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 type ProjectWorkPreferencePatch = {
   executionMode?: ProjectExecutionMode
   worktreeBranch?: string | null
+}
+
+function findFirstSelectableProject(
+  projects: ProjectWithTasks[],
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  projectIds: Array<number | null | undefined>
+): ProjectWithTasks | null {
+  for (const projectId of projectIds) {
+    if (!projectId) continue
+    const project = findSelectableProject(projects, runtimeWork, projectId)
+    if (project) return project
+  }
+  return null
 }
 
 function getProjectWorkPreferenceKey(project: { id: number } | null | undefined): string | null {
@@ -480,6 +497,7 @@ export function WorkbenchProvider({
     if (lastProjectRestoreAttemptedRef.current || !state.runtimeWork) return
     if (
       projectSelectionStartedRef.current ||
+      parseRuntimeTaskRoute(stripAppBasePath(window.location.pathname), window.location.search) ||
       state.currentProject ||
       state.currentRuntimeTask ||
       state.standaloneWorkspacePath
@@ -487,10 +505,16 @@ export function WorkbenchProvider({
       lastProjectRestoreAttemptedRef.current = true
       return
     }
-    const activeProjectId = findActiveRuntimeProjectId(state.runtimeWork)
+    const candidateProjectIds = [
+      readLastProjectId(user.id),
+      findActiveRuntimeProjectId(state.runtimeWork),
+    ]
     lastProjectRestoreAttemptedRef.current = true
-    if (!activeProjectId) return
-    const project = findSelectableProject(state.projects, state.runtimeWork, activeProjectId)
+    const project = findFirstSelectableProject(
+      state.projects,
+      state.runtimeWork,
+      candidateProjectIds
+    )
     if (project) dispatch({ type: 'project_selected', project })
   }, [
     state.currentProject,
@@ -498,6 +522,7 @@ export function WorkbenchProvider({
     state.projects,
     state.runtimeWork,
     state.standaloneWorkspacePath,
+    user.id,
   ])
 
   useEffect(() => {
@@ -711,6 +736,28 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
+    const candidateProjectIds = [
+      state.currentProject?.id ?? null,
+      readLastProjectId(user.id),
+      findActiveRuntimeProjectId(state.runtimeWork),
+    ]
+    const project = findFirstSelectableProject(
+      state.projects,
+      state.runtimeWork,
+      candidateProjectIds
+    )
+    if (project) {
+      writeLastProjectId(user.id, project.id)
+      dispatch({
+        type: 'project_workspace_selected',
+        project,
+        deviceWorkspaceId: getSingleProjectDeviceWorkspaceId(state.runtimeWork, project.id),
+      })
+      navigateTo('/')
+      requestNewChatComposerFocus()
+      return
+    }
+
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -722,7 +769,14 @@ export function WorkbenchProvider({
     })
     navigateTo('/')
     requestNewChatComposerFocus()
-  }, [state.devices, state.standaloneDeviceId, user])
+  }, [
+    state.currentProject,
+    state.devices,
+    state.projects,
+    state.runtimeWork,
+    state.standaloneDeviceId,
+    user,
+  ])
 
   const listLocalSkills = useCallback(
     async (forceReload = false) => {

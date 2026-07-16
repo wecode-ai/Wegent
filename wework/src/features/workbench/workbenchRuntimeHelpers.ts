@@ -190,6 +190,15 @@ export function writeLastProjectId(userId: number, projectId: number) {
   }
 }
 
+export function readLastProjectId(userId: number): number | null {
+  try {
+    const value = Number(window.localStorage.getItem(getLastProjectStorageKey(userId)))
+    return Number.isSafeInteger(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
 export function findRuntimeTask(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
