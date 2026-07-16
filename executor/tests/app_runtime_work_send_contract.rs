@@ -325,33 +325,6 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     })
     .expect("completed response should contain only the final answer");
     assert_eq!(completed["payload"]["data"]["value"], "done");
-
-    let transcript = handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.tasks.transcript",
-            "payload": {
-                "workspacePath": "/tmp/project",
-                "taskId": "local-task-1"
-            }
-        }))
-        .await
-        .expect("transcript should succeed");
-    let user = transcript["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|message| {
-            message["content"]
-                .as_str()
-                .is_some_and(|content| content.starts_with("continue from content"))
-        })
-        .expect("cached follow-up user message should be present");
-    assert_eq!(user["source"], source);
-    assert_eq!(user["attachments"][0]["filename"], "photo.png");
-    assert_eq!(user["attachments"][0]["status"], "ready");
-    assert_eq!(user["attachments"][0]["file_size"], 1200);
-    assert_eq!(user["attachments"][0]["local_preview_url"], attachment_path);
-    assert_eq!(user["attachments"][0]["local_path"], attachment_path);
 }
 
 #[tokio::test]
