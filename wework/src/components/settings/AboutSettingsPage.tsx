@@ -126,7 +126,7 @@ export function AboutSettingsPage() {
         <Bot className="h-10 w-10 text-primary" />
       </div>
 
-      <h1 className="mt-6 text-2xl font-semibold tracking-normal text-text-primary">Wework</h1>
+      <h1 className="heading-lg mt-6 tracking-normal text-text-primary">Wework</h1>
       <div className="mt-2 text-sm font-medium text-text-secondary">v{__WEWORK_APP_VERSION__}</div>
       <p className="mt-4 max-w-[420px] text-sm leading-6 text-text-secondary">
         {t('workbench.about_settings_description', '面向办公和编码场景的 AI 工作台。')}

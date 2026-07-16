@@ -84,7 +84,7 @@ export function PluginCreateWorkspace({
       />
 
       <section className="mx-auto flex min-h-[calc(100vh-52px)] w-full max-w-[920px] flex-col items-center justify-center px-5 pb-20">
-        <h1 className="mb-16 text-center text-[40px] font-medium leading-[48px] tracking-normal text-text-primary">
+        <h1 className="mb-16 text-center text-2xl font-medium leading-[48px] tracking-normal text-text-primary">
           {t('workbench.plugins_create_prompt_title', '我们应该在 Wegent 中构建什么？')}
         </h1>
 
@@ -103,11 +103,11 @@ export function PluginCreateWorkspace({
               data-testid="plugin-create-prompt-input"
               rows={2}
               placeholder={t('workbench.plugins_create_prompt_placeholder', 'Plugin Creator')}
-              className="min-h-[48px] flex-1 resize-none border-0 bg-transparent text-[18px] font-medium leading-7 text-text-primary outline-none placeholder:text-primary"
+              className="min-h-[48px] flex-1 resize-none border-0 bg-transparent text-heading-sm font-medium leading-7 text-text-primary outline-none placeholder:text-primary"
             />
           </label>
           <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
-            <div className="flex min-w-0 items-center gap-5 text-[15px] font-medium text-text-muted">
+            <div className="flex min-w-0 items-center gap-5 text-base font-medium text-text-muted">
               <button
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-surface"
@@ -120,7 +120,7 @@ export function PluginCreateWorkspace({
                 {t('workbench.plugins_create_full_access', '完全访问')}
               </span>
             </div>
-            <div className="flex items-center gap-4 text-[15px] font-semibold text-text-primary">
+            <div className="flex items-center gap-4 text-base font-semibold text-text-primary">
               <span className="hidden items-center gap-1.5 md:flex">
                 <Zap className="h-4 w-4 text-text-muted" />
                 5.5

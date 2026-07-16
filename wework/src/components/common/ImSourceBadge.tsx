@@ -30,7 +30,7 @@ export function ImSourceBadge({ source, className, testId }: ImSourceBadgeProps)
     <span
       data-testid={testId}
       className={cn(
-        'inline-flex h-5 max-w-[72px] shrink-0 items-center rounded border border-border/70 bg-surface px-1.5 text-[10px] font-medium leading-none text-text-muted',
+        'inline-flex h-5 max-w-[72px] shrink-0 items-center rounded border border-border/70 bg-surface px-1.5 text-xs font-medium leading-none text-text-muted',
         className
       )}
       title={label}

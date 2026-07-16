@@ -358,11 +358,11 @@ export function MessageTurnNavigation({
           )}
           style={{ top: `${getMarkerTopPx(index) - navigationScrollTop}px` }}
         >
-          <p className="break-words text-[11px] font-semibold leading-4 text-text-primary">
+          <p className="break-words text-xs font-semibold leading-4 text-text-primary">
             {marker.promptPreview}
           </p>
           {marker.responsePreview && (
-            <p className="mt-1 break-words text-[11px] leading-4 text-text-muted">
+            <p className="mt-1 break-words text-xs leading-4 text-text-muted">
               {marker.responsePreview}
             </p>
           )}

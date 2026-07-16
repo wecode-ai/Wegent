@@ -190,7 +190,7 @@ function QueueRow({
       data-testid={`conversation-queue-row-${id}`}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={[
-        'flex min-h-8 items-center gap-2 rounded-xl px-2 text-[13px] text-text-secondary hover:bg-surface',
+        'flex min-h-8 items-center gap-2 rounded-xl px-2 text-sm text-text-secondary hover:bg-surface',
         isDragging ? 'opacity-30' : '',
       ].join(' ')}
     >
@@ -271,7 +271,7 @@ function QueueDragPreview({ content }: { content: string }) {
   return (
     <div
       data-testid="queue-drag-overlay"
-      className="flex min-h-8 max-w-[28rem] items-center gap-2 rounded-xl border border-border bg-base px-3 text-[13px] text-text-secondary shadow-lg"
+      className="flex min-h-8 max-w-[28rem] items-center gap-2 rounded-xl border border-border bg-base px-3 text-sm text-text-secondary shadow-lg"
     >
       <GripVertical className="h-4 w-4 shrink-0 text-text-muted" />
       <span className="truncate">{content}</span>

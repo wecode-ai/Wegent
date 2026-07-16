@@ -371,7 +371,7 @@ export function CompactChatComposer({
               onOpenSkillFile={onOpenSkillFile}
               workspaceTarget={workspaceTarget}
               workspaceFileApi={workspaceFileApi}
-              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-base leading-7 text-text-secondary outline-none"
+              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-secondary outline-none"
               skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
               onListLocalSkills={onListLocalSkills}
               onListLocalApps={onListLocalApps}

@@ -165,7 +165,7 @@ export function LocalWorkspaceOpenerPicker({
                 role="menuitem"
                 data-testid={optionTestIdPrefix ? `${optionTestIdPrefix}-${opener.id}` : undefined}
                 onClick={() => void selectOpener(opener.id)}
-                className="flex h-10 w-full items-center gap-3 rounded-xl px-2.5 text-left text-[15px] font-medium leading-5 text-text-primary transition-colors hover:bg-muted"
+                className="flex h-10 w-full items-center gap-3 rounded-xl px-2.5 text-left text-base font-medium leading-5 text-text-primary transition-colors hover:bg-muted"
               >
                 <LocalWorkspaceOpenerIcon opener={opener.id} className="h-5 w-5 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">{opener.label}</span>

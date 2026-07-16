@@ -175,6 +175,9 @@ describe('ChatInput', () => {
       'bg-background'
     )
     expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
+    expect(screen.getByTestId('project-chat-composer')).toHaveClass(
+      'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
+    )
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'min-h-[48px]',
@@ -1105,6 +1108,19 @@ describe('ChatInput', () => {
         },
       },
     }
+    const cloudModel: UnifiedModel = {
+      ...model,
+      name: 'cloud:user:cloud-gpt-5.5',
+      displayName: '云端:gpt-5.5',
+      config: {
+        ...model.config,
+        weworkExecution: {
+          source: 'cloud',
+          modelName: 'cloud-gpt-5.5',
+          modelType: 'user',
+        },
+      },
+    }
     const setSelectedModel = vi.fn()
     render(
       <ChatInput
@@ -1114,7 +1130,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
-          models: [model],
+          models: [model, cloudModel],
           selectedModel: model,
           selectedModelOptions: { reasoning: 'high', speed: 'standard' },
           setSelectedModel,
@@ -1179,6 +1195,7 @@ describe('ChatInput', () => {
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
     expect(modelOption.querySelectorAll('span')).toHaveLength(1)
+    expect(screen.getByTestId('model-option-cloud:user:cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
     expect(
       screen
         .getByTestId('model-control-menu-model')

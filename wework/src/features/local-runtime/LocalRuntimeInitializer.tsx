@@ -411,9 +411,7 @@ export function LocalRuntimeInitializer({
             ) : (
               <WorkspaceSetupAnimation />
             )}
-            <h1 className="text-xl font-semibold">
-              {failed ? t('failed_title') : t('starting_title')}
-            </h1>
+            <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>
             <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
               {failed ? t('failed_description') : t('starting_description')}
             </p>

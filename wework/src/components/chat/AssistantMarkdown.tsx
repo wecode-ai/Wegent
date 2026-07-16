@@ -18,7 +18,7 @@ import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
-  'text-[13px] font-medium leading-5 text-blue-600 no-underline',
+  'text-sm font-medium leading-5 text-blue-600 no-underline',
   'transition-colors hover:text-blue-700',
   'dark:text-blue-300 dark:hover:text-blue-200',
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
@@ -103,7 +103,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       ),
       table: ({ children }: { children?: ReactNode }) => (
         <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
-          <table className="w-full min-w-max border-collapse text-[13px]">{children}</table>
+          <table className="w-full min-w-max border-collapse text-chat">{children}</table>
         </div>
       ),
       th: ({ children }: { children?: ReactNode }) => (
@@ -165,7 +165,7 @@ function MarkdownCode({
 
 function MarkdownInlineCode({ children }: { children?: ReactNode }) {
   return (
-    <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
+    <code className="break-words rounded bg-muted px-1.5 py-0.5 text-code font-medium text-text-primary">
       {children}
     </code>
   )
@@ -243,7 +243,7 @@ function getMarkdownFileIcon(path: string): ReactNode {
     return (
       <span
         aria-hidden="true"
-        className="shrink-0 font-mono text-[13px] font-semibold leading-5"
+        className="shrink-0 font-mono text-code font-medium"
         data-testid="assistant-markdown-link-icon"
       >
         {'{}'}
@@ -255,7 +255,7 @@ function getMarkdownFileIcon(path: string): ReactNode {
     return (
       <span
         aria-hidden="true"
-        className="shrink-0 font-mono text-[13px] font-semibold leading-5"
+        className="shrink-0 font-mono text-code font-medium"
         data-testid="assistant-markdown-link-icon"
       >
         $
@@ -321,7 +321,7 @@ function AssistantMarkdownLink({
         ) : null}
         <span
           data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-left text-[13px] font-normal leading-5 text-white shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
+          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-left text-sm font-normal leading-5 text-white shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
         >
           {tooltip}
         </span>

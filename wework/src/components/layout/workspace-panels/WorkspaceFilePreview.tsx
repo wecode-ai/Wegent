@@ -13,10 +13,10 @@ import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
-    --diffs-font-size: 12px;
-    --diffs-line-height: 20px;
-    --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    --diffs-header-font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    --diffs-font-size: var(--text-code);
+    --diffs-line-height: calc(var(--text-code) * 1.8);
+    --diffs-font-family: var(--font-code);
+    --diffs-header-font-family: var(--font-ui);
     --diffs-light-bg: rgb(255 255 255);
     --diffs-light: rgb(26 26 26);
     --diffs-fg-number-override: rgb(140 140 140);
@@ -32,7 +32,7 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
     min-height: 36px;
     padding-inline: 12px;
     border-bottom: 1px solid rgb(224 224 224);
-    font-size: 13px;
+    font-size: var(--text-sm);
   }
   [data-file],
   pre,

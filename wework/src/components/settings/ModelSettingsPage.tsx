@@ -866,7 +866,7 @@ function LocalModelSettingsSection({
                 </div>
                 <span
                   data-testid="local-model-request-url"
-                  className="break-all font-mono text-[11px] font-normal leading-5 text-text-muted"
+                  className="break-all font-mono text-xs font-normal leading-5 text-text-muted"
                 >
                   {testRequestUrl
                     ? t('workbench.local_model_request_url', {
@@ -941,7 +941,7 @@ function LocalModelSettingsSection({
                   inputMode="numeric"
                   className={LOCAL_MODEL_FIELD_CLASS}
                 />
-                <span className="text-[11px] font-normal leading-5 text-text-muted">
+                <span className="text-xs font-normal leading-5 text-text-muted">
                   {t(
                     'workbench.local_model_context_window_hint',
                     'Optional. Used to show remaining context and handle long conversations.'
@@ -954,7 +954,7 @@ function LocalModelSettingsSection({
                 <div className="text-xs font-semibold text-text-primary">
                   {t('workbench.local_model_codex_features_title')}
                 </div>
-                <div className="mt-1 text-[11px] leading-5 text-text-muted">
+                <div className="mt-1 text-xs leading-5 text-text-muted">
                   {t('workbench.local_model_codex_features_hint')}
                 </div>
               </div>

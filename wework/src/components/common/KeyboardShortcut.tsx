@@ -10,7 +10,7 @@ export function KeyboardShortcut({ value, className }: KeyboardShortcutProps) {
   return (
     <span
       className={cn(
-        'inline-flex h-6 shrink-0 items-center rounded-full bg-white/10 px-2 text-[13px] font-medium leading-none text-current',
+        'inline-flex h-6 shrink-0 items-center rounded-full bg-white/10 px-2 text-sm font-medium leading-none text-current',
         className
       )}
     >

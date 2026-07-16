@@ -54,14 +54,14 @@ export function ComposerMentionMenu({
         {mentionMode ? t('workbench.mention_add', '添加') : t('workbench.local_skills', '技能')}
       </div>
       {rows.length === 0 && loading ? (
-        <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
+        <div className="px-2.5 py-2 text-sm leading-[18px] text-text-muted">
           {t('workbench.mention_loading', '正在搜索...')}
         </div>
       ) : rows.length === 0 && error ? (
         <button
           type="button"
           data-testid="local-skill-load-error"
-          className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
+          className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-sm leading-5 text-text-muted hover:bg-muted"
           onClick={onRetry}
         >
           <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
@@ -76,7 +76,7 @@ export function ComposerMentionMenu({
           </span>
         </button>
       ) : rows.length === 0 ? (
-        <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
+        <div className="px-2.5 py-2 text-sm leading-[18px] text-text-muted">
           {t('workbench.mention_no_results', '没有匹配结果')}
         </div>
       ) : (
@@ -133,11 +133,11 @@ export function ComposerMentionMenu({
             >
               <Icon className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
               <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
+                <span className="shrink-0 truncate text-sm font-medium leading-5 text-text-primary">
                   {title}
                 </span>
                 {description && (
-                  <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
+                  <span className="min-w-0 truncate text-sm font-normal leading-5 text-text-muted">
                     {description}
                   </span>
                 )}

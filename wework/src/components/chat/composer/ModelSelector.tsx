@@ -1,7 +1,8 @@
-import { Check, ChevronRight, Search, X } from 'lucide-react'
+import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
@@ -58,6 +59,10 @@ const SUBMENU_MAX_HEIGHT = 448
 const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
+
+function isCloudModel(model: UnifiedModel): boolean {
+  return getModelExecutionOverride(model)?.source === 'cloud'
+}
 
 export function ModelSelector({
   models,
@@ -494,7 +499,7 @@ export function ModelSelector({
         onFocus={() => activateControl(control.id)}
         onClick={() => activateControl(control.id)}
         className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
           active
             ? 'bg-muted text-text-primary'
             : 'text-text-secondary hover:bg-muted hover:text-text-primary',
@@ -672,11 +677,23 @@ export function ModelSelector({
                         <span className="min-w-0 flex-1">
                           <span
                             className={[
-                              'block truncate text-sm font-semibold',
+                              'flex items-center gap-1.5 truncate text-sm font-semibold',
                               modelDisabled ? 'text-text-muted' : 'text-text-primary',
                             ].join(' ')}
                           >
-                            {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
+                            <span className="truncate">
+                              {getModelDisplayLabel(
+                                model,
+                                selectedModelOptions,
+                                resolveControlLabel
+                              )}
+                            </span>
+                            {isCloudModel(model) && (
+                              <Cloud
+                                aria-label={t('workbench.environment_cloud', '云端')}
+                                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                              />
+                            )}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-text-muted">
                             {disabledMessage || model.displayName || model.modelId || model.name}
@@ -763,7 +780,7 @@ export function ModelSelector({
                       onFocus={() => setActiveDesktopSubmenu({ type: 'models' })}
                       onClick={() => setActiveDesktopSubmenu({ type: 'models' })}
                       className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
                         modelRowActive
                           ? 'bg-muted text-text-primary'
                           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -782,7 +799,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-reasoning"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.reasoning_level', '推理强度')}
@@ -797,7 +814,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-speed"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.speed', '速度')}
@@ -897,7 +914,7 @@ export function ModelSelector({
                   styles.submenu
                 )}
               >
-                <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
+                <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold leading-[18px] text-text-muted">
                   {t('workbench.model_version', '模型')}
                 </div>
                 <div className="space-y-0.5">
@@ -931,15 +948,15 @@ export function ModelSelector({
                             handleSelectModel(model)
                           }}
                           className={[
-                            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px]',
+                            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm leading-[18px]',
                             modelDisabled
                               ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
                               : 'text-text-primary hover:bg-muted',
                           ].join(' ')}
                         >
-                          <span className="min-w-0 flex-1 truncate font-medium">
+                          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium">
                             {disabledMessage ? (
-                              <>
+                              <span className="min-w-0 flex-1 truncate">
                                 <span className="block truncate">
                                   {getModelDisplayLabel(
                                     model,
@@ -950,9 +967,19 @@ export function ModelSelector({
                                 <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
                                   {disabledMessage}
                                 </span>
-                              </>
+                              </span>
+                            ) : isCloudModel(model) ? (
+                              <span className="min-w-0 flex-1 truncate">
+                                {getModelDisplayLabel(model, {}, resolveControlLabel)}
+                              </span>
                             ) : (
                               getModelDisplayLabel(model, {}, resolveControlLabel)
+                            )}
+                            {isCloudModel(model) && (
+                              <Cloud
+                                aria-label={t('workbench.environment_cloud', '云端')}
+                                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                              />
                             )}
                           </span>
                           {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
