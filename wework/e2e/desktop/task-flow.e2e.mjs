@@ -1051,7 +1051,7 @@ async function main() {
     )
     await control.command(
       'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant-waiting"]`,
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
       {
         timeoutMs: UI_TIMEOUT_MS,
       }
