@@ -17,6 +17,8 @@ source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 # shellcheck source=lib/wework-macos-signing.sh
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
+# shellcheck source=lib/wework-macos-sidecar.sh
+source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
@@ -231,7 +233,7 @@ if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
 if [ "$RELEASE_DEVTOOLS" = "1" ]; then
-  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.devtools.XXXXXX.json")"
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.devtools.json.XXXXXX")"
   CONFIG_OVERRIDE="$CONFIG_OVERRIDE" python3 - <<'PY'
 import json
 import os
@@ -272,6 +274,11 @@ if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
   TAURI_ARGS+=(--features devtools)
 fi
 
+wework_build_macos_executor_sidecar \
+  "$PROJECT_DIR" \
+  "$WEWORK_DIR" \
+  "$MACOS_BUILD_TARGET" \
+  "$BUILD_PROFILE"
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
@@ -280,4 +287,13 @@ wework_sign_prepared_codex_macos_binaries \
   "$NO_SIGN"
 BUILD_STARTED_AT="$(date +%s)"
 pnpm exec tauri "${TAURI_ARGS[@]}"
+profile_dir="release"
+if [ "$BUILD_PROFILE" = "dev" ]; then
+  profile_dir="debug"
+fi
+tauri_target_root="${CARGO_TARGET_DIR:-$WEWORK_DIR/src-tauri/target}"
+if [ -n "$MACOS_BUILD_TARGET" ]; then
+  tauri_target_root="$tauri_target_root/$MACOS_BUILD_TARGET"
+fi
+wework_verify_macos_app_executor_sidecar "$tauri_target_root/$profile_dir/bundle"
 notarize_built_macos_dmgs "$BUILD_STARTED_AT"

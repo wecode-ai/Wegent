@@ -30,7 +30,7 @@ function errorMessage(error: unknown): string {
 
 export async function checkForWeworkUpdate(): Promise<WeworkUpdateInfo | null> {
   if (!isTauriRuntime()) {
-    throw new Error('Wework updater is only available in the macOS app.')
+    throw new Error('Wework updater is only available in the desktop app.')
   }
 
   try {

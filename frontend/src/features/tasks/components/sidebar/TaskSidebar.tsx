@@ -97,7 +97,6 @@ export default function TaskSidebar({
     tasks,
     groupTasks,
     personalTasks,
-    loadMore,
     loadAllGroupTasks,
     loadMorePersonalTasks,
     loadingMore,
@@ -331,31 +330,6 @@ export default function TaskSidebar({
     return getUnreadCount(tasks)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, getUnreadCount, viewStatusVersion])
-
-  // Scroll to bottom to load more (legacy - for search results)
-  useEffect(() => {
-    const el = desktopScrollRef.current
-    if (!el) return
-    const handleScroll = () => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMore()
-      }
-    }
-    el.addEventListener('scroll', handleScroll)
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [loadMore])
-
-  useEffect(() => {
-    const el = mobileScrollRef.current
-    if (!el) return
-    const handleScroll = () => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 10) {
-        loadMore()
-      }
-    }
-    el.addEventListener('scroll', handleScroll)
-    return () => el.removeEventListener('scroll', handleScroll)
-  }, [loadMore])
 
   useEffect(() => {
     return () => clearMoreNavCloseTimer()

@@ -104,6 +104,7 @@ interface RightWorkspacePanelProps {
   onSelectTab: (tab: RightWorkspacePanelTab) => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onRefreshReview?: () => void
+  getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
@@ -137,6 +138,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onSelectTab,
   onCloseTab,
   onRefreshReview,
+  getChatInitialInput,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
@@ -393,6 +395,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               currentProject={currentProject}
               source={currentRuntimeTask}
               instanceId={tab}
+              initialInput={getChatInitialInput?.(tab)}
               testId={
                 activeView === tab
                   ? 'right-workspace-chat-panel'

@@ -10,7 +10,14 @@ export interface AppTab {
 
 export const APP_TABS: AppTab[] = [
   { key: 'wework', label: 'WeWork', mode: 'native', path: '/', requiresAuth: true },
-  { key: 'apps', label: '应用', mode: 'native', path: '/apps', requiresAuth: true },
+  {
+    key: 'apps',
+    label: '应用',
+    mode: 'native',
+    path: '/apps',
+    requiresAuth: true,
+    hidden: true,
+  },
   {
     key: 'wegent',
     label: 'Wegent',

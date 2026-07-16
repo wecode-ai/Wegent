@@ -980,7 +980,9 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     if let Some(thread_id) = subscribed_thread_id {
         client.mark_thread_idle(&thread_id).await;
-        client.unsubscribe_thread(&thread_id).await;
+        if !prepared.request.ephemeral {
+            client.unsubscribe_thread(&thread_id).await;
+        }
     }
 
     if let Err(error) = &result {

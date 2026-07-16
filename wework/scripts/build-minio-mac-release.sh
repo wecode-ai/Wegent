@@ -5,6 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
+PROJECT_TAURI_TARGET_DIR="$WEWORK_DIR/src-tauri/target"
+
+# shellcheck source=lib/wework-updater-signing.sh
+source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -104,41 +108,6 @@ configure_release_credentials() {
   require_env APPLE_BUILD_PASSWORD
 }
 
-configure_updater_key() {
-  local key_dir
-  local public_key_path="$UPDATER_KEY_PATH.pub"
-
-  key_dir="$(dirname "$UPDATER_KEY_PATH")"
-  mkdir -p "$key_dir"
-  chmod 700 "$key_dir"
-
-  if [ ! -f "$UPDATER_KEY_PATH" ] && [ ! -f "$public_key_path" ]; then
-    echo "Generating internal updater key: $UPDATER_KEY_PATH"
-    (
-      cd "$PROJECT_DIR"
-      /usr/bin/env \
-        -u TAURI_SIGNING_PRIVATE_KEY \
-        -u TAURI_SIGNING_PRIVATE_KEY_PATH \
-        -u TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
-        pnpm --filter wework exec tauri signer generate \
-          --write-keys "$UPDATER_KEY_PATH" \
-          --ci >/dev/null
-    )
-  fi
-
-  if [ ! -s "$UPDATER_KEY_PATH" ] || [ ! -s "$public_key_path" ]; then
-    echo "Updater private/public key pair is incomplete: $UPDATER_KEY_PATH" >&2
-    exit 1
-  fi
-
-  chmod 600 "$UPDATER_KEY_PATH"
-  unset TAURI_SIGNING_PRIVATE_KEY
-  export TAURI_SIGNING_PRIVATE_KEY_PATH="$UPDATER_KEY_PATH"
-  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-  TAURI_UPDATER_PUBKEY="$(< "$public_key_path")"
-  export TAURI_UPDATER_PUBKEY
-}
-
 upload_artifacts() {
   require_env ATTACHMENT_S3_ACCESS_KEY
   require_env ATTACHMENT_S3_SECRET_KEY
@@ -183,6 +152,40 @@ verify_uploaded_artifacts() {
     exit 1
   fi
   echo "Latest DMG: $latest_dmg_url"
+}
+
+promote_release_artifacts() {
+  local build_output_dir="$1"
+  local archive_path
+  local dmg_path
+
+  archive_path="$(find "$build_output_dir" -maxdepth 1 -type f \
+    -name "WeWork_${VERSION}_*.app.tar.gz" -print | sort | tail -1)"
+  dmg_path="$(find "$build_output_dir" -maxdepth 1 -type f \
+    -name "WeWork_${VERSION}_*.dmg" -print | sort | tail -1)"
+
+  if [ -z "$archive_path" ] || [ ! -s "$archive_path" ]; then
+    echo "This build did not produce an updater archive for version $VERSION." >&2
+    exit 1
+  fi
+  if [ ! -s "$archive_path.sig" ]; then
+    echo "This build did not produce an updater signature: $archive_path.sig" >&2
+    exit 1
+  fi
+  if [ -z "$dmg_path" ] || [ ! -s "$dmg_path" ]; then
+    echo "This build did not produce a DMG for version $VERSION." >&2
+    exit 1
+  fi
+  if [ ! -s "$build_output_dir/latest.json" ]; then
+    echo "This build did not produce latest.json." >&2
+    exit 1
+  fi
+
+  find "$OUTPUT_DIR" -maxdepth 1 -type f \
+    -name "WeWork_${VERSION}_*" -delete
+  find "$build_output_dir" -maxdepth 1 -type f ! -name latest.json \
+    -exec cp -f {} "$OUTPUT_DIR/" \;
+  cp -f "$build_output_dir/latest.json" "$OUTPUT_DIR/latest.json"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -268,24 +271,35 @@ fi
 RELEASE_NOTES="${RELEASE_NOTES:-Wework $VERSION}"
 
 configure_release_credentials
-configure_updater_key
+wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+BUILD_OUTPUT_DIR="$(mktemp -d "$OUTPUT_DIR/.build-${VERSION}.XXXXXX")"
+cleanup_build_output() {
+  rm -rf "$BUILD_OUTPUT_DIR"
+}
+trap cleanup_build_output EXIT
 
 echo "Building Wework macOS MinIO release"
 echo "  VERSION=$VERSION"
 echo "  MACOS_BUILD_TARGET=$MACOS_BUILD_TARGET"
 echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
 echo "  OUTPUT_DIR=$OUTPUT_DIR"
+echo "  CARGO_TARGET_DIR=$PROJECT_TAURI_TARGET_DIR"
 echo "  UPLOAD=$UPLOAD"
 
-bash "$SCRIPT_DIR/release-mac-app.sh" \
+if ! CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" bash "$SCRIPT_DIR/release-mac-app.sh" \
   --target local \
   --version "$VERSION" \
   --notes "$RELEASE_NOTES" \
   --local-base-url "$UPDATE_BASE_URL" \
-  --local-dist-dir "$OUTPUT_DIR" \
-  --macos-build-target "$MACOS_BUILD_TARGET"
+  --local-dist-dir "$BUILD_OUTPUT_DIR" \
+  --macos-build-target "$MACOS_BUILD_TARGET"; then
+  echo "macOS release build failed; refusing to upload existing artifacts." >&2
+  exit 1
+fi
+
+promote_release_artifacts "$BUILD_OUTPUT_DIR"
 
 if [ "$UPLOAD" = "true" ]; then
   upload_artifacts

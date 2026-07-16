@@ -10,6 +10,7 @@ including subtask creation and batch data fetching.
 """
 
 import logging
+from time import perf_counter
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
@@ -204,7 +205,12 @@ def _build_standard_assistant_subtask_plan(
 
 
 def get_tasks_related_data_batch(
-    db: Session, tasks: List[Kind], user_id: int
+    db: Session,
+    tasks: List[Kind],
+    user_id: int,
+    *,
+    include_group_chat_info: bool = True,
+    use_sharded_workspaces_only: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Batch get workspace and team data for multiple tasks to reduce database queries.
@@ -219,6 +225,8 @@ def get_tasks_related_data_batch(
     """
     if not tasks:
         return {}
+
+    started_at = perf_counter()
 
     # Extract workspace and team references from all tasks
     workspace_refs = set()
@@ -252,17 +260,30 @@ def get_tasks_related_data_batch(
             device_ids.add(device_id)
 
     # Batch query workspaces
-    workspace_data = _batch_query_workspaces(db, workspace_refs, user_id)
+    phase_started_at = perf_counter()
+    workspace_data = _batch_query_workspaces(
+        db,
+        workspace_refs,
+        user_id,
+        use_sharded_workspaces_only=use_sharded_workspaces_only,
+    )
+    workspace_ms = (perf_counter() - phase_started_at) * 1000
 
     # Batch query teams (including shared teams)
+    phase_started_at = perf_counter()
     team_data = _batch_query_teams(db, team_refs, user_id)
+    team_ms = (perf_counter() - phase_started_at) * 1000
 
     # Batch query device display names
+    phase_started_at = perf_counter()
     device_data = _batch_query_devices(db, device_ids, user_id)
+    device_ms = (perf_counter() - phase_started_at) * 1000
 
     # Get user info once
+    phase_started_at = perf_counter()
     user = userReader.get_by_id(db, user_id)
     user_name = user.user_name if user else ""
+    user_ms = (perf_counter() - phase_started_at) * 1000
 
     # Build result mapping
     result = {}
@@ -335,8 +356,26 @@ def get_tasks_related_data_batch(
             "completed_at": completed_at,
         }
 
-    # Add is_group_chat to result
-    _add_group_chat_info(db, tasks, result)
+    group_chat_ms = 0.0
+    if include_group_chat_info:
+        phase_started_at = perf_counter()
+        _add_group_chat_info(db, tasks, result)
+        group_chat_ms = (perf_counter() - phase_started_at) * 1000
+
+    logger.info(
+        "[task_list_timing] related_data user_id=%s tasks=%s workspace_ms=%.2f "
+        "team_ms=%.2f device_ms=%.2f user_ms=%.2f group_chat_ms=%.2f "
+        "total_ms=%.2f shard_workspaces_only=%s",
+        user_id,
+        len(tasks),
+        workspace_ms,
+        team_ms,
+        device_ms,
+        user_ms,
+        group_chat_ms,
+        (perf_counter() - started_at) * 1000,
+        use_sharded_workspaces_only,
+    )
 
     return result
 
@@ -364,14 +403,25 @@ def _get_team_icon(team: Kind | None) -> str | None:
 
 
 def _batch_query_workspaces(
-    db: Session, workspace_refs: set, user_id: int
+    db: Session,
+    workspace_refs: set,
+    user_id: int,
+    *,
+    use_sharded_workspaces_only: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """Batch query workspaces and return data dict."""
     workspace_data = {}
     if not workspace_refs:
         return workspace_data
 
-    workspaces = task_stores.task_store.list_workspaces_by_refs(
+    list_workspaces = task_stores.task_store.list_workspaces_by_refs
+    if use_sharded_workspaces_only:
+        list_workspaces = getattr(
+            task_stores.task_store,
+            "list_api_workspaces_by_refs",
+            list_workspaces,
+        )
+    workspaces = list_workspaces(
         db,
         refs=[
             WorkspaceRefLookup(user_id=user_id, name=name, namespace=namespace)
@@ -444,6 +494,24 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
         )
         for team in exact_teams:
             team_data[_team_ref_key(team.name, team.namespace, team.user_id)] = team
+
+    if not access_resolved_refs:
+        return team_data
+
+    owned_teams = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Team",
+            Kind.user_id == user_id,
+            tuple_(Kind.name, Kind.namespace).in_(access_resolved_refs),
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    for team in owned_teams:
+        key = _team_ref_key(team.name, team.namespace)
+        team_data[key] = team
+        access_resolved_refs.discard((team.name, team.namespace))
 
     if not access_resolved_refs:
         return team_data
@@ -670,6 +738,9 @@ def build_lite_task_list(
     db: Session,
     tasks: List[TaskResource],
     user_id: int,
+    *,
+    include_group_chat_info: bool = True,
+    use_sharded_workspaces_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Build lightweight task list result from task resources.
@@ -687,7 +758,16 @@ def build_lite_task_list(
     if not tasks:
         return []
 
-    related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
+    if include_group_chat_info:
+        related_data_batch = get_tasks_related_data_batch(db, tasks, user_id)
+    else:
+        related_data_batch = get_tasks_related_data_batch(
+            db,
+            tasks,
+            user_id,
+            include_group_chat_info=False,
+            use_sharded_workspaces_only=use_sharded_workspaces_only,
+        )
 
     result = []
     for task in tasks:

@@ -20,6 +20,131 @@ vi.mock('@/lib/external-links', async importOriginal => ({
 }))
 
 describe('MessageList', () => {
+  test('offers conversation actions for text selected inside one message body', async () => {
+    const onAddSelectionToConversation = vi.fn()
+    const onAskSelectionInSidebar = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={onAskSelectionInSidebar}
+      />
+    )
+
+    selectText(screen.getByTestId('assistant-message-content'), 'Select this')
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('Select this')
+    expect(screen.queryByTestId('message-selection-actions')).not.toBeInTheDocument()
+
+    selectText(screen.getByTestId('assistant-message-content'), 'response')
+    await userEvent.click(await screen.findByTestId('ask-selection-in-sidebar-button'))
+    expect(onAskSelectionInSidebar).toHaveBeenCalledWith('response')
+  })
+
+  test('does not offer selection actions across message bodies', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-selection',
+            role: 'user',
+            content: 'First message',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+          {
+            id: 'assistant-selection',
+            role: 'assistant',
+            content: 'Second message',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:01Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const range = document.createRange()
+    range.setStart(firstTextNode(screen.getByTestId('user-message-content')), 0)
+    range.setEnd(firstTextNode(screen.getByTestId('assistant-message-content')), 6)
+    setDocumentSelection(range)
+
+    expect(screen.queryByTestId('message-selection-actions')).not.toBeInTheDocument()
+  })
+
+  test('reads the final selection after a mouse interaction completes', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-mouse-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(content), 0)
+    range.setEnd(firstTextNode(content), 6)
+    document.getSelection()?.removeAllRanges()
+    document.getSelection()?.addRange(range)
+    fireEvent.mouseUp(content)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
+  test('offers selection actions when the whole message body is selected', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-before-whole-body-selection',
+            role: 'user',
+            content: 'Previous message',
+            status: 'done',
+            createdAt: '2026-07-15T09:59:59Z',
+          },
+          {
+            id: 'assistant-whole-body-selection',
+            role: 'assistant',
+            content: 'Select the whole paragraph',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const nextMessage = screen.getByTestId('user-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(nextMessage), 0)
+    range.setEnd(firstTextNode(content), 0)
+    setDocumentSelection(range)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
   test('renders generated image artifacts from image generation blocks', () => {
     render(
       <MessageList
@@ -4152,3 +4277,31 @@ describe('MessageList', () => {
     ).not.toBeInTheDocument()
   })
 })
+
+function selectText(container: HTMLElement, text: string) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node && !node.textContent?.includes(text)) node = walker.nextNode()
+  if (!node) throw new Error(`Could not find text: ${text}`)
+  const start = node.textContent!.indexOf(text)
+  const range = document.createRange()
+  range.setStart(node, start)
+  range.setEnd(node, start + text.length)
+  setDocumentSelection(range)
+}
+
+function firstTextNode(container: HTMLElement): Node {
+  const node = document.createTreeWalker(container, NodeFilter.SHOW_TEXT).nextNode()
+  if (!node) throw new Error('Could not find a text node')
+  return node
+}
+
+function setDocumentSelection(range: Range) {
+  Object.defineProperty(range, 'getBoundingClientRect', {
+    value: () => ({ left: 100, top: 100, width: 80, height: 20 }),
+  })
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  fireEvent(document, new Event('selectionchange'))
+}

@@ -8,19 +8,16 @@ export { FilePreviewPage, type FilePreviewPageProps } from './FilePreviewPage'
 export {
   getPreviewType,
   formatFileSize,
-  getOfficeType,
   isCodeFile,
   isFilePreviewable,
   type PreviewType,
 } from './utils'
-export { useFileBlob, useExcelParser, type ExcelSheet } from './hooks'
+export { useFileBlob } from './hooks'
 export {
   ImagePreview,
   PDFPreview,
   TextPreview,
   VideoPreview,
   AudioPreview,
-  ExcelPreview,
-  WordPreview,
   UnknownPreview,
 } from './preview-renderers'
