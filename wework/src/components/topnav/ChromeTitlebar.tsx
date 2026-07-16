@@ -84,7 +84,7 @@ export function ChromeTitlebar({
               title={tab.label}
               aria-label={tab.label}
               className={cn(
-                'group relative flex h-8 max-w-[220px] min-w-24 items-center justify-center gap-2.5 rounded-lg px-3 text-center text-[13px] font-medium leading-none transition-colors',
+                'group relative flex h-8 max-w-[220px] min-w-24 items-center justify-center gap-2.5 rounded-lg px-3 text-center text-sm font-medium leading-none transition-colors',
                 activeKey === tab.key
                   ? 'bg-black/[0.045] text-text-primary'
                   : 'text-text-secondary hover:bg-black/[0.04]'

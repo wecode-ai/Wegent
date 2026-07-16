@@ -553,7 +553,7 @@ describe('DesktopSidebar', () => {
     expect(onOpenRuntimeTask).not.toHaveBeenCalled()
   })
 
-  test('opens runtime search from the sidebar', async () => {
+  test('opens runtime search from the product header', async () => {
     const onOpenSearch = vi.fn()
     renderSidebar({ onOpenSearch })
 
@@ -562,7 +562,7 @@ describe('DesktopSidebar', () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1)
   })
 
-  test('places plugins as the third primary sidebar action', () => {
+  test('keeps search in the product header and orders primary sidebar actions', () => {
     renderSidebar()
 
     const newChatButton = screen.getByTestId('new-chat-button')
@@ -571,16 +571,15 @@ describe('DesktopSidebar', () => {
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
-    expect(newChatButton.compareDocumentPosition(searchButton)).toBe(
+    expect(searchButton.compareDocumentPosition(newChatButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
-    expect(searchButton.compareDocumentPosition(pluginsButton)).toBe(
+    expect(newChatButton.compareDocumentPosition(pluginsButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
     expect(pluginsButton.compareDocumentPosition(cloudButton)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
-    expect(searchButton.compareDocumentPosition(cloudButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(cloudButton.compareDocumentPosition(projectsHeader)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -588,8 +587,9 @@ describe('DesktopSidebar', () => {
     const scrollContainer = screen.getByTestId('sidebar-worklists-scroll')
     expect(scrollContainer).toHaveClass('mt-0.5', 'mb-2')
     expect(scrollContainer).not.toHaveClass('my-2', 'pt-1')
-    expect(searchButton.parentElement).toHaveClass('space-y-0.5')
-    expect(searchButton.parentElement).not.toHaveClass('pt-2')
+    expect(searchButton.parentElement).toHaveClass('h-9', 'justify-between')
+    expect(pluginsButton.parentElement).toHaveClass('space-y-0.5')
+    expect(pluginsButton.parentElement).not.toHaveClass('pt-2')
   })
 
   test('matches Codex sidebar text emphasis levels', () => {
@@ -604,9 +604,13 @@ describe('DesktopSidebar', () => {
     const projectsToggle = screen.getByTestId('projects-section-toggle')
     const projectsTitle = projectsToggle.querySelector('span')
 
-    for (const button of [newTaskButton, searchButton, pluginsButton, cloudButton]) {
+    for (const button of [newTaskButton, pluginsButton, cloudButton]) {
       expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
     }
+    expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
+    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
+    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
+    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
     expect(newTaskIcon).toHaveClass('text-current')
     expect(cloudIcon).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     expect(projectsTitle).toHaveClass(
@@ -1904,7 +1908,7 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[72px]')
+    expect(trailing).toHaveClass('min-w-[30px]', 'group-hover/task:w-[68px]')
     expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 

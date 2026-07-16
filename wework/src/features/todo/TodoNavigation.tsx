@@ -65,10 +65,10 @@ export function ProjectSwitcherOverlay({
         onMouseDown={event => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between">
-          <span className="text-[13px] font-semibold text-[#30353A] dark:text-text-primary">
+          <span className="text-sm font-semibold text-[#30353A] dark:text-text-primary">
             {t('todo.switch_project', '切换项目')}
           </span>
-          <span className="font-mono text-[10px] text-[#8A9299]">⌘ K</span>
+          <span className="font-mono text-xs text-[#8A9299]">⌘ K</span>
         </div>
         <label className="relative block shrink-0">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[#818A92]" />
@@ -78,15 +78,15 @@ export function ProjectSwitcherOverlay({
             value={search}
             onChange={event => onSearchChange(event.target.value)}
             placeholder={t('todo.search_projects', '搜索项目…')}
-            className="h-[34px] w-full rounded-md border border-[#E0E3E6] bg-[#F7F8F9] pl-8 pr-2 text-[11px] text-[#343A40] outline-none placeholder:text-[#9AA1A8] focus:border-[#9FDCD5] dark:border-border dark:bg-muted dark:text-text-primary"
+            className="h-[34px] w-full rounded-md border border-[#E0E3E6] bg-[#F7F8F9] pl-8 pr-2 text-xs text-[#343A40] outline-none placeholder:text-[#9AA1A8] focus:border-[#9FDCD5] dark:border-border dark:bg-muted dark:text-text-primary"
           />
         </label>
-        <span className="shrink-0 text-[10px] font-semibold text-[#969EA5]">
+        <span className="shrink-0 text-xs font-semibold text-[#969EA5]">
           {t('todo.recent_projects', '最近项目')}
         </span>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {filteredProjects.length === 0 ? (
-            <div className="flex h-full items-center justify-center text-[11px] text-[#929AA1]">
+            <div className="flex h-full items-center justify-center text-xs text-[#929AA1]">
               {t('todo.no_project_results', '没有匹配的项目')}
             </div>
           ) : (
@@ -109,16 +109,16 @@ export function ProjectSwitcherOverlay({
                 >
                   <span className="flex min-w-0 items-center gap-2.5">
                     <span
-                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold text-white"
+                      className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] text-xs font-bold text-white"
                       style={{ backgroundColor: projectColor(entry.project, index) }}
                     >
                       {entry.project.name.slice(0, 1).toUpperCase()}
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-[12px] font-semibold text-[#343A40] dark:text-text-primary">
+                      <span className="block truncate text-xs font-semibold text-[#343A40] dark:text-text-primary">
                         {entry.project.name}
                       </span>
-                      <span className="block text-[9px] text-[#929AA1]">
+                      <span className="block text-xs text-[#929AA1]">
                         {t('todo.work_item_count', {
                           defaultValue: '{{count}} 个工作项',
                           count,
@@ -141,7 +141,7 @@ export function ProjectSwitcherOverlay({
           type="button"
           data-testid="todo-view-all-projects"
           onClick={onViewAll}
-          className="flex h-[34px] shrink-0 items-center gap-2 rounded-md px-2 text-[11px] font-semibold text-[#596169] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+          className="flex h-[34px] shrink-0 items-center gap-2 rounded-md px-2 text-xs font-semibold text-[#596169] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
         >
           <FolderOpen className="h-3.5 w-3.5" />
           {t('todo.view_all_projects', '查看全部项目')}
@@ -187,7 +187,7 @@ export function TodoSearchOverlay({
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t('todo.search_todos', '搜索标题、编号或任务内容…')}
-            className="min-w-0 flex-1 bg-transparent px-3 text-[13px] text-[#30363C] outline-none placeholder:text-[#9AA1A8] dark:text-text-primary"
+            className="min-w-0 flex-1 bg-transparent px-3 text-sm text-[#30363C] outline-none placeholder:text-[#9AA1A8] dark:text-text-primary"
           />
           <button
             type="button"
@@ -196,12 +196,12 @@ export function TodoSearchOverlay({
             className="flex h-7 w-7 items-center justify-center rounded-md text-[#717A82] hover:bg-[#F2F4F5] dark:hover:bg-muted"
             aria-label={t('workbench.close', '关闭')}
           >
-            <span className="font-mono text-[10px]">ESC</span>
+            <span className="font-mono text-xs">ESC</span>
           </button>
         </label>
         <div className="min-h-0 overflow-y-auto p-2">
           {results.length === 0 ? (
-            <div className="flex h-24 items-center justify-center text-[11px] text-[#929AA1]">
+            <div className="flex h-24 items-center justify-center text-xs text-[#929AA1]">
               {t('todo.no_matching_items', '暂无符合条件的 TODO')}
             </div>
           ) : (
@@ -214,10 +214,10 @@ export function TodoSearchOverlay({
                 className="flex h-14 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-[#F3F5F6] dark:hover:bg-muted"
               >
                 <span className="min-w-0">
-                  <span className="block truncate text-[12px] font-semibold text-[#30363C] dark:text-text-primary">
+                  <span className="block truncate text-xs font-semibold text-[#30363C] dark:text-text-primary">
                     {item.title}
                   </span>
-                  <span className="mt-1 block truncate text-[9px] text-[#858E96]">
+                  <span className="mt-1 block truncate text-xs text-[#858E96]">
                     {item.code} · {item.workspace}
                   </span>
                 </span>
@@ -322,7 +322,7 @@ export function TodoSidebar({
         </nav>
 
         <div className="absolute inset-x-2 bottom-14 top-[146px] overflow-y-auto">
-          <div className="flex h-8 items-center justify-between px-2 text-[11px] font-semibold text-[#939BA3]">
+          <div className="flex h-8 items-center justify-between px-2 text-xs font-semibold text-[#939BA3]">
             <span>{t('workbench.projects', '项目')}</span>
             <button
               type="button"
@@ -353,7 +353,7 @@ export function TodoSidebar({
                     className="h-5 w-5 shrink-0 rounded-[5px]"
                     style={{ backgroundColor: projectColor(selectedProject.project, 0) }}
                   />
-                  <span className="truncate text-[12px] font-semibold text-[#30353A] dark:text-text-primary">
+                  <span className="truncate text-xs font-semibold text-[#30353A] dark:text-text-primary">
                     {selectedProject.project.name}
                   </span>
                 </button>
@@ -377,7 +377,7 @@ export function TodoSidebar({
                     type="button"
                     data-testid="todo-sidebar-open-in-wework"
                     onClick={onOpenProjects}
-                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-[10px] text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
                     {t('todo.open_in_wework', '在 Wework 中打开')}
@@ -386,7 +386,7 @@ export function TodoSidebar({
                     type="button"
                     data-testid="todo-sidebar-menu-add-project"
                     onClick={onAddProject}
-                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-[10px] text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     {t('todo.add_project', '添加项目')}
@@ -432,11 +432,11 @@ export function TodoSidebar({
                       className="h-5 w-5 shrink-0 rounded-[5px]"
                       style={{ backgroundColor: projectColor(entry.project, index + 1) }}
                     />
-                    <span className="truncate text-[12px] text-[#555D65] dark:text-text-secondary">
+                    <span className="truncate text-xs text-[#555D65] dark:text-text-secondary">
                       {entry.project.name}
                     </span>
                   </span>
-                  <span className="font-mono text-[10px] text-[#9AA1A8]">
+                  <span className="font-mono text-xs text-[#9AA1A8]">
                     {projectItemCount(entry)}
                   </span>
                 </button>
@@ -450,10 +450,10 @@ export function TodoSidebar({
             <UserRound className="h-4 w-4" />
           </span>
           <span className="min-w-0">
-            <span className="block truncate text-[12px] font-semibold text-[#272B30] dark:text-text-primary">
+            <span className="block truncate text-xs font-semibold text-[#272B30] dark:text-text-primary">
               {user?.user_name || 'local'}
             </span>
-            <span className="block truncate text-[10px] text-[#737B83]">
+            <span className="block truncate text-xs text-[#737B83]">
               {user?.email || 'local@wework.local'}
             </span>
           </span>
@@ -479,7 +479,7 @@ function SidebarAction({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-normal leading-[18px] text-[#30353A] hover:bg-[#E7E9EB] dark:text-text-primary dark:hover:bg-muted"
+      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-normal leading-[18px] text-[#30353A] hover:bg-[#E7E9EB] dark:text-text-primary dark:hover:bg-muted"
     >
       <Icon className="h-4 w-4 text-current" />
       <span>{label}</span>
@@ -508,7 +508,7 @@ function ProjectNav({
       data-testid={testId}
       onClick={onClick}
       className={cn(
-        'flex h-8 w-full items-center justify-between rounded-md pl-9 pr-3 text-[11px] text-[#58616A] hover:bg-[#E7E9EB] dark:text-text-secondary dark:hover:bg-muted',
+        'flex h-8 w-full items-center justify-between rounded-md pl-9 pr-3 text-xs text-[#58616A] hover:bg-[#E7E9EB] dark:text-text-secondary dark:hover:bg-muted',
         active && 'bg-[#E8F8F5] font-semibold text-[#0F766E] dark:bg-primary/10 dark:text-primary'
       )}
     >
@@ -519,7 +519,7 @@ function ProjectNav({
       {count != null && (
         <span
           className={cn(
-            'flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 font-mono text-[9px] text-[#818A92]',
+            'flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 font-mono text-xs text-[#818A92]',
             active && 'bg-[#D6EEEA] text-[#14786F] dark:bg-primary/15 dark:text-primary'
           )}
         >

@@ -143,31 +143,57 @@ export function useResizableRightSplitChat({
 
 export function useResizableBottomPanel() {
   const [height, setHeight] = useState(BOTTOM_DEFAULT_HEIGHT)
+  const [resizing, setResizing] = useState(false)
+  const resizeFrameRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+      }
+    }
+  }, [])
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
 
     const startY = event.clientY
     const startHeight = height
+    let nextHeight = startHeight
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      setHeight(
-        clamp(startHeight + startY - moveEvent.clientY, BOTTOM_MIN_HEIGHT, BOTTOM_MAX_HEIGHT)
+      nextHeight = clamp(
+        startHeight + startY - moveEvent.clientY,
+        BOTTOM_MIN_HEIGHT,
+        BOTTOM_MAX_HEIGHT
       )
+      if (resizeFrameRef.current !== null) return
+
+      resizeFrameRef.current = window.requestAnimationFrame(() => {
+        resizeFrameRef.current = null
+        setHeight(nextHeight)
+      })
     }
 
     const handleUp = () => {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current)
+        resizeFrameRef.current = null
+      }
+      setHeight(nextHeight)
+      setResizing(false)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
 
+    setResizing(true)
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
   }
 
-  return { height, handleResizeStart }
+  return { height, resizing, handleResizeStart }
 }

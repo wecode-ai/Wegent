@@ -9,7 +9,7 @@ export function WebSearchActivityRows({ items }: { items: WebSearchActivityItem[
   return (
     <div
       data-testid="web-search-activity-results"
-      className="flex min-w-0 flex-col gap-1.5 text-[13px] leading-5 text-text-muted"
+      className="flex min-w-0 flex-col gap-1.5 text-sm leading-5 text-text-muted"
     >
       {items.map(item => (
         <div key={item.id} className="flex min-w-0 items-start gap-1.5">
@@ -48,7 +48,7 @@ export function WebSearchSourcesChip({ sources }: { sources: WebSearchSourceItem
                   key={source.id}
                   href={source.url}
                   data-testid="web-search-source-popup-row"
-                  className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] leading-5 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border"
+                  className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm leading-5 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border"
                   onClick={event => {
                     event.preventDefault()
                     void openExternalUrl(source.url).catch(error => {

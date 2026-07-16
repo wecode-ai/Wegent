@@ -579,19 +579,19 @@ export function ProjectWorkBar({
                   onChange={event => setProjectQuery(event.target.value)}
                   placeholder={t('workbench.search_projects', '搜索项目')}
                   className={cn(
-                    'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                    'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
                     isMobile && 'text-base leading-5'
                   )}
                 />
               </label>
               {availableProjects.length === 0 ? (
-                <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
+                <div className="px-4 py-3 text-sm leading-[18px] text-text-muted">
                   {t('workbench.no_projects', '暂无项目')}
                 </div>
               ) : filteredProjects.length === 0 ? (
                 <div
                   data-testid="project-search-empty"
-                  className="px-4 py-3 text-[13px] leading-[18px] text-text-muted"
+                  className="px-4 py-3 text-sm leading-[18px] text-text-muted"
                 >
                   {t('workbench.project_search_no_results', '没有匹配的项目')}
                 </div>
@@ -641,7 +641,7 @@ export function ProjectWorkBar({
                             <div className="flex min-w-0 flex-1 items-center gap-2">
                               <span
                                 className={cn(
-                                  'min-w-0 truncate text-[13px] font-semibold leading-[18px]',
+                                  'min-w-0 truncate text-sm font-semibold leading-[18px]',
                                   deviceLabel ? 'max-w-[9rem] shrink' : 'flex-1',
                                   'text-text-primary'
                                 )}
@@ -682,7 +682,7 @@ export function ProjectWorkBar({
                               onBindProjectWorkspace?.(project.id)
                               closeMenu()
                             }}
-                            className="ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                            className="ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                           >
                             <FolderPlus className="h-3.5 w-3.5 shrink-0" />
                             <span>{t('workbench.bind_project_workspace', '绑定设备工作区')}</span>
@@ -705,7 +705,7 @@ export function ProjectWorkBar({
                                 disabled={!selectable}
                                 onClick={() => handleSelectDeviceWorkspace(project.id, workspace)}
                                 className={cn(
-                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
+                                  'ml-7 flex h-9 w-[calc(100%-1.75rem)] items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                                   selectable
                                     ? 'text-text-secondary hover:bg-muted'
                                     : 'cursor-not-allowed text-text-muted opacity-60',
@@ -747,7 +747,7 @@ export function ProjectWorkBar({
                       onMouseEnter={() => setLocalProjectSubmenuOpen(true)}
                       onFocus={() => setLocalProjectSubmenuOpen(true)}
                       onClick={() => setLocalProjectSubmenuOpen(value => !value)}
-                      className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                      className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
                       <FolderPlus className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
@@ -769,7 +769,7 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid="add-local-blank-project-option"
                           onClick={() => handleCreateProject('scratch')}
-                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                         >
                           <FolderPlus className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 flex-1">
@@ -780,7 +780,7 @@ export function ProjectWorkBar({
                           type="button"
                           data-testid="add-local-existing-project-option"
                           onClick={() => handleCreateProject('existing')}
-                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                          className="flex h-9 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                         >
                           <ProjectFolderIcon
                             project={{ id: 0, name: 'folder', tasks: [] }}
@@ -802,7 +802,7 @@ export function ProjectWorkBar({
                       onMouseEnter={() => setLocalProjectSubmenuOpen(false)}
                       onFocus={() => setLocalProjectSubmenuOpen(false)}
                       onClick={() => handleCreateProject('git')}
-                      className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                      className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                     >
                       <Cloud className="h-4 w-4 shrink-0" />
                       <span className="min-w-0 flex-1">
@@ -818,7 +818,7 @@ export function ProjectWorkBar({
                     onMouseEnter={() => setLocalProjectSubmenuOpen(false)}
                     onFocus={() => setLocalProjectSubmenuOpen(false)}
                     onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
-                    className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+                    className="flex h-8 w-full items-center gap-3 rounded-lg px-4 text-left text-sm font-medium leading-[18px] text-text-secondary hover:bg-muted"
                   >
                     <FolderX className="h-4 w-4 shrink-0" />
                     <span className="min-w-0 flex-1">
@@ -837,7 +837,7 @@ export function ProjectWorkBar({
             data-testid="project-work-button"
             onClick={handleToggleMenu}
             className={cn(
-              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
               buttonClassName
             )}
@@ -858,7 +858,7 @@ export function ProjectWorkBar({
             <ChevronDown className="h-4 w-4" />
           </button>
         ) : currentProject ? (
-          <div className="flex h-8 min-w-0 items-center rounded-lg text-[13px] font-medium leading-[18px] text-text-secondary">
+          <div className="flex h-8 min-w-0 items-center rounded-lg text-sm font-medium leading-[18px] text-text-secondary">
             <button
               type="button"
               data-testid="clear-project-button"
@@ -902,7 +902,7 @@ export function ProjectWorkBar({
             data-testid="project-work-button"
             onClick={handleToggleMenu}
             className={cn(
-              'flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-medium leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               open && 'bg-background/70 text-text-primary',
               buttonClassName
             )}
@@ -947,7 +947,7 @@ export function ProjectWorkBar({
                   disabled={executionModeLocked}
                   onClick={() => handleExecutionModeChange('current_workspace')}
                   className={cn(
-                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
                     isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
                     executionMode === 'current_workspace'
                       ? 'text-text-primary'
@@ -966,7 +966,7 @@ export function ProjectWorkBar({
                   disabled={executionModeLocked}
                   onClick={() => handleExecutionModeChange('git_worktree')}
                   className={cn(
-                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
                     isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
                     executionMode === 'git_worktree'
                       ? 'text-text-primary'
@@ -988,7 +988,7 @@ export function ProjectWorkBar({
             data-testid="execution-mode-button"
             onClick={handleToggleExecutionModeMenu}
             className={cn(
-              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-base font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
               executionModeOpen &&
                 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]'
             )}
@@ -1036,7 +1036,7 @@ export function ProjectWorkBar({
       {selectedWorkspaceIsRemote && selectedWorkspaceDeviceIp && (
         <div
           data-testid="project-work-remote-status"
-          className="ml-auto flex min-w-0 items-center gap-2 text-[13px] font-medium leading-[18px] text-text-primary"
+          className="ml-auto flex min-w-0 items-center gap-2 text-sm font-medium leading-[18px] text-text-primary"
         >
           <span className="truncate">{selectedWorkspaceDeviceIp}</span>
           <span

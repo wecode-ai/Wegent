@@ -6,8 +6,9 @@ This directory implements the Wework desktop workbench: Tauri, Vite, React, Type
 
 - Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.
 - Mobile is `<=767px`, tablet `768px–1023px`, desktop `>=1024px`. Split mobile and desktop components when layout or interaction differs materially; otherwise use responsive classes. Mobile controls must be at least `44px × 44px`.
-- Follow the calm UI tokens: low contrast, sparse shadows, teal primary (`#14B8A6`), `bg-base`, `bg-surface`, `text-text-primary`, and `border-border`. Dialog primary actions use `variant="primary"`.
-- Desktop workbench controls use `h-8`; icon-only controls use `h-8 w-8`, standard icons use `h-4 w-4`, and toolbar gaps use `gap-1` or `gap-1.5`. Do not introduce other desktop button heights without a documented reason.
+- Follow the Codex-derived, neutral-first visual system in `DESIGN.md`: grayscale surfaces, `14px` default desktop UI text, sparse hairlines and shadows, inverse-neutral primary actions, and blue only for focus, links, or narrow selection accents. Green and teal are restricted to semantic success/addition states and must never define product chrome or default actions.
+- Use the Codex component density documented in `DESIGN.md`: `30px` sidebar rows, `28px` app-shell tabs and composer actions, `16px` standard desktop icons, and `4px–8px` action-group gaps. Reuse the shared component's established size instead of inventing a local height.
+- Use the shared typography scale and semantic `heading-*`, `text-chat`, and `text-code` roles. Never add arbitrary `text-[Npx]`, literal CSS `font-size`, or literal inline `fontSize` values; `pnpm lint` enforces this rule.
 
 ## i18n
 

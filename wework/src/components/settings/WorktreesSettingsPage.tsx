@@ -79,7 +79,7 @@ function WorktreeRow({
             data-testid={`delete-worktree-button-${item.worktreeId}`}
             onClick={onDelete}
             disabled={busy}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-500/10 px-3 text-[13px] font-medium text-red-500 hover:bg-red-500/15 disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             {t('workbench.worktrees_delete')}
@@ -478,7 +478,7 @@ export function WorktreesSettingsPage({
             data-testid="disable-worktree-cleanup-dialog"
             className="w-full max-w-[640px] rounded-[28px] border border-border bg-popover px-8 py-7 shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
           >
-            <h2 className="text-xl font-semibold text-text-primary">
+            <h2 className="heading-base text-text-primary">
               {t('workbench.worktrees_disable_cleanup_title')}
             </h2>
             <p className="mt-5 text-sm leading-7 text-text-secondary">

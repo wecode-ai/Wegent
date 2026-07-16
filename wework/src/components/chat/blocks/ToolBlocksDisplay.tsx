@@ -404,7 +404,7 @@ function ToolActivityGroup({
   if (isGuidanceGroup) {
     return (
       <div
-        className="flex max-w-full items-center gap-1.5 text-[13px] text-text-muted"
+        className="flex max-w-full items-center gap-1.5 text-sm text-text-muted"
         data-testid="processing-activity-group-label"
       >
         {icon}
@@ -414,7 +414,7 @@ function ToolActivityGroup({
   }
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
+    <div className="min-w-0 overflow-x-hidden text-sm">
       <button
         type="button"
         data-testid="processing-activity-group-toggle"
@@ -455,7 +455,7 @@ function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
     >
       <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
       <span
-        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] font-semibold ${textClassName}`}
+        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-sm font-semibold ${textClassName}`}
       >
         <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
         <span className={`min-w-0 truncate ${isRunning ? 'waiting-thinking-text' : ''}`}>
@@ -519,7 +519,7 @@ function CodeSearchActivityRow({ label }: { label: string }) {
   return (
     <div
       data-testid="code-search-activity-row"
-      className="flex max-w-full text-[13px] leading-5 text-text-muted"
+      className="flex max-w-full text-sm leading-5 text-text-muted"
     >
       <span className="min-w-0 break-words">{label}</span>
     </div>

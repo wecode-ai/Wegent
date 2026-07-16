@@ -71,9 +71,9 @@ function TextInputDialogContent({
           </button>
         </div>
         {description && (
-          <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">{description}</p>
+          <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
         )}
-        <label className="mt-5 block text-[13px] font-medium leading-[18px] text-text-secondary">
+        <label className="mt-5 block text-sm font-medium leading-[18px] text-text-secondary">
           {label}
         </label>
         <input
@@ -85,7 +85,7 @@ function TextInputDialogContent({
             setValue(event.target.value)
             setError(null)
           }}
-          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-[13px] text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          className="mt-2 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
         {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
@@ -93,7 +93,7 @@ function TextInputDialogContent({
             type="button"
             data-testid={`${inputTestId}-cancel-button`}
             onClick={onClose}
-            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
+            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-sm font-medium leading-[18px] text-text-primary hover:bg-muted"
           >
             {cancelLabel}
           </button>
@@ -117,7 +117,7 @@ function TextInputDialogContent({
                 setSubmitting(false)
               }
             }}
-            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:opacity-50"
+            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:opacity-50"
           >
             {confirmLabel}
           </button>

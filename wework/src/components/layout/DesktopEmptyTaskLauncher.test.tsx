@@ -60,6 +60,22 @@ describe('DesktopEmptyTaskLauncher', () => {
       '审查代码并提出修改建议',
       '修复问题和失败',
     ])
+
+    const categoryButtons = within(screen.getByTestId('task-suggestion-categories')).getAllByRole(
+      'button'
+    )
+    expect(categoryButtons[0]).toHaveClass(
+      'min-h-[104px]',
+      'rounded-2xl',
+      'bg-background',
+      'ring-[0.5px]'
+    )
+    expect(categoryButtons.map(button => button.querySelector('svg')?.classList.value)).toEqual([
+      'h-4 w-4 text-[#0285FF]',
+      'h-4 w-4 text-[#924FF7]',
+      'h-4 w-4 text-[#04B84C]',
+      'h-4 w-4 text-[#FB6A22]',
+    ])
   })
 
   test('replaces the draft from a secondary suggestion without submitting and keeps focus local', async () => {

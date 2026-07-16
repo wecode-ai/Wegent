@@ -197,7 +197,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             onClick={() => void handleOpenLocalWorkspace()}
             disabled={ideLoading}
             className={cn(
-              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-[13px] font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
+              'flex h-8 shrink-0 items-center gap-1.5 border-0 bg-transparent pl-2 pr-1.5 text-sm font-medium leading-[18px] text-text-primary transition-colors hover:bg-black/[0.06] hover:text-text-primary active:bg-black/[0.10] focus-visible:outline-none disabled:cursor-wait',
               ideLoading && 'cursor-wait opacity-70'
             )}
             aria-label={t('workbench.open_project_ide_with', {

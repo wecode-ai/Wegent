@@ -74,7 +74,7 @@ const tabs: Array<{
 
 function tabClassName(selected: boolean) {
   return [
-    'h-9 shrink-0 rounded-lg px-3 text-[15px] font-semibold leading-5 transition-colors',
+    'h-9 shrink-0 rounded-lg px-3 text-base font-semibold leading-5 transition-colors',
     selected ? 'bg-[#f3f3f4] text-[#101014]' : 'text-[#85858c] hover:text-[#101014]',
   ].join(' ')
 }
@@ -775,16 +775,16 @@ export function PluginManagementWorkspace({
                   </div>
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
-                      <h2 className="truncate text-[15px] font-medium leading-6">{app.name}</h2>
+                      <h2 className="truncate text-base font-medium leading-6">{app.name}</h2>
                       <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-medium text-text-muted">
                         {app.pluginName}
                       </span>
                     </div>
-                    <p className="mt-0.5 truncate text-[13px] leading-5 text-text-secondary">
+                    <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
                       {app.description}
                     </p>
                   </div>
-                  <span className="text-[13px] leading-5 text-text-muted">
+                  <span className="text-sm leading-5 text-text-muted">
                     {app.enabled
                       ? t('workbench.plugins_enabled', '已启用')
                       : t('workbench.plugins_disabled', '已停用')}

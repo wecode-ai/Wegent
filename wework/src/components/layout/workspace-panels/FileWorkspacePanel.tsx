@@ -639,7 +639,7 @@ export function FileWorkspacePanel({
                 data-testid="workspace-file-open-file-button"
                 disabled={openingWorkspace}
                 onClick={() => void openSelectedFile()}
-                className="flex h-[30px] items-center gap-1.5 rounded-l-lg px-2 text-[13px] leading-[18px] text-text-primary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                className="flex h-[30px] items-center gap-1.5 rounded-l-lg px-2 text-sm leading-[18px] text-text-primary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
               >
                 {openingWorkspace ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

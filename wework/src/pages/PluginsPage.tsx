@@ -46,10 +46,8 @@ function PluginsWorkspaceRouteFallback({
       </div>
       <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-5 pb-14 pt-5 md:px-8 md:pt-4">
         <section className="space-y-1.5">
-          <h1 className="text-[30px] font-normal leading-9 tracking-normal text-text-primary">
-            插件
-          </h1>
-          <p className="text-[16px] leading-6 text-text-secondary">通过插件扩展 WeWork 能力</p>
+          <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">插件</h1>
+          <p className="text-lg leading-6 text-text-secondary">通过插件扩展 WeWork 能力</p>
         </section>
         <div className="h-11 w-full animate-pulse rounded-full bg-surface" />
         <div className="space-y-8 border-t border-border pt-8">

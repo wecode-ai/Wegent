@@ -66,7 +66,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
             ? t('workbench.appshots_accessibility_permission_title', '允许 Wework 读取窗口文本')
             : t('workbench.appshots_permission_title', '允许 Wework 录制屏幕')}
         </h2>
-        <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+        <p className="mt-2 text-sm leading-[18px] text-text-secondary">
           {permissionRequired === 'accessibility'
             ? t(
                 'workbench.appshots_accessibility_permission_description',
@@ -82,7 +82,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
             type="button"
             data-testid="appshots-permission-cancel-button"
             onClick={() => setPermissionRequired(null)}
-            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-[13px] font-medium hover:bg-muted"
+            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-sm font-medium hover:bg-muted"
           >
             {t('common.cancel', '取消')}
           </button>
@@ -94,7 +94,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
                 console.error('[Wework] Failed to open screen capture settings:', error)
               })
             }}
-            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-[13px] font-medium text-background hover:bg-text-primary/90"
+            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90"
           >
             {t('workbench.appshots_open_permission_settings', '打开系统设置')}
           </button>
