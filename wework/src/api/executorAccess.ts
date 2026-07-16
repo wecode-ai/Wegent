@@ -113,6 +113,8 @@ export interface ExecutorRuntimeClient {
   setRuntimeProjectAppearance: ReturnType<
     typeof createRuntimeWorkApi
   >['setRuntimeProjectAppearance']
+  syncRuntimeRemoteProjects: ReturnType<typeof createRuntimeWorkApi>['syncRuntimeRemoteProjects']
+  activateRuntimeProject: ReturnType<typeof createRuntimeWorkApi>['activateRuntimeProject']
   reorderRuntimeProjectTasks: ReturnType<typeof createRuntimeWorkApi>['reorderRuntimeProjectTasks']
   setRuntimeTaskPinned: ReturnType<typeof createRuntimeWorkApi>['setRuntimeTaskPinned']
   archiveRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['archiveRuntimeTask']

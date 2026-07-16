@@ -709,6 +709,49 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('updates the logical device when a websocket event uses its socket id', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [
+        {
+          id: 1,
+          device_id: 'logical-device',
+          socket_device_id: 'socket-device',
+          name: 'Remote Device',
+          status: 'offline',
+          is_default: false,
+        },
+      ],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'logical-device',
+            deviceStatus: 'offline',
+            available: false,
+            workspacePath: '/workspace/repo',
+            mapped: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      },
+    })
+
+    const updated = workbenchReducer(state, {
+      type: 'device_status_changed',
+      deviceId: 'socket-device',
+      status: 'online',
+    })
+
+    expect(updated.devices[0].status).toBe('online')
+    expect(updated.runtimeWork?.chats[0]).toMatchObject({
+      deviceStatus: 'online',
+      available: true,
+    })
+  })
+
   test('preserves runtime task order on refresh and appends new tasks', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

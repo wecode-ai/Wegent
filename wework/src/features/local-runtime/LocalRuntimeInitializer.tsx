@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   AlertCircle,
@@ -14,6 +14,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
+import {
+  applyLocalExecutorCloudConnection,
+  type LocalExecutorCloudConnection,
+} from '@/features/cloud-connection/localExecutorCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
@@ -33,6 +37,7 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
+  initialCloudConnection?: LocalExecutorCloudConnection
   startupReady?: boolean
 }
 
@@ -86,9 +91,13 @@ function localRuntimeMinimumReadyDelayMs(): number {
 
 async function resolveLocalRuntimeState(
   fallbackError: string,
-  errorText: LocalRuntimeErrorText
+  errorText: LocalRuntimeErrorText,
+  initialCloudConnection?: LocalExecutorCloudConnection
 ): Promise<LocalRuntimeState> {
   try {
+    if (initialCloudConnection) {
+      await applyLocalExecutorCloudConnection(initialCloudConnection)
+    }
     const status = await ensureLocalExecutorStarted()
     const statusError = localRuntimeError(status, errorText)
     if (statusError) {
@@ -282,11 +291,13 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 
 export function LocalRuntimeInitializer({
   children,
+  initialCloudConnection,
   startupReady = true,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
+  const initialCloudConnectionRef = useRef(initialCloudConnection)
   const minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
   const [minimumDelayElapsed, setMinimumDelayElapsed] = useState(() => minimumReadyDelayMs === 0)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
@@ -332,13 +343,23 @@ export function LocalRuntimeInitializer({
     setSlowStartupTimedOut(false)
     setCopyDebugState('idle')
     setState({ phase: 'starting', error: null })
-    setState(await resolveLocalRuntimeState(fallbackError, runtimeErrorText))
+    setState(
+      await resolveLocalRuntimeState(
+        fallbackError,
+        runtimeErrorText,
+        initialCloudConnectionRef.current
+      )
+    )
   }, [enabled, fallbackError, runtimeErrorText])
 
   useEffect(() => {
     if (!enabled) return undefined
     let cancelled = false
-    void resolveLocalRuntimeState(fallbackError, runtimeErrorText).then(nextState => {
+    void resolveLocalRuntimeState(
+      fallbackError,
+      runtimeErrorText,
+      initialCloudConnectionRef.current
+    ).then(nextState => {
       if (!cancelled) {
         setState(nextState)
       }

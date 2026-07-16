@@ -144,6 +144,7 @@ class OpenAPIStreamingService:
         current_reasoning_segment: Optional[Dict[str, Any]] = None
         tool_output_indexes: Dict[str, int] = {}
         completed_output_items: Dict[int, Any] = {}
+        response_blocks: Dict[str, Dict[str, Any]] = {}
 
         def allocate_output_index() -> int:
             nonlocal next_output_index
@@ -542,6 +543,41 @@ class OpenAPIStreamingService:
                             }
                         )
                         sequence_number += 1
+                    elif chunk.type == "block_created":
+                        close_reasoning_segment()
+                        block = chunk.data.get("block")
+                        if not isinstance(block, dict) or not block.get("id"):
+                            continue
+                        block_id = str(block["id"])
+                        response_blocks[block_id] = dict(block)
+                        yield _format_sse_event(
+                            {
+                                "type": "response.block.created",
+                                "response_id": response_id,
+                                "sequence_number": sequence_number,
+                                "block": block,
+                            }
+                        )
+                        sequence_number += 1
+                    elif chunk.type == "block_updated":
+                        close_reasoning_segment()
+                        block_id = chunk.data.get("block_id")
+                        updates = chunk.data.get("updates")
+                        if not block_id or not isinstance(updates, dict):
+                            continue
+                        block_id = str(block_id)
+                        if block_id in response_blocks:
+                            response_blocks[block_id].update(updates)
+                        yield _format_sse_event(
+                            {
+                                "type": "response.block.updated",
+                                "response_id": response_id,
+                                "sequence_number": sequence_number,
+                                "block_id": block_id,
+                                "updates": updates,
+                            }
+                        )
+                        sequence_number += 1
 
             # Close text output items
             if accumulated_text:
@@ -635,9 +671,12 @@ class OpenAPIStreamingService:
                 output=output_items,
                 previous_response_id=previous_response_id,
             )
+            final_response_data = final_response.model_dump()
+            if response_blocks:
+                final_response_data["blocks"] = list(response_blocks.values())
             yield _format_sse_event(
                 {
-                    "response": final_response.model_dump(),
+                    "response": final_response_data,
                     "sequence_number": sequence_number,
                     "type": "response.completed",
                 }

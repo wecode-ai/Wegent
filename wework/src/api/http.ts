@@ -105,6 +105,15 @@ async function parseError(response: Response): Promise<ApiError> {
     if (json.error_code) {
       errorCode = json.error_code
     }
+    if (json.error && typeof json.error === 'object') {
+      detail = json.error
+      if (typeof json.error.message === 'string') {
+        message = json.error.message
+      }
+      if (json.error.code || json.error.error_code) {
+        errorCode = json.error.code ?? json.error.error_code
+      }
+    }
   } catch {
     message = errorText || `HTTP ${response.status}`
   }

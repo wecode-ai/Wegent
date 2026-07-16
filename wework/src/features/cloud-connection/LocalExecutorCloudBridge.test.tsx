@@ -47,4 +47,11 @@ describe('LocalExecutorCloudBridge', () => {
       authToken: 'token-b',
     })
   })
+
+  test('disconnects the executor when the cloud connection is unavailable', async () => {
+    render(<LocalExecutorCloudBridge isConnected={false} token={null} />)
+
+    await waitFor(() => expect(mocks.disconnect).toHaveBeenCalledTimes(1))
+    expect(mocks.connect).not.toHaveBeenCalled()
+  })
 })

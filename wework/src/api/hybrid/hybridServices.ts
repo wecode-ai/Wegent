@@ -20,6 +20,7 @@ import type {
   ArchivedConversationItem,
   ArchivedConversationsListResponse,
   DeleteDeviceWorkspaceRequest,
+  DeviceCommandResponse,
   DeviceInfo,
   DeviceWorkspacePrepareRequest,
   RuntimeArchivedConversationBulkResponse,
@@ -342,7 +343,9 @@ export function createHybridWorkbenchServices(
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
-      project.deviceWorkspaces.forEach(workspace => localDeviceIds.add(workspace.deviceId))
+      project.deviceWorkspaces.forEach(workspace => {
+        if (workspace.workspaceSource !== 'remote') localDeviceIds.add(workspace.deviceId)
+      })
     })
     work.chats.forEach(workspace => localDeviceIds.add(workspace.deviceId))
   }
@@ -439,7 +442,14 @@ export function createHybridWorkbenchServices(
       return deviceApi(deviceId).createDirectory(deviceId, path)
     },
     executeCommand(deviceId, data) {
-      return deviceApi(deviceId).executeCommand(deviceId, data)
+      if (isLocalDeviceId(deviceId)) {
+        return localServices.deviceApi.executeCommand(deviceId, data)
+      }
+      return cloudRuntimeIpc.request<DeviceCommandResponse>(
+        'device.execute_command',
+        data,
+        runtimeDeviceIdFor(deviceId)
+      )
     },
     upgradeDevice(deviceId, options) {
       return deviceApi(deviceId).upgradeDevice(deviceId, options)
@@ -573,6 +583,12 @@ export function createHybridWorkbenchServices(
     },
     setRuntimeProjectAppearance(data) {
       return runtimeApi(data.deviceId).setRuntimeProjectAppearance(data)
+    },
+    syncRuntimeRemoteProjects(data) {
+      return runtimeApi(data.deviceId).syncRuntimeRemoteProjects(data)
+    },
+    activateRuntimeProject(data) {
+      return runtimeApi(data.deviceId).activateRuntimeProject(data)
     },
     reorderRuntimeProjectTasks(data) {
       return runtimeApi(data.deviceId).reorderRuntimeProjectTasks(data)

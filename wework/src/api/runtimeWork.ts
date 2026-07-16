@@ -51,8 +51,10 @@ import type {
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
   RuntimeProjectTaskReorderRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskPinRequest,
@@ -162,6 +164,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeProjectAppearanceRequest
     ): Promise<RuntimeSidebarMutationResponse> {
       return client.post('/runtime-work/sidebar/projects/appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/sync-remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/activate', data)
     },
     reorderRuntimeProjectTasks(
       data: RuntimeProjectTaskReorderRequest

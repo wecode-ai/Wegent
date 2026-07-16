@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import { createLocalFileWorkspaceTarget } from '@/lib/workspace-target'
@@ -262,6 +263,8 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const isTauri = isTauriRuntime()
+  const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
+  const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
   const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
@@ -306,7 +309,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
+          environmentInfoPinned={environmentInfoPinned}
+          environmentInfoOverlayOpen={environmentInfoOverlayOpen}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
+          onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
+          onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
           onTerminalPanePinned={pinTerminalPane}
           onTerminalPaneUnpinned={unpinTerminalPane}
         />
@@ -333,7 +340,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
+  environmentInfoPinned,
+  environmentInfoOverlayOpen,
   onSidebarCollapsedChange,
+  onEnvironmentInfoPinnedChange,
+  onEnvironmentInfoOverlayOpenChange,
   onTerminalPanePinned,
   onTerminalPaneUnpinned,
 }: {
@@ -341,7 +352,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
+  environmentInfoPinned: boolean
+  environmentInfoOverlayOpen: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
+  onEnvironmentInfoPinnedChange: (open: boolean) => void
+  onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
@@ -501,6 +516,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     Boolean(currentRuntimeTask) &&
     availableChatColumnWidth - DOCKED_ENVIRONMENT_INFO_WIDTH >=
       MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO
+  const environmentInfoOpen = environmentInfoDocked
+    ? environmentInfoPinned
+    : environmentInfoOverlayOpen
+  const setEnvironmentInfoOpen = environmentInfoDocked
+    ? onEnvironmentInfoPinnedChange
+    : onEnvironmentInfoOverlayOpenChange
+
+  useEffect(() => {
+    if (!paneActive || (currentRuntimeTask && !environmentInfoDocked)) return
+    onEnvironmentInfoOverlayOpenChange(false)
+  }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, paneActive])
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const rightPanelTitlebarWidth = rightPanelOpen
@@ -799,7 +825,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -1155,7 +1183,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             latestPreviousTurnSubtaskId !== null
               ? {
                   loadDiff: () =>
-                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessagesRef.current),
+                    loadTurnFileChangesDiff(
+                      latestPreviousTurnSubtaskId,
+                      paneMessagesRef.current,
+                      undefined,
+                      currentRuntimeTask
+                    ),
                   defaultFileTreeVisible: false,
                   sourceSubtaskId: latestPreviousTurnSubtaskId,
                 }
@@ -1171,6 +1204,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       },
     ],
     [
+      currentRuntimeTask,
       hasPreviousTurnReview,
       latestPreviousTurnSubtaskId,
       loadEnvironmentDiff,
@@ -1274,6 +1308,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       environmentInfoPopoverContainer={environmentInfoPanelElement}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
       environmentInfoDocked={environmentInfoDocked}
+      environmentInfoOpen={environmentInfoOpen}
+      onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
       environmentInfoFloatingFooter={
         !environmentInfoDocked && (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
           <div data-testid="workbench-subagent-status-row">
@@ -1671,10 +1707,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
                 onRevertFileChanges={(subtaskId, fileChanges) =>
-                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
                 onOpenFileChangesReview={({
                   subtaskId,

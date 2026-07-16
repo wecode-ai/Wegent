@@ -1310,6 +1310,8 @@ describe('createLocalAppServices', () => {
             stateDeviceId: 'device-uuid',
             roots: [{ kind: 'local', path: '/Users/me/project' }],
             pinned: false,
+            pinnedOrder: null,
+            active: false,
             appearance: null,
           },
           deviceWorkspaces: [

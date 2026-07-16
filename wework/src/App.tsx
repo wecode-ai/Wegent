@@ -10,6 +10,7 @@ import { PluginsPage } from '@/pages/PluginsPage'
 import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
+import { SitesPage } from '@/pages/SitesPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -22,6 +23,7 @@ import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
   requestDesktopSidebarToggle,
   useDesktopSidebarCollapsed,
@@ -92,6 +94,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     path === '/plugins/manage' ||
     path === '/plugins/create' ||
     path === '/plugins' ||
+    path === '/sites' ||
     path === '/apps'
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
   if (!isAuxiliaryRoute && !hasMountedWorkbench) setHasMountedWorkbench(true)
@@ -122,6 +125,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <PluginCreatePage />
     ) : path === '/plugins' ? (
       <PluginsPage />
+    ) : path === '/sites' ? (
+      <SitesPage />
     ) : path === '/apps' ? (
       <AppsPage />
     ) : null
@@ -188,6 +193,12 @@ export default function App() {
 function AppShell() {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
+  const cloudConnection = useCloudConnection()
+  const initialCloudConnection = {
+    backendUrl: cloudConnection.backendUrl,
+    isConnected: cloudConnection.isConnected,
+    token: cloudConnection.token,
+  }
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
@@ -340,7 +351,7 @@ function AppShell() {
 
   if (isLoading) {
     return (
-      <LocalRuntimeInitializer startupReady={false}>
+      <LocalRuntimeInitializer initialCloudConnection={initialCloudConnection} startupReady={false}>
         <div />
       </LocalRuntimeInitializer>
     )
@@ -353,6 +364,7 @@ function AppShell() {
   return (
     <CodexHomeInitializer>
       <LocalRuntimeInitializer
+        initialCloudConnection={initialCloudConnection}
         startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
       >
         <div

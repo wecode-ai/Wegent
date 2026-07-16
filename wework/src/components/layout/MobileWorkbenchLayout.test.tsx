@@ -651,6 +651,7 @@ describe('MobileWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      client_ip: '10.201.3.200',
     }
     const project = {
       id: 1,
@@ -698,7 +699,7 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Device 已离线，恢复在线后可继续对话'
+      '10.201.3.200 已离线，恢复在线后可继续对话'
     )
     expect(
       within(screen.getByTestId('mobile-chat-input-dock')).getByTestId(

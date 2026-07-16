@@ -21,6 +21,7 @@ use crate::process_environment;
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
+const LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV: &str = "WEWORK_EXECUTOR_ISOLATION_OVERRIDE";
 const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
 const LOCAL_EXECUTOR_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
@@ -543,7 +544,7 @@ fn local_executor_instance_name() -> &'static str {
 
 fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     let home = local_executor_home_path()?;
-    if uses_isolated_executor_home() {
+    if local_executor_isolation_enabled()? {
         return Ok(home
             .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
             .join(local_executor_instance_name()));
@@ -553,11 +554,25 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
 }
 
 fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
-    if uses_isolated_executor_home() {
-        return local_executor_runtime_dir_path();
+    local_executor_runtime_dir_path()
+}
+
+fn local_executor_isolation_enabled() -> Result<bool, String> {
+    if let Ok(value) = std::env::var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV) {
+        return match value.trim() {
+            "" => Ok(cfg!(debug_assertions)),
+            "true" => Ok(true),
+            "false" => Ok(false),
+            value => Err(format!(
+                "{LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV} must be true or false, got {value:?}"
+            )),
+        };
     }
 
-    local_executor_home_path()
+    Ok(cfg!(debug_assertions)
+        && std::env::var(LOCAL_EXECUTOR_SHARED_HOME_ENV)
+            .map(|value| value.trim() != "1")
+            .unwrap_or(true))
 }
 
 fn local_executor_ipc_dir_path() -> Result<PathBuf, String> {
@@ -571,13 +586,6 @@ fn local_executor_ipc_dir_path() -> Result<PathBuf, String> {
     }
 
     Ok(home)
-}
-
-fn uses_isolated_executor_home() -> bool {
-    cfg!(debug_assertions)
-        && std::env::var(LOCAL_EXECUTOR_SHARED_HOME_ENV)
-            .map(|value| value.trim() != "1")
-            .unwrap_or(true)
 }
 
 fn local_executor_home_path() -> Result<PathBuf, String> {
@@ -2945,6 +2953,55 @@ command = "example"
     }
 
     #[test]
+    fn executor_isolation_override_controls_runtime_home() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+        let home = PathBuf::from("/tmp/wework-isolation-override");
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &home);
+        std::env::remove_var(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        assert_eq!(
+            local_executor_isolation_enabled().expect("default isolation should resolve"),
+            cfg!(debug_assertions)
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "true");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("isolated home should resolve"),
+            home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                .join(local_executor_instance_name())
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "false");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("shared home should resolve"),
+            home
+        );
+
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
+    }
+
+    #[test]
+    fn executor_isolation_override_rejects_invalid_values() {
+        let _guard = env_lock();
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "sometimes");
+
+        let error = local_executor_isolation_enabled().expect_err("invalid override should fail");
+
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        assert_eq!(
+            error,
+            "WEWORK_EXECUTOR_ISOLATION_OVERRIDE must be true or false, got \"sometimes\""
+        );
+    }
+
+    #[test]
     fn app_ipc_addr_file_path_uses_executor_home() {
         let _guard = env_lock();
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
@@ -2973,9 +3030,11 @@ command = "example"
     fn shared_executor_home_keeps_app_ipc_addr_file_instance_specific() {
         let _guard = env_lock();
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
         let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
         let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wegent-shared-home");
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
         std::env::set_var(LOCAL_EXECUTOR_SHARED_HOME_ENV, "1");
         std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
 
@@ -2986,6 +3045,7 @@ command = "example"
             .collect::<HashMap<_, _>>();
 
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
         restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
         restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
         if cfg!(debug_assertions) {
@@ -3256,12 +3316,14 @@ command = "example"
         let previous_codex_home = std::env::var_os(WEGENT_CODEX_HOME_ENV);
         let previous_addr = std::env::var_os(LOCAL_EXECUTOR_ADDR_ENV);
         let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
         let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
         let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wework-instance-executor");
         std::env::remove_var(WEGENT_CODEX_HOME_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_ADDR_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_SHARED_HOME_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
         let inner = LocalExecutorInner {
@@ -3281,6 +3343,7 @@ command = "example"
         restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
         restore_env(LOCAL_EXECUTOR_ADDR_ENV, previous_addr);
         restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
         restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
         restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 

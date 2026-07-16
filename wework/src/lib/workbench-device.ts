@@ -58,6 +58,9 @@ export function findWorkbenchDevice(devices: DeviceInfo[], deviceId: string | nu
   const exact = devices.find(device => device.device_id === deviceId) ?? null
   if (exact) return exact
 
+  const aliased = devices.find(device => workbenchDeviceMatchesId(device, deviceId)) ?? null
+  if (aliased) return aliased
+
   if (!isLocalWorkbenchDeviceAlias(deviceId)) return null
 
   const resolvedId = resolveLocalWorkbenchDeviceId(devices, deviceId)
@@ -74,4 +77,45 @@ export function getWorkbenchDeviceDisplayName(
   deviceId: string | null | undefined
 ) {
   return device?.name || deviceId || ''
+}
+
+export function workbenchDeviceMatchesId(device: DeviceInfo, deviceId: string): boolean {
+  const normalizedDeviceId = deviceId.trim()
+  if (!normalizedDeviceId) return false
+
+  const ids = [
+    device.device_id,
+    device.app_device_id,
+    device.socket_device_id,
+    device.runtime_instance_id,
+    ...(device.runtime_routes?.flatMap(route => [route.device_id, route.runtime_device_id]) ?? []),
+  ]
+  return ids.some(id => id?.trim() === normalizedDeviceId)
+}
+
+function extractNetworkHost(value?: string | null): string | null {
+  const normalized = value?.trim()
+  if (!normalized) return null
+
+  const bracketMatch = normalized.match(/^\[([^\]]+)\](?::\d+)?$/)
+  if (bracketMatch?.[1]) return bracketMatch[1]
+
+  const colonParts = normalized.split(':')
+  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
+    return colonParts[0] || null
+  }
+  return normalized
+}
+
+export function getWorkbenchDeviceUnavailableDisplayName(device: DeviceInfo | null): string {
+  return (
+    extractNetworkHost(device?.client_ip) ?? extractNetworkHost(device?.runtime_transfer_host) ?? ''
+  )
+}
+
+export function getExecutorOfflineDeviceId(error?: string | null): string | null {
+  const prefix = 'executor-offline:'
+  if (!error?.startsWith(prefix)) return null
+  const deviceId = error.slice(prefix.length).trim()
+  return deviceId || null
 }

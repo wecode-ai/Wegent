@@ -227,6 +227,37 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
+  test('replaces a stale cloud device record with the latest same-route status', () => {
+    const staleDevice = device({
+      device_id: 'remote-device',
+      device_type: 'remote',
+      status: 'offline',
+      client_ip: '10.201.3.199',
+    })
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'device-event', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: {
+        status: 'fulfilled',
+        value: [
+          device({
+            device_id: 'remote-device',
+            device_type: 'remote',
+            status: 'online',
+            client_ip: '10.201.3.200',
+          }),
+        ],
+      },
+    })
+
+    expect(selectVisibleDevices([staleDevice], ready)).toEqual([
+      expect.objectContaining({
+        device_id: 'remote-device',
+        status: 'online',
+        client_ip: '10.201.3.200',
+      }),
+    ])
+  })
+
   test('excludes remote routes that resolve to the local runtime from remote project creation', () => {
     const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
     const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
@@ -462,6 +493,89 @@ describe('cloud runtime sync state', () => {
     })
     expect(runtimeView.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)).toEqual([
       'task-cloud',
+    ])
+  })
+
+  test('merges a local Codex remote descriptor with its remote executor project in global order', () => {
+    const remoteWorkspace = {
+      ...workspace('remote-device', []),
+      workspacePath: '/srv/repo',
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
+      available: false,
+    }
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: '/local/a', name: 'Local A' },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/local/a' }],
+        },
+        {
+          project: {
+            key: 'remote-project-id',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Remote',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+            pinned: true,
+            pinnedOrder: 0,
+            active: true,
+          },
+          deviceWorkspaces: [remoteWorkspace],
+        },
+        {
+          project: { key: '/local/b', name: 'Local B' },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/local/b' }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const remoteWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: '/srv/repo', name: 'Remote executor project' },
+          deviceWorkspaces: [
+            {
+              ...remoteWorkspace,
+              workspaceSource: 'local',
+              remoteHostId: undefined,
+              available: true,
+              tasks: [{ taskId: 'remote-task', title: 'Remote task' }],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    const merged = mergeRuntimeWorkLists(localWork, remoteWork, {
+      devices: [device({ device_id: 'remote-device', device_type: 'remote' })],
+    })
+
+    expect(merged.projects.map(project => project.project.name)).toEqual([
+      'Local A',
+      'Remote',
+      'Local B',
+    ])
+    expect(merged.projects[1].project).toMatchObject({
+      key: '/srv/repo',
+      sidebarStateKey: 'remote-project-id',
+      stateDeviceId: 'local-device',
+      pinned: true,
+      pinnedOrder: 0,
+      active: true,
+    })
+    expect(merged.projects[1].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        deviceId: 'remote-device',
+        workspacePath: '/srv/repo',
+        workspaceSource: 'remote',
+        remoteHostId: 'remote-device',
+        tasks: [expect.objectContaining({ taskId: 'remote-task' })],
+      }),
     ])
   })
 })

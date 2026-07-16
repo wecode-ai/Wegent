@@ -383,6 +383,10 @@ class WebSocketResultEmitter(BaseResultEmitter):
             ("content", "content"),
             ("tool_input", "tool_input"),
             ("tool_output", "tool_output"),
+            ("parent_tool_use_id", "parent_tool_use_id"),
+            ("output", "output"),
+            ("summary", "summary"),
+            ("children", "children"),
             ("status", "status"),
         ):
             if source_key in updates:

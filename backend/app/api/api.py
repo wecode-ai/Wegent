@@ -32,6 +32,7 @@ from app.api.endpoints import (
     repository,
     runtime_work,
     share,
+    sites,
     skill_identity,
     skill_market,
     subtasks,
@@ -173,6 +174,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(sites.router, prefix="/v1/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
     device_chat_tasks.router, prefix="/device-chat", tags=["device-chat"]
