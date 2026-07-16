@@ -613,6 +613,36 @@ function upsertActiveRuntimeTask(
   ]
 }
 
+function updateRuntimeTaskRunning(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  running: boolean
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.map(task => {
+      const taskAddress: RuntimeTaskAddress = {
+        deviceId: workspace.deviceId,
+        taskId: task.taskId,
+        workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+      }
+      if (!sameRuntimeTaskActivity(taskAddress, address) || task.running === running) return task
+      return { ...task, running }
+    }),
+  })
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    chats: runtimeWork.chats.map(updateWorkspace),
+  }
+}
+
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string
@@ -1133,11 +1163,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'runtime_task_started':
       return {
         ...state,
+        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, true),
         activeRuntimeTasks: upsertActiveRuntimeTask(state.activeRuntimeTasks, action.address),
       }
     case 'runtime_task_settled':
       return {
         ...state,
+        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, false),
         activeRuntimeTasks: state.activeRuntimeTasks.filter(
           address => !sameRuntimeTaskActivity(address, action.address)
         ),

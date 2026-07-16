@@ -125,6 +125,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setRuntimeGoal,
     clearRuntimeGoal,
     markRuntimeTaskStarted,
+    markRuntimeTaskSettled,
     sendRuntimePaneMessage,
     sendRuntimePaneGuidance,
     compactRuntimePaneTask,
@@ -183,6 +184,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const currentRuntimeTaskRef = useRef(currentRuntimeTask)
   const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
   const messagesRef = useRef<WorkbenchMessage[]>([])
+  const sendPhaseRef = useRef<RuntimePaneSendPhase>('idle')
   const displayedTranscriptIdentityRef = useRef<string | null>(null)
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const guidanceSplitBoundariesRef = useRef(new Map<string, GuidanceSplitBoundary>())
@@ -382,6 +384,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [messages])
 
   useEffect(() => {
+    sendPhaseRef.current = sendPhase
+  }, [sendPhase])
+
+  useEffect(() => {
     setAnsweredRequestUserInputIds(new Set())
     lastSubmittedRetryMessageRef.current = null
     retrySourceBySubtaskIdRef.current.clear()
@@ -540,8 +546,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           const bufferedActions = bufferedTranscriptActionsRef.current
           bufferedTranscriptActionsRef.current = []
           bufferedActions.forEach(dispatchMessages)
-          if (hasSettledAssistantMessage(nextMessages)) {
+          if (!transcript.running && hasSettledAssistantMessage(nextMessages)) {
             setSendPhase('idle')
+            markRuntimeTaskSettled(address)
           }
           clearRuntimePaneMessageSeed(address)
         }
@@ -575,7 +582,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [dispatchMessages, markRuntimeTaskStarted, runtimeTaskLoadTarget])
+  }, [dispatchMessages, markRuntimeTaskSettled, markRuntimeTaskStarted, runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
@@ -634,6 +641,89 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               address: runtimeAddressDebug(address),
               error,
             })
+          })
+      },
+      onRuntimeTransportReplaced: replacement => {
+        const latestTarget = runtimeTaskLoadTargetRef.current
+        if (
+          !latestTarget ||
+          latestTarget.identityKey !== target.identityKey ||
+          rebuildingTranscriptRef.current ||
+          !hasUnsettledRuntimePaneState(messagesRef.current, sendPhaseRef.current)
+        ) {
+          return
+        }
+
+        const identityKey = target.identityKey
+        rebuildingTranscriptRef.current = true
+        rebuildingTranscriptIdentityRef.current = identityKey
+        bufferedTranscriptActionsRef.current = []
+        console.warn('[Wework] Runtime transport replaced during an active response', {
+          address: runtimeAddressDebug(address),
+          previousRuntimeInstanceId: replacement.previousRuntimeInstanceId,
+          runtimeInstanceId: replacement.runtimeInstanceId,
+          currentMessageCount: messagesRef.current.length,
+        })
+
+        void loadRuntimeTranscriptForPaneRef
+          .current(address, {
+            limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+            refresh: true,
+          })
+          .then(transcript => {
+            if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
+
+            const nextMessages =
+              transcript.messages.length > 0 ? transcript.messages : messagesRef.current
+            loadedRuntimeTranscriptKeyRef.current = target.key
+            setTranscriptFullContent(transcript.fullContent === true)
+            setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+            setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
+            setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
+            setTurnNavigation(transcript.turnNavigation ?? [])
+            dispatchMessages({ type: 'reset', messages: nextMessages })
+
+            if (transcript.running) {
+              setStreamSettled(false)
+              markRuntimeTaskStarted(address)
+            } else {
+              if (hasUnsettledRuntimePaneState(nextMessages, 'idle')) {
+                dispatchMessages({ type: 'assistant_cancelled' })
+              }
+              setStreamSettled(true)
+              setSendPhase('idle')
+              setSubagentStatuses(markRuntimeSubagentsSettled)
+              markRuntimeTaskSettled(address)
+            }
+            clearRuntimePaneMessageSeed(address)
+            console.info('[Wework] Runtime pane reconciled after transport replacement', {
+              address: runtimeAddressDebug(address),
+              running: transcript.running,
+              transcriptMessageCount: transcript.messages.length,
+              restoredMessageCount: nextMessages.length,
+            })
+          })
+          .catch(error => {
+            if (runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) return
+            console.error('[Wework] Runtime replacement transcript recovery failed', {
+              address: runtimeAddressDebug(address),
+              error,
+            })
+            if (hasUnsettledRuntimePaneState(messagesRef.current, 'idle')) {
+              dispatchMessages({ type: 'assistant_cancelled' })
+            }
+            setStreamSettled(true)
+            setSendPhase('idle')
+            setSubagentStatuses(markRuntimeSubagentsSettled)
+            markRuntimeTaskSettled(address)
+          })
+          .finally(() => {
+            if (rebuildingTranscriptIdentityRef.current !== identityKey) return
+            rebuildingTranscriptRef.current = false
+            rebuildingTranscriptIdentityRef.current = null
+            const bufferedActions = bufferedTranscriptActionsRef.current
+            bufferedTranscriptActionsRef.current = []
+            bufferedActions.forEach(dispatchMessages)
           })
       },
       onRefreshWorkLists: () => {
@@ -2536,6 +2626,21 @@ function updateRuntimeSubagentStatuses(
     const rightTime = right.updatedAtMs ?? 0
     return rightTime - leftTime
   })
+}
+
+function hasUnsettledRuntimePaneState(
+  messages: WorkbenchMessage[],
+  sendPhase: RuntimePaneSendPhase
+): boolean {
+  if (sendPhase !== 'idle') return true
+  return messages.some(
+    message =>
+      message.status === 'streaming' ||
+      message.status === 'pending' ||
+      message.blocks?.some(block =>
+        ['generating_arguments', 'pending', 'streaming'].includes(block.status)
+      )
+  )
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {

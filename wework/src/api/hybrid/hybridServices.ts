@@ -371,6 +371,7 @@ export function createHybridWorkbenchServices(
       async () => runtimeDeviceIdFor(logicalDeviceId),
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
+        transportLabel: 'Cloud',
       }
     ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
     cloudRuntimeApis.set(logicalDeviceId, api)

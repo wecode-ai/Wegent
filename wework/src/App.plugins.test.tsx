@@ -141,6 +141,7 @@ const workbenchValue: WorkbenchContextValue = {
   archiveChatConversations: vi.fn(),
   forkCurrentRuntimeTask: vi.fn(),
   markRuntimeTaskStarted: vi.fn(),
+  markRuntimeTaskSettled: vi.fn(),
   listImPrivateSessions: vi.fn(),
   bindRuntimeTaskToImSessions: vi.fn(),
   getImNotificationSettings: vi.fn(),
