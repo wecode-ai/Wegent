@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
@@ -52,7 +53,7 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
-import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import { getRuntimePaneTaskExecution, hasRunningRuntimeTask } from './runtimePaneStatus'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -184,6 +185,10 @@ export function WorkbenchProvider({
         )),
     [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
   )
+  const deferLocalExecutorConnectionUpdate =
+    state.isBootstrapping ||
+    state.activeRuntimeTasks.length > 0 ||
+    hasRunningRuntimeTask(state.runtimeWork)
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,
@@ -1394,6 +1399,12 @@ export function WorkbenchProvider({
     <WorkbenchContext.Provider value={value}>
       <WorkbenchPaneContext.Provider value={paneValue}>
         <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
+        <LocalExecutorCloudBridge
+          backendUrl={cloudConnection.backendUrl}
+          deferConnectionUpdate={deferLocalExecutorConnectionUpdate}
+          isConnected={cloudConnection.isConnected}
+          token={cloudConnection.token}
+        />
         {children}
       </WorkbenchPaneContext.Provider>
     </WorkbenchContext.Provider>

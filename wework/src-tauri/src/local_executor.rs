@@ -2421,17 +2421,24 @@ pub async fn local_executor_connect_backend(
     let backend_url = normalize_command_arg(backend_url, "backend_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
     let _guard = state.start_lock.lock().await;
-    {
+    let changed = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
-        inner.backend_connection = Some(LocalExecutorBackendConnection {
-            backend_url,
-            auth_token,
-        });
+        replace_backend_connection(
+            &mut inner,
+            Some(LocalExecutorBackendConnection {
+                backend_url,
+                auth_token,
+            }),
+        )
+    };
+    if changed {
+        restart_executor_unlocked(app.clone(), &state).await?;
+    } else {
+        start_executor_if_needed_unlocked(app.clone(), &state).await?;
     }
-    restart_executor_unlocked(app.clone(), &state).await?;
     ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
@@ -2442,16 +2449,31 @@ pub async fn local_executor_disconnect_backend(
     state: State<'_, LocalExecutorState>,
 ) -> Result<LocalExecutorStatus, String> {
     let _guard = state.start_lock.lock().await;
-    {
+    let changed = {
         let mut inner = state
             .inner
             .lock()
             .map_err(|_| "Failed to lock local executor state".to_string())?;
-        inner.backend_connection = None;
+        replace_backend_connection(&mut inner, None)
+    };
+    if changed {
+        restart_executor_unlocked(app.clone(), &state).await?;
+    } else {
+        start_executor_if_needed_unlocked(app.clone(), &state).await?;
     }
-    restart_executor_unlocked(app.clone(), &state).await?;
     ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
+}
+
+fn replace_backend_connection(
+    inner: &mut LocalExecutorInner,
+    connection: Option<LocalExecutorBackendConnection>,
+) -> bool {
+    if inner.backend_connection == connection {
+        return false;
+    }
+    inner.backend_connection = connection;
+    true
 }
 
 #[tauri::command]
@@ -3056,6 +3078,26 @@ command = "example"
             assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
+    }
+
+    #[test]
+    fn replacing_backend_connection_is_idempotent() {
+        let connection = LocalExecutorBackendConnection {
+            backend_url: "https://cloud.example.com".to_string(),
+            auth_token: "wg-token".to_string(),
+        };
+        let mut inner = LocalExecutorInner::default();
+
+        assert!(replace_backend_connection(
+            &mut inner,
+            Some(connection.clone())
+        ));
+        assert!(!replace_backend_connection(
+            &mut inner,
+            Some(connection.clone())
+        ));
+        assert!(replace_backend_connection(&mut inner, None));
+        assert!(!replace_backend_connection(&mut inner, None));
     }
 
     #[test]
