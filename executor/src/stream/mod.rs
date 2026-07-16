@@ -30,6 +30,7 @@ pub struct ClaudeToolUse {
     pub id: String,
     pub name: String,
     pub input: Value,
+    pub parent_tool_use_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +38,22 @@ pub struct ClaudeToolResult {
     pub tool_use_id: String,
     pub content: Option<String>,
     pub is_error: bool,
+    pub parent_tool_use_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeChildBlock {
+    pub id: String,
+    pub block_type: String,
+    pub parent_tool_use_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClaudeSubagentUpdate {
+    pub tool_use_id: String,
+    pub status: String,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -437,9 +454,7 @@ pub fn extract_reasoning(value: &Value) -> Option<String> {
 }
 
 pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
-    if is_child_agent_event(value) {
-        return Vec::new();
-    }
+    let parent_tool_use_id = parent_tool_use_id(value);
     let Some(content) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -471,15 +486,18 @@ pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
                 .get("input")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Default::default()));
-            Some(ClaudeToolUse { id, name, input })
+            Some(ClaudeToolUse {
+                id,
+                name,
+                input,
+                parent_tool_use_id: parent_tool_use_id.clone(),
+            })
         })
         .collect()
 }
 
 pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
-    if is_child_agent_event(value) {
-        return Vec::new();
-    }
+    let parent_tool_use_id = parent_tool_use_id(value);
     let Some(content) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -507,9 +525,84 @@ pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
                     .get("is_error")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                parent_tool_use_id: parent_tool_use_id.clone(),
             })
         })
         .collect()
+}
+
+pub fn extract_claude_child_blocks(value: &Value) -> Vec<ClaudeChildBlock> {
+    let Some(parent_tool_use_id) = parent_tool_use_id(value) else {
+        return Vec::new();
+    };
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return Vec::new();
+    }
+    let Some(message) = value.get("message") else {
+        return Vec::new();
+    };
+    let Some(message_id) = message
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+    let Some(content) = message.get("content").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+
+    content
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let (block_type, content) = match block.get("type").and_then(Value::as_str) {
+                Some("text") => ("text", block.get("text").and_then(Value::as_str)?),
+                Some("thinking") => ("thinking", block.get("thinking").and_then(Value::as_str)?),
+                _ => return None,
+            };
+            if content.is_empty() {
+                return None;
+            }
+            Some(ClaudeChildBlock {
+                id: format!("{message_id}:{block_type}:{index}"),
+                block_type: block_type.to_owned(),
+                parent_tool_use_id: parent_tool_use_id.clone(),
+                content: content.to_owned(),
+            })
+        })
+        .collect()
+}
+
+pub fn extract_claude_subagent_update(value: &Value) -> Option<ClaudeSubagentUpdate> {
+    if value.get("type").and_then(Value::as_str) != Some("system") {
+        return None;
+    }
+    let subtype = value.get("subtype").and_then(Value::as_str)?;
+    let tool_use_id = non_empty_string_field(value, "tool_use_id")?;
+    match subtype {
+        "task_started" if value.get("task_type").and_then(Value::as_str) == Some("local_agent") => {
+            Some(ClaudeSubagentUpdate {
+                tool_use_id,
+                status: "invoking".to_owned(),
+                summary: None,
+            })
+        }
+        "task_notification" => {
+            let status = match value.get("status").and_then(Value::as_str)? {
+                "completed" | "succeeded" | "success" => "done",
+                "failed" | "error" | "cancelled" | "canceled" | "stopped" => "error",
+                _ => return None,
+            };
+            Some(ClaudeSubagentUpdate {
+                tool_use_id,
+                status: status.to_owned(),
+                summary: non_empty_string_field(value, "summary"),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn extract_claude_assistant_text(value: &Value) -> Option<String> {
@@ -550,12 +643,17 @@ fn is_claude_assistant_message(value: &Value) -> bool {
 }
 
 fn is_child_agent_event(value: &Value) -> bool {
+    parent_tool_use_id(value).is_some()
+}
+
+fn parent_tool_use_id(value: &Value) -> Option<String> {
     value
         .get("parent_tool_use_id")
         .or_else(|| value.get("parentToolUseId"))
         .and_then(Value::as_str)
         .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn stringify_tool_result_content(value: Option<&Value>) -> Option<String> {
