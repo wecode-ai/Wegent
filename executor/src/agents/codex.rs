@@ -875,6 +875,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             thread_fields.push(("operation", thread_operation.to_owned()));
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
+            validate_codex_permission_profile(thread_operation, &thread)?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1141,6 +1142,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 rpc.request(thread_operation, thread_params, &mut state),
             )
             .await?;
+            validate_codex_permission_profile(thread_operation, &thread)?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -3942,6 +3944,44 @@ fn resolve_codex_binary(value: &str) -> String {
     super::resolve_codex_binary_path(value)
 }
 
+const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+
+fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
+    params.insert(
+        "permissions".to_owned(),
+        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+    );
+}
+
+fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
+    let active_profile = response
+        .get("activePermissionProfile")
+        .and_then(|profile| profile.get("id"))
+        .and_then(Value::as_str);
+    let sandbox_type = response
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("type"))
+        .and_then(Value::as_str);
+
+    // Minimal test doubles and older app-server builds do not expose effective permission
+    // metadata. Current Codex builds do, so reject any explicit mismatch instead of running a
+    // turn whose tools silently inherit workspace-write permissions.
+    if active_profile.is_none() && sandbox_type.is_none() {
+        return Ok(());
+    }
+    if active_profile == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE)
+        && sandbox_type == Some("dangerFullAccess")
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "codex app-server {operation} applied unexpected permissions: active_profile={}, sandbox={}",
+        active_profile.unwrap_or("<none>"),
+        sandbox_type.unwrap_or("<none>")
+    ))
+}
+
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
     if let Some(model) = model_id(request) {
@@ -3955,6 +3995,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3984,6 +4025,7 @@ fn thread_fork_params(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -4046,6 +4088,7 @@ fn thread_resume_params(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    insert_codex_runtime_permissions(&mut params);
     Value::Object(params)
 }
 
@@ -4083,10 +4126,7 @@ fn turn_start_params(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
-    params.insert(
-        "sandboxPolicy".to_owned(),
-        json!({"type": "dangerFullAccess"}),
-    );
+    insert_codex_runtime_permissions(&mut params);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -5345,6 +5385,49 @@ mod tests {
             "high"
         );
         assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
+        let request = ExecutionRequest::default();
+        let launch_config = CodexLaunchConfig::default();
+        let thread_start = thread_start_params(&request, &launch_config);
+        let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+        let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+        let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+
+        for params in [thread_start, thread_resume, thread_fork, turn_start] {
+            assert_eq!(
+                params["permissions"],
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+            );
+            assert!(params.get("sandboxPolicy").is_none());
+            assert!(params.get("sandbox").is_none());
+        }
+    }
+
+    #[test]
+    fn codex_permission_profile_validation_rejects_effective_downgrade() {
+        let response = json!({
+            "activePermissionProfile": {"id": ":workspace"},
+            "sandbox": {"type": "workspaceWrite", "networkAccess": false},
+        });
+
+        let error = validate_codex_permission_profile("thread/resume", &response)
+            .expect_err("workspace-write must not be accepted");
+
+        assert!(error.contains("active_profile=:workspace"));
+        assert!(error.contains("sandbox=workspaceWrite"));
+    }
+
+    #[test]
+    fn codex_permission_profile_validation_accepts_effective_full_access() {
+        let response = json!({
+            "activePermissionProfile": {"id": ":danger-full-access"},
+            "sandbox": {"type": "dangerFullAccess"},
+        });
+
+        validate_codex_permission_profile("thread/resume", &response).unwrap();
     }
 
     #[test]
