@@ -366,7 +366,7 @@ function ArchiveConversationsConfirmDialog({
         className="w-full max-w-[460px] rounded-xl border border-border bg-popover p-5 text-text-primary shadow-[0_20px_56px_rgba(0,0,0,0.28)]"
       >
         <div className="flex items-start justify-between gap-5">
-          <h2 id={`${testId}-title`} className="text-xl font-semibold tracking-normal">
+          <h2 id={`${testId}-title`} className="heading-base tracking-normal">
             {title}
           </h2>
           <button
@@ -460,7 +460,7 @@ function SidebarButton({
       data-testid={testId}
       onClick={onClick}
       className={[
-        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-normal leading-[18px]',
+        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-sm font-normal leading-5',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -609,7 +609,7 @@ function SidebarSectionHeader({
     hasContent && !expanded ? 'opacity-100' : 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section relative mb-2 flex h-8 items-center px-2.5">
+    <div className="group/section relative mb-2 flex h-[30px] items-center px-2.5">
       <button
         type="button"
         data-testid={toggleTestId}
@@ -617,7 +617,7 @@ function SidebarSectionHeader({
         aria-expanded={expanded}
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md pr-8 text-left"
       >
-        <span className="truncate text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
+        <span className="truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] opacity-75">
           {title}
         </span>
         <ChevronRight
@@ -1382,7 +1382,7 @@ function ProjectDeviceInlineStatus({
       title={title}
       aria-label={label}
       className={cn(
-        'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
+        'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-sm leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
         className
       )}
     >
@@ -1637,7 +1637,7 @@ function RuntimeTaskRow({
           }}
           onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
           className={cn(
-            'group/task relative flex h-8 min-w-0 items-center rounded-md pr-2 text-[13px] leading-[18px]',
+            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-sm leading-5',
             indentClassName,
             disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
             selected
@@ -1649,7 +1649,7 @@ function RuntimeTaskRow({
           <span className="min-w-0 flex-1 truncate">{task.title}</span>
           <span
             data-testid={`runtime-local-task-trailing-${task.taskId}`}
-            className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[72px]"
+            className="relative ml-1 flex h-[30px] min-w-[30px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[68px]"
           >
             <span
               data-testid={`runtime-local-task-time-${task.taskId}`}
@@ -1667,14 +1667,14 @@ function RuntimeTaskRow({
                   `runtime-local-task-notify-${task.taskId}`,
                   `runtime-local-task-notify-icon-${task.taskId}`
                 )}
-              <span className="flex h-8 w-8 items-center justify-center">
+              <span className="flex h-[30px] w-[30px] items-center justify-center">
                 {task.running ? (
                   <span
                     data-testid={`runtime-local-task-running-${task.taskId}`}
                     role="status"
                     title={t('workbench.runtime_task_running')}
                     aria-label={t('workbench.runtime_task_running')}
-                    className="flex h-8 w-8 items-center justify-center"
+                    className="flex h-[30px] w-[30px] items-center justify-center"
                   >
                     <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
                   </span>
@@ -2103,7 +2103,7 @@ function ProjectItem({
             event.stopPropagation()
             setProjectMenuPosition({ left: event.clientX, top: event.clientY })
           }}
-          className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-sm leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
           <button
             type="button"
@@ -2226,7 +2226,7 @@ function ProjectItem({
                   onSelect: () => setRemoveConfirmOpen(true),
                 },
               ]}
-              triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+              triggerClassName="flex h-7 w-7 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             />
             <button
               type="button"
@@ -2237,7 +2237,7 @@ function ProjectItem({
                 if (!canStartProjectChat) return
                 onStartNewProjectChat(project.id)
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[rgb(var(--color-sidebar-text-secondary))]"
               title={newProjectChatTitle}
               aria-label={newProjectChatTitle}
             >
@@ -2337,7 +2337,7 @@ function ProjectItem({
                             )
                           )
                         }
-                        className="flex h-8 items-center rounded-md px-2 text-left text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        className="flex h-8 items-center rounded-md px-2 text-left text-sm font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.expand_display', '展开显示')}
                       </button>
@@ -2348,7 +2348,7 @@ function ProjectItem({
                         onClick={() =>
                           setRuntimeTaskVisibleLimit(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT)
                         }
-                        className="flex h-8 items-center rounded-md px-2 text-left text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
+                        className="flex h-8 items-center rounded-md px-2 text-left text-sm font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-secondary))]"
                       >
                         {t('workbench.collapse_display', '折叠显示')}
                       </button>
@@ -2934,7 +2934,7 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover shrink-0 overflow-visible bg-[rgb(var(--color-sidebar))] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width]',
+        'relative z-popover shrink-0 overflow-visible border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150 transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
         !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
@@ -2977,6 +2977,23 @@ export function DesktopSidebar({
               />
             </div>
           )}
+          <div className="mb-1 flex h-9 items-center justify-between px-2">
+            <span className="min-w-0 truncate text-heading-sm font-semibold leading-6 text-[rgb(var(--color-sidebar-text-primary))]">
+              Wework
+            </span>
+            {onOpenSearch && (
+              <button
+                type="button"
+                data-testid="runtime-search-button"
+                onClick={onOpenSearch}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-500"
+                title={t('workbench.search')}
+                aria-label={t('workbench.search')}
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            )}
+          </div>
           <nav className="space-y-0.5">
             <SidebarButton
               icon={Plus}
@@ -2997,14 +3014,6 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              {onOpenSearch && (
-                <SidebarButton
-                  icon={Search}
-                  label={t('workbench.search')}
-                  testId="runtime-search-button"
-                  onClick={onOpenSearch}
-                />
-              )}
               {SHOW_PLUGINS_NAVIGATION && (
                 <SidebarButton
                   icon={Sparkles}
@@ -3035,7 +3044,7 @@ export function DesktopSidebar({
               <section data-testid="sidebar-pinned-section" className="mb-5">
                 <div
                   data-testid="sidebar-pinned-section-header"
-                  className="mb-1 flex h-8 items-center px-2.5 text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-muted))] opacity-75"
+                  className="mb-1 flex h-[30px] items-center px-2.5 text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-muted))] opacity-75"
                 >
                   {t('workbench.pinned')}
                 </div>
@@ -3215,7 +3224,7 @@ export function DesktopSidebar({
                   <div
                     ref={projectCreateMenuFloatingRef}
                     data-testid="projects-create-button-menu"
-                    className="fixed z-modal rounded-xl border border-border bg-surface p-1.5 text-[13px] text-text-primary shadow-lg"
+                    className="fixed z-modal rounded-xl border border-border bg-surface p-1.5 text-sm text-text-primary shadow-lg"
                     style={{
                       top: projectCreateMenuPosition.top,
                       left: projectCreateMenuPosition.left,
@@ -3485,10 +3494,10 @@ export function DesktopSidebar({
                   <UserRound className="h-5 w-5" aria-hidden="true" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px] font-semibold leading-[18px]">
+                  <span className="block truncate text-base font-semibold leading-[18px]">
                     {sidebarAccount.label}
                   </span>
-                  <span className="block truncate text-[12px] font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
+                  <span className="block truncate text-xs font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
                     {sidebarAccount.detail}
                   </span>
                 </span>

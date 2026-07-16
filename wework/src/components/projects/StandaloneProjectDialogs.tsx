@@ -211,7 +211,7 @@ export function StandaloneBlankProjectDialog({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold leading-7">
+            <h2 className="heading-base">
               {t('workbench.blank_project_name_title', '为项目命名')}
             </h2>
             <p className="mt-2 text-sm leading-5 text-text-secondary">
@@ -548,15 +548,7 @@ export function StandaloneFolderProjectDialog({
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h2
-              className={
-                usesRemoteFolderPicker
-                  ? 'text-xl font-semibold leading-7'
-                  : 'text-2xl font-semibold leading-8'
-              }
-            >
-              {title}
-            </h2>
+            <h2 className={usesRemoteFolderPicker ? 'heading-base' : 'heading-lg'}>{title}</h2>
             <p
               className={
                 usesRemoteFolderPicker
@@ -775,7 +767,7 @@ export function StandaloneFolderProjectDialog({
               }}
             />
             {usesRemoteFolderPicker && (
-              <p className="mt-4 text-[13px] leading-5 text-[#9a9a9a]">
+              <p className="mt-4 text-sm leading-5 text-[#9a9a9a]">
                 {t(
                   'workbench.remote_project_directory_note',
                   '此远程文件夹将作为单独项目显示在侧边栏中。'

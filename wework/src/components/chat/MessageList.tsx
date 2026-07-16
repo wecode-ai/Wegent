@@ -852,7 +852,7 @@ function UserMessage({
         ) : displayContent ? (
           <div
             className={[
-              'overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary',
+              'overflow-hidden rounded-2xl bg-muted text-sm leading-5 text-text-primary',
               hasImagePreviews ? 'max-w-[80%]' : 'max-w-full',
             ].join(' ')}
           >
@@ -973,7 +973,7 @@ function UserMessageEditForm({
   return (
     <div
       data-testid="edit-user-message-form"
-      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-[13px] leading-5 text-text-primary"
+      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-sm leading-5 text-text-primary"
     >
       <textarea
         ref={textareaRef}
@@ -994,7 +994,7 @@ function UserMessageEditForm({
             onCancel?.()
           }
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-[13px] leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-sm leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -1002,7 +1002,7 @@ function UserMessageEditForm({
           data-testid="cancel-edit-user-message-button"
           disabled={submitting}
           onClick={onCancel}
-          className="flex h-8 items-center justify-center rounded-md px-3 text-[13px] font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
         >
           取消
         </button>
@@ -1011,7 +1011,7 @@ function UserMessageEditForm({
           data-testid="submit-edit-user-message-button"
           disabled={submitDisabled}
           onClick={submit}
-          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-[13px] font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           发送
         </button>
@@ -1115,7 +1115,7 @@ function MessageCodexFileMention({
     <button
       type="button"
       data-testid="message-codex-file-mention"
-      className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
+      className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
       title={file.path}
       aria-label={file.filename}
       onClick={() => onOpenFile?.(file.path)}
@@ -1172,7 +1172,7 @@ function MessageDocumentAttachment({
       className="flex h-14 w-[220px] max-w-full items-center gap-3 rounded-2xl border border-border bg-base px-3 text-left text-xs text-text-secondary shadow-sm"
       aria-label={attachment.filename}
     >
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-[9px] font-semibold leading-none text-red-600">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-xs font-semibold leading-none text-red-600">
         {typeLabel}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -1194,7 +1194,7 @@ function MessageTextAttachment({
   const attachmentPath = openableAttachmentPath(attachment)
   const clickable = Boolean(attachmentPath)
   const className =
-    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm'
+    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
     <>
       <FileText
@@ -1479,7 +1479,7 @@ function renderUserContent(
         key={`${mentionKind}-${start}`}
         href={href}
         data-testid={testId}
-        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
+        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-sm font-medium leading-none text-blue-600 no-underline"
         onClick={event => {
           event.preventDefault()
           if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
@@ -1648,7 +1648,7 @@ function AssistantMessage({
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
 
   return (
-    <div className="min-w-0 max-w-full text-[13px] leading-6 text-text-primary">
+    <div className="min-w-0 max-w-full text-chat text-text-primary">
       <div
         className="w-full max-w-full"
         data-testid="message-hover-region"
@@ -1930,7 +1930,7 @@ function AssistantErrorCard({
         <AlertTriangle className="h-3 w-3" strokeWidth={2} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-semibold leading-5 text-text-primary">{title}</p>
+        <p className="text-sm font-semibold leading-5 text-text-primary">{title}</p>
         <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
@@ -1974,7 +1974,7 @@ function AssistantErrorCard({
           <pre
             data-testid="assistant-error-details"
             className={[
-              'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-[11px] leading-4 text-text-muted',
+              'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-xs leading-4 text-text-muted',
               isDetailExpanded
                 ? 'max-h-32 overflow-auto whitespace-pre-wrap break-words'
                 : 'overflow-hidden truncate whitespace-nowrap',

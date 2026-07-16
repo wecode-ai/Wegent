@@ -190,7 +190,7 @@ export function GeneralSettingsPage() {
                       aria-pressed={active}
                       onClick={() => void handleLanguageChange(option.value)}
                       className={[
-                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-[13px] font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                         active
                           ? 'bg-text-primary text-background shadow-sm'
                           : 'text-text-secondary hover:bg-muted hover:text-text-primary',
@@ -263,7 +263,7 @@ export function GeneralSettingsPage() {
                       title={option.description}
                       disabled={loading || saving}
                       onClick={() => void handlePreferenceChange(option.preferenceKey, !selected)}
-                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-[13px] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      className={`group flex h-9 items-center justify-between gap-2 rounded-md border px-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
                         selected
                           ? 'border-text-primary/50 bg-muted text-text-primary'
                           : 'border-border bg-background text-text-secondary hover:border-text-muted/40 hover:bg-muted/40 hover:text-text-primary'

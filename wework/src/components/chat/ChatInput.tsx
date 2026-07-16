@@ -152,7 +152,7 @@ function PluginTrialTemplateStrip({ templates }: { templates: PluginPathComponen
       data-testid="plugin-trial-template-strip"
       aria-label={t('workbench.plugin_trial_templates', '模板')}
     >
-      <div className="mb-2 text-[13px] font-medium leading-5 text-text-muted">
+      <div className="mb-2 text-sm font-medium leading-5 text-text-muted">
         {t('workbench.plugin_trial_templates', '模板')}
       </div>
       <div className="flex gap-3 overflow-x-auto pb-1">
@@ -175,7 +175,7 @@ function PluginTrialTemplateStrip({ templates }: { templates: PluginPathComponen
                 </span>
               )}
             </div>
-            <div className="truncate text-[13px] font-medium leading-5 text-text-primary">
+            <div className="truncate text-sm font-medium leading-5 text-text-primary">
               {template.name}
             </div>
             {template.description ? (

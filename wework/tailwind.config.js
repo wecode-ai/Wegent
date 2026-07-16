@@ -8,9 +8,27 @@ export default {
     './node_modules/streamdown/dist/*.js',
   ],
   theme: {
+    fontSize: {
+      xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
+      sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
+      base: ['var(--text-base)', { lineHeight: '1.5' }],
+      lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
+      xl: ['var(--text-xl)', { lineHeight: '1.4' }],
+      '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
+      '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
+      '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
+      'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
+      'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
+      'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
+      chat: ['var(--text-chat)', { lineHeight: 'calc(1em + 8px)' }],
+      code: ['var(--text-code)', { lineHeight: '1.8' }],
+      'code-sm': ['var(--text-code-sm)', { lineHeight: '1.8' }],
+    },
     extend: {
-      colors: {
+      backgroundColor: {
         base: 'rgb(var(--color-bg-base) / <alpha-value>)',
+      },
+      colors: {
         primary: 'rgb(var(--color-primary) / <alpha-value>)',
         'primary-contrast': 'rgb(var(--color-primary-contrast) / <alpha-value>)',
         'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',

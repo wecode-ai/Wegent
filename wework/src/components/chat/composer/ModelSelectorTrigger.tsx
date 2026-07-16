@@ -112,7 +112,7 @@ export function ModelSelectorTrigger({
         disabled={disabled}
         style={desktopStyle}
         className={cn(
-          'flex h-8 min-w-8 items-center gap-1 overflow-hidden rounded-full px-2 text-[13px] font-light leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 min-w-8 items-center gap-1 overflow-hidden rounded-full px-2 text-sm font-light leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           !isMobile &&
             'transition-[width,background-color,color,opacity] duration-200 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none',
           buttonClassName
@@ -130,7 +130,7 @@ export function ModelSelectorTrigger({
         <span
           ref={measureRef}
           aria-hidden="true"
-          className="pointer-events-none invisible absolute whitespace-nowrap text-[13px] font-light leading-[18px]"
+          className="pointer-events-none invisible absolute whitespace-nowrap text-sm font-light leading-[18px]"
         >
           {label}
         </span>
@@ -140,7 +140,7 @@ export function ModelSelectorTrigger({
           id="model-selector-tooltip"
           role="tooltip"
           data-testid="model-selector-tooltip"
-          className="pointer-events-none absolute bottom-[calc(100%+0.5rem)] right-0 z-system-popover flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-popover px-3 text-[13px] font-medium leading-[18px] text-text-primary opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.18)] transition-opacity delay-0 duration-150 group-hover/model-selector:delay-[1500ms] group-hover/model-selector:opacity-100"
+          className="pointer-events-none absolute bottom-[calc(100%+0.5rem)] right-0 z-system-popover flex h-9 items-center gap-2 whitespace-nowrap rounded-xl border border-border bg-popover px-3 text-sm font-medium leading-[18px] text-text-primary opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.18)] transition-opacity delay-0 duration-150 group-hover/model-selector:delay-[1500ms] group-hover/model-selector:opacity-100"
         >
           <span>{tooltipLabel}</span>
           {shortcut ? (

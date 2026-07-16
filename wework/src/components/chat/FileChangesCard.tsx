@@ -93,7 +93,7 @@ function FileChangeRow({
         >
           <span
             data-testid="file-change-title-label"
-            className="min-w-0 truncate text-[13px] font-medium leading-5 text-text-primary"
+            className="min-w-0 truncate text-sm font-medium leading-5 text-text-primary"
           >
             {displayPath}
           </span>
@@ -187,7 +187,7 @@ function FileChangeSummaryTrigger({
         <span className="min-w-0 flex-1">
           <span
             data-testid="file-changes-summary-title"
-            className="block truncate text-[13px] font-semibold leading-5 text-text-primary"
+            className="block truncate text-sm font-semibold leading-5 text-text-primary"
           >
             {t(fileChangeLabelKey(file.change_type), { filename })}
           </span>
@@ -413,14 +413,14 @@ function FileChangeDiffPreview({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      <div className="flex h-10 items-center gap-3 border-b border-border px-4 text-[13px] font-semibold">
+      <div className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm font-semibold">
         <span className="min-w-0 flex-1 truncate" title={preview.displayPath}>
           {preview.displayPath}
         </span>
         <span className="shrink-0 font-medium text-green-400">+{preview.additions}</span>
         <span className="shrink-0 font-medium text-red-400">-{preview.deletions}</span>
       </div>
-      <div className="max-h-[min(24rem,calc(100vh-9rem))] overflow-auto py-1 font-mono text-[12px] leading-5">
+      <div className="max-h-[min(24rem,calc(100vh-9rem))] overflow-auto py-1 font-mono text-xs leading-5">
         {preview.lines.map(line =>
           line.type === 'separator' ? (
             <div key={line.key} className="my-1 h-px bg-border" />
@@ -690,7 +690,7 @@ export function FileChangesCard({
               <span className="min-w-0 flex-1">
                 <span
                   data-testid="file-changes-summary-title"
-                  className="block truncate text-[13px] font-semibold leading-5 text-text-primary"
+                  className="block truncate text-sm font-semibold leading-5 text-text-primary"
                 >
                   {t('file_changes.edited_files', { count: shownFileCount })}
                 </span>

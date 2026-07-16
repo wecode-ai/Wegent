@@ -1659,7 +1659,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
-    expect(paneTitle).toHaveClass('truncate', 'text-[13px]', 'text-text-primary')
+    expect(paneTitle).toHaveClass('truncate', 'text-sm', 'text-text-primary')
     expect(screen.getByTestId('workbench-topbar')).toHaveClass(
       'h-11',
       'border-b',

@@ -117,7 +117,7 @@ function TodoFilterBar({
       className="flex min-h-[52px] shrink-0 items-center justify-between gap-3 border-b border-[#E3E6E8] bg-white px-3.5 py-2 dark:border-border dark:bg-background"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="flex h-[30px] items-center gap-1.5 rounded-md border border-[#DDE1E4] bg-[#F7F8F9] px-2 text-[10px] font-semibold text-[#5D666E] dark:border-border dark:bg-muted dark:text-text-secondary">
+        <span className="flex h-[30px] items-center gap-1.5 rounded-md border border-[#DDE1E4] bg-[#F7F8F9] px-2 text-xs font-semibold text-[#5D666E] dark:border-border dark:bg-muted dark:text-text-secondary">
           <ListFilterPlus className="h-3.5 w-3.5" />
           {t('todo.filter_conditions', '筛选条件')}
         </span>
@@ -177,7 +177,7 @@ function TodoFilterBar({
           type="button"
           data-testid="todo-filter-clear"
           onClick={() => onChange(DEFAULT_TODO_FILTERS)}
-          className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2 text-[10px] font-semibold text-[#68717A] hover:bg-[#F2F4F5] dark:hover:bg-muted"
+          className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold text-[#68717A] hover:bg-[#F2F4F5] dark:hover:bg-muted"
         >
           <RotateCcw className="h-3.5 w-3.5" />
           {t('todo.clear_all', '清除全部')}
@@ -202,7 +202,7 @@ function FilterSelect({
 }) {
   const selected = options.find(option => option.value === value)?.label ?? value
   return (
-    <label className="relative flex h-[30px] items-center gap-1.5 rounded-md border border-[#DDE1E4] bg-[#F7F8F9] px-2 pr-7 text-[10px] text-[#596169] dark:border-border dark:bg-muted dark:text-text-secondary">
+    <label className="relative flex h-[30px] items-center gap-1.5 rounded-md border border-[#DDE1E4] bg-[#F7F8F9] px-2 pr-7 text-xs text-[#596169] dark:border-border dark:bg-muted dark:text-text-secondary">
       <span className="text-[#858D95]">{label}</span>
       <span className="font-semibold text-[#30363C] dark:text-text-primary">{selected}</span>
       <ChevronDown className="pointer-events-none absolute right-2 h-3 w-3 text-[#899199]" />
@@ -239,7 +239,7 @@ function TodoDisplayPanel({
       className="absolute right-3 top-2 z-20 flex w-[300px] flex-col overflow-hidden rounded-lg border border-[#D9DEE2] bg-white shadow-[0_8px_24px_rgba(31,41,55,0.14)] dark:border-border dark:bg-background"
     >
       <header className="flex h-11 items-center justify-between border-b border-[#E6E9EB] px-3.5 dark:border-border">
-        <span className="text-[12px] font-semibold text-[#30363C] dark:text-text-primary">
+        <span className="text-xs font-semibold text-[#30363C] dark:text-text-primary">
           {t('todo.display_settings', '显示设置')}
         </span>
         <button
@@ -281,7 +281,7 @@ function TodoDisplayPanel({
         </DisplaySection>
         <div className="h-px bg-[#E8EBED] dark:bg-border" />
         <DisplaySection title={t('todo.grouping', '分组方式')}>
-          <div className="flex h-8 items-center gap-2 rounded-md border border-[#DDE1E4] bg-[#F7F8F9] px-2.5 text-[10px] font-semibold text-[#414950] dark:border-border dark:bg-muted dark:text-text-secondary">
+          <div className="flex h-8 items-center gap-2 rounded-md border border-[#DDE1E4] bg-[#F7F8F9] px-2.5 text-xs font-semibold text-[#414950] dark:border-border dark:bg-muted dark:text-text-secondary">
             <span className="h-2.5 w-2.5 rounded-full bg-[#14B8A6]" />
             {t('todo.group_by_state', '按状态分组')}
           </div>
@@ -307,7 +307,7 @@ function TodoDisplayPanel({
               data-testid={`todo-display-order-${value}`}
               onClick={() => onChange({ ...display, order: value })}
               className={cn(
-                'flex h-8 w-full items-center justify-between rounded-md px-2.5 text-[10px] text-[#596169] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted',
+                'flex h-8 w-full items-center justify-between rounded-md px-2.5 text-xs text-[#596169] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted',
                 display.order === value &&
                   'bg-[#E8F8F5] font-semibold text-[#0F766E] dark:bg-primary/10 dark:text-primary'
               )}
@@ -318,7 +318,7 @@ function TodoDisplayPanel({
           ))}
         </DisplaySection>
       </div>
-      <footer className="border-t border-[#E8EBED] bg-[#FAFBFB] px-3.5 py-2 text-[9px] text-[#8B939A] dark:border-border dark:bg-background">
+      <footer className="border-t border-[#E8EBED] bg-[#FAFBFB] px-3.5 py-2 text-xs text-[#8B939A] dark:border-border dark:bg-background">
         {t('todo.display_saved_per_project', '设置仅影响当前项目视图，并自动保存')}
       </footer>
     </div>
@@ -328,7 +328,7 @@ function TodoDisplayPanel({
 function DisplaySection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-1.5">
-      <h3 className="text-[10px] font-semibold text-[#818990]">{title}</h3>
+      <h3 className="text-xs font-semibold text-[#818990]">{title}</h3>
       {children}
     </section>
   )
@@ -352,7 +352,7 @@ function DisplayToggle({
       aria-checked={checked}
       data-testid={testId}
       onClick={() => onChange(!checked)}
-      className="flex h-7 w-full items-center justify-between text-[10px] text-[#414950] dark:text-text-secondary"
+      className="flex h-7 w-full items-center justify-between text-xs text-[#414950] dark:text-text-secondary"
     >
       {label}
       <span
@@ -455,8 +455,8 @@ function TodoColumn({
           <ChevronRight className="h-3.5 w-3.5 text-[#727B83]" />
         </button>
         <span className="mt-2 h-2.5 w-2.5 rounded-full" style={{ backgroundColor: meta.color }} />
-        <span className="mt-2 font-mono text-[9px] text-[#7A838B]">{items.length}</span>
-        <span className="mt-2 [writing-mode:vertical-rl] text-[10px] font-semibold text-[#596169] dark:text-text-secondary">
+        <span className="mt-2 font-mono text-xs text-[#7A838B]">{items.length}</span>
+        <span className="mt-2 [writing-mode:vertical-rl] text-xs font-semibold text-[#596169] dark:text-text-secondary">
           {t(meta.labelKey, meta.fallback)}
         </span>
       </section>
@@ -467,10 +467,10 @@ function TodoColumn({
       <header className="flex h-[34px] items-center justify-between px-1.5">
         <div className="flex items-center gap-2">
           <span className="h-3 w-3 rounded-full" style={{ backgroundColor: meta.color }} />
-          <span className="text-[12px] font-semibold text-[#30363C] dark:text-text-primary">
+          <span className="text-xs font-semibold text-[#30363C] dark:text-text-primary">
             {t(meta.labelKey, meta.fallback)}
           </span>
-          <span className="font-mono text-[10px] text-[#7A838B]">{items.length}</span>
+          <span className="font-mono text-xs text-[#7A838B]">{items.length}</span>
         </div>
         <div className="flex items-center gap-1.5 text-[#808890]">
           <button
@@ -506,7 +506,7 @@ function TodoColumn({
               setMenuOpen(false)
               onCreate()
             }}
-            className="flex h-8 w-full items-center gap-2 rounded px-2 text-[10px] text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+            className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('todo.create_action', '新建 TODO')}
@@ -518,7 +518,7 @@ function TodoColumn({
               setMenuOpen(false)
               onToggleCollapsed()
             }}
-            className="flex h-8 w-full items-center gap-2 rounded px-2 text-[10px] text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
+            className="flex h-8 w-full items-center gap-2 rounded px-2 text-xs text-[#4F575F] hover:bg-[#F2F4F5] dark:text-text-secondary dark:hover:bg-muted"
           >
             <ChevronDown className="h-3.5 w-3.5" />
             {t('todo.collapse_column', '收起列')}
@@ -538,7 +538,7 @@ function TodoColumn({
           type="button"
           data-testid={`todo-column-bottom-add-${state}`}
           onClick={onCreate}
-          className="flex h-[34px] w-full items-center gap-2 rounded-md px-2 text-[11px] text-[#7B848C] hover:bg-[#ECEEEF] hover:text-[#4E565E]"
+          className="flex h-[34px] w-full items-center gap-2 rounded-md px-2 text-xs text-[#7B848C] hover:bg-[#ECEEEF] hover:text-[#4E565E]"
         >
           <Plus className="h-3.5 w-3.5" />
           {t('todo.add_work_item', '添加工作项')}
@@ -577,26 +577,26 @@ function TodoList({
           return (
             <section key={state} data-testid={`todo-list-group-${state}`}>
               <header className="flex h-10 items-center justify-between border-b border-[#E7EAEC] bg-[#F7F8F9] px-3 dark:border-border dark:bg-muted">
-                <span className="flex items-center gap-2 text-[11px] font-semibold text-[#3C444B] dark:text-text-primary">
+                <span className="flex items-center gap-2 text-xs font-semibold text-[#3C444B] dark:text-text-primary">
                   <span
                     className="h-2.5 w-2.5 rounded-full"
                     style={{ backgroundColor: meta.color }}
                   />
                   {t(meta.labelKey, meta.fallback)}
-                  <span className="font-mono text-[9px] text-[#879098]">{stateItems.length}</span>
+                  <span className="font-mono text-xs text-[#879098]">{stateItems.length}</span>
                 </span>
                 <button
                   type="button"
                   data-testid={`todo-list-add-${state}`}
                   onClick={() => onCreate(state)}
-                  className="flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-[#68717A] hover:bg-white dark:hover:bg-background"
+                  className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-[#68717A] hover:bg-white dark:hover:bg-background"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   {t('todo.create_action', '新建 TODO')}
                 </button>
               </header>
               {stateItems.length === 0 ? (
-                <div className="flex h-12 items-center px-4 text-[10px] text-[#9AA2A9]">
+                <div className="flex h-12 items-center px-4 text-xs text-[#9AA2A9]">
                   {t('todo.no_matching_items', '暂无符合条件的 TODO')}
                 </div>
               ) : (
@@ -606,10 +606,10 @@ function TodoList({
                     type="button"
                     data-testid={`todo-list-item-${item.id}`}
                     onClick={() => onSelectItem(item)}
-                    className="grid h-12 w-full grid-cols-[86px_minmax(240px,1fr)_120px_110px_90px] items-center gap-3 border-b border-[#EEF0F1] px-3 text-left text-[10px] last:border-b-0 hover:bg-[#FAFBFB] dark:border-border dark:hover:bg-muted"
+                    className="grid h-12 w-full grid-cols-[86px_minmax(240px,1fr)_120px_110px_90px] items-center gap-3 border-b border-[#EEF0F1] px-3 text-left text-xs last:border-b-0 hover:bg-[#FAFBFB] dark:border-border dark:hover:bg-muted"
                   >
                     <span className="font-mono font-semibold text-[#879098]">{item.code}</span>
-                    <span className="truncate text-[11px] font-semibold text-[#30363C] dark:text-text-primary">
+                    <span className="truncate text-xs font-semibold text-[#30363C] dark:text-text-primary">
                       {item.title}
                     </span>
                     <span className="truncate text-[#68717A] dark:text-text-secondary">
@@ -650,23 +650,23 @@ function TodoCard({
       onClick={onClick}
       className="flex min-h-[150px] w-full flex-col gap-2.5 rounded-lg border border-[#DDE1E4] bg-white p-3 text-left shadow-[0_1px_3px_rgba(17,24,39,0.06)] transition-colors hover:border-[#BFC6CB] dark:border-border dark:bg-surface"
     >
-      <span className="font-mono text-[10px] font-semibold text-[#858D95]">{item.code}</span>
-      <span className="line-clamp-2 min-h-[36px] text-[13px] font-semibold leading-[1.35] text-[#262B30] dark:text-text-primary">
+      <span className="font-mono text-xs font-semibold text-[#858D95]">{item.code}</span>
+      <span className="line-clamp-2 min-h-[36px] text-sm font-semibold leading-[1.35] text-[#262B30] dark:text-text-primary">
         {item.title}
       </span>
       {display.showObjective && item.objective && (
-        <span className="line-clamp-2 text-[9px] leading-4 text-[#6F7880]">{item.objective}</span>
+        <span className="line-clamp-2 text-xs leading-4 text-[#6F7880]">{item.objective}</span>
       )}
       {(display.showPriority || display.showAssignee) && (
         <span className="flex min-w-0 items-center gap-1.5">
           {display.showPriority && (
-            <span className="flex h-[22px] items-center gap-1 rounded-[5px] border border-[#E2E5E7] bg-[#F7F8F9] px-1.5 text-[9px] font-semibold text-[#626A72] dark:border-border dark:bg-muted dark:text-text-secondary">
+            <span className="flex h-[22px] items-center gap-1 rounded-[5px] border border-[#E2E5E7] bg-[#F7F8F9] px-1.5 text-xs font-semibold text-[#626A72] dark:border-border dark:bg-muted dark:text-text-secondary">
               <Signal className="h-3 w-3" />
               {item.priority || '—'}
             </span>
           )}
           {display.showAssignee && (
-            <span className="flex h-[22px] min-w-0 items-center gap-1 rounded-[5px] border border-[#E2E5E7] bg-[#F7F8F9] px-1.5 text-[9px] font-semibold text-[#626A72] dark:border-border dark:bg-muted dark:text-text-secondary">
+            <span className="flex h-[22px] min-w-0 items-center gap-1 rounded-[5px] border border-[#E2E5E7] bg-[#F7F8F9] px-1.5 text-xs font-semibold text-[#626A72] dark:border-border dark:bg-muted dark:text-text-secondary">
               <span
                 className="h-[7px] w-[7px] shrink-0 rounded-full"
                 style={{ backgroundColor: labelColor }}
@@ -677,7 +677,7 @@ function TodoCard({
         </span>
       )}
       <span className="mt-auto flex w-full items-center justify-between">
-        <span className="flex min-w-0 items-center gap-1 text-[9px] text-[#727B83]">
+        <span className="flex min-w-0 items-center gap-1 text-xs text-[#727B83]">
           <CircleDot className="h-3 w-3 shrink-0" />
           <span className="max-w-[120px] truncate">{item.workspace}</span>
           {display.showUpdated && (
@@ -688,7 +688,7 @@ function TodoCard({
           )}
         </span>
         {display.showAssignee && (
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white bg-[#DDF8F2] text-[9px] font-bold text-[#0F766E]">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-white bg-[#DDF8F2] text-xs font-bold text-[#0F766E]">
             {initials}
           </span>
         )}

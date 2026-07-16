@@ -45,10 +45,8 @@ export function InstalledSkillRow({
         <Sparkles className="h-7 w-7" />
       </div>
       <div className="min-w-0">
-        <h2 className="truncate text-[17px] font-semibold leading-6">{skill.name}</h2>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
-          {skill.description}
-        </p>
+        <h2 className="truncate text-lg font-semibold leading-6">{skill.name}</h2>
+        <p className="mt-1 truncate text-base leading-6 text-text-secondary">{skill.description}</p>
       </div>
       <div className="flex items-center justify-end gap-3">
         <button
@@ -102,12 +100,12 @@ export function InstalledMcpRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[17px] font-semibold leading-6">{mcp.name}</h2>
+          <h2 className="truncate text-lg font-semibold leading-6">{mcp.name}</h2>
           <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
             {mcp.serverType}
           </span>
         </div>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">{mcp.description}</p>
+        <p className="mt-1 truncate text-base leading-6 text-text-secondary">{mcp.description}</p>
       </div>
       <div className="flex items-center justify-end gap-3">
         <button
@@ -179,14 +177,14 @@ export function InstalledPluginRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[17px] font-semibold leading-6">{plugin.name}</h2>
+          <h2 className="truncate text-lg font-semibold leading-6">{plugin.name}</h2>
           {plugin.version && (
             <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
               {plugin.version}
             </span>
           )}
         </div>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
+        <p className="mt-1 truncate text-base leading-6 text-text-secondary">
           {plugin.description || componentLabels.join(' · ')}
         </p>
         {componentLabels.length > 0 && (

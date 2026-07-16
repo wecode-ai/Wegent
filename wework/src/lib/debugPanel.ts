@@ -671,9 +671,7 @@ function buildExpectedMessageUi({
   referenceCount: number
   memoryCitationCount: number
 }): string[] {
-  const entries = [
-    'base assistant: min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary',
-  ]
+  const entries = ['base assistant: min-w-0 overflow-x-hidden text-sm leading-6 text-text-primary']
   if (hasBlocks || isAssistantRunning) {
     entries.push(`ToolBlocksDisplay isStreaming=${isStreaming}`)
   }

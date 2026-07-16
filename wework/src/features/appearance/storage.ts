@@ -1,6 +1,7 @@
 import { defaultAppearance } from './presets'
 import type { AppearanceConfig, AppearanceMode, AppearanceUpdate, ThemePalette } from './types'
 import { clampContrast, isHexColor } from './color'
+import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 
 const STORAGE_KEY = 'wework.appearance'
 const APPEARANCE_MODES = new Set(['light', 'dark', 'system'])
@@ -17,9 +18,8 @@ function mergePalette(base: ThemePalette, update: unknown): ThemePalette {
 }
 
 export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
-  const nextMode: AppearanceMode = update.mode && APPEARANCE_MODES.has(update.mode)
-    ? update.mode
-    : defaultAppearance.mode
+  const nextMode: AppearanceMode =
+    update.mode && APPEARANCE_MODES.has(update.mode) ? update.mode : defaultAppearance.mode
   const accentColor = isHexColor(update.accentColor)
     ? update.accentColor
     : defaultAppearance.accentColor
@@ -37,6 +37,8 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
       typeof update.codeFont === 'string' && update.codeFont.trim()
         ? update.codeFont
         : defaultAppearance.codeFont,
+    uiFontSize: normalizeUiFontSize(update.uiFontSize),
+    codeFontSize: normalizeCodeFontSize(update.codeFontSize),
     sidebarTranslucent:
       typeof update.sidebarTranslucent === 'boolean'
         ? update.sidebarTranslucent

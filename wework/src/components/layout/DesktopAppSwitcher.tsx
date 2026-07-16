@@ -12,7 +12,7 @@ interface DesktopAppSwitcherProps {
 }
 
 const APP_BUTTON_CLASS =
-  'group relative flex h-8 w-8 min-w-0 shrink-0 items-center justify-center rounded-lg px-0 text-center text-[13px] font-medium leading-none transition-colors'
+  'group relative flex h-8 w-8 min-w-0 shrink-0 items-center justify-center rounded-lg px-0 text-center text-sm font-medium leading-none transition-colors'
 
 const APP_TOOLTIP_CLASS =
   'pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100'

@@ -15,6 +15,8 @@ import {
   TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID,
   WEWORK_OPEN_TERMINAL_EVENT,
   MODEL_SELECTOR_BUTTON_TEST_ID,
+  INCREASE_FONT_SIZE_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
 } from './keybindings'
 
 describe('keybindings', () => {
@@ -29,6 +31,8 @@ describe('keybindings', () => {
     expect(mergeKeybindings([])[TOGGLE_SIDEBAR_COMMAND]).toBe('Command+B')
     expect(mergeKeybindings([])[TOGGLE_SIDE_PANEL_COMMAND]).toBe('Alt+Command+B')
     expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
+    expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
+    expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
     expect(
       mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: 'Control+J' }])[
         OPEN_TERMINAL_COMMAND
@@ -60,6 +64,14 @@ describe('keybindings', () => {
         new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true })
       )
     ).toBe('Control+Shift+M')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '+', metaKey: true, shiftKey: true })
+      )
+    ).toBe('Command+Plus')
+    expect(
+      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))
+    ).toBe('Command+Minus')
   })
 
   it('detects editable shortcut targets', () => {

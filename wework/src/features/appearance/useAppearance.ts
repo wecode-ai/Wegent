@@ -8,3 +8,7 @@ export function useAppearance() {
   }
   return context
 }
+
+export function useOptionalAppearance() {
+  return useContext(AppearanceContext)
+}

@@ -46,6 +46,11 @@ import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import {
+  DEFAULT_UI_FONT_SIZE,
+  resolveUiTypographyVariables,
+} from '@/features/appearance/typography'
 
 const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
@@ -160,7 +165,8 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
 
 // Exported for DOM-level regression tests of the injected browser behavior.
 // eslint-disable-next-line react-refresh/only-export-components
-export function browserAnnotationInjectionScript() {
+export function browserAnnotationInjectionScript(uiFontSize = DEFAULT_UI_FONT_SIZE) {
+  const typography = resolveUiTypographyVariables(uiFontSize)
   return String.raw`
 (() => {
   const log = (message, data = {}) => {
@@ -334,7 +340,7 @@ export function browserAnnotationInjectionScript() {
       height: '28px',
       border: '0',
       outline: '0',
-      fontSize: '13px',
+      fontSize: ${JSON.stringify(typography['--text-base'])},
       background: 'transparent',
     });
 
@@ -348,7 +354,7 @@ export function browserAnnotationInjectionScript() {
       color: 'white',
       height: '28px',
       padding: '0 10px',
-      fontSize: '12px',
+      fontSize: ${JSON.stringify(typography['--text-xs'])},
       cursor: 'pointer',
     });
 
@@ -384,7 +390,7 @@ export function browserAnnotationInjectionScript() {
         borderRadius: '999px',
         background: '#1683ff',
         color: 'white',
-        fontSize: '11px',
+        fontSize: ${JSON.stringify(typography['--text-xs'])},
         fontWeight: '700',
         padding: '0 4px',
       });
@@ -545,6 +551,7 @@ export function WorkspaceBrowserPanel({
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
@@ -669,7 +676,7 @@ export function WorkspaceBrowserPanel({
       return
     }
     try {
-      await evalEmbeddedBrowser(browserAnnotationInjectionScript(), label)
+      await evalEmbeddedBrowser(browserAnnotationInjectionScript(appearance.uiFontSize), label)
       annotationEmptyPollLogCountRef.current = 0
       setAnnotationMode(true)
       logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
@@ -683,7 +690,7 @@ export function WorkspaceBrowserPanel({
       setStatus('error')
       setError(t('workbench.browser_annotation_failed'))
     }
-  }, [active, currentUrl, embeddedBrowserAvailable, label, t])
+  }, [active, appearance.uiFontSize, currentUrl, embeddedBrowserAvailable, label, t])
 
   useEffect(() => {
     const previousCount = previousCodeCommentCountRef.current
@@ -1165,7 +1172,7 @@ export function WorkspaceBrowserPanel({
       )}
     >
       {annotationMode ? (
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-[13px] text-text-primary">
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-sm text-text-primary">
           <BrowserToolbarButton
             testId="workspace-browser-annotation-close-button"
             label={t('workbench.browser_annotation_close')}
@@ -1243,7 +1250,7 @@ export function WorkspaceBrowserPanel({
               value={address}
               onChange={event => setAddress(event.target.value)}
               placeholder={t('workbench.browser_url_placeholder')}
-              className="h-8 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
+              className="h-8 w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
             />
           </form>
           <BrowserToolbarButton
@@ -1392,7 +1399,7 @@ export function WorkspaceBrowserPanel({
             <p className="text-sm font-semibold text-text-primary">
               {t('workbench.browser_empty_title')}
             </p>
-            <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+            <p className="mt-2 text-sm leading-[18px] text-text-secondary">
               {t('workbench.browser_empty_desc')}
             </p>
           </div>
@@ -1427,7 +1434,7 @@ export function WorkspaceBrowserPanel({
           <div
             data-testid="workspace-browser-error"
             role="alert"
-            className="absolute inset-x-4 top-4 rounded-md border border-red-500/30 bg-background px-3 py-2 text-[13px] text-red-500 shadow-sm"
+            className="absolute inset-x-4 top-4 rounded-md border border-red-500/30 bg-background px-3 py-2 text-sm text-red-500 shadow-sm"
           >
             {error}
           </div>

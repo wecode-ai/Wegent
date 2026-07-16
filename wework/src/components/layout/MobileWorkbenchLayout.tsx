@@ -461,7 +461,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 className="flex w-full max-w-[360px] flex-col items-center gap-6"
               >
                 <Bot className="h-8 w-8 text-text-muted" />
-                <h1 className="text-center text-2xl font-semibold tracking-normal">{emptyTitle}</h1>
+                <h1 className="heading-lg text-center tracking-normal">{emptyTitle}</h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
                   className="min-h-0 flex-col justify-center gap-1 px-0"

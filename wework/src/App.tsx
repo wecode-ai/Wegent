@@ -38,6 +38,8 @@ import {
   KEYBINDINGS_CHANGED_EVENT,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
+  INCREASE_FONT_SIZE_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
@@ -50,6 +52,7 @@ import {
   dispatchToggleSidebarShortcut,
   dispatchToggleSidePanelShortcut,
   dispatchToggleModelSelectorShortcut,
+  dispatchStepFontSizeShortcut,
   isEditableShortcutTarget,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -223,6 +226,8 @@ function AppShell() {
       const sidebarKey = activeBindings[TOGGLE_SIDEBAR_COMMAND]
       const sidePanelKey = activeBindings[TOGGLE_SIDE_PANEL_COMMAND]
       const modelSelectorKey = activeBindings[TOGGLE_MODEL_SELECTOR_COMMAND]
+      const increaseFontSizeKey = activeBindings[INCREASE_FONT_SIZE_COMMAND]
+      const decreaseFontSizeKey = activeBindings[DECREASE_FONT_SIZE_COMMAND]
       const eventKey = keybindingFromKeyboardEvent(event)
       const matchesRegisteredShortcut = [
         terminalKey,
@@ -232,6 +237,8 @@ function AppShell() {
         sidebarKey,
         sidePanelKey,
         modelSelectorKey,
+        increaseFontSizeKey,
+        decreaseFontSizeKey,
       ].some(key => key && key === eventKey)
       if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
 
@@ -263,6 +270,16 @@ function AppShell() {
       if (modelSelectorKey && eventKey === modelSelectorKey) {
         event.preventDefault()
         dispatchToggleModelSelectorShortcut()
+        return
+      }
+      if (increaseFontSizeKey && eventKey === increaseFontSizeKey) {
+        event.preventDefault()
+        dispatchStepFontSizeShortcut(1)
+        return
+      }
+      if (decreaseFontSizeKey && eventKey === decreaseFontSizeKey) {
+        event.preventDefault()
+        dispatchStepFontSizeShortcut(-1)
         return
       }
       if (!terminalKey || eventKey !== terminalKey) return
@@ -408,7 +425,7 @@ function WeworkDevInstanceBadge() {
               >
                 <div className="text-text-muted">{row.label}</div>
                 <div
-                  className="min-w-0 truncate font-mono text-[11px] text-text-primary"
+                  className="min-w-0 truncate font-mono text-xs text-text-primary"
                   title={row.value}
                 >
                   {row.value}

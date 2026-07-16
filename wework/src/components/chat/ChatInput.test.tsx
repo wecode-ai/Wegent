@@ -175,6 +175,9 @@ describe('ChatInput', () => {
       'bg-background'
     )
     expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
+    expect(screen.getByTestId('project-chat-composer')).toHaveClass(
+      'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
+    )
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'min-h-[48px]',
