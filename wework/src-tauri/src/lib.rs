@@ -3643,21 +3643,6 @@ pub fn run() {
             if hide_main_window_on_close(window, event) {
                 return;
             }
-
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                #[cfg(desktop)]
-                if window.label() == MAIN_WINDOW_LABEL {
-                    let lifecycle = window.app_handle().state::<MainWindowLifecycleState>();
-                    if lifecycle.destroy_to_tray_in_progress.load(Ordering::SeqCst) {
-                        return;
-                    }
-                }
-
-                let state = window
-                    .app_handle()
-                    .state::<local_executor::LocalExecutorState>();
-                local_executor::shutdown_local_executor(&state);
-            }
         })
         .setup(|app| {
             #[cfg(desktop)]
