@@ -68,11 +68,13 @@ jobs:
       contents: read
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Configure executor target directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/executor-target" >> "$GITHUB_ENV"
 
       - name: Free executor runner disk space
         run: |
