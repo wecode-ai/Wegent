@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
 
 use crate::{
-    agents::codex::mcp_server_elicitation_request_user_input_params,
+    agents::mcp_server_elicitation_request_user_input_params,
     codex_phase::CodexAgentMessagePhaseTracker, logging::log_executor_event,
     protocol::ExecutionRequest,
 };
