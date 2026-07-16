@@ -1,4 +1,5 @@
-import { Monitor, Moon, RotateCcw, Sun } from 'lucide-react'
+import { Image, Monitor, Moon, RotateCcw, Sun, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import {
   SettingsPage,
   SettingsPageHeader,
@@ -15,6 +16,11 @@ import {
   MIN_UI_FONT_SIZE,
   normalizeFontSize,
 } from './typography'
+import {
+  backgroundImageUrl,
+  removeWorkbenchBackground,
+  selectWorkbenchBackground,
+} from './backgroundImage'
 
 const themeModes: Array<{
   mode: AppearanceMode
@@ -83,6 +89,49 @@ function FontSizeControl({
 export function AppearanceSettingsPage() {
   const { t } = useTranslation('common')
   const { appearance, resolvedMode, setAppearance, resetAppearance } = useAppearance()
+  const [backgroundBusy, setBackgroundBusy] = useState(false)
+  const [backgroundError, setBackgroundError] = useState<string | null>(null)
+  const backgroundUrl = backgroundImageUrl(appearance.backgroundImagePath)
+
+  const selectBackground = async () => {
+    setBackgroundBusy(true)
+    setBackgroundError(null)
+    try {
+      const backgroundImagePath = await selectWorkbenchBackground()
+      if (backgroundImagePath) setAppearance({ backgroundImagePath })
+    } catch {
+      setBackgroundError(
+        t('workbench.appearance_background_error', '无法保存背景图，请选择其他图片后重试')
+      )
+    } finally {
+      setBackgroundBusy(false)
+    }
+  }
+
+  const removeBackground = async () => {
+    setBackgroundBusy(true)
+    setBackgroundError(null)
+    try {
+      await removeWorkbenchBackground()
+      setAppearance({ backgroundImagePath: null })
+    } catch {
+      setBackgroundError(t('workbench.appearance_background_remove_error', '无法移除背景图'))
+    } finally {
+      setBackgroundBusy(false)
+    }
+  }
+
+  const reset = async () => {
+    if (appearance.backgroundImagePath) {
+      try {
+        await removeWorkbenchBackground()
+      } catch {
+        setBackgroundError(t('workbench.appearance_background_remove_error', '无法移除背景图'))
+        return
+      }
+    }
+    resetAppearance()
+  }
 
   return (
     <SettingsPage data-testid="appearance-settings-page">
@@ -93,7 +142,7 @@ export function AppearanceSettingsPage() {
           <button
             type="button"
             data-testid="appearance-reset-button"
-            onClick={resetAppearance}
+            onClick={() => void reset()}
             className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
           >
             <RotateCcw className="h-4 w-4" />
@@ -209,6 +258,149 @@ export function AppearanceSettingsPage() {
                 </div>
               }
             />
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
+        <div className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-text-primary">
+            {t('workbench.appearance_background', '工作台背景')}
+          </h2>
+        </div>
+        <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1fr)_minmax(16rem,1fr)]">
+          <div
+            data-testid="appearance-background-preview"
+            className="relative min-h-40 overflow-hidden rounded-lg border border-border bg-surface"
+          >
+            {backgroundUrl ? (
+              <>
+                <img
+                  src={backgroundUrl}
+                  alt=""
+                  aria-hidden="true"
+                  className="absolute inset-0 h-full w-full object-cover"
+                  style={{
+                    filter: appearance.backgroundBlur
+                      ? `blur(${appearance.backgroundBlur}px)`
+                      : undefined,
+                    transform: appearance.backgroundBlur
+                      ? `scale(${1 + appearance.backgroundBlur / 500})`
+                      : undefined,
+                  }}
+                />
+                <div
+                  className="absolute inset-0 bg-background"
+                  style={{ opacity: 1 - appearance.backgroundVisibility / 100 }}
+                />
+              </>
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center text-text-muted">
+                <Image className="h-6 w-6" />
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col justify-center gap-4">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="appearance-background-select-button"
+                disabled={backgroundBusy}
+                onClick={() => void selectBackground()}
+                className="inline-flex h-8 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Image className="h-4 w-4" />
+                {t('workbench.appearance_background_select', '选择图片')}
+              </button>
+              {appearance.backgroundImagePath && (
+                <button
+                  type="button"
+                  data-testid="appearance-background-remove-button"
+                  disabled={backgroundBusy}
+                  onClick={() => void removeBackground()}
+                  className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {t('workbench.appearance_background_remove', '移除')}
+                </button>
+              )}
+            </div>
+            <label className="grid gap-2 text-sm text-text-secondary">
+              <span className="flex justify-between">
+                {t('workbench.appearance_background_visibility', '背景可见度')}
+                <span>{appearance.backgroundVisibility}</span>
+              </span>
+              <input
+                data-testid="appearance-background-visibility-slider"
+                type="range"
+                min="0"
+                max="100"
+                value={appearance.backgroundVisibility}
+                disabled={!appearance.backgroundImagePath}
+                onChange={event =>
+                  setAppearance({ backgroundVisibility: Number(event.target.value) })
+                }
+                className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
+              />
+            </label>
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm text-text-secondary">
+                {t('workbench.appearance_background_areas', '显示区域')}
+              </legend>
+              {[
+                {
+                  key: 'main',
+                  label: t('workbench.appearance_background_area_main', '主区域'),
+                  checked: appearance.backgroundInMain,
+                  update: (checked: boolean) => setAppearance({ backgroundInMain: checked }),
+                },
+                {
+                  key: 'sidebar',
+                  label: t('workbench.appearance_background_area_sidebar', '侧边栏'),
+                  checked: appearance.backgroundInSidebar,
+                  update: (checked: boolean) => setAppearance({ backgroundInSidebar: checked }),
+                },
+                {
+                  key: 'topbar',
+                  label: t('workbench.appearance_background_area_topbar', '顶部栏'),
+                  checked: appearance.backgroundInTopBar,
+                  update: (checked: boolean) => setAppearance({ backgroundInTopBar: checked }),
+                },
+              ].map(area => (
+                <label key={area.key} className="flex items-center gap-2 text-sm text-text-primary">
+                  <input
+                    data-testid={`appearance-background-area-${area.key}`}
+                    type="checkbox"
+                    checked={area.checked}
+                    disabled={!appearance.backgroundImagePath}
+                    onChange={event => area.update(event.target.checked)}
+                    className="h-4 w-4 accent-[rgb(var(--color-text-primary))]"
+                  />
+                  {area.label}
+                </label>
+              ))}
+            </fieldset>
+            <label className="grid gap-2 text-sm text-text-secondary">
+              <span className="flex justify-between">
+                {t('workbench.appearance_background_blur', '背景模糊')}
+                <span>{appearance.backgroundBlur}px</span>
+              </span>
+              <input
+                data-testid="appearance-background-blur-slider"
+                type="range"
+                min="0"
+                max="20"
+                value={appearance.backgroundBlur}
+                disabled={!appearance.backgroundImagePath}
+                onChange={event => setAppearance({ backgroundBlur: Number(event.target.value) })}
+                className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
+              />
+            </label>
+            {backgroundError && (
+              <p data-testid="appearance-background-error" className="text-sm text-red-500">
+                {backgroundError}
+              </p>
+            )}
           </div>
         </div>
       </section>

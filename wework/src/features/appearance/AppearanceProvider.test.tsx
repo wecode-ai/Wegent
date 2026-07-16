@@ -37,6 +37,10 @@ function Harness() {
       <span data-testid="accent-color">{appearance.accentColor}</span>
       <span data-testid="ui-font-size">{appearance.uiFontSize}</span>
       <span data-testid="code-font-size">{appearance.codeFontSize}</span>
+      <span data-testid="background-path">{appearance.backgroundImagePath ?? 'none'}</span>
+      <span data-testid="background-visibility">{appearance.backgroundVisibility}</span>
+      <span data-testid="background-blur">{appearance.backgroundBlur}</span>
+      <span data-testid="background-in-main">{String(appearance.backgroundInMain)}</span>
       <button type="button" data-testid="set-dark" onClick={() => setAppearance({ mode: 'dark' })}>
         dark
       </button>
@@ -201,5 +205,27 @@ describe('AppearanceProvider', () => {
     expect(localStorage.getItem('wework.appearance')).toContain(
       `"mobileDrawer":"${darkPalette.mobileDrawer}"`
     )
+  })
+
+  test('normalizes stored background settings and preserves old configuration defaults', () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/tmp/background.png',
+        backgroundVisibility: 140,
+        backgroundBlur: 99,
+      })
+    )
+
+    render(
+      <AppearanceProvider>
+        <Harness />
+      </AppearanceProvider>
+    )
+
+    expect(screen.getByTestId('background-path')).toHaveTextContent('/tmp/background.png')
+    expect(screen.getByTestId('background-visibility')).toHaveTextContent('100')
+    expect(screen.getByTestId('background-blur')).toHaveTextContent('20')
+    expect(screen.getByTestId('background-in-main')).toHaveTextContent('true')
   })
 })
