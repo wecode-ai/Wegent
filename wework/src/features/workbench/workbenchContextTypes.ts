@@ -93,6 +93,7 @@ export interface CreateProjectRuntimeTaskOptions {
   project: ProjectWithTasks
   attachments?: Attachment[]
   initialGoal?: RuntimeGoalCreateInput | null
+  collaborationMode?: 'default' | 'plan'
   onError?: (error: string) => void
 }
 
