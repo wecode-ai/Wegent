@@ -8,6 +8,13 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useAppearance } from './useAppearance'
 import type { AppearanceMode } from './types'
+import {
+  MAX_CODE_FONT_SIZE,
+  MAX_UI_FONT_SIZE,
+  MIN_CODE_FONT_SIZE,
+  MIN_UI_FONT_SIZE,
+  normalizeFontSize,
+} from './typography'
 
 const themeModes: Array<{
   mode: AppearanceMode
@@ -19,6 +26,59 @@ const themeModes: Array<{
   { mode: 'dark', icon: Moon, labelKey: 'appearance_dark', fallback: '深色' },
   { mode: 'system', icon: Monitor, labelKey: 'appearance_system', fallback: '系统' },
 ]
+
+interface FontSizeControlProps {
+  testId: string
+  ariaLabel: string
+  value: number
+  minimum: number
+  maximum: number
+  onCommit: (value: number) => void
+}
+
+function FontSizeControl({
+  testId,
+  ariaLabel,
+  value,
+  minimum,
+  maximum,
+  onCommit,
+}: FontSizeControlProps) {
+  const commit = (input: HTMLInputElement) => {
+    const parsedValue = Number.parseFloat(input.value)
+    if (Number.isNaN(parsedValue)) {
+      input.value = String(value)
+      return
+    }
+
+    const nextValue = normalizeFontSize(parsedValue, value, minimum, maximum)
+    input.value = String(nextValue)
+    if (nextValue !== value) onCommit(nextValue)
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        key={value}
+        data-testid={testId}
+        aria-label={ariaLabel}
+        type="number"
+        min={minimum}
+        max={maximum}
+        step={1}
+        defaultValue={value}
+        onBlur={event => commit(event.currentTarget)}
+        onKeyDown={event => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          commit(event.currentTarget)
+        }}
+        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      />
+      <span className="text-sm text-text-secondary">px</span>
+    </div>
+  )
+}
 
 export function AppearanceSettingsPage() {
   const { t } = useTranslation('common')
@@ -178,6 +238,40 @@ export function AppearanceSettingsPage() {
               value={appearance.codeFont}
               onChange={event => setAppearance({ codeFont: event.target.value })}
               className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-text-primary"
+            />
+          }
+        />
+        <SettingsRow
+          label={t('workbench.appearance_ui_font_size', 'UI 字号')}
+          description={t(
+            'workbench.appearance_ui_font_size_description',
+            '调整 Wework 界面使用的基础字号'
+          )}
+          control={
+            <FontSizeControl
+              testId="appearance-ui-font-size-input"
+              ariaLabel={t('workbench.appearance_ui_font_size', 'UI 字号')}
+              value={appearance.uiFontSize}
+              minimum={MIN_UI_FONT_SIZE}
+              maximum={MAX_UI_FONT_SIZE}
+              onCommit={uiFontSize => setAppearance({ uiFontSize })}
+            />
+          }
+        />
+        <SettingsRow
+          label={t('workbench.appearance_code_font_size', '代码字号')}
+          description={t(
+            'workbench.appearance_code_font_size_description',
+            '调整聊天、diff、编辑器和终端中的代码字号'
+          )}
+          control={
+            <FontSizeControl
+              testId="appearance-code-font-size-input"
+              ariaLabel={t('workbench.appearance_code_font_size', '代码字号')}
+              value={appearance.codeFontSize}
+              minimum={MIN_CODE_FONT_SIZE}
+              maximum={MAX_CODE_FONT_SIZE}
+              onCommit={codeFontSize => setAppearance({ codeFontSize })}
             />
           }
         />

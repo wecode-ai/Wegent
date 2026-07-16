@@ -15,6 +15,7 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
@@ -42,6 +43,7 @@ export function EmbeddedLocalTerminal({
   onTitleChange,
   testIdsEnabled = true,
 }: EmbeddedLocalTerminalProps) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -50,6 +52,24 @@ export function EmbeddedLocalTerminal({
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+  const appearanceRef = useRef(appearance)
+
+  useEffect(() => {
+    appearanceRef.current = appearance
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal) return
+
+    terminal.options.fontFamily = appearance.codeFont
+    terminal.options.fontSize = appearance.codeFontSize
+    requestAnimationFrame(() => {
+      try {
+        fitAddon?.fit()
+      } catch (error) {
+        console.error('Failed to resize local terminal after typography change:', error)
+      }
+    })
+  }, [appearance])
 
   useEffect(() => {
     activeRef.current = active
@@ -71,11 +91,12 @@ export function EmbeddedLocalTerminal({
     const container = containerRef.current
     if (!container) return
 
+    const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13,
+      fontFamily: terminalAppearance.codeFont,
+      fontSize: terminalAppearance.codeFontSize,
       lineHeight: 1.2,
       scrollback: 2000,
       theme: getTerminalTheme(),

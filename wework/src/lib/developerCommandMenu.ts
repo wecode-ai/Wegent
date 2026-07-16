@@ -491,7 +491,7 @@ function createDebugPanelSection(title: string, content: string): HTMLElement {
 
   const pre = document.createElement('pre')
   pre.className =
-    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-5 text-text-primary'
+    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-text-primary'
   pre.textContent = content
 
   section.append(heading, pre)
@@ -525,7 +525,7 @@ function createMessageStyleComparisonSection(snapshot: WorkbenchDebugSnapshot): 
 
     const diff = document.createElement('pre')
     diff.className =
-      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-5 text-text-primary'
+      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-xs leading-5 text-text-primary'
     diff.textContent = JSON.stringify(
       {
         fieldDiff: comparison.fieldDiff,
@@ -562,7 +562,7 @@ function createMessageStyleSampleCard(
   }
 
   const meta = document.createElement('div')
-  meta.className = 'mt-2 grid gap-1 text-[11px] leading-5 text-text-secondary'
+  meta.className = 'mt-2 grid gap-1 text-xs leading-5 text-text-secondary'
   ;[
     `id: ${sample.id}`,
     `status: ${sample.status}`,
@@ -579,11 +579,11 @@ function createMessageStyleSampleCard(
 
   const preview = document.createElement('div')
   preview.className =
-    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-[12px] leading-5 text-text-primary'
+    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-xs leading-5 text-text-primary'
   preview.textContent = sample.contentPreview
 
   const uiList = document.createElement('ul')
-  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-[11px] leading-5 text-text-secondary'
+  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-xs leading-5 text-text-secondary'
   sample.expectedUi.forEach(rule => {
     const item = document.createElement('li')
     item.textContent = rule

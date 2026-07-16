@@ -121,7 +121,7 @@ function RuntimeTaskCloseConfirmDialog({
         >
           {title}
         </h2>
-        <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">{description}</p>
+        <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-6 flex justify-end gap-2">
           <Button
             type="button"

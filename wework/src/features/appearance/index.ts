@@ -1,5 +1,5 @@
 export { AppearanceProvider } from './AppearanceProvider'
-export { useAppearance } from './useAppearance'
+export { useAppearance, useOptionalAppearance } from './useAppearance'
 export { defaultAppearance } from './presets'
 export type {
   AppearanceConfig,

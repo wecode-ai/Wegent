@@ -748,7 +748,7 @@ export function WorkspacePanelCards({
                     onClick={() => {
                       setActiveTerminalSessionId(session.session_id)
                     }}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left text-[13px] leading-[18px]"
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left text-sm leading-[18px]"
                   >
                     <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
                     <span className="truncate">{sessionLabel}</span>
@@ -819,12 +819,12 @@ export function WorkspacePanelCards({
         >
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-8 py-6">
             {!hasWorkspaceContext && (
-              <p className="text-center text-[13px] leading-[18px] text-text-secondary">
+              <p className="text-center text-sm leading-[18px] text-text-secondary">
                 {t('workbench.project_tool_requires_project', '请选择项目后使用')}
               </p>
             )}
             {error && (
-              <p className="text-center text-[13px] leading-[18px] text-red-500" role="alert">
+              <p className="text-center text-sm leading-[18px] text-red-500" role="alert">
                 {error}
               </p>
             )}
@@ -836,7 +836,7 @@ export function WorkspacePanelCards({
                 <p className="text-sm font-semibold text-text-primary">
                   {t('workbench.local_device_limited_tools_title')}
                 </p>
-                <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                <p className="mt-2 text-sm leading-[18px] text-text-secondary">
                   {t('workbench.local_device_limited_tools_desc')}
                 </p>
               </div>
@@ -858,7 +858,7 @@ export function WorkspacePanelCards({
                   <span className="text-sm font-semibold text-text-primary">
                     {t('workbench.terminal', '终端')}
                   </span>
-                  <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                  <span className="mt-2 text-sm leading-[18px] text-text-secondary">
                     {availableTools.terminal
                       ? t('workbench.start_shell', '启动交互式 shell')
                       : t('workbench.project_tool_unavailable', '暂不可用')}
@@ -889,7 +889,7 @@ export function WorkspacePanelCards({
                           <span className="text-sm font-semibold text-text-primary">
                             {t('workbench.ide', 'IDE')}
                           </span>
-                          <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                          <span className="mt-2 text-sm leading-[18px] text-text-secondary">
                             {availableTools.ide
                               ? t('workbench.open_project_ide_with', {
                                   opener: 'VS Code',
@@ -926,7 +926,7 @@ export function WorkspacePanelCards({
                         <span className="text-sm font-semibold text-text-primary">
                           {t('workbench.ide', 'IDE')}
                         </span>
-                        <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                        <span className="mt-2 text-sm leading-[18px] text-text-secondary">
                           {availableTools.ide
                             ? t('workbench.open_project_ide', '打开项目 IDE')
                             : t('workbench.project_tool_unavailable', '暂不可用')}
@@ -951,7 +951,7 @@ export function WorkspacePanelCards({
                         <span className="text-sm font-semibold text-text-primary">
                           {t('workbench.desktop', '桌面')}
                         </span>
-                        <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
+                        <span className="mt-2 text-sm leading-[18px] text-text-secondary">
                           {availableTools.desktop
                             ? t('workbench.open_project_desktop', '打开项目桌面')
                             : t('workbench.project_tool_unavailable', '暂不可用')}

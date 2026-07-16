@@ -72,7 +72,7 @@ export function ToolBlockItem({
   )
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
+    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
       <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
@@ -162,7 +162,7 @@ function ProcessFileChangesBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-visible text-[13px]"
+      className="min-w-0 overflow-visible text-sm"
       data-processing-block-id={block.id}
       data-testid="process-file-changes-block"
     >
@@ -461,7 +461,7 @@ function InlineDiffPreview({
   return (
     <div
       ref={previewRef}
-      className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-[12px] leading-[18px]"
+      className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-xs leading-[18px]"
       data-testid="process-file-change-diff"
       data-message-content-visibility-lock="true"
       onClick={event => event.stopPropagation()}
@@ -717,7 +717,7 @@ function ThinkingBlockItem({
     const preview = buildBlockPreview(block.content)
 
     return (
-      <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
+      <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
         <div
           className="flex max-w-full items-center gap-1.5 text-text-secondary"
           role="status"
@@ -738,7 +738,7 @@ function ThinkingBlockItem({
   const detailId = `${block.id}-thinking-detail`
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
+    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
       <button
         type="button"
         data-testid="thinking-toggle-button"
@@ -781,7 +781,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-[13px] text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-sm text-text-secondary"
       data-processing-block-id={block.id}
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}

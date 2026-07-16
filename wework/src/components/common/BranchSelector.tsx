@@ -230,8 +230,8 @@ export function BranchSelector({
         onClick={() => void handleToggle()}
         className={cn(
           variant === 'environment'
-            ? 'flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover'
-            : 'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+            ? 'flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover'
+            : 'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
           open &&
             variant === 'workbar' &&
             'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'

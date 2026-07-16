@@ -281,7 +281,7 @@ export function DeviceFolderPicker({
             className={
               dark
                 ? 'h-10 w-full border border-transparent bg-transparent font-mono text-sm text-white outline-none disabled:opacity-60'
-                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-[13px] text-[#3c4043] outline-none focus:border-[#14b8a6] focus:bg-white focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60'
+                : 'h-9 w-full rounded-md border border-transparent bg-transparent px-1 font-mono text-sm text-[#3c4043] outline-none focus:border-[#14b8a6] focus:bg-white focus:ring-2 focus:ring-[#14b8a6]/20 disabled:opacity-60'
             }
             placeholder={t('workbench.project_directory_loading', '正在加载目录...')}
           />
@@ -330,7 +330,7 @@ export function DeviceFolderPicker({
             className={
               dark
                 ? 'h-10 min-w-0 flex-1 rounded-xl border border-[#454545] bg-[#303030] px-3 text-sm text-white outline-none focus:border-[#707070] disabled:opacity-60'
-                : 'h-9 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/10 disabled:opacity-60'
+                : 'h-9 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-sm outline-none focus:border-text-primary focus:ring-2 focus:ring-text-primary/10 disabled:opacity-60'
             }
             placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
           />
@@ -366,7 +366,7 @@ export function DeviceFolderPicker({
             className={
               dark
                 ? 'flex h-10 w-full items-center gap-3 rounded-lg px-2 text-left text-base text-[#d8d8d8] hover:bg-white/5'
-                : 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#3c4043] hover:bg-[#f1f3f4]'
+                : 'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-[#3c4043] hover:bg-[#f1f3f4]'
             }
           >
             <ChevronLeft className="h-4 w-4" />
@@ -376,7 +376,7 @@ export function DeviceFolderPicker({
         {loadingDirectories && (
           <p
             className={
-              dark ? 'px-2 py-3 text-sm text-[#9a9a9a]' : 'px-2 py-3 text-[13px] text-[#8a8f98]'
+              dark ? 'px-2 py-3 text-sm text-[#9a9a9a]' : 'px-2 py-3 text-sm text-[#8a8f98]'
             }
           >
             {t('workbench.project_directory_loading', '正在加载目录...')}
@@ -400,7 +400,7 @@ export function DeviceFolderPicker({
                         selected ? 'bg-white/10 text-white' : 'text-[#f2f2f2] hover:bg-white/5',
                       ].join(' ')
                     : [
-                        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px]',
+                        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm',
                         selected
                           ? 'bg-[#e5f6f4] text-[#0f766e]'
                           : 'text-[#3c4043] hover:bg-[#f1f3f4]',
@@ -418,7 +418,7 @@ export function DeviceFolderPicker({
             className={
               dark
                 ? 'px-2 py-8 text-center text-sm text-[#9a9a9a]'
-                : 'px-2 py-8 text-center text-[13px] text-[#8a8f98]'
+                : 'px-2 py-8 text-center text-sm text-[#8a8f98]'
             }
           >
             {t('workbench.project_directory_empty', '当前目录下没有子目录')}

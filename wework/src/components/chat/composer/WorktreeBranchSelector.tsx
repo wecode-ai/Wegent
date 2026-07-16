@@ -215,7 +215,7 @@ export function WorktreeBranchSelector({
                 onChange={event => setQuery(event.target.value)}
                 placeholder={t('workbench.project_worktree_branch_search', '搜索分支')}
                 className={cn(
-                  'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                  'min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
                   isMobile && 'text-base leading-5'
                 )}
               />
@@ -231,12 +231,12 @@ export function WorktreeBranchSelector({
               )}
             >
               {branchesLoading && (
-                <p className="px-2 py-3 text-[13px] text-text-muted">
+                <p className="px-2 py-3 text-sm text-text-muted">
                   {t('workbench.project_worktree_branch_loading', '加载中')}
                 </p>
               )}
               {!branchesLoading && error && (
-                <p className="px-2 py-3 text-[13px] text-danger">{error}</p>
+                <p className="px-2 py-3 text-sm text-danger">{error}</p>
               )}
               {!branchesLoading &&
                 !error &&
@@ -246,7 +246,7 @@ export function WorktreeBranchSelector({
                     type="button"
                     data-testid="project-worktree-branch-option"
                     onClick={() => handleSelectBranch(branch)}
-                    className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-[13px] text-text-primary hover:bg-muted"
+                    className="flex min-h-9 w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-text-primary hover:bg-muted"
                   >
                     <GitBranch className="h-4 w-4 shrink-0 text-text-secondary" />
                     <span className="min-w-0 flex-1 truncate">{branch}</span>
@@ -258,7 +258,7 @@ export function WorktreeBranchSelector({
               {!branchesLoading && !error && filteredBranches.length === 0 && (
                 <p
                   data-testid="project-worktree-branch-empty"
-                  className="px-2 py-3 text-[13px] text-text-muted"
+                  className="px-2 py-3 text-sm text-text-muted"
                 >
                   {t('workbench.project_worktree_branch_empty_results', '没有匹配的分支')}
                 </p>
@@ -273,7 +273,7 @@ export function WorktreeBranchSelector({
         data-testid="project-worktree-branch-button"
         onClick={() => setOpen(current => !current)}
         className={cn(
-          'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+          'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-medium leading-[18px] text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background hover:text-text-primary hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
           open && 'bg-background text-text-primary shadow-[0_10px_28px_rgba(0,0,0,0.14)]'
         )}
         aria-expanded={open}
