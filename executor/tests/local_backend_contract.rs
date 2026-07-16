@@ -74,9 +74,12 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
 
 #[tokio::test]
 async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_files() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("auth-report");
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let mut config = local_backend_config();
@@ -101,7 +104,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
     assert_eq!(
         calls[0].payload["runtime_auth_files"]["codex"],
-        json!({"target_path": "~/.codex/auth.json", "exists": true})
+        json!({"target_path": expected_auth_path, "exists": true})
     );
 }
 
@@ -509,12 +512,15 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.configured_capabilities, vec!["claude"]);
 }
 
-#[test]
-fn local_backend_auth_file_report_and_ip_filter_match_python_contract() {
+#[tokio::test]
+async fn local_backend_auth_file_report_and_ip_filter_follow_runtime_paths() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("missing-auth-report");
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
     assert_eq!(
         build_runtime_auth_file_report(&home),
-        json!({"codex": {"target_path": "~/.codex/auth.json", "exists": false}})
+        json!({"codex": {"target_path": expected_auth_path, "exists": false}})
     );
 
     assert!(is_usable_device_ip("192.0.2.10"));
@@ -705,7 +711,6 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    #[cfg(unix)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);

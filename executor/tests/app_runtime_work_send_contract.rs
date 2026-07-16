@@ -5,7 +5,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex as StdMutex, MutexGuard as StdMutexGuard, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,12 +14,21 @@ use std::os::unix::fs::PermissionsExt;
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, Mutex, MutexGuard};
+use tokio::sync::broadcast;
 use wegent_executor::{local::app_ipc::RuntimeWorkHandler, runtime_work::RuntimeWorkRpcHandler};
 
-async fn env_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().await
+struct EnvLockGuard {
+    _guard: StdMutexGuard<'static, ()>,
+}
+
+async fn env_lock() -> EnvLockGuard {
+    static LOCK: OnceLock<StdMutex<()>> = OnceLock::new();
+    EnvLockGuard {
+        _guard: LOCK
+            .get_or_init(|| StdMutex::new(()))
+            .lock()
+            .expect("environment lock should be available"),
+    }
 }
 
 struct EnvGuard {
@@ -1615,6 +1624,7 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
         .await
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-visible-task", "thread-1").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
 
     handler
         .handle_runtime_rpc(json!({
@@ -2142,7 +2152,6 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
-    exit 0
   fi
 done
 "#,
@@ -2190,12 +2199,12 @@ while IFS= read -r line; do
       case "$line" in
         *'second turn'*)
           printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-2","status":"completed"}}}}}}'
-          exit 0
           ;;
       esac
-      sleep 2
-      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
-      exit 0
+      ;;
+    *'"method":"turn/interrupt"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"cancelled"}}}}}}'
       ;;
   esac
 done
