@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wegent_executor::local::{
     app_ipc::{
-        app_ipc_listening_log_line, local_app_ipc_addr_file_path, read_app_ipc_addr_file,
-        AppIpcError, AppIpcServer, RuntimeWorkHandler,
+        app_ipc_listening_log_line, read_app_ipc_addr_file, AppIpcError, AppIpcServer,
+        RuntimeWorkHandler,
     },
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
@@ -850,6 +850,11 @@ async fn app_ipc_unknown_method_returns_protocol_error() {
 async fn app_ipc_addr_can_be_overridden() {
     let _lock = env_lock().await;
     let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:17490");
+    let addr_file = unique_dir("overridden-addr").join("app-ipc.addr");
+    let _addr_file = EnvGuard::set(
+        "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
+        &addr_file.display().to_string(),
+    );
     let server = AppIpcServer::new();
     let task = tokio::spawn(async move { server.serve_forever().await });
 
@@ -863,7 +868,8 @@ async fn app_ipc_addr_can_be_overridden() {
     }
 
     task.abort();
-    let _ = std::fs::remove_file(local_app_ipc_addr_file_path());
+    let _ = std::fs::remove_file(&addr_file);
+    let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
 
     assert_eq!(addr, Some("127.0.0.1:17490".parse().unwrap()));
 }
@@ -897,6 +903,11 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
 
     let _lock = env_lock().await;
     let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:0");
+    let addr_file = unique_dir("socket-server").join("app-ipc.addr");
+    let _addr_file = EnvGuard::set(
+        "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
+        &addr_file.display().to_string(),
+    );
     let server = AppIpcServer::new().with_device_id("device-1");
     let task = tokio::spawn(async move { server.serve_forever().await });
 
@@ -944,7 +955,8 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 
     task.abort();
-    let _ = std::fs::remove_file(local_app_ipc_addr_file_path());
+    let _ = std::fs::remove_file(&addr_file);
+    let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {

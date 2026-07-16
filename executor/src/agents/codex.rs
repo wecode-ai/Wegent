@@ -51,6 +51,17 @@ const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
+    "WEGENT_EXECUTOR_APP_IPC_ADDR",
+    "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
+    "WEGENT_EXECUTOR_APP_IPC_SOCKET",
+    "WEGENT_EXECUTOR_BINARY",
+    "WEGENT_EXECUTOR_HOME",
+    "WEGENT_EXECUTOR_LOG_DIR",
+    "WEGENT_EXECUTOR_PROJECTS_DIR",
+    "WEGENT_EXECUTOR_SOURCE_DIR",
+    "WEWORK_EXECUTOR_SIDECAR",
+];
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
 const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
@@ -1603,6 +1614,9 @@ fn spawn_codex_app_server(
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
     let mut command = Command::new(&resolved_binary);
+    for key in EXECUTOR_INTERNAL_ENV_KEYS {
+        command.env_remove(key);
+    }
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
