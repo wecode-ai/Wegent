@@ -39,6 +39,7 @@ use crate::{
     },
 };
 
+use super::codex_log_db::configure_codex_log_db_filter;
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
@@ -388,7 +389,7 @@ impl CodexAppServerClient {
         Ok((request_id, handle, rx))
     }
 
-    async fn send_response(&self, request_id: u64, result: Value) -> Result<(), String> {
+    async fn send_response(&self, request_id: Value, result: Value) -> Result<(), String> {
         let handle = self.existing_process().await?;
         handle
             .write_message(json!({
@@ -643,6 +644,7 @@ async fn start_persistent_codex_app_server(
             rpc.request_ignoring_notifications("initialize", initialize_params()),
         )
         .await?;
+        configure_codex_log_db_filter(wework_codex_home()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,
@@ -687,7 +689,10 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
-    launch_config.config_overrides.push("goals=true".to_owned());
+    launch_config.config_overrides.extend([
+        "goals=true".to_owned(),
+        "features.code_mode_host=true".to_owned(),
+    ]);
     launch_config
 }
 
@@ -870,6 +875,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             thread_fields.push(("operation", thread_operation.to_owned()));
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
+            validate_codex_permission_profile(thread_operation, &thread)?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1086,6 +1092,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             rpc.request("initialize", initialize_params(), &mut state),
         )
         .await?;
+        configure_codex_log_db_filter(wework_codex_home()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,
@@ -1135,6 +1142,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 rpc.request(thread_operation, thread_params, &mut state),
             )
             .await?;
+            validate_codex_permission_profile(thread_operation, &thread)?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1386,6 +1394,20 @@ async fn read_shared_turn_notifications(
             continue;
         }
 
+        if message
+            .get("method")
+            .and_then(Value::as_str)
+            .is_some_and(|method| method == "mcpServer/elicitation/request")
+        {
+            answer_shared_mcp_server_elicitation(
+                client,
+                &message,
+                &mut options.request_user_input_answers,
+            )
+            .await?;
+            continue;
+        }
+
         if let Some(outcome) = state.handle_message(&message) {
             options.active_turn_id = None;
             if let Some(callback) = options.active_turn_finished.as_ref() {
@@ -1497,7 +1519,7 @@ async fn answer_shared_request_user_input(
     message: &Value,
     request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
 ) -> Result<(), String> {
-    let request_id = response_id(message)
+    let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
     let Some(receiver) = request_user_input_answers else {
         return Err("request_user_input requires a runtime response channel".to_owned());
@@ -1509,6 +1531,18 @@ async fn answer_shared_request_user_input(
     client
         .send_response(request_id, request_user_input_result(response))
         .await
+}
+
+async fn answer_shared_mcp_server_elicitation(
+    client: &CodexAppServerClient,
+    message: &Value,
+    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+) -> Result<(), String> {
+    let request_id = json_rpc_request_id(message)
+        .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
+    let result =
+        receive_mcp_server_elicitation_response(message, request_user_input_answers).await?;
+    client.send_response(request_id, result).await
 }
 
 async fn notification_belongs_to_thread(
@@ -1978,6 +2012,15 @@ impl JsonRpcConnection {
                     .await?;
                 continue;
             }
+            if message
+                .get("method")
+                .and_then(Value::as_str)
+                .is_some_and(|method| method == "mcpServer/elicitation/request")
+            {
+                self.answer_mcp_server_elicitation(&message, &mut request_user_input_answers)
+                    .await?;
+                continue;
+            }
             if let Some(outcome) = state.handle_message(&message) {
                 return Ok(outcome);
             }
@@ -1992,7 +2035,7 @@ impl JsonRpcConnection {
         message: &Value,
         request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
     ) -> Result<(), String> {
-        let request_id = response_id(message)
+        let request_id = json_rpc_request_id(message)
             .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
         let Some(receiver) = request_user_input_answers else {
             return Err("request_user_input requires a runtime response channel".to_owned());
@@ -2004,6 +2047,22 @@ impl JsonRpcConnection {
         self.write_message(json!({
             "id": request_id,
             "result": request_user_input_result(response),
+        }))
+        .await
+    }
+
+    async fn answer_mcp_server_elicitation(
+        &mut self,
+        message: &Value,
+        request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    ) -> Result<(), String> {
+        let request_id = json_rpc_request_id(message)
+            .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
+        let result =
+            receive_mcp_server_elicitation_response(message, request_user_input_answers).await?;
+        self.write_message(json!({
+            "id": request_id,
+            "result": result,
         }))
         .await
     }
@@ -3247,6 +3306,15 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             toml_key_path(&[
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("approve")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
                 "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
             ]),
@@ -3876,6 +3944,44 @@ fn resolve_codex_binary(value: &str) -> String {
     super::resolve_codex_binary_path(value)
 }
 
+const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+
+fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
+    params.insert(
+        "permissions".to_owned(),
+        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+    );
+}
+
+fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
+    let active_profile = response
+        .get("activePermissionProfile")
+        .and_then(|profile| profile.get("id"))
+        .and_then(Value::as_str);
+    let sandbox_type = response
+        .get("sandbox")
+        .and_then(|sandbox| sandbox.get("type"))
+        .and_then(Value::as_str);
+
+    // Minimal test doubles and older app-server builds do not expose effective permission
+    // metadata. Current Codex builds do, so reject any explicit mismatch instead of running a
+    // turn whose tools silently inherit workspace-write permissions.
+    if active_profile.is_none() && sandbox_type.is_none() {
+        return Ok(());
+    }
+    if active_profile == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE)
+        && sandbox_type == Some("dangerFullAccess")
+    {
+        return Ok(());
+    }
+
+    Err(format!(
+        "codex app-server {operation} applied unexpected permissions: active_profile={}, sandbox={}",
+        active_profile.unwrap_or("<none>"),
+        sandbox_type.unwrap_or("<none>")
+    ))
+}
+
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
     if let Some(model) = model_id(request) {
@@ -3889,6 +3995,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3918,6 +4025,7 @@ fn thread_fork_params(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    insert_codex_runtime_permissions(&mut params);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -3980,6 +4088,7 @@ fn thread_resume_params(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    insert_codex_runtime_permissions(&mut params);
     Value::Object(params)
 }
 
@@ -4017,10 +4126,7 @@ fn turn_start_params(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
-    params.insert(
-        "sandboxPolicy".to_owned(),
-        json!({"type": "dangerFullAccess"}),
-    );
+    insert_codex_runtime_permissions(&mut params);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -4310,6 +4416,320 @@ fn request_user_input_result(response: Value) -> Value {
         });
     }
     response
+}
+
+const MCP_ELICITATION_APPROVAL_QUESTION_ID: &str = "__mcp_approval";
+const MCP_ELICITATION_ALLOW: &str = "Allow";
+const MCP_ELICITATION_ALLOW_SESSION: &str = "Allow for this session";
+const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
+const MCP_ELICITATION_DECLINE: &str = "Decline";
+
+async fn receive_mcp_server_elicitation_response(
+    message: &Value,
+    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+) -> Result<Value, String> {
+    let params = message_params(message);
+    let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
+    log_executor_event(
+        "codex mcp elicitation request",
+        &[
+            ("request_id", json_scalar_field(message, "id")),
+            ("thread_id", json_string_field(params, "threadId")),
+            ("turn_id", json_string_field(params, "turnId")),
+            ("server_name", json_string_field(params, "serverName")),
+            ("mode", mode.to_owned()),
+            (
+                "raw",
+                serde_json::to_string(message)
+                    .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>")),
+            ),
+        ],
+    );
+    if !matches!(mode, "form" | "openai/form") {
+        log_executor_event(
+            "codex mcp elicitation declined",
+            &[
+                ("mode", mode.to_owned()),
+                ("server_name", json_string_field(params, "serverName")),
+                ("reason", "unsupported elicitation mode".to_owned()),
+            ],
+        );
+        return Ok(mcp_server_elicitation_decline_result());
+    }
+
+    if mcp_server_elicitation_request_user_input_params(params).is_none() {
+        log_executor_event(
+            "codex mcp elicitation declined",
+            &[
+                ("mode", mode.to_owned()),
+                ("server_name", json_string_field(params, "serverName")),
+                ("reason", "unsupported elicitation schema".to_owned()),
+            ],
+        );
+        return Ok(mcp_server_elicitation_decline_result());
+    }
+
+    let Some(receiver) = request_user_input_answers else {
+        return Ok(mcp_server_elicitation_cancel_result());
+    };
+    let response = receiver
+        .recv()
+        .await
+        .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
+    let result = mcp_server_elicitation_result(params, &response);
+    log_executor_event(
+        "codex mcp elicitation response",
+        &[
+            ("request_id", json_scalar_field(message, "id")),
+            ("server_name", json_string_field(params, "serverName")),
+            ("action", json_string_field(&result, "action")),
+            (
+                "raw",
+                serde_json::to_string(&result)
+                    .unwrap_or_else(|error| format!("<failed to serialize response: {error}>")),
+            ),
+        ],
+    );
+    Ok(result)
+}
+
+pub(crate) fn mcp_server_elicitation_request_user_input_params(params: &Value) -> Option<Value> {
+    let mode = params.get("mode").and_then(Value::as_str)?;
+    if !matches!(mode, "form" | "openai/form") {
+        return None;
+    }
+    let schema = params.get("requestedSchema")?;
+    let properties = schema.get("properties").and_then(Value::as_object)?;
+    let meta = params.get("_meta").and_then(Value::as_object);
+    let is_tool_approval = meta
+        .and_then(|meta| meta.get("codex_approval_kind"))
+        .and_then(Value::as_str)
+        == Some("mcp_tool_call");
+    let mut questions = Vec::new();
+
+    if is_tool_approval || properties.is_empty() {
+        let mut options = vec![json!({
+            "label": MCP_ELICITATION_ALLOW,
+            "description": "Allow this MCP tool call once.",
+        })];
+        if mcp_elicitation_persist_modes(meta).contains(&"session") {
+            options.push(json!({
+                "label": MCP_ELICITATION_ALLOW_SESSION,
+                "description": "Allow this tool for the current session.",
+            }));
+        }
+        if mcp_elicitation_persist_modes(meta).contains(&"always") {
+            options.push(json!({
+                "label": MCP_ELICITATION_ALLOW_ALWAYS,
+                "description": "Always allow this tool without asking again.",
+            }));
+        }
+        options.push(json!({
+            "label": MCP_ELICITATION_DECLINE,
+            "description": "Do not allow this MCP tool call.",
+        }));
+        questions.push(json!({
+            "id": MCP_ELICITATION_APPROVAL_QUESTION_ID,
+            "header": params.get("serverName").and_then(Value::as_str).unwrap_or("MCP"),
+            "question": params.get("message").and_then(Value::as_str).unwrap_or("Allow this MCP request?"),
+            "options": options,
+        }));
+    } else {
+        for (id, property) in properties {
+            questions.push(mcp_elicitation_question(id, property));
+        }
+    }
+
+    Some(json!({
+        "itemId": "mcp_server_elicitation",
+        "serverName": params.get("serverName").cloned().unwrap_or(Value::Null),
+        "message": params.get("message").cloned().unwrap_or(Value::Null),
+        "questions": questions,
+    }))
+}
+
+fn mcp_elicitation_persist_modes(meta: Option<&serde_json::Map<String, Value>>) -> Vec<&str> {
+    match meta.and_then(|meta| meta.get("persist")) {
+        Some(Value::String(mode)) => vec![mode.as_str()],
+        Some(Value::Array(modes)) => modes.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn mcp_elicitation_question(id: &str, property: &Value) -> Value {
+    let mut question = serde_json::Map::new();
+    question.insert("id".to_owned(), Value::String(id.to_owned()));
+    question.insert(
+        "header".to_owned(),
+        Value::String(
+            property
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or(id)
+                .to_owned(),
+        ),
+    );
+    question.insert(
+        "question".to_owned(),
+        Value::String(
+            property
+                .get("description")
+                .or_else(|| property.get("title"))
+                .and_then(Value::as_str)
+                .unwrap_or(id)
+                .to_owned(),
+        ),
+    );
+    let options = mcp_elicitation_property_options(property);
+    if !options.is_empty() {
+        question.insert("options".to_owned(), Value::Array(options));
+    }
+    Value::Object(question)
+}
+
+fn mcp_elicitation_property_options(property: &Value) -> Vec<Value> {
+    if property.get("type").and_then(Value::as_str) == Some("boolean") {
+        return vec![
+            json!({"label": "true", "description": "Yes"}),
+            json!({"label": "false", "description": "No"}),
+        ];
+    }
+    if let Some(options) = property.get("oneOf").and_then(Value::as_array) {
+        return options
+            .iter()
+            .filter_map(|option| {
+                let value = option.get("const").and_then(Value::as_str)?;
+                let label = option.get("title").and_then(Value::as_str).unwrap_or(value);
+                Some(json!({"label": label, "description": value}))
+            })
+            .collect();
+    }
+    if let Some(values) = property.get("enum").and_then(Value::as_array) {
+        let names = property.get("enumNames").and_then(Value::as_array);
+        return values
+            .iter()
+            .enumerate()
+            .filter_map(|(index, value)| {
+                let value = value.as_str()?;
+                let label = names
+                    .and_then(|names| names.get(index))
+                    .and_then(Value::as_str)
+                    .unwrap_or(value);
+                Some(json!({"label": label, "description": value}))
+            })
+            .collect();
+    }
+    Vec::new()
+}
+
+fn mcp_server_elicitation_result(params: &Value, response: &Value) -> Value {
+    let answers = response.get("answers").and_then(Value::as_object);
+    if answers.map_or(true, serde_json::Map::is_empty) {
+        return mcp_server_elicitation_cancel_result();
+    }
+    let approval = answers
+        .and_then(|answers| answers.get(MCP_ELICITATION_APPROVAL_QUESTION_ID))
+        .and_then(|answer| answer.get("answers"))
+        .and_then(Value::as_array)
+        .and_then(|answers| answers.first())
+        .and_then(Value::as_str);
+    if approval == Some(MCP_ELICITATION_DECLINE) {
+        return mcp_server_elicitation_decline_result();
+    }
+    if let Some(approval) = approval {
+        let meta = match approval {
+            MCP_ELICITATION_ALLOW_SESSION => json!({"persist": "session"}),
+            MCP_ELICITATION_ALLOW_ALWAYS => json!({"persist": "always"}),
+            _ => Value::Null,
+        };
+        return json!({"action": "accept", "content": Value::Null, "_meta": meta});
+    }
+
+    let schema = params.get("requestedSchema").unwrap_or(&Value::Null);
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut content = serde_json::Map::new();
+    if let Some(answers) = answers {
+        for (id, answer) in answers {
+            let values = answer
+                .get("answers")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let Some(property) = properties.get(id) else {
+                continue;
+            };
+            if let Some(value) = mcp_elicitation_answer_value(property, &values) {
+                content.insert(id.clone(), value);
+            }
+        }
+    }
+    json!({"action": "accept", "content": content, "_meta": Value::Null})
+}
+
+fn mcp_elicitation_answer_value(property: &Value, values: &[Value]) -> Option<Value> {
+    let strings = values.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+    if property.get("type").and_then(Value::as_str) == Some("array") {
+        return Some(Value::Array(
+            strings
+                .into_iter()
+                .map(|value| Value::String(mcp_elicitation_enum_value(property, value)))
+                .collect(),
+        ));
+    }
+    let value = strings.first().copied()?;
+    match property.get("type").and_then(Value::as_str) {
+        Some("boolean") => value.parse::<bool>().ok().map(Value::Bool),
+        Some("integer") => value
+            .parse::<i64>()
+            .ok()
+            .map(|value| Value::Number(value.into())),
+        Some("number") => {
+            serde_json::Number::from_f64(value.parse::<f64>().ok()?).map(Value::Number)
+        }
+        _ => Some(Value::String(mcp_elicitation_enum_value(property, value))),
+    }
+}
+
+fn mcp_elicitation_enum_value(property: &Value, label: &str) -> String {
+    if let Some(options) = property.get("oneOf").and_then(Value::as_array) {
+        if let Some(value) = options.iter().find_map(|option| {
+            (option.get("title").and_then(Value::as_str) == Some(label))
+                .then(|| option.get("const").and_then(Value::as_str))
+                .flatten()
+        }) {
+            return value.to_owned();
+        }
+    }
+    if let (Some(values), Some(names)) = (
+        property.get("enum").and_then(Value::as_array),
+        property.get("enumNames").and_then(Value::as_array),
+    ) {
+        if let Some(index) = names.iter().position(|name| name.as_str() == Some(label)) {
+            if let Some(value) = values.get(index).and_then(Value::as_str) {
+                return value.to_owned();
+            }
+        }
+    }
+    label.to_owned()
+}
+
+fn mcp_server_elicitation_decline_result() -> Value {
+    json!({"action": "decline", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn mcp_server_elicitation_cancel_result() -> Value {
+    json!({"action": "cancel", "content": Value::Null, "_meta": Value::Null})
+}
+
+fn json_rpc_request_id(message: &Value) -> Option<Value> {
+    message
+        .get("id")
+        .filter(|id| id.is_string() || id.is_number())
+        .cloned()
 }
 
 fn message_params(message: &Value) -> &Value {
@@ -4722,7 +5142,10 @@ mod tests {
             launch_config.env.get("HTTP_PROXY").map(String::as_str),
             Some("http://127.0.0.1:7890")
         );
-        assert_eq!(launch_config.config_overrides, vec!["goals=true"]);
+        assert_eq!(
+            launch_config.config_overrides,
+            vec!["goals=true", "features.code_mode_host=true"]
+        );
         assert!(launch_config.model_provider.is_none());
         assert!(launch_config.effort.is_none());
         assert!(launch_config.summary.is_none());
@@ -4965,6 +5388,49 @@ mod tests {
     }
 
     #[test]
+    fn codex_permission_profile_is_applied_to_thread_and_turn_requests() {
+        let request = ExecutionRequest::default();
+        let launch_config = CodexLaunchConfig::default();
+        let thread_start = thread_start_params(&request, &launch_config);
+        let thread_resume = thread_resume_params("thread-1", &request, &launch_config);
+        let thread_fork = thread_fork_params("thread-1", None, &request, &launch_config);
+        let turn_start = turn_start_params("thread-1", &request, &launch_config, Vec::new());
+
+        for params in [thread_start, thread_resume, thread_fork, turn_start] {
+            assert_eq!(
+                params["permissions"],
+                CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
+            );
+            assert!(params.get("sandboxPolicy").is_none());
+            assert!(params.get("sandbox").is_none());
+        }
+    }
+
+    #[test]
+    fn codex_permission_profile_validation_rejects_effective_downgrade() {
+        let response = json!({
+            "activePermissionProfile": {"id": ":workspace"},
+            "sandbox": {"type": "workspaceWrite", "networkAccess": false},
+        });
+
+        let error = validate_codex_permission_profile("thread/resume", &response)
+            .expect_err("workspace-write must not be accepted");
+
+        assert!(error.contains("active_profile=:workspace"));
+        assert!(error.contains("sandbox=workspaceWrite"));
+    }
+
+    #[test]
+    fn codex_permission_profile_validation_accepts_effective_full_access() {
+        let response = json!({
+            "activePermissionProfile": {"id": ":danger-full-access"},
+            "sandbox": {"type": "dangerFullAccess"},
+        });
+
+        validate_codex_permission_profile("thread/resume", &response).unwrap();
+    }
+
+    #[test]
     fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
         let input = turn_input(&Value::String(
             "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),
@@ -5116,6 +5582,10 @@ mod tests {
         );
         assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
         assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+        assert_eq!(
+            config["mcp_servers.wework_browser.default_tools_approval_mode"],
+            "approve"
+        );
         assert_eq!(
             config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
             "http://127.0.0.1:43127"

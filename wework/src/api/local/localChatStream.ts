@@ -51,7 +51,22 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
             deviceId: stringField(asRecord(event.payload), 'deviceId') ?? null,
           })
         }
-        for (const [subscriptionId, subscription] of Array.from(subscriptions)) {
+        const subscriptionEntries = Array.from(subscriptions)
+        if (shouldLogLocalChatStreamEvent(event.event)) {
+          const matchedSubscriptionCount = subscriptionEntries.filter(([, subscription]) =>
+            isLocalExecutorEventInScope(event, subscription.handlers.scope)
+          ).length
+          logLocalChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
+        }
+        for (const [subscriptionId, subscription] of subscriptionEntries) {
+          if (event.event === 'executor.runtime_replaced') {
+            const payload = runtimeTransportReplacedPayload(event.payload)
+            if (payload) {
+              subscription.state = createResponseApiStreamState()
+              subscription.handlers.onRuntimeTransportReplaced?.(payload)
+            }
+            continue
+          }
           const inScope = isLocalExecutorEventInScope(event, subscription.handlers.scope)
           if (!inScope && event.event !== 'runtime.plan.updated') {
             continue
@@ -97,6 +112,10 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       })
       .catch(error => {
         nativeSubscribePromise = null
+        console.error('[Wework] Local chat stream native listener failed', {
+          error: error instanceof Error ? error.message : String(error),
+          activeSubscriptions: activeLocalChatStreamSubscriptions,
+        })
         logLocalChatStreamNativeSubscription('native-listener-failed', {
           error: error instanceof Error ? error.message : String(error),
         })
@@ -161,6 +180,22 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
   }
 }
 
+function logLocalChatTerminalEvent(
+  event: LocalExecutorEvent,
+  matchedSubscriptionCount: number,
+  subscriptionCount: number
+): void {
+  const payload = asRecord(event.payload)
+  console.info('[Wework] Local chat stream terminal event received', {
+    event: event.event,
+    taskId: stringField(payload, 'taskId') ?? null,
+    subtaskId: stringField(payload, 'subtaskId') ?? null,
+    deviceId: stringField(payload, 'deviceId') ?? null,
+    subscriptionCount,
+    matchedSubscriptionCount,
+  })
+}
+
 function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean {
   return Boolean(
     handlers.onChatStart ||
@@ -173,8 +208,19 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeGoalUpdated ||
     handlers.onRuntimeGoalCleared ||
     handlers.onRuntimePlanUpdated ||
-    handlers.onGuidanceApplied
+    handlers.onGuidanceApplied ||
+    handlers.onRuntimeTransportReplaced
   )
+}
+
+function runtimeTransportReplacedPayload(
+  value: unknown
+): { previousRuntimeInstanceId: string; runtimeInstanceId: string } | null {
+  const payload = asRecord(value)
+  const previousRuntimeInstanceId = stringField(payload, 'previousRuntimeInstanceId')
+  const runtimeInstanceId = stringField(payload, 'runtimeInstanceId')
+  if (!previousRuntimeInstanceId || !runtimeInstanceId) return null
+  return { previousRuntimeInstanceId, runtimeInstanceId }
 }
 
 function streamScopeDebug(scope: ChatStreamHandlers['scope']): Record<string, unknown> {

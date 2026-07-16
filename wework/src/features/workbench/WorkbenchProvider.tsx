@@ -63,7 +63,7 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
-import { getRuntimePaneTaskExecution, hasRunningRuntimeTask } from './runtimePaneStatus'
+import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -213,10 +213,6 @@ export function WorkbenchProvider({
         )),
     [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
   )
-  const deferLocalExecutorConnectionUpdate =
-    state.isBootstrapping ||
-    state.activeRuntimeTasks.length > 0 ||
-    hasRunningRuntimeTask(state.runtimeWork)
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,
@@ -1028,8 +1024,13 @@ export function WorkbenchProvider({
     (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_started', address }),
     [dispatch]
   )
+  const markRuntimeTaskSettled = useCallback(
+    (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_settled', address }),
+    [dispatch]
+  )
   const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
   const stableMarkRuntimeTaskStarted = useStableEvent(markRuntimeTaskStarted)
+  const stableMarkRuntimeTaskSettled = useStableEvent(markRuntimeTaskSettled)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
@@ -1406,6 +1407,7 @@ export function WorkbenchProvider({
     setRuntimeGoal: runtimeTasks.setRuntimeGoal,
     clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
     markRuntimeTaskStarted,
+    markRuntimeTaskSettled,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     getImNotificationSettings,
@@ -1491,6 +1493,7 @@ export function WorkbenchProvider({
       setRuntimeGoal: stableSetRuntimeGoal,
       clearRuntimeGoal: stableClearRuntimeGoal,
       markRuntimeTaskStarted: stableMarkRuntimeTaskStarted,
+      markRuntimeTaskSettled: stableMarkRuntimeTaskSettled,
       listImPrivateSessions: stableListImPrivateSessions,
       bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
@@ -1583,6 +1586,7 @@ export function WorkbenchProvider({
       stableLoadRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
       stableMarkRuntimeTaskStarted,
+      stableMarkRuntimeTaskSettled,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,
@@ -1632,7 +1636,6 @@ export function WorkbenchProvider({
         <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
         <LocalExecutorCloudBridge
           backendUrl={cloudConnection.backendUrl}
-          deferConnectionUpdate={deferLocalExecutorConnectionUpdate}
           isConnected={cloudConnection.isConnected}
           token={cloudConnection.token}
         />

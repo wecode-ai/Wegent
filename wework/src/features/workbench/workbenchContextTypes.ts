@@ -196,6 +196,7 @@ export interface WorkbenchContextValue {
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
   markRuntimeTaskStarted: (address: RuntimeTaskAddress) => void
+  markRuntimeTaskSettled: (address: RuntimeTaskAddress) => void
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,

@@ -4,21 +4,16 @@ import {
   type LocalExecutorCloudConnection,
 } from './localExecutorCloudConnection'
 
-interface LocalExecutorCloudBridgeProps extends LocalExecutorCloudConnection {
-  deferConnectionUpdate: boolean
-}
+type LocalExecutorCloudBridgeProps = LocalExecutorCloudConnection
 
 export function LocalExecutorCloudBridge({
   backendUrl: configuredBackendUrl,
-  deferConnectionUpdate,
   isConnected,
   token,
 }: LocalExecutorCloudBridgeProps) {
   const lastTargetRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (deferConnectionUpdate) return
-
     const backendUrl = isConnected ? configuredBackendUrl : null
     const authToken = isConnected ? token : null
     const connected = Boolean(backendUrl && authToken)
@@ -37,7 +32,7 @@ export function LocalExecutorCloudBridge({
       }
       console.error('[CloudConnection] Failed to disconnect runtime task service from cloud', error)
     })
-  }, [configuredBackendUrl, deferConnectionUpdate, isConnected, token])
+  }, [configuredBackendUrl, isConnected, token])
 
   return null
 }

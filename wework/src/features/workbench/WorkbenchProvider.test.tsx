@@ -6434,6 +6434,117 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
+  test('restores partial output only after the local runtime transport is replaced', async () => {
+    const runningWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      totalTasks: 1,
+    })
+    const getRuntimeTranscript = vi
+      .fn()
+      .mockResolvedValueOnce({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: true,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '执行命令' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '已经输出的中间内容',
+            status: 'streaming',
+            subtaskId: '101',
+          },
+        ],
+      })
+      .mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: false,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '执行命令' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '已经输出的中间内容',
+            status: 'streaming',
+            subtaskId: '101',
+          },
+        ],
+      })
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(runningWork),
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: { subscribe } as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent(
+        'assistant:streaming'
+      )
+    )
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      streamHandlers.onRuntimeTransportReplaced?.({
+        previousRuntimeInstanceId: 'runtime-instance-a',
+        runtimeInstanceId: 'runtime-instance-b',
+      })
+    })
+
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+      deviceId: 'device-1',
+      taskId: 'runtime-a',
+      workspacePath: '/workspace/project-alpha',
+      limit: 50,
+      refresh: true,
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent('assistant:done')
+    )
+    expect(screen.getByText('已经输出的中间内容')).toBeInTheDocument()
+    expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
+  })
+
   test('resumes a paused runtime goal when editing and sending its objective', async () => {
     const setRuntimeGoal = vi.fn().mockResolvedValue({
       accepted: true,

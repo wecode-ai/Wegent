@@ -4153,17 +4153,15 @@ fn codex_stream_thread_id(value: &Value) -> Option<String> {
 
 fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
     let notification = codex_notification(message);
+    let raw = serde_json::to_string(message)
+        .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
     log_executor_event(
         "runtime work codex notification unrouted",
         &[
             ("reason", reason.to_owned()),
             ("method", notification.method),
-            (
-                "raw_len",
-                serde_json::to_string(message)
-                    .map(|raw| raw.len().to_string())
-                    .unwrap_or_else(|_| "0".to_owned()),
-            ),
+            ("raw_len", raw.len().to_string()),
+            ("raw", raw),
         ],
     );
 }

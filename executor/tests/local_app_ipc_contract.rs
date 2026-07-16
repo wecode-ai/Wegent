@@ -873,7 +873,9 @@ fn app_ipc_listening_log_line_includes_device_and_addr() {
     let line = app_ipc_listening_log_line("device-1", "127.0.0.1:17490");
 
     assert_log_timestamp(&line);
-    assert!(line.ends_with(" app IPC listening device_id=device-1 addr=127.0.0.1:17490"));
+    assert!(line.contains(" app IPC listening device_id=device-1 addr=127.0.0.1:17490"));
+    assert!(line.contains(" process_id="));
+    assert!(line.contains(" addr_file="));
 }
 
 fn assert_log_timestamp(line: &str) {

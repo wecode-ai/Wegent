@@ -35,6 +35,7 @@ use crate::local::command::build_env;
 const DEFAULT_DEVICE_ID: &str = "local-device";
 const DEFAULT_APP_IPC_ADDR: &str = "127.0.0.1:0";
 const APP_IPC_ADDR_FILE_NAME: &str = "app-ipc.addr";
+const APP_IPC_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
@@ -209,6 +210,10 @@ pub trait RuntimeWorkHandler: Send + Sync {
     }
 }
 
+pub trait BackendConnectionHandler: Send + Sync {
+    fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppIpcError {
     pub code: String,
@@ -242,6 +247,7 @@ pub struct AppIpcServer {
     device_id: String,
     runtime_instance_id: Option<String>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
 }
@@ -253,6 +259,7 @@ impl Default for AppIpcServer {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
             runtime_work_handler: None,
+            backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
             event_tx,
         }
@@ -295,6 +302,14 @@ impl AppIpcServer {
             codex_binary.into(),
             self.event_tx.clone(),
         )));
+        self
+    }
+
+    pub fn with_backend_connection_handler<H>(mut self, handler: H) -> Self
+    where
+        H: BackendConnectionHandler + 'static,
+    {
+        self.backend_connection_handler = Some(Arc::new(handler));
         self
     }
 
@@ -345,6 +360,16 @@ impl AppIpcServer {
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
         if method == "executor.health" {
             return Ok(json!({"status": "healthy"}));
+        }
+
+        if method == "executor.backend.configure" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.configure_backend(params).await;
         }
 
         if method == "device.execute_command" {
@@ -861,6 +886,11 @@ pub fn app_ipc_listening_log_line(device_id: &str, addr: &str) -> String {
         &[
             ("device_id", device_id.to_owned()),
             ("addr", addr.to_owned()),
+            ("process_id", std::process::id().to_string()),
+            (
+                "addr_file",
+                local_app_ipc_addr_file_path().display().to_string(),
+            ),
         ],
     )
 }
@@ -1330,6 +1360,12 @@ pub fn app_ipc_socket_path() -> PathBuf {
 }
 
 pub fn local_app_ipc_addr_file_path() -> PathBuf {
+    if let Ok(value) = env::var(APP_IPC_ADDR_FILE_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return expand_home(trimmed);
+        }
+    }
     let home = env::var("WEGENT_EXECUTOR_HOME")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -1393,4 +1429,41 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment lock should be available")
+    }
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            env::set_var(key, value);
+        } else {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn explicit_app_ipc_addr_file_is_independent_from_executor_home() {
+        let _guard = env_lock();
+        let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        let previous_addr_file = env::var_os(APP_IPC_ADDR_FILE_ENV);
+        env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/shared-executor-home");
+        env::set_var(APP_IPC_ADDR_FILE_ENV, "/tmp/wework-runtime/app-ipc.addr");
+
+        let path = local_app_ipc_addr_file_path();
+
+        restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+        restore_env(APP_IPC_ADDR_FILE_ENV, previous_addr_file);
+        assert_eq!(path, PathBuf::from("/tmp/wework-runtime/app-ipc.addr"));
+    }
 }
