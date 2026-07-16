@@ -101,10 +101,12 @@ describe('LocalRuntimeInitializer', () => {
     )
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    expect(connectMock).toHaveBeenCalledWith({
-      backendUrl: 'https://backend.example.com',
-      authToken: 'token-a',
-    })
+    await waitFor(() =>
+      expect(connectMock).toHaveBeenCalledWith({
+        backendUrl: 'https://backend.example.com',
+        authToken: 'token-a',
+      })
+    )
     expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
       connectMock.mock.invocationCallOrder[0]
     )
@@ -126,7 +128,7 @@ describe('LocalRuntimeInitializer', () => {
     )
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    expect(disconnectMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(disconnectMock).toHaveBeenCalledTimes(1))
     expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
       disconnectMock.mock.invocationCallOrder[0]
     )
