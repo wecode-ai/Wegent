@@ -42,7 +42,7 @@ jobs:
         working-directory: ./backend
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv sync --dev
 
       - name: Run backend tests
@@ -50,11 +50,11 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv run pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./backend/coverage.xml
           flags: backend
@@ -136,7 +136,7 @@ jobs:
         working-directory: ./executor_manager
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv sync --dev
 
       - name: Run executor manager tests
@@ -147,11 +147,11 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
         run: |
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv run pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v -s
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./executor_manager/coverage.xml
           flags: executor-manager
@@ -182,7 +182,7 @@ jobs:
         working-directory: ./shared
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv sync --dev
 
       - name: Run shared tests
@@ -192,7 +192,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
         run: |
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           # Run pytest and capture exit code, ignoring thread cleanup errors
           set +e
           uv run pytest tests/ --cov=utils --cov-config=.coveragerc --cov-report=xml --cov-report=term-missing -v -p no:cacheprovider 2>&1
@@ -200,16 +200,16 @@ jobs:
           set -e
           # Exit code 0 = success, others indicate test failures
           # Thread cleanup errors cause exit 134 but tests pass, so check coverage.xml exists
-          if [ $PYTEST_EXIT -eq 0 ] || ([ $PYTEST_EXIT -eq 134 ] && [ -f coverage.xml ]); then
+          if [ "$PYTEST_EXIT" -eq 0 ] || { [ "$PYTEST_EXIT" -eq 134 ] && [ -f coverage.xml ]; }; then
             echo "Tests completed successfully"
             exit 0
           else
             echo "Tests failed with exit code $PYTEST_EXIT"
-            exit $PYTEST_EXIT
+            exit "$PYTEST_EXIT"
           fi
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./shared/coverage.xml
           flags: shared
@@ -240,7 +240,7 @@ jobs:
         working-directory: ./knowledge_engine
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv sync --dev
 
       - name: Run knowledge engine tests
@@ -250,11 +250,11 @@ jobs:
           PYTHONUNBUFFERED: "1"
           PYTHONFAULTHANDLER: "1"
         run: |
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv run pytest tests/ --cov=knowledge_engine --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./knowledge_engine/coverage.xml
           flags: knowledge-engine
@@ -300,7 +300,7 @@ jobs:
         run: pnpm --filter wecode-ai-assistant run test --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./frontend/coverage/coverage-final.json
           flags: frontend
@@ -333,7 +333,7 @@ jobs:
         run: pnpm --filter wework exec vitest run --coverage --passWithNoTests
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./wework/coverage/coverage-final.json
           flags: wework
@@ -373,7 +373,7 @@ jobs:
           pytest tests/ --ignore=tests/test_integration.py --cov=wegent --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: ./wegent-cli/coverage.xml
           flags: wegent-cli
@@ -429,7 +429,7 @@ jobs:
         working-directory: ./backend
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
+          source "$HOME/.cargo/env"
           uv sync
 
       - name: Install shared module
