@@ -46,7 +46,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const { height, handleResizeStart } = useResizableBottomPanel()
+  const { height, resizing, handleResizeStart } = useResizableBottomPanel()
   const terminalSequenceRef = useRef(2)
   const [tabs, setTabs] = useState<BottomWorkspacePanelTab[]>(() => [createTerminalTab(1)])
   const [activeTabId, setActiveTabId] = useState('terminal-1')
@@ -117,7 +117,8 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
     <section
       data-testid={testId('bottom-workspace-panel')}
       className={cn(
-        'relative flex shrink-0 flex-col overflow-hidden bg-background transition-[height,opacity,transform] duration-300 ease-out',
+        'relative flex shrink-0 flex-col overflow-hidden bg-background ease-out',
+        resizing ? 'transition-none' : 'transition-[height,opacity,transform] duration-300',
         open
           ? 'pointer-events-auto translate-y-0 border-t border-border opacity-100'
           : 'pointer-events-none translate-y-3 border-t border-transparent opacity-0'
