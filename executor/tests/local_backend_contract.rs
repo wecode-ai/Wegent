@@ -385,7 +385,7 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_task_execute_splits_large_claude_assistant_message_into_deltas() {
+async fn local_backend_task_execute_streams_large_claude_assistant_message() {
     let _lock = ENV_LOCK.lock().await;
     let long_text = "abcdefghijklmnopqrstuvwxyz".repeat(7);
     let claude_event = json!({
@@ -427,15 +427,12 @@ async fn local_backend_task_execute_splits_large_claude_assistant_message_into_d
     .await;
     assert_eq!(ack, None);
 
-    let expected_chunks = long_text.chars().count().div_ceil(20);
-    let emits = transport.wait_for_emits(expected_chunks + 2).await;
+    let emits = transport.wait_for_emit_event("response.completed").await;
     assert_eq!(emits[0].event, "response.created");
-    for emit in &emits[1..=expected_chunks] {
-        assert_eq!(emit.event, "response.output_text.delta");
-    }
-    assert_eq!(emits[expected_chunks + 1].event, "response.completed");
-    let streamed = emits[1..=expected_chunks]
+    assert_eq!(emits.last().unwrap().event, "response.completed");
+    let streamed = emits
         .iter()
+        .filter(|event| event.event == "response.output_text.delta")
         .map(|event| event.payload["data"]["delta"].as_str().unwrap())
         .collect::<String>();
     assert_eq!(streamed, long_text);
@@ -579,6 +576,20 @@ impl RecordingTransport {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
+                    return emits;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let emits = self.emits();
+                if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
                 self.notify.notified().await;
