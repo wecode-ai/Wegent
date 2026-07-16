@@ -40,6 +40,19 @@ export function getRuntimePaneTaskExecution(
   }
 }
 
+export function hasRunningRuntimeTask(
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): boolean {
+  if (!runtimeWork) return false
+
+  return [
+    ...runtimeWork.chats,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+    .flatMap(workspace => workspace.tasks)
+    .some(task => task.running === true)
+}
+
 export function deriveRuntimePaneStatus({
   messages,
   sendPhase,
@@ -99,5 +112,5 @@ function normalizeTaskStatus(task: RuntimeTaskSummary): string | null {
 
 function isLastMessageWaitingForAssistant(messages: WorkbenchMessage[]): boolean {
   const lastMessage = [...messages].reverse().find(message => message.role !== 'system')
-  return !lastMessage || lastMessage.role === 'user'
+  return !lastMessage || lastMessage.role === 'user' || lastMessage.status === 'failed'
 }

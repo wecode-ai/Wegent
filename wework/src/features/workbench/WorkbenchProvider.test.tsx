@@ -41,12 +41,16 @@ import type {
 } from '@/types/api'
 
 const localExecutorMocks = vi.hoisted(() => ({
+  connectLocalExecutorToBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
+  disconnectLocalExecutorFromBackend: vi.fn().mockResolvedValue({ running: true, ready: true }),
   ensureLocalExecutorStarted: vi.fn(),
   requestLocalExecutor: vi.fn(),
   subscribeLocalExecutorEvents: vi.fn(),
 }))
 
 vi.mock('@/tauri/localExecutor', () => ({
+  connectLocalExecutorToBackend: localExecutorMocks.connectLocalExecutorToBackend,
+  disconnectLocalExecutorFromBackend: localExecutorMocks.disconnectLocalExecutorFromBackend,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
@@ -740,6 +744,7 @@ function ProjectSendProbe() {
       <MessageList
         messages={paneSession.messages}
         isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
+        onRetryFailedMessage={message => void paneSession.retryFailedMessage(message)}
       />
     </div>
   )
@@ -4220,6 +4225,78 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/workspace/project-alpha',
       limit: 50,
     })
+  })
+
+  test('retries a live failure with the submitted prompt when the failed subtask is reused', async () => {
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&taskId=runtime-restored')
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-restored',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-restored',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [
+          {
+            id: 'user-old',
+            role: 'user',
+            content: '旧问题',
+            status: 'done',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            id: 'assistant-old',
+            role: 'assistant',
+            content: '旧回答',
+            status: 'done',
+            subtaskId: 'reused-subtask',
+            createdAt: '2026-01-01T00:00:01.000Z',
+          },
+        ],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: { subscribe } as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-restored'
+      )
+    )
+    await waitFor(() => expect(screen.getByTestId('message-roles')).toHaveTextContent('旧回答'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      streamHandlers.onChatError?.({
+        taskId: 'runtime-restored',
+        subtaskId: 'reused-subtask',
+        deviceId: 'device-1',
+        error: 'codex app-server exited',
+      })
+    })
+    await userEvent.click(await screen.findByTestId('assistant-error-retry'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
+    expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        address: expect.objectContaining({ taskId: 'runtime-restored' }),
+        message: '修复 CI',
+      })
+    )
   })
 
   test('uses runtime transcript server times for blocks without timestamps', async () => {

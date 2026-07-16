@@ -131,6 +131,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
+    retryFailedMessage: retryRuntimeFailedMessage,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
   const paneActive = useWorkbenchPaneActive()
@@ -191,6 +192,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
   const bufferedTranscriptActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
+  const retryInFlightRef = useRef(false)
+  const lastSubmittedRetryMessageRef = useRef<WorkbenchMessage | null>(null)
+  const retrySourceBySubtaskIdRef = useRef(new Map<string, WorkbenchMessage>())
   const currentRuntimeTaskLoadTarget = useMemo(
     () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
     [currentRuntimeTask]
@@ -379,6 +383,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     setAnsweredRequestUserInputIds(new Set())
+    lastSubmittedRetryMessageRef.current = null
+    retrySourceBySubtaskIdRef.current.clear()
   }, [runtimeTaskLoadTarget?.key])
 
   useEffect(() => {
@@ -582,6 +588,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const { address } = target
     const unsubscribe = subscribeRuntimeTaskStreamRef.current(address, {
       onMessageAction: action => {
+        if (action.type === 'assistant_error' && action.subtaskId) {
+          const retrySource = lastSubmittedRetryMessageRef.current
+          if (retrySource) {
+            retrySourceBySubtaskIdRef.current.set(action.subtaskId, retrySource)
+          }
+        }
         if (rebuildingTranscriptRef.current) {
           bufferedTranscriptActionsRef.current.push(action)
           return
@@ -899,6 +911,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       setStreamSettled(false)
       setSendPhase('submitting')
+      lastSubmittedRetryMessageRef.current = createLocalUserMessage(
+        message.content,
+        message.attachments,
+        {
+          id: message.id,
+          createdAt: message.createdAt,
+          runtimeGoalRequest: message.runtimeGoalRequest,
+          codeComments: message.codeComments,
+        }
+      )
       if (options.appendLocalMessage !== false) {
         appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
           id: message.id,
@@ -934,6 +956,68 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       return sent
     },
     [appendLocalUserMessage, currentRuntimeTask, sendRuntimePaneMessage]
+  )
+
+  const retryFailedMessageInPane = useCallback(
+    async (message: WorkbenchMessage): Promise<boolean> => {
+      if (retryInFlightRef.current) return false
+
+      retryInFlightRef.current = true
+      setError(null)
+      setStreamSettled(false)
+      setSendPhase('submitting')
+      try {
+        const currentMessages = messagesRef.current
+        const failedMessageIndex = currentMessages.findIndex(
+          currentMessage => currentMessage.id === message.id
+        )
+        const associatedRetrySource = message.subtaskId
+          ? retrySourceBySubtaskIdRef.current.get(message.subtaskId)
+          : undefined
+        const retrySource = associatedRetrySource ?? lastSubmittedRetryMessageRef.current
+        const failedCreatedAt = Date.parse(message.createdAt)
+        const retrySourceCreatedAt = retrySource ? Date.parse(retrySource.createdAt) : Number.NaN
+        const retrySourcePredatesFailure =
+          Number.isNaN(failedCreatedAt) ||
+          Number.isNaN(retrySourceCreatedAt) ||
+          retrySourceCreatedAt <= failedCreatedAt
+        const retryUserMessageOverride =
+          associatedRetrySource ??
+          (failedMessageIndex >= 0 && retrySourcePredatesFailure ? retrySource : null)
+        debugRuntimePaneMessageFlow('retry-failed-message', {
+          address: currentRuntimeTask ? runtimeAddressDebug(currentRuntimeTask) : null,
+          failedMessageId: message.id,
+          failedMessageIndex,
+          retrySource: textMetrics(retrySource?.content),
+          associatedRetrySource: Boolean(associatedRetrySource),
+          retrySourcePredatesFailure,
+          usingRetrySourceOverride: Boolean(retryUserMessageOverride),
+        })
+        const sent = await retryRuntimeFailedMessage(
+          message.id,
+          currentMessages,
+          retryUserMessageOverride ?? undefined
+        )
+        if (sent) {
+          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+          return true
+        }
+        setSendPhase('idle')
+        return false
+      } catch (error) {
+        console.error('[Wework] Runtime failed message retry failed', {
+          address: currentRuntimeTask ? runtimeAddressDebug(currentRuntimeTask) : null,
+          messageId: message.id,
+          error,
+        })
+        setError(error instanceof Error ? error.message : '重试失败')
+        setSendPhase('idle')
+        return false
+      } finally {
+        retryInFlightRef.current = false
+      }
+    },
+    [currentRuntimeTask, retryRuntimeFailedMessage]
   )
 
   const sendRequestUserInputResponse = useCallback(
@@ -1935,6 +2019,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,
+    retryFailedMessage: retryFailedMessageInPane,
     editLastUserMessage: editLastUserMessageInPane,
     sendRequestUserInputResponse,
     ignoreRequestUserInput,

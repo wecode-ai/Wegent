@@ -979,7 +979,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
       cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
-      retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
       loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
       revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -1022,6 +1022,7 @@ describe('DesktopWorkbenchLayout', () => {
       loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
       loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
       send: props.onSend ?? baseProps.onSend,
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
       ignoreRequestUserInput: vi.fn(),

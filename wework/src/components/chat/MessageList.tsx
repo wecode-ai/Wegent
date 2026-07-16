@@ -187,7 +187,10 @@ export const MessageList = memo(function MessageList({
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const lastVisibleMessage = visibleMessages.at(-1)
-  const waitingForAssistantTurn = !lastVisibleMessage || lastVisibleMessage.role === 'user'
+  const waitingForAssistantTurn =
+    !lastVisibleMessage ||
+    lastVisibleMessage.role === 'user' ||
+    lastVisibleMessage.status === 'failed'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     waitingForAssistantTurn &&

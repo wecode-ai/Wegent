@@ -15,7 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use serde_json::{json, Value};
 use tokio::sync::{Mutex, MutexGuard};
 use wegent_executor::{
-    agents::CodexAppServerEngine,
+    agents::{CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurnOptions},
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
 };
@@ -529,6 +529,7 @@ async fn codex_app_server_engine_times_out_unresponsive_rpc() {
 async fn codex_app_server_engine_does_not_timeout_running_turn() {
     let _lock = env_lock().await;
     let _timeout = EnvGuard::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "3");
+    let _startup_timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
     let fake_codex = write_fake_codex_slow_turn();
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let request = ExecutionRequest {
@@ -549,6 +550,97 @@ async fn codex_app_server_engine_does_not_timeout_running_turn() {
         ExecutionOutcome::Completed {
             content: "done".to_owned()
         }
+    );
+}
+
+#[tokio::test]
+async fn codex_app_server_engine_times_out_turn_without_progress() {
+    let _lock = env_lock().await;
+    let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
+    let marker_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-engine-stall-marker-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-engine-stall-log-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let fake_codex = write_fake_codex_turn_startup_stall(&marker_path, &log_path);
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Failed {
+            message: "codex app-server turn made no model or tool progress for 1s".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
+async fn codex_shared_app_server_restarts_after_turn_startup_stalls() {
+    let _lock = env_lock().await;
+    let _timeout = EnvGuard::set("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS", "1");
+    let marker_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-startup-stall-marker-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let log_path = std::env::temp_dir().join(format!(
+        "wegent-executor-codex-startup-stall-log-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let fake_codex = write_fake_codex_turn_startup_stall(&marker_path, &log_path);
+    let client = CodexAppServerClient::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let stalled_result = client
+        .run_turn_with_cancel(request.clone(), CodexAppServerTurnOptions::default())
+        .await;
+    let recovered_result = client
+        .run_turn_with_cancel(request, CodexAppServerTurnOptions::default())
+        .await;
+
+    assert_eq!(
+        stalled_result.unwrap_err(),
+        "codex app-server turn made no model or tool progress for 1s; the shared app-server was restarted"
+    );
+    assert_eq!(
+        recovered_result.unwrap().outcome,
+        ExecutionOutcome::Completed {
+            content: "recovered".to_owned()
+        }
+    );
+    assert_eq!(
+        fs::read_to_string(&log_path)
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("launch "))
+            .count(),
+        2
     );
 }
 
@@ -576,6 +668,32 @@ async fn codex_app_server_engine_reports_nested_turn_error_details() {
             message:
                 "Reconnecting... 2/5: stream disconnected before completion: tls handshake eof"
                     .to_owned()
+        }
+    );
+}
+
+#[tokio::test]
+async fn codex_app_server_engine_waits_for_retryable_turn_error_recovery() {
+    let _lock = env_lock().await;
+    let fake_codex = write_fake_codex_retryable_turn_error();
+    let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
+    let request = ExecutionRequest {
+        prompt: json!("implement feature"),
+        bot: json!([{"shell_type": "ClaudeCode"}]),
+        model_config: json!({
+            "model": "openai",
+            "model_id": "gpt-5",
+            "protocol": "openai-responses"
+        }),
+        ..ExecutionRequest::default()
+    };
+
+    let outcome = engine.run(request).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "recovered".to_owned()
         }
     );
 }
@@ -745,6 +863,7 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
+      printf '%s\n' '{"method":"item/started","params":{"item":{"id":"tool-1","type":"commandExecution","status":"inProgress"},"threadId":"thread-1","turnId":"turn-1"}}'
       sleep 4
       printf '%s\n' '{"method":"item/agentMessage/delta","params":{"delta":"done","phase":"finalAnswer"}}'
       printf '%s\n' '{"method":"turn/completed","params":{"turn":{"id":"turn-1","status":"completed"}}}'
@@ -755,6 +874,57 @@ done
 "#,
     )
     .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_turn_startup_stall(marker_path: &Path, log_path: &Path) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-turn-startup-stall-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let content = r#"#!/bin/sh
+MARKER_PATH='__MARKER_PATH__'
+LOG_PATH='__LOG_PATH__'
+if [ -e "$MARKER_PATH" ]; then
+  MODE=recover
+else
+  touch "$MARKER_PATH"
+  MODE=stall
+fi
+printf 'launch %s\n' "$MODE" >> "$LOG_PATH"
+while IFS= read -r line; do
+  request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"id":%s,"result":{"protocolVersion":1}}\n' "$request_id"
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '{"id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$request_id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{"id":%s,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}\n' "$request_id"
+      if [ "$MODE" = stall ]; then
+        printf '%s\n' '{"method":"item/completed","params":{"item":{"id":"user-1","type":"userMessage","content":[{"type":"text","text":"implement feature"}]},"threadId":"thread-1","turnId":"turn-1"}}'
+      else
+        printf '%s\n' '{"method":"item/completed","params":{"item":{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"recovered"},"threadId":"thread-1","turnId":"turn-1"}}'
+        printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}'
+      fi
+      ;;
+  esac
+done
+"#
+    .replace("__MARKER_PATH__", &marker_path.display().to_string())
+    .replace("__LOG_PATH__", &log_path.display().to_string());
+    fs::write(&path, content).unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -785,7 +955,47 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
+      printf '%s\n' '{"method":"error","params":{"error":{"additionalDetails":"stream disconnected before completion: tls handshake eof","message":"Reconnecting... 2/5"},"threadId":"thread-1","turnId":"turn-1","willRetry":false}}'
+      exit 0
+      ;;
+  esac
+done
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_retryable_turn_error() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "fake-codex-retryable-turn-error-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{"id":1,"result":{"protocolVersion":1}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-1"}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-1","status":"inProgress"}}}'
       printf '%s\n' '{"method":"error","params":{"error":{"additionalDetails":"stream disconnected before completion: tls handshake eof","message":"Reconnecting... 2/5"},"threadId":"thread-1","turnId":"turn-1","willRetry":true}}'
+      printf '%s\n' '{"method":"item/completed","params":{"item":{"id":"message-1","type":"agentMessage","phase":"final_answer","text":"recovered"},"threadId":"thread-1","turnId":"turn-1"}}'
+      printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}'
       exit 0
       ;;
   esac

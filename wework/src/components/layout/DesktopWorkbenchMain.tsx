@@ -351,7 +351,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     upgradingDevices,
     projectChat,
     upgradeDevice,
-    retryFailedMessage,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -1666,7 +1665,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                 devices={devices}
                 onRetryFailedMessage={message => {
-                  void retryFailedMessage(message.id, paneMessages)
+                  void paneSession.retryFailedMessage(message)
                 }}
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)

@@ -22,7 +22,6 @@ import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
-import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import {
   requestDesktopSidebarToggle,
   useDesktopSidebarCollapsed,
@@ -339,7 +338,6 @@ function AppShell() {
       <LocalRuntimeInitializer
         startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
       >
-        <LocalExecutorCloudBridge />
         <div
           className={cn(
             'h-dvh overflow-hidden bg-surface',
