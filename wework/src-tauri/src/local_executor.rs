@@ -23,6 +23,7 @@ const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
 const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
+const LOCAL_EXECUTOR_SHARED_HOME_ENV: &str = "WEWORK_SHARED_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
@@ -474,7 +475,7 @@ fn local_executor_instance_name() -> &'static str {
 
 fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     let home = local_executor_home_path()?;
-    if cfg!(debug_assertions) {
+    if uses_isolated_executor_home() {
         return Ok(home
             .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
             .join(local_executor_instance_name()));
@@ -484,11 +485,18 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
 }
 
 fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
+    if uses_isolated_executor_home() {
         return local_executor_runtime_dir_path();
     }
 
     local_executor_home_path()
+}
+
+fn uses_isolated_executor_home() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var(LOCAL_EXECUTOR_SHARED_HOME_ENV)
+            .map(|value| value.trim() != "1")
+            .unwrap_or(true)
 }
 
 fn local_executor_home_path() -> Result<PathBuf, String> {
