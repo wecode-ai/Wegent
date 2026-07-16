@@ -39,6 +39,7 @@ use crate::{
     },
 };
 
+use super::codex_log_db::configure_codex_log_db_filter;
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
@@ -643,6 +644,7 @@ async fn start_persistent_codex_app_server(
             rpc.request_ignoring_notifications("initialize", initialize_params()),
         )
         .await?;
+        configure_codex_log_db_filter(wework_codex_home()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,
@@ -1089,6 +1091,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
             rpc.request("initialize", initialize_params(), &mut state),
         )
         .await?;
+        configure_codex_log_db_filter(wework_codex_home()).await;
         with_rpc_timeout(
             "initialized",
             timeout_seconds,

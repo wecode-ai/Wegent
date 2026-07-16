@@ -9,6 +9,7 @@ mod backend_url;
 mod claude_code;
 mod claude_options;
 mod codex;
+mod codex_log_db;
 mod dify;
 mod git_auth;
 mod git_workspace;
