@@ -182,12 +182,12 @@ function mergeAppPreferences(value: unknown): AppPreferences {
 function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
   if (!value || typeof value !== 'object') return []
   const record = value as Partial<QuickPhrase>
+  const id = typeof record.id === 'string' ? record.id : ''
   const title = typeof record.title === 'string' ? record.title.trim() : ''
   const content = typeof record.content === 'string' ? record.content.trim() : ''
   const mode = record.mode
-  if (!record.id || !title || !content || !['normal', 'plan', 'goal'].includes(mode ?? ''))
-    return []
-  return [{ id: record.id, title, content, mode: mode as QuickPhraseMode }]
+  if (!id || !title || !content || !['normal', 'plan', 'goal'].includes(mode ?? '')) return []
+  return [{ id, title, content, mode: mode as QuickPhraseMode }]
 }
 
 function emitAppPreferencesChanged(preferences: AppPreferences) {

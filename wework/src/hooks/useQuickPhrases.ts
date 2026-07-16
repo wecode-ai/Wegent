@@ -12,10 +12,12 @@ export function useQuickPhrases(): QuickPhrase[] {
 
   useEffect(() => {
     let active = true
+    let hasReceivedEvent = false
     void getAppPreferences().then(preferences => {
-      if (active) setPhrases(preferences.quickPhrases)
+      if (active && !hasReceivedEvent) setPhrases(preferences.quickPhrases)
     })
     const handleChange = (event: Event) => {
+      hasReceivedEvent = true
       setPhrases((event as CustomEvent<AppPreferences>).detail.quickPhrases)
     }
     window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handleChange)

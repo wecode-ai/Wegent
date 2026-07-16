@@ -1329,6 +1329,7 @@
     "quick_phrase_mode": "使用模式",
     "quick_phrase_mode_normal": "普通",
     "quick_phrase_mode_plan": "计划模式",
+    "quick_phrase_mode_goal": "目标模式",
     "quick_phrase_required": "标题和内容不能为空",
     "quick_phrase_delete_confirm": "删除这条快捷短语？",
     "no_slash_commands": "暂无匹配命令",

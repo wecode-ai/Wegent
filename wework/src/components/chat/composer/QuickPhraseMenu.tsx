@@ -30,12 +30,15 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
   useEffect(() => {
     if (!open) return
     inputRef.current?.focus()
+    rootRef.current
+      ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
+      ?.scrollIntoView?.({ block: 'nearest' })
     const close = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
     }
     window.addEventListener('pointerdown', close)
     return () => window.removeEventListener('pointerdown', close)
-  }, [open])
+  }, [open, selectedIndex])
 
   const choose = (phrase: QuickPhrase) => {
     onSelect(phrase)
@@ -117,7 +120,7 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
                     ? t('workbench.quick_phrase_mode_normal', '普通')
                     : phrase.mode === 'plan'
                       ? t('workbench.quick_phrase_mode_plan', '计划')
-                      : 'Goal'}
+                      : t('workbench.quick_phrase_mode_goal', '目标模式')}
                 </span>
               </button>
             ))}
@@ -130,7 +133,10 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
           <button
             type="button"
             data-testid="manage-quick-phrases-button"
-            onClick={() => navigateTo('/settings/personal/quick-phrases')}
+            onClick={() => {
+              setOpen(false)
+              navigateTo('/settings/personal/quick-phrases')
+            }}
             className="mt-1 flex h-8 w-full items-center gap-2 border-t border-border px-2 pt-1 text-sm text-text-secondary hover:text-text-primary"
           >
             <Settings className="h-4 w-4" />

@@ -1330,6 +1330,7 @@
     "quick_phrase_mode": "Mode",
     "quick_phrase_mode_normal": "Normal",
     "quick_phrase_mode_plan": "Plan mode",
+    "quick_phrase_mode_goal": "Goal mode",
     "quick_phrase_required": "Title and content are required",
     "quick_phrase_delete_confirm": "Delete this quick phrase?",
     "no_slash_commands": "No matching commands",

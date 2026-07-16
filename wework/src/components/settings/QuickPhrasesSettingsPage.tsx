@@ -111,7 +111,7 @@ export function QuickPhrasesSettingsPage() {
                 ? t('workbench.quick_phrase_mode_normal', '普通')
                 : phrase.mode === 'plan'
                   ? t('workbench.quick_phrase_mode_plan', '计划')
-                  : 'Goal'}
+                  : t('workbench.quick_phrase_mode_goal', '目标模式')}
             </span>
             <button
               type="button"
@@ -203,7 +203,7 @@ export function QuickPhrasesSettingsPage() {
                       ? t('workbench.quick_phrase_mode_normal', '普通')
                       : mode === 'plan'
                         ? t('workbench.quick_phrase_mode_plan', '计划模式')
-                        : 'Goal'}
+                        : t('workbench.quick_phrase_mode_goal', '目标模式')}
                   </label>
                 ))}
               </div>
