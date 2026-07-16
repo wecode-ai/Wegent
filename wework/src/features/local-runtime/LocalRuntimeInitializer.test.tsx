@@ -84,7 +84,7 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
-  test('applies the initial cloud connection before ensuring the executor is started', async () => {
+  test('starts the executor before applying the initial cloud connection', async () => {
     connectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
@@ -105,12 +105,12 @@ describe('LocalRuntimeInitializer', () => {
       backendUrl: 'https://backend.example.com',
       authToken: 'token-a',
     })
-    expect(connectMock.mock.invocationCallOrder[0]).toBeLessThan(
-      ensureMock.mock.invocationCallOrder[0]
+    expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      connectMock.mock.invocationCallOrder[0]
     )
   })
 
-  test('applies disconnected local mode before ensuring the executor is started', async () => {
+  test('starts the executor before applying disconnected local mode', async () => {
     disconnectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
@@ -127,15 +127,13 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
     expect(disconnectMock).toHaveBeenCalledTimes(1)
-    expect(disconnectMock.mock.invocationCallOrder[0]).toBeLessThan(
-      ensureMock.mock.invocationCallOrder[0]
+    expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnectMock.mock.invocationCallOrder[0]
     )
   })
 
-  test('does not start the executor until initial cloud connection setup succeeds', async () => {
-    connectMock
-      .mockRejectedValueOnce(new Error('backend setup failed'))
-      .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
+  test('reveals the app without waiting for initial cloud connection setup', async () => {
+    connectMock.mockImplementation(() => new Promise(() => undefined))
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
     render(
@@ -150,16 +148,30 @@ describe('LocalRuntimeInitializer', () => {
       </LocalRuntimeInitializer>
     )
 
-    expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent(
-      'backend setup failed'
-    )
-    expect(ensureMock).not.toHaveBeenCalled()
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+    expect(connectMock).toHaveBeenCalledTimes(1)
+    expect(ensureMock).toHaveBeenCalledTimes(1)
+  })
 
-    await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
+  test('keeps the app ready when initial cloud connection setup fails', async () => {
+    connectMock.mockRejectedValue(new Error('backend setup failed'))
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          backendUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
-    expect(connectMock).toHaveBeenCalledTimes(2)
-    expect(ensureMock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('local-runtime-error')).not.toBeInTheDocument()
   })
 
   test('reveals children once executor is ready even while app startup continues', async () => {
