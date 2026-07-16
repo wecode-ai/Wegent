@@ -15,7 +15,7 @@ import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
-import { findRuntimeTask, writeLastProjectId } from './workbenchRuntimeHelpers'
+import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
@@ -649,6 +649,18 @@ function ProjectSendProbe() {
       </button>
       <button type="button" onClick={() => workbench.startStandaloneChat()}>
         start standalone chat
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+          })
+        }
+      >
+        open project runtime task
       </button>
       <button
         type="button"
@@ -2464,18 +2476,52 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('starts a new task in the last used project when no project is currently open', async () => {
+  test('restores the last used project before starting a new task', async () => {
+    writeLastProjectId(1, 7)
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    )
+
+    await userEvent.click(screen.getByText('start new chat'))
+
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+  })
+
+  test('starts a new task in the project of the last opened task', async () => {
     renderWorkbench(<ProjectSendProbe />)
 
     await waitFor(() =>
       expect(screen.getByTestId('runtime-project-order')).toHaveTextContent('Wegent')
     )
-    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
-    writeLastProjectId(1, 7)
+    await userEvent.click(screen.getByText('open project runtime task'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-a'
+    )
 
     await userEvent.click(screen.getByText('start new chat'))
-
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+  })
+
+  test('keeps a standalone new task unassigned when starting another new task', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-project-order')).toHaveTextContent('Wegent')
+    )
+    await userEvent.click(screen.getByText('select project'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+
+    await userEvent.click(screen.getByText('start standalone chat'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
+    expect(readLastProjectId(1)).toBeNull()
+
+    await userEvent.click(screen.getByText('start new chat'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('none')
     expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
   })
 

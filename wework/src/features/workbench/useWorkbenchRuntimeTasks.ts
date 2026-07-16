@@ -186,7 +186,7 @@ export function useWorkbenchRuntimeTasks({
           ) ?? runtimeProjectToProject(runtimeProjectWork))
         : null
 
-      if (project) writeLastProjectId(user.id, project.id)
+      writeLastProjectId(user.id, project?.id ?? null)
       openRuntimeTaskView(address, project, {
         markOpened: !openedRuntimeTaskKeysRef.current.has(getRuntimeTaskRouteKey(address)),
       })

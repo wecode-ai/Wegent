@@ -72,6 +72,7 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     projects: [project()],
     devices: [localDevice()],
     onNewChat: vi.fn(),
+    onStartStandaloneChat: vi.fn(),
     onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
@@ -2639,9 +2640,11 @@ describe('DesktopSidebar', () => {
     const onArchiveProjectsConversations = vi.fn().mockResolvedValue(undefined)
     const onArchiveChatConversations = vi.fn().mockResolvedValue(undefined)
     const onNewChat = vi.fn()
+    const onStartStandaloneChat = vi.fn()
 
     renderSidebar({
       onNewChat,
+      onStartStandaloneChat,
       onArchiveProjectsConversations,
       onArchiveChatConversations,
       runtimeWork: {
@@ -2713,7 +2716,8 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
-    expect(onNewChat).toHaveBeenCalledTimes(1)
+    expect(onStartStandaloneChat).toHaveBeenCalledTimes(1)
+    expect(onNewChat).not.toHaveBeenCalled()
 
     await user.click(screen.getByTestId('runtime-chat-section-menu'))
     expect(screen.getByTestId('runtime-chat-section-archive-all-chats')).toHaveTextContent(

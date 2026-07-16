@@ -51,6 +51,7 @@ export function DesktopWorkbenchLayout() {
     selectStandaloneDevice,
     openStandaloneWorkspace: onOpenStandaloneWorkspace,
     startNewChat: onNewChat,
+    startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
     createProjectRuntimeTask: onCreateProjectRuntimeTask,
     openRuntimeTask: onOpenRuntimeTask,
@@ -496,6 +497,7 @@ export function DesktopWorkbenchLayout() {
       onOpenTodo={() => navigateTo('/todo')}
       onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
+      onStartStandaloneChat={onStartStandaloneChat}
       onOpenSearch={() => setSearchOpen(true)}
       onSelectProject={onSelectProject}
       onStartNewProjectChat={onStartNewProjectChat}

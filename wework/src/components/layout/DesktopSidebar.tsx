@@ -146,6 +146,7 @@ interface DesktopSidebarProps {
   onOpenTodo?: () => void
   onOpenApps?: () => void
   onNewChat: () => void
+  onStartStandaloneChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -2439,6 +2440,7 @@ export function DesktopSidebar({
   preferredDeviceId,
   activeItem = 'chat',
   onNewChat,
+  onStartStandaloneChat,
   onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeTask,
@@ -3410,7 +3412,7 @@ export function DesktopSidebar({
                     data-testid="runtime-chat-section-new-chat-button"
                     onClick={event => {
                       event.stopPropagation()
-                      onNewChat()
+                      onStartStandaloneChat()
                     }}
                     className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                   >

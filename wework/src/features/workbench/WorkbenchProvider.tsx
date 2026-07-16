@@ -505,10 +505,11 @@ export function WorkbenchProvider({
       lastProjectRestoreAttemptedRef.current = true
       return
     }
-    const candidateProjectIds = [
-      readLastProjectId(user.id),
-      findActiveRuntimeProjectId(state.runtimeWork),
-    ]
+    const lastProjectId = readLastProjectId(user.id)
+    const candidateProjectIds =
+      lastProjectId === undefined
+        ? [findActiveRuntimeProjectId(state.runtimeWork)]
+        : [lastProjectId]
     lastProjectRestoreAttemptedRef.current = true
     const project = findFirstSelectableProject(
       state.projects,
@@ -605,6 +606,7 @@ export function WorkbenchProvider({
     (projectId: number | null) => {
       projectSelectionStartedRef.current = true
       if (projectId === null) {
+        writeLastProjectId(user.id, null)
         dispatch({
           type: 'project_cleared',
           standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -646,6 +648,7 @@ export function WorkbenchProvider({
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
       projectSelectionStartedRef.current = true
+      writeLastProjectId(user.id, null)
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
@@ -665,6 +668,7 @@ export function WorkbenchProvider({
       rememberExecutionDevice,
       state.devices,
       state.standaloneDeviceId,
+      user.id,
       user.preferences?.default_execution_target,
     ]
   )
@@ -717,6 +721,7 @@ export function WorkbenchProvider({
         response.deviceId?.trim() ||
         requestDeviceId
 
+      writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
         type: 'project_cleared',
@@ -732,20 +737,13 @@ export function WorkbenchProvider({
       })
       navigateTo('/')
     },
-    [executorClient, rememberExecutionDevice, state.devices]
+    [executorClient, rememberExecutionDevice, state.devices, user.id]
   )
 
   const startNewChat = useCallback(() => {
-    const candidateProjectIds = [
-      state.currentProject?.id ?? null,
-      readLastProjectId(user.id),
-      findActiveRuntimeProjectId(state.runtimeWork),
-    ]
-    const project = findFirstSelectableProject(
-      state.projects,
-      state.runtimeWork,
-      candidateProjectIds
-    )
+    const project = state.currentProject
+      ? findFirstSelectableProject(state.projects, state.runtimeWork, [state.currentProject.id])
+      : null
     if (project) {
       writeLastProjectId(user.id, project.id)
       dispatch({
@@ -758,6 +756,7 @@ export function WorkbenchProvider({
       return
     }
 
+    writeLastProjectId(user.id, null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -878,6 +877,7 @@ export function WorkbenchProvider({
         const input = `${references.join(' ')} `
         setDraftInputByScope(current => ({ ...current, [nextScopeKey]: input }))
       }
+      writeLastProjectId(user.id, null)
       dispatch({
         type: 'project_cleared',
         standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -904,6 +904,7 @@ export function WorkbenchProvider({
   )
 
   const startStandaloneChat = useCallback(() => {
+    writeLastProjectId(user.id, null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(

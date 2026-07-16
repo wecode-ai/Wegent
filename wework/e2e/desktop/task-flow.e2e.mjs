@@ -1116,6 +1116,29 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
+    phase = 'standalone-new-task-state'
+    await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+    const standaloneTaskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('project-work-button') &&
+        (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
+      'The task-section new-task action selected a project'
+    )
+    assert.ok(
+      standaloneTaskSnapshot.testIds.includes('project-work-button'),
+      'The standalone new task did not render the project selector'
+    )
+
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('project-work-button') &&
+        (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
+      'The global new-task action did not preserve the standalone project state'
+    )
+
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,

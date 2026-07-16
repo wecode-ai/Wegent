@@ -95,9 +95,12 @@ describe('workbenchRuntimeHelpers', () => {
     writeLastProjectId(7, 42)
 
     expect(readLastProjectId(7)).toBe(42)
-    expect(readLastProjectId(8)).toBeNull()
+    expect(readLastProjectId(8)).toBeUndefined()
+
+    writeLastProjectId(7, null)
+    expect(readLastProjectId(7)).toBeNull()
 
     localStorage.setItem('wework.lastProjectId.7', 'not-a-project')
-    expect(readLastProjectId(7)).toBeNull()
+    expect(readLastProjectId(7)).toBeUndefined()
   })
 })
