@@ -17,7 +17,7 @@ use crate::{
     agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
     config::device::DeviceConfig,
     local::{
-        app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
+        app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
         session::{LocalSessionHandler, SessionType},
         workspace_files::{execute_workspace_file_command, is_workspace_file_command},
@@ -32,6 +32,7 @@ mod cancellation;
 mod capability;
 mod client;
 mod config;
+mod connection_controller;
 mod extension;
 mod session_events;
 mod socket_transport;
@@ -42,6 +43,7 @@ pub use cancellation::LocalCancellationSnapshot;
 pub use capability::{CapabilityReportProvider, CapabilitySyncRpcHandler, HttpPackageProvider};
 pub use client::{build_runtime_auth_file_report, LocalBackendClient, LocalBackendEventSink};
 pub use config::{is_usable_device_ip, LocalBackendConfig};
+pub use connection_controller::LocalBackendConnectionController;
 pub use extension::{DeviceExtensionHandler, DeviceExtensionRunner};
 pub use socket_transport::SocketIoTransport;
 pub use tasks::{LocalRunningTaskTracker, LocalTaskController, ManagedLocalTaskRunner};
@@ -761,22 +763,17 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
     )
 }
 
-pub async fn serve_local_backend_sidecar(config: DeviceConfig) -> Result<(), String> {
-    let backend_config = LocalBackendConfig::from_device_config(config);
+pub async fn serve_local_sidecar(config: DeviceConfig) -> Result<(), String> {
+    let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
-    let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
-
-    let ipc_task =
-        tokio::spawn(
-            async move { serve_app_ipc_sidecar(app_ipc_device_id, runtime_instance_id).await },
-        );
-    let backend_task = tokio::spawn(async move { runner.run_forever().await });
-
-    tokio::select! {
-        result = ipc_task => task_result("app IPC sidecar", result),
-        result = backend_task => task_result("local backend runner", result),
-    }
+    let backend_connection = LocalBackendConnectionController::start(config).await;
+    let server = AppIpcServer::new()
+        .with_device_id(app_ipc_device_id)
+        .with_runtime_instance_id(runtime_instance_id)
+        .with_local_runtime_work_handler(resolve_codex_binary())
+        .with_backend_connection_handler(backend_connection);
+    server.serve_forever().await
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {
@@ -799,17 +796,6 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     }
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
-    }
-}
-
-fn task_result(
-    label: &str,
-    result: Result<Result<(), String>, tokio::task::JoinError>,
-) -> Result<(), String> {
-    match result {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(error),
-        Err(error) => Err(format!("{label} task failed: {error}")),
     }
 }
 

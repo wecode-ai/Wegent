@@ -210,6 +210,10 @@ pub trait RuntimeWorkHandler: Send + Sync {
     }
 }
 
+pub trait BackendConnectionHandler: Send + Sync {
+    fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppIpcError {
     pub code: String,
@@ -243,6 +247,7 @@ pub struct AppIpcServer {
     device_id: String,
     runtime_instance_id: Option<String>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
 }
@@ -254,6 +259,7 @@ impl Default for AppIpcServer {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
             runtime_work_handler: None,
+            backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
             event_tx,
         }
@@ -296,6 +302,14 @@ impl AppIpcServer {
             codex_binary.into(),
             self.event_tx.clone(),
         )));
+        self
+    }
+
+    pub fn with_backend_connection_handler<H>(mut self, handler: H) -> Self
+    where
+        H: BackendConnectionHandler + 'static,
+    {
+        self.backend_connection_handler = Some(Arc::new(handler));
         self
     }
 
@@ -346,6 +360,16 @@ impl AppIpcServer {
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
         if method == "executor.health" {
             return Ok(json!({"status": "healthy"}));
+        }
+
+        if method == "executor.backend.configure" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.configure_backend(params).await;
         }
 
         if method == "device.execute_command" {

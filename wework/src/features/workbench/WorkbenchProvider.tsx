@@ -53,7 +53,7 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
-import { getRuntimePaneTaskExecution, hasRunningRuntimeTask } from './runtimePaneStatus'
+import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -185,10 +185,6 @@ export function WorkbenchProvider({
         )),
     [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
   )
-  const deferLocalExecutorConnectionUpdate =
-    state.isBootstrapping ||
-    state.activeRuntimeTasks.length > 0 ||
-    hasRunningRuntimeTask(state.runtimeWork)
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,
@@ -1421,7 +1417,6 @@ export function WorkbenchProvider({
         <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
         <LocalExecutorCloudBridge
           backendUrl={cloudConnection.backendUrl}
-          deferConnectionUpdate={deferLocalExecutorConnectionUpdate}
           isConnected={cloudConnection.isConnected}
           token={cloudConnection.token}
         />

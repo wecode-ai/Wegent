@@ -22,22 +22,10 @@ describe('LocalExecutorCloudBridge', () => {
     mocks.disconnect.mockClear()
   })
 
-  test('defers backend changes until runtime tasks are idle', async () => {
+  test('updates backend connection whenever the cloud target changes', async () => {
     const view = render(
       <LocalExecutorCloudBridge
         backendUrl="https://backend.example.com"
-        deferConnectionUpdate
-        isConnected
-        token="token-a"
-      />
-    )
-
-    expect(mocks.connect).not.toHaveBeenCalled()
-
-    view.rerender(
-      <LocalExecutorCloudBridge
-        backendUrl="https://backend.example.com"
-        deferConnectionUpdate={false}
         isConnected
         token="token-a"
       />
@@ -51,22 +39,7 @@ describe('LocalExecutorCloudBridge', () => {
     })
 
     view.rerender(
-      <LocalExecutorCloudBridge
-        backendUrl="https://next.example.com"
-        deferConnectionUpdate
-        isConnected
-        token="token-b"
-      />
-    )
-    expect(mocks.connect).toHaveBeenCalledTimes(1)
-
-    view.rerender(
-      <LocalExecutorCloudBridge
-        backendUrl="https://next.example.com"
-        deferConnectionUpdate={false}
-        isConnected
-        token="token-b"
-      />
+      <LocalExecutorCloudBridge backendUrl="https://next.example.com" isConnected token="token-b" />
     )
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
     expect(mocks.connect).toHaveBeenLastCalledWith({

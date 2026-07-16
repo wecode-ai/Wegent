@@ -57,6 +57,7 @@ pub struct LocalExecutorState {
     inner: SharedExecutorInner,
     next_id: Arc<AtomicU64>,
     start_lock: Arc<AsyncMutex<()>>,
+    backend_connection_lock: Arc<AsyncMutex<()>>,
     keepalive: Arc<LocalExecutorKeepaliveState>,
 }
 
@@ -71,6 +72,7 @@ impl Clone for LocalExecutorState {
             inner: self.inner.clone(),
             next_id: self.next_id.clone(),
             start_lock: self.start_lock.clone(),
+            backend_connection_lock: self.backend_connection_lock.clone(),
             keepalive: self.keepalive.clone(),
         }
     }
@@ -287,6 +289,7 @@ impl Default for LocalExecutorState {
             inner: Arc::new(Mutex::new(LocalExecutorInner::default())),
             next_id: Arc::new(AtomicU64::new(1)),
             start_lock: Arc::new(AsyncMutex::new(())),
+            backend_connection_lock: Arc::new(AsyncMutex::new(())),
             keepalive: Arc::new(LocalExecutorKeepaliveState {
                 enabled: AtomicBool::new(false),
                 worker_running: AtomicBool::new(false),
@@ -2190,33 +2193,6 @@ fn ensure_local_executor_keepalive(app: tauri::AppHandle, state: &LocalExecutorS
     });
 }
 
-async fn restart_executor_unlocked(
-    app: tauri::AppHandle,
-    state: &LocalExecutorState,
-) -> Result<(), String> {
-    let mut old_child = state
-        .inner
-        .lock()
-        .map_err(|_| "Failed to lock local executor state".to_string())?
-        .child
-        .take();
-
-    if let Some(child) = old_child.take() {
-        child.kill();
-    }
-
-    set_executor_error(state, "Local executor restarting".to_string());
-    fail_pending_requests(state, "Local executor restarting".to_string());
-    start_executor_if_needed_unlocked(app, state).await
-}
-
-async fn restart_executor(app: tauri::AppHandle, state: &LocalExecutorState) -> Result<(), String> {
-    let _guard = state.start_lock.lock().await;
-    restart_executor_unlocked(app.clone(), state).await?;
-    ensure_local_executor_keepalive(app, state);
-    Ok(())
-}
-
 async fn send_executor_request(
     app: tauri::AppHandle,
     state: &LocalExecutorState,
@@ -2488,15 +2464,6 @@ pub async fn local_executor_ensure_started(
 }
 
 #[tauri::command]
-pub async fn local_executor_restart(
-    app: tauri::AppHandle,
-    state: State<'_, LocalExecutorState>,
-) -> Result<LocalExecutorStatus, String> {
-    restart_executor(app, &state).await?;
-    status_from_state(&state)
-}
-
-#[tauri::command]
 pub async fn local_executor_connect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
@@ -2505,7 +2472,22 @@ pub async fn local_executor_connect_backend(
 ) -> Result<LocalExecutorStatus, String> {
     let backend_url = normalize_command_arg(backend_url, "backend_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
-    let _guard = state.start_lock.lock().await;
+    let _guard = state.backend_connection_lock.lock().await;
+    log::info!(
+        "Local executor backend connection update requested: connected=true, backend_url={backend_url}"
+    );
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "executor.backend.configure".to_string(),
+            params: json!({
+                "backend_url": backend_url.clone(),
+                "auth_token": auth_token.clone(),
+            }),
+        },
+    )
+    .await?;
     let changed = {
         let mut inner = state
             .inner
@@ -2519,11 +2501,9 @@ pub async fn local_executor_connect_backend(
             }),
         )
     };
-    if changed {
-        restart_executor_unlocked(app.clone(), &state).await?;
-    } else {
-        start_executor_if_needed_unlocked(app.clone(), &state).await?;
-    }
+    log::info!(
+        "Local executor backend connection updated in process: connected=true, changed={changed}"
+    );
     ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
@@ -2533,7 +2513,20 @@ pub async fn local_executor_disconnect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
 ) -> Result<LocalExecutorStatus, String> {
-    let _guard = state.start_lock.lock().await;
+    let _guard = state.backend_connection_lock.lock().await;
+    log::info!("Local executor backend connection update requested: connected=false");
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "executor.backend.configure".to_string(),
+            params: json!({
+                "backend_url": Value::Null,
+                "auth_token": Value::Null,
+            }),
+        },
+    )
+    .await?;
     let changed = {
         let mut inner = state
             .inner
@@ -2541,11 +2534,9 @@ pub async fn local_executor_disconnect_backend(
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         replace_backend_connection(&mut inner, None)
     };
-    if changed {
-        restart_executor_unlocked(app.clone(), &state).await?;
-    } else {
-        start_executor_if_needed_unlocked(app.clone(), &state).await?;
-    }
+    log::info!(
+        "Local executor backend connection updated in process: connected=false, changed={changed}"
+    );
     ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }

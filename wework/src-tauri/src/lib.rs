@@ -3763,7 +3763,6 @@ pub fn run() {
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
             local_executor::local_executor_request,
-            local_executor::local_executor_restart,
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
             get_app_log_directory,
