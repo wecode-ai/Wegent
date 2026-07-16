@@ -1494,6 +1494,47 @@ function RuntimeTaskSkillsProbe() {
   )
 }
 
+function StartSkillChatProbe() {
+  const workbench = useWorkbench()
+  const [result, setResult] = useState('not-started')
+
+  return (
+    <div>
+      <span data-testid="available-skill-names">
+        {workbench.projectChat.skills.map(skill => skill.name).join('|')}
+      </span>
+      <span data-testid="selected-skill-refs">
+        {workbench.projectChat.selectedSkills
+          .map(skill => `${skill.namespace}:${skill.name}:${String(skill.is_public)}`)
+          .join('|')}
+      </span>
+      <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
+      <span data-testid="skill-chat-start-result">{result}</span>
+      <span data-testid="skill-chat-input">{workbench.projectChat.input}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void Promise.resolve(workbench.startNewSkillChat(['sites:sites-building'])).then(
+            started => setResult(started ? 'started' : 'missing')
+          )
+        }
+      >
+        start sites chat
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void Promise.resolve(
+            workbench.startNewSkillChat(['sites:sites-building'], { allowLocalSkills: false })
+          ).then(started => setResult(started ? 'started' : 'missing'))
+        }
+      >
+        start backend sites chat
+      </button>
+    </div>
+  )
+}
+
 describe('WorkbenchProvider runtime tasks', () => {
   beforeEach(() => {
     vi.useRealTimers()
@@ -1546,6 +1587,156 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('starts a fresh blank chat with a requested loaded skill selected', async () => {
+    const services = createWorkbenchServices({
+      skillApi: {
+        listSkills: vi.fn().mockResolvedValue([
+          {
+            id: 101,
+            name: 'sites-building',
+            namespace: 'sites',
+            description: 'Build websites with Sites',
+            is_active: true,
+            is_public: false,
+            user_id: 1,
+          },
+        ]),
+        getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+      },
+    })
+    renderWorkbench(<StartSkillChatProbe />, services)
+    await waitFor(() =>
+      expect(screen.getByTestId('available-skill-names')).toHaveTextContent('sites-building')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
+
+    expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('started')
+    expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('1')
+    expect(screen.getByTestId('selected-skill-refs')).toHaveTextContent(
+      'sites:sites-building:false'
+    )
+    expect(screen.getByTestId('skill-chat-input')).toHaveTextContent('')
+  })
+
+  test('starts a fresh blank chat with a requested local skill mentioned', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (
+          method === 'codex.app_server_request' &&
+          params &&
+          typeof params === 'object' &&
+          (params as { method?: unknown }).method === 'skills/list'
+        ) {
+          return {
+            data: [
+              {
+                cwd: '',
+                skills: [
+                  {
+                    name: 'sites:sites-building',
+                    description: 'Build websites with Sites',
+                    path: '/Users/alice/.codex/plugins/sites/skills/sites-building/SKILL.md',
+                    scope: 'user',
+                    source: 'codex-plugin',
+                    enabled: true,
+                  },
+                ],
+                errors: [],
+              },
+            ],
+          }
+        }
+        return {}
+      }
+    )
+
+    renderWorkbench(<StartSkillChatProbe />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('started')
+    )
+    expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('1')
+    expect(screen.getByTestId('selected-skill-refs')).toHaveTextContent('')
+    expect(screen.getByTestId('skill-chat-input')).toHaveTextContent(
+      '[$sites](/Users/alice/.codex/plugins/sites/skills/sites-building/SKILL.md)'
+    )
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'codex.app_server_request',
+      {
+        method: 'skills/list',
+        params: { cwds: [], forceReload: true },
+      }
+    )
+  })
+
+  test('does not resolve local skills for a Backend-only skill chat', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (
+          method === 'codex.app_server_request' &&
+          params &&
+          typeof params === 'object' &&
+          (params as { method?: unknown }).method === 'skills/list'
+        ) {
+          return {
+            data: [
+              {
+                cwd: '',
+                skills: [
+                  {
+                    name: 'sites:sites-building',
+                    description: 'Build websites with Sites',
+                    path: '/Users/alice/.codex/plugins/sites/skills/sites-building/SKILL.md',
+                    scope: 'user',
+                    enabled: true,
+                  },
+                ],
+                errors: [],
+              },
+            ],
+          }
+        }
+        return {}
+      }
+    )
+
+    renderWorkbench(<StartSkillChatProbe />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'start backend sites chat' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('missing')
+    )
+    expect(localExecutorMocks.requestLocalExecutor).not.toHaveBeenCalledWith(
+      'codex.app_server_request',
+      expect.objectContaining({ method: 'skills/list' })
+    )
+  })
+
+  test('does not leave the current view when a requested skill is unavailable', async () => {
+    renderWorkbench(<StartSkillChatProbe />)
+    window.history.pushState({}, '', '/sites')
+
+    await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('missing')
+    )
+    expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('0')
+    expect(window.location.pathname).toBe('/sites')
   })
 
   test('does not poll runtime work after bootstrap', async () => {

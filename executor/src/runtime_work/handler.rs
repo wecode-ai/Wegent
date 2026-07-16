@@ -5423,7 +5423,9 @@ mod tests {
 
     #[test]
     fn finishing_an_active_goal_keeps_the_task_idle() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let index_path = temp_runtime_work_index_path("finish-active-goal");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
         let mut link = RuntimeTaskLink::new_pending(
             "task-1".to_owned(),
             "/tmp/project".to_owned(),
@@ -5440,11 +5442,15 @@ mod tests {
         assert_eq!(task.status, "done");
         assert!(!task.running);
         assert_eq!(task.goal_status.as_deref(), Some("active"));
+
+        let _ = fs::remove_file(index_path);
     }
 
     #[test]
     fn syncing_an_active_goal_does_not_start_an_idle_task() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let index_path = temp_runtime_work_index_path("sync-active-goal");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
         let mut link = RuntimeTaskLink::new_pending(
             "task-1".to_owned(),
             "/tmp/project".to_owned(),
@@ -5462,6 +5468,8 @@ mod tests {
         assert_eq!(task.status, "done");
         assert!(!task.running);
         assert_eq!(task.goal_status.as_deref(), Some("active"));
+
+        let _ = fs::remove_file(index_path);
     }
 
     #[test]

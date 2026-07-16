@@ -18,6 +18,17 @@ describe('workbenchRuntimeHelpers', () => {
     )
   })
 
+  test('removes leading plugin mentions from task titles', () => {
+    expect(buildRuntimeTaskTitle('[$Sites](plugin://sites) 创建一个 OKR 网站')).toBe(
+      '创建一个 OKR 网站'
+    )
+    expect(
+      buildRuntimeTaskTitle(
+        '[$Sites](plugin://sites) [@designer](plugin://designer) Build a portal'
+      )
+    ).toBe('Build a portal')
+  })
+
   test('limits runtime task titles for compact display and terminal context', () => {
     const title = 'a'.repeat(MAX_RUNTIME_TASK_TITLE_LENGTH + 1)
 

@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
+  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -56,6 +57,7 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   runtimeProjectToProject,
@@ -126,7 +128,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -168,6 +170,7 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
+  onOpenSites?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenBlankStandaloneProject?: () => void
   onOpenStandaloneFolderProject?: (
@@ -458,6 +461,7 @@ function SidebarButton({
     <button
       type="button"
       data-testid={testId}
+      aria-current={selected ? 'page' : undefined}
       onClick={onClick}
       className={[
         'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-sm font-normal leading-5',
@@ -2435,6 +2439,7 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
+  onOpenSites,
   onRefreshDevices,
   onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
@@ -3023,6 +3028,13 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
+              <SidebarButton
+                icon={Grid3X3}
+                label={t('workbench.sites', '站点')}
+                testId="sites-button"
+                selected={activeItem === 'sites'}
+                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
+              />
               {showCloudConnectionEntry && (
                 <CloudConnectionSidebarButton
                   devices={devices}
