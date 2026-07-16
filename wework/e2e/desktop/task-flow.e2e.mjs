@@ -157,6 +157,22 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
   throw new Error(message)
 }
 
+async function triggerModelReloadUntilCloudFailure(control) {
+  const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
+  for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
+    await control.command('dispatchLocalModelSettingsChanged', '')
+    await Promise.race([
+      failedCloudModelRequest,
+      new Promise(resolvePromise => setTimeout(resolvePromise, 1_000)),
+    ])
+  }
+  await withTimeout(
+    failedCloudModelRequest,
+    UI_TIMEOUT_MS,
+    'The connected desktop app did not retry models after the cloud endpoint began failing'
+  )
+}
+
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
   let lastError
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -745,7 +761,7 @@ async function writeCodexConfig(codexHome, modelServerUrl) {
   await mkdir(codexHome, { recursive: true })
   await writeFile(
     join(codexHome, 'config.toml'),
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "workspace-write"\n\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
     'utf8'
   )
 }
@@ -915,16 +931,7 @@ async function main() {
     })
     await selectE2EModel(control)
     control.failBlockedCloudModels()
-    const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
-    for (let attempt = 0; attempt < 5 && control.failedCloudModelRequests === 0; attempt += 1) {
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-      await control.command('dispatchLocalModelSettingsChanged', '')
-    }
-    await withTimeout(
-      failedCloudModelRequest,
-      UI_TIMEOUT_MS,
-      'The connected desktop app did not retry models after the cloud endpoint began failing'
-    )
+    await triggerModelReloadUntilCloudFailure(control)
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
