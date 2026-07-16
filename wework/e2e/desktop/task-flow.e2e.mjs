@@ -31,6 +31,7 @@ const MODEL_ID = 'gpt-5.4'
 const MODEL_LABEL = 'GPT 5.4'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
+const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -345,6 +346,9 @@ class DesktopE2EServer {
     this.commandResults = new Map()
     this.commandHistory = []
     this.modelRequests = []
+    this.blockedCloudRequests = []
+    this.blockedCloudResponses = new Set()
+    this.blockedCloudWaiters = []
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.toolLessPrewarmHandled = false
@@ -373,6 +377,9 @@ class DesktopE2EServer {
   }
 
   async close() {
+    for (const response of this.blockedCloudResponses) response.destroy()
+    this.blockedCloudResponses.clear()
+    this.server.closeAllConnections?.()
     await new Promise(resolvePromise => this.server.close(resolvePromise))
   }
 
@@ -381,6 +388,35 @@ class DesktopE2EServer {
     return new Promise(resolvePromise => {
       this.readyResolver = resolvePromise
     })
+  }
+
+  awaitBlockedCloudRequest(pathname) {
+    const request = this.blockedCloudRequests.find(item => item.pathname === pathname)
+    if (request) return Promise.resolve(request)
+    return new Promise(resolvePromise => {
+      this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
+    })
+  }
+
+  blockCloudRequest(request, response, url) {
+    const blockedRequest = {
+      method: request.method,
+      pathname: url.pathname,
+      search: url.search,
+    }
+    this.blockedCloudRequests.push(blockedRequest)
+    this.blockedCloudResponses.add(response)
+    response.once('close', () => this.blockedCloudResponses.delete(response))
+
+    const remainingWaiters = []
+    for (const waiter of this.blockedCloudWaiters) {
+      if (waiter.pathname === url.pathname) {
+        waiter.resolve(blockedRequest)
+      } else {
+        remainingWaiters.push(waiter)
+      }
+    }
+    this.blockedCloudWaiters = remainingWaiters
   }
 
   setScenario(scenario) {
@@ -476,6 +512,20 @@ class DesktopE2EServer {
         pending.reject(new Error(result.error ?? `UI action ${result.id} failed`))
       }
       json(response, 200, { ok: true })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/users/me') {
+      json(response, 200, {
+        id: 9001,
+        user_name: 'wework-desktop-e2e-cloud-user',
+        email: 'desktop-e2e@wework.local',
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
+      this.blockCloudRequest(request, response, url)
       return
     }
 
@@ -716,6 +766,7 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
       env: {
         ...process.env,
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
+        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: controlUrl,
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
@@ -824,10 +875,17 @@ async function main() {
       'The desktop controller did not connect from a webview'
     )
 
-    phase = 'remote-project-dialog'
+    phase = 'cloud-request-non-blocking'
+    await withTimeout(
+      control.awaitBlockedCloudRequest(BLOCKED_CLOUD_MODEL_PATH),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The connected desktop app did not start the intentionally blocked cloud model request'
+    )
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+
+    phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-remote-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {

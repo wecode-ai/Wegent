@@ -477,6 +477,7 @@ export interface RuntimeWorkSearchRequest {
   limit?: number
   includeArchived?: boolean
   projectId?: number
+  source?: 'all' | 'local' | 'cloud'
 }
 
 export interface RuntimeWorkSearchProjectRef {

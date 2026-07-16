@@ -7,6 +7,10 @@ import {
 } from '@/features/model-settings/localModelConnectionTest'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { closeMainWindowToTray } from '@/tauri/runtimeTaskCloseGuard'
+import {
+  normalizeCloudBackendUrl,
+  saveStoredCloudConnection,
+} from '@/features/cloud-connection/cloudConnectionStorage'
 import { invoke } from '@tauri-apps/api/core'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -187,11 +191,30 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
+function seedDesktopE2ECloudConnection() {
+  const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+  if (!backendUrl) return
+
+  const config = normalizeCloudBackendUrl(backendUrl)
+  saveStoredCloudConnection({
+    ...config,
+    token: 'wework-desktop-e2e-cloud-token',
+    tokenExpiresAt: null,
+    user: {
+      id: 9001,
+      user_name: 'wework-desktop-e2e-cloud-user',
+      email: 'desktop-e2e@wework.local',
+    },
+    connectedAt: new Date().toISOString(),
+  })
+}
+
 export function installWeworkAutomationBridge() {
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 
+  seedDesktopE2ECloudConnection()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
 }

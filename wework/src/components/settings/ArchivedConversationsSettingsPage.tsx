@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getArchivedBulkDeleteProgress,
@@ -310,6 +311,15 @@ export function ArchivedConversationsSettingsPage({
     return () => window.clearTimeout(loadTimer)
   }, [loadArchivedConversations])
 
+  useEffect(() => {
+    const handleCloudArchivesChanged = () => {
+      void loadArchivedConversations()
+    }
+    window.addEventListener(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, handleCloudArchivesChanged)
+    return () =>
+      window.removeEventListener(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, handleCloudArchivesChanged)
+  }, [loadArchivedConversations])
+
   useEffect(() => subscribeArchivedBulkDeleteProgress(setBulkDeleteProgress), [])
 
   useEffect(
@@ -429,7 +439,13 @@ export function ArchivedConversationsSettingsPage({
         let completed = 0
         let total = deleteItems.length
         for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
-          for (const batch of chunkItems(deleteItems, ARCHIVED_DELETE_BATCH_SIZE)) {
+          const localItems = deleteItems.filter(item => item.source === 'local')
+          const cloudItems = deleteItems.filter(item => item.source === 'cloud')
+          const batches = [
+            ...chunkItems(localItems, ARCHIVED_DELETE_BATCH_SIZE),
+            ...chunkItems(cloudItems, ARCHIVED_DELETE_BATCH_SIZE),
+          ]
+          for (const batch of batches) {
             const response = await api.deleteArchivedConversationsBulk({
               items: batch.map(archivedConversationAddress),
             })

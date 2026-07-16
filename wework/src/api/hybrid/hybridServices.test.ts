@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => {
   const cloudListModels = vi.fn()
   const localListTeams = vi.fn()
   const localGetDefaultWorkbenchTeam = vi.fn()
+  const localListProjects = vi.fn()
+  const localUpdateCurrentUser = vi.fn()
   const localListSkills = vi.fn()
   const localGetTeamSkills = vi.fn()
   const cloudListTeams = vi.fn()
@@ -23,6 +25,12 @@ const mocks = vi.hoisted(() => {
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
+  const localListArchivedConversations = vi.fn()
+  const cloudListArchivedConversations = vi.fn()
+  const localArchiveAllConversations = vi.fn()
+  const cloudArchiveAllConversations = vi.fn()
+  const localArchiveProjectConversations = vi.fn()
+  const cloudArchiveProjectConversations = vi.fn()
 
   const localServices = {
     teamApi: {
@@ -34,6 +42,7 @@ const mocks = vi.hoisted(() => {
       listSkills: localListSkills,
       getTeamSkills: localGetTeamSkills,
     },
+    projectApi: { listProjects: localListProjects },
     deviceApi: {
       listDevices: localListDevices,
       getHomeDirectory: vi.fn(),
@@ -53,19 +62,11 @@ const mocks = vi.hoisted(() => {
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       getWorktreeSettings: localGetWorktreeSettings,
-      listArchivedConversations: vi.fn(async () => ({
-        items: [],
-        projectGroups: [],
-        total: 0,
-      })),
-      archiveAllConversations: vi.fn(async () => ({
-        accepted: true,
-        requestedCount: 0,
-        acceptedCount: 0,
-        deletedCount: 0,
-        results: [],
-      })),
+      listArchivedConversations: localListArchivedConversations,
+      archiveAllConversations: localArchiveAllConversations,
+      archiveProjectConversations: localArchiveProjectConversations,
     },
+    userApi: { updateCurrentUser: localUpdateCurrentUser },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
   }
 
@@ -76,7 +77,7 @@ const mocks = vi.hoisted(() => {
     },
     modelApi: { listModels: cloudListModels },
     skillApi: {},
-    projectApi: {},
+    projectApi: { listProjects: vi.fn() },
     taskApi: { getTurnFileChangesDiff: vi.fn() },
     deviceApi: {
       listDevices: cloudListDevices,
@@ -97,18 +98,9 @@ const mocks = vi.hoisted(() => {
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
-      listArchivedConversations: vi.fn(async () => ({
-        items: [],
-        projectGroups: [],
-        total: 0,
-      })),
-      archiveAllConversations: vi.fn(async () => ({
-        accepted: true,
-        requestedCount: 0,
-        acceptedCount: 0,
-        deletedCount: 0,
-        results: [],
-      })),
+      listArchivedConversations: cloudListArchivedConversations,
+      archiveAllConversations: cloudArchiveAllConversations,
+      archiveProjectConversations: cloudArchiveProjectConversations,
       getImNotificationSettings: vi.fn(),
     },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
@@ -126,6 +118,8 @@ const mocks = vi.hoisted(() => {
     cloudListModels,
     localListTeams,
     localGetDefaultWorkbenchTeam,
+    localListProjects,
+    localUpdateCurrentUser,
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
@@ -136,6 +130,12 @@ const mocks = vi.hoisted(() => {
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
     cloudRuntimeIpcSubscribe,
+    localListArchivedConversations,
+    cloudListArchivedConversations,
+    localArchiveAllConversations,
+    cloudArchiveAllConversations,
+    localArchiveProjectConversations,
+    cloudArchiveProjectConversations,
     localServices,
     cloudServices,
   }
@@ -270,6 +270,8 @@ describe('createHybridWorkbenchServices', () => {
       is_active: true,
       default_for_modes: ['wework'],
     })
+    mocks.localListProjects.mockResolvedValue({ items: [] })
+    mocks.localUpdateCurrentUser.mockImplementation(async data => data)
     mocks.localListSkills.mockResolvedValue([])
     mocks.localGetTeamSkills.mockResolvedValue({ skills: [], preload_skills: [] })
     mocks.cloudListTeams.mockResolvedValue([
@@ -317,6 +319,42 @@ describe('createHybridWorkbenchServices', () => {
         workspacePath: '/tmp/cloud',
       }
     })
+    mocks.localListArchivedConversations.mockResolvedValue({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })
+    mocks.cloudListArchivedConversations.mockResolvedValue({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })
+    mocks.localArchiveAllConversations.mockResolvedValue({
+      accepted: true,
+      requestedCount: 0,
+      acceptedCount: 0,
+      deletedCount: 0,
+      results: [],
+    })
+    mocks.cloudArchiveAllConversations.mockResolvedValue({
+      accepted: true,
+      requestedCount: 0,
+      acceptedCount: 0,
+      deletedCount: 0,
+      results: [],
+    })
+    mocks.localArchiveProjectConversations.mockResolvedValue({
+      accepted: true,
+      requestedCount: 0,
+      acceptedCount: 0,
+      results: [],
+    })
+    mocks.cloudArchiveProjectConversations.mockResolvedValue({
+      accepted: true,
+      requestedCount: 0,
+      acceptedCount: 0,
+      results: [],
+    })
     mocks.cloudCreateDockerRemoteDeviceCommand.mockResolvedValue({
       device_id: 'remote-device',
       name: 'Remote Device',
@@ -330,12 +368,20 @@ describe('createHybridWorkbenchServices', () => {
     })
   })
 
-  it('keeps local model identity while giving cloud Codex models unique UI names', async () => {
+  it('loads cloud models in the background without delaying local models', async () => {
     const services = createServices()
     const response = await services.modelApi.listModels()
 
-    expect(response.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
-    expect(response.data.map(model => getModelExecutionOverride(model)?.modelName)).toEqual([
+    expect(response.data.map(model => model.name)).toEqual(['gpt-5.5'])
+
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
+    })
+    const refreshed = await services.modelApi.listModels()
+
+    expect(refreshed.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
+    expect(refreshed.data.map(model => getModelExecutionOverride(model)?.modelName)).toEqual([
       'gpt-5.5',
       'gpt-5.5',
     ])
@@ -348,6 +394,14 @@ describe('createHybridWorkbenchServices', () => {
     })
     const services = createServices()
 
+    await services.modelApi.listModels()
+    await vi.waitFor(async () => {
+      const refreshed = await services.modelApi.listModels()
+      expect(refreshed.data.map(model => model.name)).toEqual([
+        'chat-completions-model',
+        'cloud:public:responses-model',
+      ])
+    })
     const response = await services.modelApi.listModels()
 
     expect(response.data.map(model => model.name)).toEqual([
@@ -355,6 +409,16 @@ describe('createHybridWorkbenchServices', () => {
       'cloud:public:responses-model',
     ])
     expect(getModelExecutionOverride(response.data[1])?.source).toBe('cloud')
+  })
+
+  it('does not wait for an unresponsive cloud model request', async () => {
+    mocks.cloudListModels.mockReturnValue(new Promise(() => undefined))
+    const services = createServices()
+
+    const response = await services.modelApi.listModels()
+
+    expect(response.data.map(model => model.name)).toEqual(['gpt-5.5'])
+    expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
   it('keeps default team and skills on the local services', async () => {
@@ -499,6 +563,31 @@ describe('createHybridWorkbenchServices', () => {
     expect(runtimeWork?.projects.map(project => project.project.key)).toEqual(['local'])
     expect(mocks.cloudListDevices).not.toHaveBeenCalled()
     expect(mocks.cloudListRuntimeWork).not.toHaveBeenCalled()
+  })
+
+  it('keeps all shared local reads usable while every cloud read is unresponsive', async () => {
+    mocks.cloudListDevices.mockReturnValue(new Promise(() => undefined))
+    mocks.cloudListModels.mockReturnValue(new Promise(() => undefined))
+    mocks.cloudListArchivedConversations.mockReturnValue(new Promise(() => undefined))
+    const services = createServices()
+
+    const [team, models, devices, runtimeWork, search, archives, projects] = await Promise.all([
+      services.teamApi.getDefaultWorkbenchTeam(),
+      services.modelApi.listModels(),
+      services.deviceApi.listDevices(),
+      services.runtimeWorkApi?.listRuntimeWork(),
+      services.runtimeWorkApi?.searchRuntimeWork({ query: 'local' }),
+      services.runtimeWorkApi?.listArchivedConversations(),
+      services.projectApi.listProjects(),
+    ])
+
+    expect(team.name).toBe('local-wework')
+    expect(models.data.map(model => model.name)).toEqual(['gpt-5.5'])
+    expect(devices.map(device => device.device_id)).toEqual(['local-device'])
+    expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })
+    expect(search).toEqual({ items: [] })
+    expect(archives).toEqual({ items: [], projectGroups: [], total: 0 })
+    expect(projects).toEqual({ items: [] })
   })
 
   it('does not expose the current app registration as a background cloud work device', async () => {
@@ -710,7 +799,154 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
-  it('sorts merged search results by updated time before applying the limit', async () => {
+  it('returns local archives without waiting for cloud and merges cloud archives later', async () => {
+    const localItem = {
+      id: 'local-archive',
+      taskId: 'local-task',
+      title: 'Local archive',
+      workspacePath: '/tmp/local',
+      deviceId: 'local-device',
+      source: 'local' as const,
+    }
+    const cloudItem = {
+      id: 'cloud-archive',
+      taskId: 'cloud-task',
+      title: 'Cloud archive',
+      workspacePath: '/tmp/cloud',
+      deviceId: 'cloud-device',
+      source: 'cloud' as const,
+    }
+    mocks.localListArchivedConversations.mockResolvedValue({
+      items: [localItem],
+      projectGroups: [],
+      total: 1,
+    })
+    mocks.cloudListArchivedConversations.mockResolvedValue({
+      items: [cloudItem],
+      projectGroups: [],
+      total: 1,
+    })
+    const services = createServices()
+
+    const firstResponse = await services.runtimeWorkApi?.listArchivedConversations()
+
+    expect(firstResponse?.items.map(item => item.id)).toEqual(['local-archive'])
+    await vi.waitFor(async () => {
+      const refreshed = await services.runtimeWorkApi?.listArchivedConversations()
+      expect(refreshed?.items.map(item => item.id)).toEqual(['local-archive', 'cloud-archive'])
+    })
+
+    const refreshedResponse = await services.runtimeWorkApi?.listArchivedConversations()
+
+    expect(refreshedResponse?.items.map(item => item.id)).toEqual([
+      'local-archive',
+      'cloud-archive',
+    ])
+  })
+
+  it('does not wait for an unresponsive cloud archive request', async () => {
+    mocks.localListArchivedConversations.mockResolvedValue({
+      items: [
+        {
+          id: 'local-archive',
+          taskId: 'local-task',
+          title: 'Local archive',
+          workspacePath: '/tmp/local',
+          deviceId: 'local-device',
+          source: 'local',
+        },
+      ],
+      projectGroups: [],
+      total: 1,
+    })
+    mocks.cloudListArchivedConversations.mockReturnValue(new Promise(() => undefined))
+    const services = createServices()
+
+    const response = await services.runtimeWorkApi?.listArchivedConversations()
+
+    expect(response?.items.map(item => item.id)).toEqual(['local-archive'])
+  })
+
+  it('completes archive-all and local preferences without waiting for cloud services', async () => {
+    mocks.cloudArchiveAllConversations.mockReturnValue(new Promise(() => undefined))
+    const services = createServices()
+
+    const archiveResponse = await services.runtimeWorkApi?.archiveAllConversations()
+    await services.userApi?.updateCurrentUser({ preferences: { theme: 'dark' } })
+    await services.projectApi.listProjects()
+
+    expect(archiveResponse?.accepted).toBe(true)
+    expect(mocks.localArchiveAllConversations).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudArchiveAllConversations).toHaveBeenCalledTimes(1)
+    expect(mocks.localUpdateCurrentUser).toHaveBeenCalledTimes(1)
+    expect(mocks.localListProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates local reads and mutations from synchronous cloud failures', async () => {
+    mocks.cloudListModels.mockImplementation(() => {
+      throw new Error('cloud models failed synchronously')
+    })
+    mocks.cloudListArchivedConversations.mockImplementation(() => {
+      throw new Error('cloud archives failed synchronously')
+    })
+    mocks.cloudArchiveAllConversations.mockImplementation(() => {
+      throw new Error('cloud archive-all failed synchronously')
+    })
+    const services = createServices()
+
+    const models = await services.modelApi.listModels()
+    const archives = await services.runtimeWorkApi?.listArchivedConversations()
+    const archiveResponse = await services.runtimeWorkApi?.archiveAllConversations()
+
+    expect(models.data.map(model => model.name)).toEqual(['gpt-5.5'])
+    expect(archives).toEqual({ items: [], projectGroups: [], total: 0 })
+    expect(archiveResponse?.accepted).toBe(true)
+    await vi.waitFor(() => {
+      expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
+      expect(mocks.cloudListArchivedConversations).toHaveBeenCalledTimes(1)
+      expect(mocks.cloudArchiveAllConversations).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('routes remembered local project keys without relying on a local prefix', async () => {
+    mocks.localListRuntimeWork.mockResolvedValue({
+      projects: [
+        {
+          project: { key: 'project-state-key', name: 'Local project' },
+          deviceWorkspaces: [],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    const services = createServices()
+
+    await services.runtimeWorkApi?.listRuntimeWork()
+    await services.runtimeWorkApi?.archiveProjectConversations({
+      runtimeProjectKey: 'project-state-key',
+    })
+
+    expect(mocks.localArchiveProjectConversations).toHaveBeenCalledWith({
+      runtimeProjectKey: 'project-state-key',
+    })
+    expect(mocks.cloudArchiveProjectConversations).not.toHaveBeenCalled()
+  })
+
+  it('requires bulk archive mutations to use one transport per request', async () => {
+    const services = createServices()
+
+    await expect(
+      services.runtimeWorkApi?.deleteArchivedConversationsBulk({
+        items: [
+          { deviceId: 'local-device', taskId: 'local-task' },
+          { deviceId: 'cloud-device', taskId: 'cloud-task' },
+        ],
+      })
+    ).rejects.toThrow('must target one source')
+  })
+
+  it('returns local search immediately and merges cached cloud results later', async () => {
     const services = createServices()
     mocks.localSearchRuntimeWork.mockResolvedValue({
       items: [
@@ -746,13 +982,50 @@ describe('createHybridWorkbenchServices', () => {
       }
     })
 
-    const response = await services.runtimeWorkApi?.searchRuntimeWork({
+    const firstResponse = await services.runtimeWorkApi?.searchRuntimeWork({
       query: 'result',
       limit: 1,
     })
 
-    expect(response?.items.map(item => item.title)).toEqual(['Newer cloud result'])
+    expect(firstResponse?.items.map(item => item.title)).toEqual(['Older local result'])
+    await vi.waitFor(() =>
+      expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+        'runtime.tasks.search',
+        { query: 'result', limit: 1 },
+        'cloud-device'
+      )
+    )
+
+    const refreshedResponse = await services.runtimeWorkApi?.searchRuntimeWork({
+      query: 'result',
+      limit: 1,
+    })
+
+    expect(refreshedResponse?.items.map(item => item.title)).toEqual(['Newer cloud result'])
     expect(mocks.cloudSearchRuntimeWork).not.toHaveBeenCalled()
+  })
+
+  it('does not wait for unresponsive cloud search', async () => {
+    mocks.cloudListDevices.mockReturnValue(new Promise(() => undefined))
+    mocks.localSearchRuntimeWork.mockResolvedValue({
+      items: [
+        {
+          address: { deviceId: 'local-device', taskId: 'local-task' },
+          runtime: 'codex',
+          title: 'Local result',
+          snippet: 'local',
+          matchStart: 0,
+          matchEnd: 5,
+          deviceName: 'Local Executor',
+          workspacePath: '/tmp/local',
+        },
+      ],
+    })
+    const services = createServices()
+
+    const response = await services.runtimeWorkApi?.searchRuntimeWork({ query: 'local' })
+
+    expect(response?.items.map(item => item.title)).toEqual(['Local result'])
   })
 
   it('routes remote device startup command generation to the cloud service', async () => {
