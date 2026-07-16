@@ -2,300 +2,287 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""LLM proxy gateway.
+"""Authenticated LLM proxy gateway for Wework cloud models."""
 
-Keeps provider API keys inside the backend by issuing encrypted proxy tokens to
-Wework local executors. The executor calls the backend proxy endpoint, which
-decrypts the token, resolves the Wegent Model CRD, and forwards the request to
-the real provider with the stored credentials.
-
-Token encryption key lifecycle:
-- If ``LLM_PROXY_TOKEN_KEY`` is set, it is used directly.
-- Otherwise the key is loaded from ``SystemConfig`` (key ``llm_proxy_token_key``).
-  If a legacy ``codex_proxy_token_key`` entry exists, it is migrated to the new
-  key name automatically.
-- If no stored key exists, a new Fernet key is generated and persisted
-  automatically so deployments do not need manual key provisioning.
-- For tests/development without a database, a deterministic fallback key is
-  derived from existing settings.
-"""
-
-import base64
 import json
 import logging
-import time
-from typing import Any, Optional
+from typing import Any
 
 import httpx
-from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.services.chat.config.model_resolver import (
-    _extract_model_config,
-    _find_model_with_namespace,
-)
+from app.models.kind import Kind
+from app.models.user import User
+from app.services.chat.config.model_resolver import extract_and_process_model_config
+from app.services.group_permission import get_user_groups
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_KEY_CACHE: Optional[Fernet] = None
+MODEL_TYPE_HEADER = "x-wegent-model-type"
+MODEL_NAMESPACE_HEADER = "x-wegent-model-namespace"
+MODEL_USER_ID_HEADER = "x-wegent-model-user-id"
+UPSTREAM_HEADER_PREFIX = "x-wegent-upstream-header-"
+SUPPORTED_MODEL_TYPES = {"public", "user", "group"}
+PROTECTED_UPSTREAM_HEADERS = {
+    "accept",
+    "authorization",
+    "connection",
+    "content-length",
+    "content-type",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "set-cookie",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    MODEL_TYPE_HEADER,
+    MODEL_NAMESPACE_HEADER,
+    MODEL_USER_ID_HEADER,
+}
+PROTECTED_UPSTREAM_HEADER_MARKERS = (
+    "api-key",
+    "apikey",
+    "credential",
+    "secret",
+    "token",
+)
 
 
-class LLMProxyTokenError(Exception):
-    """Raised when a proxy token is invalid, expired, or malformed."""
-
-
-class LLMProxyConfigurationError(Exception):
-    """Raised when the referenced model has incomplete provider configuration."""
-
-
-def _env_fernet_key() -> Optional[str]:
-    """Return the explicitly configured Fernet key, if any."""
-    key = settings.LLM_PROXY_TOKEN_KEY.strip()
-    return key or None
-
-
-def _dev_fallback_fernet_key() -> str:
-    """Return a deterministic dev/test key derived from existing settings.
-
-    This is only used when no env key and no database are available. It must
-    not be relied upon in production.
-    """
-    seed = settings.INTERNAL_SERVICE_TOKEN or settings.SHARE_TOKEN_AES_KEY
-    raw = seed.encode("utf-8")[:32].ljust(32, b"0")
-    return base64.urlsafe_b64encode(raw).decode("utf-8")
-
-
-def _load_stored_token_key(db: Session) -> Optional[str]:
-    """Return a stored Fernet key, migrating a legacy key name if found."""
-    from app.models.system_config import SystemConfig
-
-    config = (
-        db.query(SystemConfig)
-        .filter(SystemConfig.config_key == "llm_proxy_token_key")
-        .first()
+def _is_protected_upstream_header(name: str) -> bool:
+    normalized = name.strip().lower().replace("_", "-")
+    parts = normalized.split("-")
+    return (
+        normalized in PROTECTED_UPSTREAM_HEADERS
+        or "auth" in parts
+        or "authentication" in parts
+        or any(marker in normalized for marker in PROTECTED_UPSTREAM_HEADER_MARKERS)
     )
-    if config is not None:
-        stored = (config.config_value or {}).get("key")
-        if isinstance(stored, str) and stored.strip():
-            return stored.strip()
-
-    legacy_config = (
-        db.query(SystemConfig)
-        .filter(SystemConfig.config_key == "codex_proxy_token_key")
-        .first()
-    )
-    if legacy_config is not None:
-        stored = (legacy_config.config_value or {}).get("key")
-        if isinstance(stored, str) and stored.strip():
-            key = stored.strip()
-            if config is None:
-                config = SystemConfig(
-                    config_key="llm_proxy_token_key",
-                    config_value={"key": key},
-                )
-                db.add(config)
-            else:
-                config.config_value = {"key": key}
-            db.delete(legacy_config)
-            db.commit()
-            logger.info("Migrated legacy Codex proxy token key to LLM proxy token key")
-            return key
-
-    return None
 
 
-def _load_or_create_stored_token_key(db: Session) -> str:
-    """Load the persisted Fernet key from SystemConfig, creating one if missing."""
-    stored_key = _load_stored_token_key(db)
-    if stored_key is not None:
-        return stored_key
-
-    from app.models.system_config import SystemConfig
-
-    key = Fernet.generate_key().decode("utf-8")
-    config = SystemConfig(
-        config_key="llm_proxy_token_key",
-        config_value={"key": key},
-    )
-    db.add(config)
-    db.commit()
-    logger.info("Generated and persisted new LLM proxy token key")
-    return key
-
-
-def _get_fernet(db: Optional[Session] = None) -> Fernet:
-    """Return a Fernet instance for proxy token crypto.
-
-    Priority:
-    1. ``LLM_PROXY_TOKEN_KEY`` environment variable.
-    2. Persisted ``SystemConfig`` value (auto-generated on first use).
-    3. Deterministic dev/test fallback (no DB or env key).
-    """
-    global _TOKEN_KEY_CACHE  # noqa: PLW0603
-
-    env_key = _env_fernet_key()
-    if env_key is not None:
-        if _TOKEN_KEY_CACHE is None:
-            _TOKEN_KEY_CACHE = Fernet(env_key)
-        return _TOKEN_KEY_CACHE
-
-    if _TOKEN_KEY_CACHE is not None:
-        return _TOKEN_KEY_CACHE
-
-    if db is not None:
-        key = _load_or_create_stored_token_key(db)
-    else:
-        key = _dev_fallback_fernet_key()
-
-    _TOKEN_KEY_CACHE = Fernet(key)
-    return _TOKEN_KEY_CACHE
+def _extract_custom_upstream_headers(request: Request) -> dict[str, str]:
+    custom_headers: dict[str, str] = {}
+    for header_name, value in request.headers.items():
+        if not header_name.lower().startswith(UPSTREAM_HEADER_PREFIX):
+            continue
+        target_name = header_name[len(UPSTREAM_HEADER_PREFIX) :].strip()
+        if not target_name or target_name.startswith("-"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid custom upstream header name",
+            )
+        if _is_protected_upstream_header(target_name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Custom upstream header is protected: {target_name}",
+            )
+        custom_headers[target_name] = value
+    return custom_headers
 
 
-def _encode_payload(payload: dict[str, Any], db: Optional[Session] = None) -> str:
-    data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return _get_fernet(db).encrypt(data).decode("utf-8")
+def _merge_headers_case_insensitive(
+    *header_sources: dict[str, str],
+) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    names_by_lowercase: dict[str, str] = {}
+    for headers in header_sources:
+        for name, value in headers.items():
+            normalized = name.lower()
+            previous_name = names_by_lowercase.get(normalized)
+            if previous_name is not None:
+                merged.pop(previous_name, None)
+            merged[name] = value
+            names_by_lowercase[normalized] = name
+    return merged
 
 
-def _decode_payload(token: str, db: Optional[Session] = None) -> dict[str, Any]:
+def _required_header(request: Request, name: str) -> str:
+    value = (request.headers.get(name) or "").strip()
+    if not value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Missing {name} header",
+        )
+    return value
+
+
+def _resource_user_id(request: Request) -> int:
+    raw_value = _required_header(request, MODEL_USER_ID_HEADER)
     try:
-        data = _get_fernet(db).decrypt(token.encode("utf-8"), ttl=None)
-        payload = json.loads(data)
-    except (InvalidToken, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise LLMProxyTokenError("Invalid proxy token") from exc
-    if not isinstance(payload, dict):
-        raise LLMProxyTokenError("Invalid proxy token payload")
-    exp = payload.get("exp")
-    if not isinstance(exp, int) or exp < int(time.time()):
-        raise LLMProxyTokenError("Proxy token expired")
-    return payload
+        value = int(raw_value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {MODEL_USER_ID_HEADER} header",
+        ) from exc
+    if value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {MODEL_USER_ID_HEADER} header",
+        )
+    return value
 
 
-def create_llm_proxy_token(
+def _validate_model_access(
     db: Session,
-    user_id: int,
-    model_namespace: str,
-    model_name: str,
-    expires_in_seconds: Optional[int] = None,
-) -> str:
-    """Create an encrypted proxy token for a Wegent Model CRD.
+    current_user: User,
+    model_type: str,
+    namespace: str,
+    resource_user_id: int,
+) -> None:
+    if model_type == "user":
+        allowed = namespace == "default" and resource_user_id == current_user.id
+    elif model_type == "public":
+        allowed = namespace == "default" and resource_user_id == 0
+    elif model_type == "group":
+        allowed = namespace != "default" and namespace in get_user_groups(
+            db, current_user.id
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported cloud model type: {model_type}",
+        )
 
-    The token binds the caller (user_id) to one Model CRD identified by
-    namespace + name. It is time-limited and encrypted with the backend key.
-    """
-    if expires_in_seconds is None:
-        expires_in_seconds = settings.LLM_PROXY_TOKEN_TTL_SECONDS
-
-    # Verify the model exists before issuing a token.
-    kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
-    if not model_spec:
-        raise LLMProxyConfigurationError(f"Model '{model_name}' not found")
-    resolved_namespace = kind.namespace if kind else model_namespace
-    if model_namespace and resolved_namespace != model_namespace:
-        raise LLMProxyConfigurationError(f"Model '{model_name}' namespace mismatch")
-
-    now = int(time.time())
-    payload = {
-        "u": user_id,
-        "ns": resolved_namespace,
-        "n": model_name,
-        "iat": now,
-        "exp": now + expires_in_seconds,
-    }
-    return _encode_payload(payload, db)
-
-
-def decode_llm_proxy_token(token: str, db: Optional[Session] = None) -> dict[str, Any]:
-    """Decrypt and validate a proxy token."""
-    return _decode_payload(token, db)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cloud model access denied",
+        )
 
 
 def resolve_llm_proxy_model_config(
     db: Session,
-    payload: dict[str, Any],
+    current_user: User,
+    *,
+    model_name: str,
+    model_type: str,
+    namespace: str,
+    resource_user_id: int,
 ) -> dict[str, Any]:
-    """Resolve the Model CRD referenced by a proxy token."""
-    user_id = payload.get("u")
-    namespace = payload.get("ns")
-    name = payload.get("n")
-    if (
-        not isinstance(user_id, int)
-        or not isinstance(namespace, str)
-        or not isinstance(name, str)
-    ):
-        raise LLMProxyTokenError("Malformed proxy token")
+    """Resolve one authorized Model CRD by its complete resource identity."""
+    if model_type not in SUPPORTED_MODEL_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported cloud model type: {model_type}",
+        )
+    _validate_model_access(
+        db,
+        current_user,
+        model_type,
+        namespace,
+        resource_user_id,
+    )
 
-    kind, model_spec = _find_model_with_namespace(db, name, user_id)
-    if not model_spec:
-        raise LLMProxyConfigurationError(f"Model '{name}' not found")
-    if kind and kind.namespace != namespace:
-        raise LLMProxyConfigurationError(f"Model '{name}' namespace mismatch")
-    return _extract_model_config(model_spec)
+    kind = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == resource_user_id,
+            Kind.kind == "Model",
+            Kind.namespace == namespace,
+            Kind.name == model_name,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    if not kind or not kind.json:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cloud model not found",
+        )
+    return extract_and_process_model_config(
+        model_spec=kind.json.get("spec", {}),
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
 
 
-def _extract_bearer_token(request: Request) -> str:
-    """Extract the proxy token from the ``Authorization: Bearer`` header."""
-    auth = request.headers.get("authorization") or ""
-    parts = auth.split()
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1]
-    raise LLMProxyTokenError("Missing or invalid Authorization header")
+def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
+    try:
+        body = json.loads(body_bytes)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM proxy request body must be valid JSON",
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM proxy request body must be an object",
+        )
+    model_name = body.get("model")
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LLM proxy request model is required",
+        )
+    return body, model_name.strip()
 
 
 async def proxy_llm_responses(
     request: Request,
     db: Session,
+    current_user: User,
 ) -> StreamingResponse:
-    """Validate token and stream the LLM responses request to the provider."""
-    token = _extract_bearer_token(request)
-    payload = decode_llm_proxy_token(token, db)
-    model_config = resolve_llm_proxy_model_config(db, payload)
-    user_id = payload["u"]
+    """Resolve a cloud model for the authenticated user and stream its response."""
+    body_json, model_name = _parse_request_body(await request.body())
+    model_type = _required_header(request, MODEL_TYPE_HEADER)
+    namespace = _required_header(request, MODEL_NAMESPACE_HEADER)
+    resource_user_id = _resource_user_id(request)
+    model_config = resolve_llm_proxy_model_config(
+        db,
+        current_user,
+        model_name=model_name,
+        model_type=model_type,
+        namespace=namespace,
+        resource_user_id=resource_user_id,
+    )
 
     provider_base_url = str(model_config.get("base_url") or "").strip()
     provider_api_key = str(model_config.get("api_key") or "").strip()
     provider_model_id = str(model_config.get("model_id") or "").strip()
     default_headers = model_config.get("default_headers") or {}
-
-    if not provider_base_url or not provider_api_key or not provider_model_id:
-        logger.error("LLM proxy model configuration incomplete for user %s", user_id)
+    if not provider_base_url or not provider_model_id:
+        logger.error(
+            "LLM proxy model configuration incomplete for user %s model %s",
+            current_user.id,
+            model_name,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Model configuration incomplete",
         )
 
-    body_bytes = await request.body()
-    try:
-        body_json = json.loads(body_bytes)
-        if isinstance(body_json, dict):
-            request_model = body_json.get("model")
-            if request_model is not None and str(request_model) != provider_model_id:
-                logger.warning(
-                    "LLM proxy request model mismatch for user %s: "
-                    "requested=%s, crd=%s",
-                    user_id,
-                    request_model,
-                    provider_model_id,
-                )
-            body_json["model"] = provider_model_id
-            body_bytes = json.dumps(body_json).encode("utf-8")
-    except json.JSONDecodeError:
-        logger.warning("LLM proxy received non-JSON body from user %s", user_id)
-
+    body_json["model"] = provider_model_id
+    body_bytes = json.dumps(body_json).encode("utf-8")
     upstream_url = f"{provider_base_url.rstrip('/')}/responses"
 
-    provider_headers: dict[str, str] = {}
-    for key, value in default_headers.items():
-        provider_headers[str(key)] = str(value)
-    provider_headers["Authorization"] = f"Bearer {provider_api_key}"
+    configured_headers = (
+        {str(key): str(value) for key, value in default_headers.items()}
+        if isinstance(default_headers, dict)
+        else {}
+    )
+    custom_headers = _extract_custom_upstream_headers(request)
+    provider_headers = _merge_headers_case_insensitive(
+        configured_headers,
+        custom_headers,
+    )
+    protocol_headers: dict[str, str] = {}
+    if provider_api_key:
+        protocol_headers["Authorization"] = f"Bearer {provider_api_key}"
     content_type = request.headers.get("content-type")
     if content_type:
-        provider_headers["Content-Type"] = content_type
+        protocol_headers["Content-Type"] = content_type
     accept = request.headers.get("accept")
     if accept:
-        provider_headers["Accept"] = accept
+        protocol_headers["Accept"] = accept
+    provider_headers = _merge_headers_case_insensitive(
+        provider_headers,
+        protocol_headers,
+    )
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0))
     try:
@@ -305,7 +292,11 @@ async def proxy_llm_responses(
         upstream_response = await client.send(upstream_request, stream=True)
     except httpx.RequestError as exc:
         await client.aclose()
-        logger.error("LLM proxy upstream request failed for user %s: %s", user_id, exc)
+        logger.error(
+            "LLM proxy upstream request failed for user %s: %s",
+            current_user.id,
+            exc,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Upstream request failed: {exc}",

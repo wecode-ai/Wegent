@@ -154,7 +154,6 @@ def _build_codex_runtime_model_config(
     model_options: Optional[Dict[str, Any]] = None,
     db: Optional["Session"] = None,
     user_id: Optional[int] = None,
-    proxy_backend_base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a Codex-compatible model config for Wework runtime models.
 
@@ -164,12 +163,6 @@ def _build_codex_runtime_model_config(
     Wegent web frontend would use. Otherwise a minimal runtime config is built
     for runtime-only or official Codex models.
 
-    If ``proxy_backend_base_url`` is provided and the CRD carries explicit
-    provider credentials, the raw ``api_key`` is replaced by an encrypted
-    backend proxy token. The local executor then calls the backend gateway,
-    which resolves the token to the real credentials before contacting the
-    provider. This keeps provider API keys inside the backend when the WeWork
-    desktop client runs on a different machine.
     """
     requested_name = model_name
     options = model_options or {}
@@ -203,57 +196,28 @@ def _build_codex_runtime_model_config(
             _kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
             if model_spec:
                 full_config = _extract_model_config(model_spec)
-                if proxy_backend_base_url and _model_has_explicit_provider_credentials(
-                    full_config
-                ):
-                    from app.services.llm_proxy_service import (
-                        create_llm_proxy_token,
+                resolved_config = {
+                    "model": "openai",
+                    "model_id": str(full_config.get("model_id") or model_name),
+                    "api_format": "responses",
+                    "protocol": "openai-responses",
+                    "base_url": str(full_config.get("base_url") or "").strip(),
+                    "api_key": str(full_config.get("api_key") or "").strip(),
+                }
+                if full_config.get("default_headers"):
+                    resolved_config["default_headers"] = dict(
+                        full_config["default_headers"]
                     )
-
-                    namespace = _kind.namespace if _kind else "default"
-                    proxy_token = create_llm_proxy_token(
-                        db,
-                        user_id,
-                        namespace,
-                        model_name,
-                    )
-                    proxy_base_url = proxy_backend_base_url.rstrip("/")
-                    resolved_config = {
-                        "model": "openai",
-                        "model_id": str(full_config.get("model_id") or model_name),
-                        "api_format": "responses",
-                        "protocol": "openai-responses",
-                        "base_url": f"{proxy_base_url}/llm-responses-proxy",
-                        "api_key": proxy_token,
-                        "codex_responses_compat_proxy": True,
-                    }
-                else:
-                    resolved_config = {
-                        "model": "openai",
-                        "model_id": str(full_config.get("model_id") or model_name),
-                        "api_format": "responses",
-                        "protocol": "openai-responses",
-                        "base_url": str(full_config.get("base_url") or "").strip(),
-                        "api_key": str(full_config.get("api_key") or "").strip(),
-                    }
-                    if full_config.get("default_headers"):
-                        resolved_config["default_headers"] = dict(
-                            full_config["default_headers"]
-                        )
-                    if full_config.get("context_window") is not None:
-                        resolved_config["context_window"] = full_config[
-                            "context_window"
-                        ]
-                    if full_config.get("max_output_tokens") is not None:
-                        resolved_config["max_output_tokens"] = full_config[
-                            "max_output_tokens"
-                        ]
-                    if full_config.get("temperature") is not None:
-                        resolved_config["temperature"] = full_config["temperature"]
-                    if full_config.get("think_config"):
-                        resolved_config["think_config"] = dict(
-                            full_config["think_config"]
-                        )
+                if full_config.get("context_window") is not None:
+                    resolved_config["context_window"] = full_config["context_window"]
+                if full_config.get("max_output_tokens") is not None:
+                    resolved_config["max_output_tokens"] = full_config[
+                        "max_output_tokens"
+                    ]
+                if full_config.get("temperature") is not None:
+                    resolved_config["temperature"] = full_config["temperature"]
+                if full_config.get("think_config"):
+                    resolved_config["think_config"] = dict(full_config["think_config"])
         except Exception:
             pass
 

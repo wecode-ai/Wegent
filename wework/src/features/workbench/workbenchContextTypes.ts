@@ -89,6 +89,13 @@ export interface CreateTemporaryRuntimeTaskOptions {
   onError?: (error: string) => void
 }
 
+export interface CreateProjectRuntimeTaskOptions {
+  project: ProjectWithTasks
+  attachments?: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput | null
+  onError?: (error: string) => void
+}
+
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
 }
@@ -184,6 +191,7 @@ export interface WorkbenchContextValue {
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
+  markRuntimeTaskStarted: (address: RuntimeTaskAddress) => void
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
@@ -287,7 +295,15 @@ export interface WorkbenchContextValue {
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
-  retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
+  createProjectRuntimeTask: (
+    input: string,
+    options: CreateProjectRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  retryFailedMessage: (
+    messageId: string,
+    messagesOverride?: WorkbenchMessage[],
+    retryUserMessageOverride?: WorkbenchMessage
+  ) => Promise<boolean>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,

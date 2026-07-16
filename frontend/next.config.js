@@ -153,6 +153,16 @@ const nextConfig = {
           },
         ],
       },
+      {
+        // Versioned Flyfish workers, WASM, fonts and vendor assets
+        source: '/file-viewer/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
     ]
   },
 }

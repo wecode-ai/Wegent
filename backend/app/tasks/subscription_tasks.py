@@ -587,6 +587,7 @@ async def _create_subscription_task(
         git_repo_id=ws.git_repo_id,
         git_domain=ws.git_domain,
         branch_name=ws.branch_name,
+        task_type="task" if resolved_device_id else None,
         device_id=resolved_device_id,
     )
 
@@ -650,6 +651,7 @@ def _add_subscription_labels_to_task(
 
     Sets:
     - type='subscription': Mark this as a Subscription-triggered task
+    - taskType='task': Restore task-mode capabilities for device subscriptions
     - userInteracted='false': Task hidden from history until user interacts
     - subscriptionId: Associated Subscription ID
     - executionId/backgroundExecutionId: Associated execution record ID
@@ -682,6 +684,8 @@ def _add_subscription_labels_to_task(
         )
     # Subscription task identification
     task_crd.metadata.labels["type"] = "subscription"
+    if task_crd.spec.device_id:
+        task_crd.metadata.labels["taskType"] = "task"
     task_crd.metadata.labels["userInteracted"] = "false"
     # Subscription-specific labels
     task_crd.metadata.labels[LABEL_SUBSCRIPTION_ID] = str(subscription_id)

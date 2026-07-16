@@ -15,6 +15,8 @@ export interface WorkspaceTextFileResponse {
   path: string
   name: string
   content: string
+  editable: boolean
+  revision: string
   truncated: boolean
   size: number
   modifiedAt?: string | null
@@ -39,6 +41,12 @@ export interface WorkspaceFileApi {
     cancellationToken?: string
   ) => Promise<import('./api').RuntimeWorkspaceSearchResponse>
   readWorkspaceTextFile: (deviceId: string, filePath: string) => Promise<WorkspaceTextFileResponse>
+  writeWorkspaceTextFile?: (
+    deviceId: string,
+    filePath: string,
+    content: string,
+    expectedRevision: string
+  ) => Promise<WorkspaceTextFileResponse>
   readWorkspaceFileChunk?: (
     deviceId: string,
     filePath: string,

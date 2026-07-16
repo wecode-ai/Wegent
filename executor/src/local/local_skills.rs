@@ -506,9 +506,7 @@ fn file_mtime(path: &Path) -> Option<f64> {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn codex_home_dir() -> PathBuf {

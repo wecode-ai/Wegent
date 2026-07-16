@@ -12,6 +12,7 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import {
+  supportsResponsesApi,
   withModelExecutionOverride,
   type HybridModelSource,
 } from '@/features/cloud-connection/modelExecution'
@@ -47,7 +48,6 @@ import type {
 const LOCAL_DEVICE_ID = 'local-device'
 
 export interface HybridWorkbenchServicesOptions {
-  backendUrl: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
@@ -121,6 +121,8 @@ function annotateHybridModel(
       source,
       modelName: model.name,
       modelType: model.type,
+      modelNamespace: model.namespace,
+      resourceUserId: model.resourceUserId,
     }
   )
 }
@@ -128,38 +130,46 @@ function annotateHybridModel(
 function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.map(model => {
     if (!isRuntimeCodexModel(model)) {
-      return withModelExecutionOverride(
-        { ...model, name: `local:${model.type}:${model.name}` },
-        { source: 'local', modelName: model.name, modelType: model.type }
-      )
+      return withModelExecutionOverride(model, {
+        source: 'local',
+        modelName: model.name,
+        modelType: model.type,
+        modelNamespace: model.namespace,
+        resourceUserId: model.resourceUserId,
+      })
     }
 
     return annotateHybridModel(
       model,
       'local',
-      `local:${model.type}:${model.name}`,
-      `${model.displayName || model.modelId || model.name} (本机)`,
-      `${model.displayName || model.modelId || model.name} 本机`
+      model.name,
+      model.displayName || model.modelId || model.name,
+      model.displayName || model.modelId || model.name
     )
   })
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.map(model => {
+  return models.filter(supportsResponsesApi).map(model => {
     if (!isRuntimeCodexModel(model)) {
-      return withModelExecutionOverride(model, {
-        source: 'cloud',
-        modelName: model.name,
-        modelType: model.type,
-      })
+      return withModelExecutionOverride(
+        { ...model, name: `cloud:${model.type}:${model.name}` },
+        {
+          source: 'cloud',
+          modelName: model.name,
+          modelType: model.type,
+          modelNamespace: model.namespace,
+          resourceUserId: model.resourceUserId,
+        }
+      )
     }
 
     return annotateHybridModel(
       model,
       'cloud',
       `cloud:${model.type}:${model.name}`,
-      `${model.displayName || model.modelId || model.name} (云端)`,
-      `${model.displayName || model.modelId || model.name} 云端`
+      model.displayName || model.modelId || model.name,
+      model.displayName || model.modelId || model.name
     )
   })
 }
@@ -304,16 +314,9 @@ export function createHybridWorkbenchServices(
     transportKind: 'backend-relay',
   })
   const localServices = createLocalAppServices({
-    resolveCloudModelConfig: async (modelId, modelType, modelOptions) => {
-      if (!cloudServices.runtimeWorkApi) {
-        throw new Error('Cloud runtime work API is unavailable')
-      }
-      const response = await cloudServices.runtimeWorkApi.resolveModelConfig({
-        modelId,
-        modelType,
-        modelOptions,
-      })
-      return response.modelConfig
+    cloudModelGateway: {
+      baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
+      apiKey: options.token,
     },
   })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
@@ -451,6 +454,17 @@ export function createHybridWorkbenchServices(
     },
     readWorkspaceFileChunk(deviceId, filePath, offset) {
       return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset)
+    },
+    writeWorkspaceTextFile(deviceId, filePath, content, expectedRevision) {
+      if (!isLocalDeviceId(deviceId) || !localServices.deviceApi.writeWorkspaceTextFile) {
+        throw new Error('Workspace file editing is only available for local devices')
+      }
+      return localServices.deviceApi.writeWorkspaceTextFile(
+        deviceId,
+        filePath,
+        content,
+        expectedRevision
+      )
     },
     createDockerRemoteDeviceCommand(data) {
       if (!cloudServices.deviceApi.createDockerRemoteDeviceCommand) {
@@ -693,12 +707,6 @@ export function createHybridWorkbenchServices(
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
-    },
-    resolveModelConfig(data) {
-      if (!cloudServices.runtimeWorkApi) {
-        throw new Error('Cloud runtime work API is unavailable')
-      }
-      return cloudServices.runtimeWorkApi.resolveModelConfig(data)
     },
   }
 

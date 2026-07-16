@@ -10,14 +10,15 @@ The Settings module provides configuration functionality for the Wegent system, 
 
 ## 📋 Documentation in This Module
 
-| Document                                                  | Description                                                    |
-| --------------------------------------------------------- | -------------------------------------------------------------- |
-| [Agent Settings](./agent-settings.md)                     | Configure Agents, Bots, prompts, and collaboration modes       |
-| [Configuring Models](./configuring-models.md)             | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)       |
-| [Configuring Shells](./configuring-shells.md)             | Configure runtime environments (ClaudeCode, Dify, Chat)        |
-| [Managing Skills](./managing-skills.md)                   | Upload, manage, and use Skill capability extension packages    |
-| [Keyboard Shortcuts](./keyboard-shortcuts.md)             | Manage local shortcuts for the Wework desktop app              |
-| [Desktop App Preferences](./desktop-app-preferences.md)   | Configure Wework desktop launch, background, and tray behavior |
+| Document                                                | Description                                                    |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| [Agent Settings](./agent-settings.md)                   | Configure Agents, Bots, prompts, and collaboration modes       |
+| [Configuring Models](./configuring-models.md)           | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)       |
+| [Configuring Shells](./configuring-shells.md)           | Configure runtime environments (ClaudeCode, Dify, Chat)        |
+| [Managing Skills](./managing-skills.md)                 | Upload, manage, and use Skill capability extension packages    |
+| [Keyboard Shortcuts](./keyboard-shortcuts.md)           | Manage local shortcuts for the Wework desktop app              |
+| [Desktop App Preferences](./desktop-app-preferences.md) | Configure Wework desktop launch, background, and tray behavior |
+| [Browser settings](./browser-settings.md)               | Configure built-in browser links, privacy, and downloads       |
 
 ---
 
@@ -74,6 +75,8 @@ Desktop Wework settings can show archived Project and Conversation chats. Deleti
 ### Desktop App Preferences
 
 Desktop Wework's **General** settings control the interface language, whether the main window is shown after launch, and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.
+
+Desktop Wework's **Integrations → Appshots** settings show macOS Appshots status and sound preference. The default `⌘⇧2` shortcut captures the frontmost application window and adds the PNG snapshot to the current Wework composer.
 
 ### Wework Context Settings
 

@@ -1,4 +1,5 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
@@ -97,6 +98,8 @@ interface MessageListProps {
   loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onAddSelectionToConversation?: (text: string) => void
+  onAskSelectionInSidebar?: (text: string) => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -106,6 +109,14 @@ interface MessageListProps {
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
+const SELECTION_ACTION_GAP = 8
+
+interface MessageTextSelection {
+  text: string
+  left: number
+  top: number
+  conversationKey?: string | number | null
+}
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
@@ -149,11 +160,15 @@ export const MessageList = memo(function MessageList({
   loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onAddSelectionToConversation,
+  onAskSelectionInSidebar,
   renderGapAfterMessage,
 }: MessageListProps) {
+  const { t } = useTranslation('common')
   const listRef = useRef<HTMLDivElement>(null)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
+  const [textSelection, setTextSelection] = useState<MessageTextSelection | null>(null)
   const [layoutWidth, setLayoutWidth] = useState(0)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
@@ -172,7 +187,10 @@ export const MessageList = memo(function MessageList({
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const lastVisibleMessage = visibleMessages.at(-1)
-  const waitingForAssistantTurn = !lastVisibleMessage || lastVisibleMessage.role === 'user'
+  const waitingForAssistantTurn =
+    !lastVisibleMessage ||
+    lastVisibleMessage.role === 'user' ||
+    lastVisibleMessage.status === 'failed'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     waitingForAssistantTurn &&
@@ -228,25 +246,45 @@ export const MessageList = memo(function MessageList({
   }, [])
 
   useEffect(() => {
-    if (isTauri) {
-      return
-    }
+    if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
 
     const updateSelectionState = () => {
       const selection = document.getSelection?.()
       const root = listRef.current
       if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
         setIsTextSelectionActive(false)
+        setTextSelection(null)
         return
       }
 
       const selectionTouchesList =
         isNodeInsideElement(selection.anchorNode, root) ||
         isNodeInsideElement(selection.focusNode, root)
-      setIsTextSelectionActive(selectionTouchesList)
+      setIsTextSelectionActive(!isTauri && selectionTouchesList)
+      if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
+
+      const range = selection.getRangeAt(0)
+      const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
+      if (selectedMessageBodies.length !== 1) {
+        setTextSelection(null)
+        return
+      }
+
+      const text = selection.toString().trim()
+      if (!text) {
+        setTextSelection(null)
+        return
+      }
+      const rect = range.getBoundingClientRect()
+      setTextSelection({
+        text,
+        left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
+        top: Math.max(rect.top - SELECTION_ACTION_GAP, 44),
+        conversationKey,
+      })
     }
 
-    const handlePointerUp = () => {
+    const scheduleSelectionUpdate = () => {
       window.requestAnimationFrame(updateSelectionState)
     }
 
@@ -254,18 +292,31 @@ export const MessageList = memo(function MessageList({
       updateSelectionState()
     }
 
-    document.addEventListener('pointerup', handlePointerUp)
-    document.addEventListener('pointercancel', handlePointerUp)
-    document.addEventListener('selectionchange', updateSelectionState)
+    document.addEventListener('pointerup', scheduleSelectionUpdate)
+    document.addEventListener('pointercancel', scheduleSelectionUpdate)
+    document.addEventListener('mouseup', scheduleSelectionUpdate)
+    document.addEventListener('keyup', scheduleSelectionUpdate)
+    document.addEventListener('selectionchange', scheduleSelectionUpdate)
+    window.addEventListener('scroll', updateSelectionState, true)
     window.addEventListener('blur', handleBlur)
 
     return () => {
-      document.removeEventListener('pointerup', handlePointerUp)
-      document.removeEventListener('pointercancel', handlePointerUp)
-      document.removeEventListener('selectionchange', updateSelectionState)
+      document.removeEventListener('pointerup', scheduleSelectionUpdate)
+      document.removeEventListener('pointercancel', scheduleSelectionUpdate)
+      document.removeEventListener('mouseup', scheduleSelectionUpdate)
+      document.removeEventListener('keyup', scheduleSelectionUpdate)
+      document.removeEventListener('selectionchange', scheduleSelectionUpdate)
+      window.removeEventListener('scroll', updateSelectionState, true)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [isTauri])
+  }, [conversationKey, isTauri, onAddSelectionToConversation, onAskSelectionInSidebar])
+
+  const applySelectionAction = (action: (text: string) => void) => {
+    if (!textSelection) return
+    action(textSelection.text)
+    document.getSelection()?.removeAllRanges()
+    setTextSelection(null)
+  }
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
@@ -273,6 +324,34 @@ export const MessageList = memo(function MessageList({
 
   return (
     <div ref={listRef} className={cn(listLayoutClass, className)}>
+      {textSelection &&
+        textSelection.conversationKey === conversationKey &&
+        createPortal(
+          <div
+            data-testid="message-selection-actions"
+            className="fixed z-critical flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-lg border border-border bg-base p-1 shadow-lg"
+            style={{ left: textSelection.left, top: textSelection.top }}
+            onPointerDown={event => event.preventDefault()}
+          >
+            <button
+              type="button"
+              data-testid="add-selection-to-conversation-button"
+              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => applySelectionAction(onAddSelectionToConversation!)}
+            >
+              {t('workbench.add_selection_to_conversation')}
+            </button>
+            <button
+              type="button"
+              data-testid="ask-selection-in-sidebar-button"
+              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => applySelectionAction(onAskSelectionInSidebar!)}
+            >
+              {t('workbench.ask_selection_in_sidebar')}
+            </button>
+          </div>,
+          document.body
+        )}
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -358,6 +437,26 @@ function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSPro
   } as CSSProperties
 }
 
+function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(
+    element => selectedTextWithinElement(range, element).trim().length > 0
+  )
+}
+
+function selectedTextWithinElement(range: Range, element: HTMLElement): string {
+  if (!range.intersectsNode(element)) return ''
+
+  const intersection = document.createRange()
+  intersection.selectNodeContents(element)
+  if (intersection.compareBoundaryPoints(Range.START_TO_START, range) < 0) {
+    intersection.setStart(range.startContainer, range.startOffset)
+  }
+  if (intersection.compareBoundaryPoints(Range.END_TO_END, range) > 0) {
+    intersection.setEnd(range.endContainer, range.endOffset)
+  }
+  return intersection.toString()
+}
+
 function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
   if (!node) return false
 
@@ -411,6 +510,12 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       : null,
     previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
       ? 'hiddenRequestUserInputIds'
+      : null,
+    previous.onAddSelectionToConversation !== next.onAddSelectionToConversation
+      ? 'onAddSelectionToConversation'
+      : null,
+    previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
+      ? 'onAskSelectionInSidebar'
       : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
@@ -756,6 +861,7 @@ function UserMessage({
           >
             <div
               data-testid="user-message-content"
+              data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
@@ -1598,11 +1704,13 @@ function AssistantMessage({
             />
           ) : null}
           {hasVisibleContent ? (
-            <AssistantMarkdown
-              content={visibleContent}
-              isStreaming={isStreaming}
-              onOpenFile={openFileFromLink}
-            />
+            <div data-message-selectable-text data-testid="assistant-message-content">
+              <AssistantMarkdown
+                content={visibleContent}
+                isStreaming={isStreaming}
+                onOpenFile={openFileFromLink}
+              />
+            </div>
           ) : null}
           {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (

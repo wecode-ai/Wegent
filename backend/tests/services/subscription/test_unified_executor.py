@@ -7,12 +7,13 @@
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.subscription.unified_executor import (
     SubscriptionExecutionData,
+    _build_subscription_execution_request,
     _execute_http_callback,
     execute_subscription_unified,
 )
@@ -72,6 +73,63 @@ async def test_http_callback_dispatch_preserves_device_id():
     dispatch_mock.assert_awaited_once()
     _, kwargs = dispatch_mock.await_args
     assert kwargs["device_id"] == "local-device-1"
+
+
+@pytest.mark.asyncio
+async def test_subscription_request_includes_selected_device_id():
+    """The request sent to a device must retain its selected device context."""
+    execution_data = SubscriptionExecutionData(
+        subscription_id=88,
+        execution_id=2,
+        task_id=544,
+        subtask_id=670,
+        user_id=2,
+        team_id=73,
+        user_subtask_id=669,
+        device_id="local-device-1",
+        prompt="hello",
+        model_override_name=None,
+        preserve_history=False,
+        history_message_count=0,
+        subscription_name="echo",
+        subscription_display_name="Echo",
+        team_display_name="Team",
+        trigger_type="cron",
+        trigger_reason="Scheduled",
+    )
+    objects = SimpleNamespace(
+        task=object(),
+        assistant_subtask=object(),
+        team=object(),
+        user=object(),
+    )
+    db = MagicMock()
+
+    @contextmanager
+    def fake_get_db_session():
+        yield db
+
+    build_request = AsyncMock(return_value=object())
+    with (
+        patch(
+            "app.services.subscription.unified_executor.get_db_session",
+            fake_get_db_session,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._load_subscription_execution_objects",
+            return_value=objects,
+        ),
+        patch(
+            "app.services.subscription.unified_executor._detach_subscription_execution_objects"
+        ),
+        patch(
+            "app.services.chat.trigger.unified.build_execution_request",
+            build_request,
+        ),
+    ):
+        await _build_subscription_execution_request(execution_data)
+
+    assert build_request.await_args.kwargs["device_id"] == "local-device-1"
 
 
 @pytest.mark.asyncio

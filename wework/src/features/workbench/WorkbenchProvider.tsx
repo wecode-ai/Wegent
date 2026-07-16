@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
@@ -52,7 +53,7 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
-import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import { getRuntimePaneTaskExecution, hasRunningRuntimeTask } from './runtimePaneStatus'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -170,10 +171,24 @@ export function WorkbenchProvider({
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
-  const currentRuntimeTaskRunning = useMemo(
+  const authoritativeRuntimeTaskRunning = useMemo(
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
+  const currentRuntimeTaskRunning = useMemo(
+    () =>
+      authoritativeRuntimeTaskRunning ||
+      (state.currentRuntimeTask !== null &&
+        state.activeRuntimeTasks.some(
+          address =>
+            getRuntimeTaskRouteKey(address) === getRuntimeTaskRouteKey(state.currentRuntimeTask!)
+        )),
+    [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
+  )
+  const deferLocalExecutorConnectionUpdate =
+    state.isBootstrapping ||
+    state.activeRuntimeTasks.length > 0 ||
+    hasRunningRuntimeTask(state.runtimeWork)
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,
@@ -732,7 +747,7 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     runtimeTasks,
-    currentRuntimeTaskRunning,
+    authoritativeRuntimeTaskRunning,
     projectExecutionMode,
     projectWorktreeBranch,
     isOptionsLocked,
@@ -748,7 +763,12 @@ export function WorkbenchProvider({
     (error: string | null) => dispatch({ type: 'error_set', error }),
     [dispatch]
   )
+  const markRuntimeTaskStarted = useCallback(
+    (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_started', address }),
+    [dispatch]
+  )
   const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
+  const stableMarkRuntimeTaskStarted = useStableEvent(markRuntimeTaskStarted)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
@@ -887,6 +907,7 @@ export function WorkbenchProvider({
   const stableCreateTemporaryRuntimeTask = useStableEvent(
     runtimeMessaging.createTemporaryRuntimeTask
   )
+  const stableCreateProjectRuntimeTask = useStableEvent(runtimeMessaging.createProjectRuntimeTask)
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
@@ -961,6 +982,7 @@ export function WorkbenchProvider({
       listWorkspaceEntries: executorClient.files.listWorkspaceEntries,
       searchWorkspaceEntries: executorClient.files.searchWorkspaceEntries,
       readWorkspaceTextFile: executorClient.files.readWorkspaceTextFile,
+      writeWorkspaceTextFile: executorClient.files.writeWorkspaceTextFile,
       readWorkspaceFileChunk: executorClient.files.readWorkspaceFileChunk,
     }),
     [executorClient]
@@ -1154,6 +1176,7 @@ export function WorkbenchProvider({
     getRuntimeGoal: runtimeTasks.getRuntimeGoal,
     setRuntimeGoal: runtimeTasks.setRuntimeGoal,
     clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
+    markRuntimeTaskStarted,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     getImNotificationSettings,
@@ -1197,6 +1220,7 @@ export function WorkbenchProvider({
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
     createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
+    createProjectRuntimeTask: runtimeMessaging.createProjectRuntimeTask,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
     loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
@@ -1236,6 +1260,7 @@ export function WorkbenchProvider({
       getRuntimeGoal: stableGetRuntimeGoal,
       setRuntimeGoal: stableSetRuntimeGoal,
       clearRuntimeGoal: stableClearRuntimeGoal,
+      markRuntimeTaskStarted: stableMarkRuntimeTaskStarted,
       listImPrivateSessions: stableListImPrivateSessions,
       bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
@@ -1279,6 +1304,7 @@ export function WorkbenchProvider({
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
       createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
+      createProjectRuntimeTask: stableCreateProjectRuntimeTask,
       retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
       loadTurnFileChangesDiff: stableLoadTurnFileChangesDiff,
@@ -1309,6 +1335,7 @@ export function WorkbenchProvider({
       stableCreateGitWorkspaceProject,
       stableCreateProject,
       stableCreateTemporaryRuntimeTask,
+      stableCreateProjectRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
       stableGetDeviceHomeDirectory,
@@ -1325,6 +1352,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
+      stableMarkRuntimeTaskStarted,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,
@@ -1371,6 +1399,12 @@ export function WorkbenchProvider({
     <WorkbenchContext.Provider value={value}>
       <WorkbenchPaneContext.Provider value={paneValue}>
         <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
+        <LocalExecutorCloudBridge
+          backendUrl={cloudConnection.backendUrl}
+          deferConnectionUpdate={deferLocalExecutorConnectionUpdate}
+          isConnected={cloudConnection.isConnected}
+          token={cloudConnection.token}
+        />
         {children}
       </WorkbenchPaneContext.Provider>
     </WorkbenchContext.Provider>

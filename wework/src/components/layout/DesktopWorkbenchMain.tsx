@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
+  type RightWorkspaceChatTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
 } from './workspace-panels/RightWorkspacePanel'
@@ -44,9 +45,12 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { navigateTo } from '@/lib/navigation'
 import {
+  DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
@@ -215,6 +219,7 @@ function createBottomPanelWorkspaceKey({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -298,6 +303,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       renderPane={pane => (
         <DesktopWorkbenchPane
           pane={pane}
+          workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
@@ -324,6 +330,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
 const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   pane,
+  workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
   onSidebarCollapsedChange,
@@ -331,6 +338,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPaneUnpinned,
 }: {
   pane: WorkbenchPaneIdentity
+  workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -343,7 +351,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     upgradingDevices,
     projectChat,
     upgradeDevice,
-    retryFailedMessage,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -425,6 +432,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
     (EmbeddedBrowserOpenRequest & { id: number }) | null
   >(null)
+  const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
+    id: number
+    text: string
+  } | null>(null)
+  const temporaryChatInitialInputsRef = useRef(new Map<RightWorkspaceChatTab, string>())
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     null
   )
@@ -636,6 +648,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     migratedEmbeddedBrowserLabel,
   ])
 
+  useEffect(() => {
+    if (paneActive || migratedEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+
+    void relabelEmbeddedBrowser(DEFAULT_EMBEDDED_BROWSER_LABEL, defaultEmbeddedBrowserLabel)
+      .then(() => {
+        markEmbeddedBrowserLabelTransferred(DEFAULT_EMBEDDED_BROWSER_LABEL)
+        setMigratedEmbeddedBrowserLabel(null)
+      })
+      .catch(error => {
+        console.error('Failed to preserve embedded browser for inactive task:', error)
+      })
+  }, [defaultEmbeddedBrowserLabel, migratedEmbeddedBrowserLabel, paneActive])
+
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
     currentRuntimeTask,
     workspaceProjectId: workspaceProject?.id,
@@ -819,24 +844,70 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelView]
   )
-  const openTemporaryChatTab = useCallback(() => {
-    temporaryChatTabSequence.current += 1
-    openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
-  }, [openRightPanelTab])
+  const openTemporaryChatTab = useCallback(
+    (initialInput?: string) => {
+      temporaryChatTabSequence.current += 1
+      const tab: RightWorkspaceChatTab = `chat:${Date.now()}-${temporaryChatTabSequence.current}`
+      if (initialInput) temporaryChatInitialInputsRef.current.set(tab, initialInput)
+      openRightPanelTab(tab)
+    },
+    [openRightPanelTab]
+  )
+
+  const addSelectionToConversation = useCallback(
+    (selectedText: string) => {
+      setConversationSelectionInsertion(current => ({
+        id: (current?.id ?? 0) + 1,
+        text: selectedText,
+      }))
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLElement>(
+              '[data-testid="desktop-floating-composer-card"] [data-testid="chat-message-input"]'
+            )
+            ?.focus()
+        })
+      })
+    },
+    [setConversationSelectionInsertion]
+  )
+
+  const askSelectionInSidebar = useCallback(
+    (selectedText: string) => openTemporaryChatTab(selectedText),
+    [openTemporaryChatTab]
+  )
+  const embeddedBrowserListenerStateRef = useRef({
+    embeddedBrowserLabel,
+    openRightPanelTab,
+    paneActive,
+  })
+  useEffect(() => {
+    embeddedBrowserListenerStateRef.current = {
+      embeddedBrowserLabel,
+      openRightPanelTab,
+      paneActive,
+    }
+  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (request.label && request.label !== embeddedBrowserLabel) return
-      setEmbeddedBrowserOpenRequest(current => ({
+      const current = embeddedBrowserListenerStateRef.current
+      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !current.paneActive) return
+      if (request.label && request.label !== current.embeddedBrowserLabel) {
+        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+        setMigratedEmbeddedBrowserLabel(request.label)
+      }
+      setEmbeddedBrowserOpenRequest(previous => ({
         ...request,
-        id: (current?.id ?? 0) + 1,
+        id: (previous?.id ?? 0) + 1,
       }))
-      openRightPanelTab('browser')
+      current.openRightPanelTab('browser')
     })
 
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [embeddedBrowserLabel, openRightPanelTab])
+  }, [])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -850,6 +921,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      if (tab.startsWith('chat:')) {
+        temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+      }
       if (tab === 'files') {
         setOpenFileRequest(null)
       }
@@ -1306,15 +1380,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-0 flex h-full shrink-0 items-center pr-1',
+            'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
             MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
           )}
         >
           <DesktopWindowControls
             sidebarCollapsed
             onToggleSidebar={() => onSidebarCollapsedChange(false)}
-            onNewChat={startNewChat}
             className="gap-1"
+          />
+          <DesktopAppSwitcher
+            activeApp="wework"
+            onNavigate={app =>
+              navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+            }
           />
         </div>
       )}
@@ -1437,7 +1516,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
-            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto] overflow-y-auto',
+            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
+            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
@@ -1535,6 +1615,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           />
                         ) : (
                           <BufferedChatInput
+                            insertion={conversationSelectionInsertion}
                             value={paneSession.input}
                             onChange={paneSession.setInput}
                             onSubmit={paneSession.send}
@@ -1584,7 +1665,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                 devices={devices}
                 onRetryFailedMessage={message => {
-                  void retryFailedMessage(message.id, paneMessages)
+                  void paneSession.retryFailedMessage(message)
                 }}
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)
@@ -1626,6 +1707,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 canEditLastUserMessage={canEditLastUserMessage}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                onAddSelectionToConversation={addSelectionToConversation}
+                onAskSelectionInSidebar={askSelectionInSidebar}
               />
             </div>
           ) : (
@@ -1735,7 +1818,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
-              visible={paneActive && rightPanelOpen}
+              visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
@@ -1766,6 +1849,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
             />
           )}
         </div>

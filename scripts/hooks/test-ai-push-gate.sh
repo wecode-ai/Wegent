@@ -10,10 +10,12 @@ CALL_LOG="$TMP_DIR/calls.log"
 DEFAULT_TEST_OUT="$(mktemp "${TMP_DIR}/default-test.XXXXXX")"
 FULL_TEST_OUT="$(mktemp "${TMP_DIR}/full-test.XXXXXX")"
 WEWORK_TEST_OUT="$(mktemp "${TMP_DIR}/wework-test.XXXXXX")"
+FRONTEND_TEST_OUT="$(mktemp "${TMP_DIR}/frontend-test.XXXXXX")"
 EXECUTOR_TEST_OUT="$(mktemp "${TMP_DIR}/executor-test.XXXXXX")"
 EXECUTOR_FULL_TEST_OUT="$(mktemp "${TMP_DIR}/executor-full-test.XXXXXX")"
 ROOT_NODE_MODULES_CREATED=0
 WEWORK_NODE_MODULES_CREATED=0
+FRONTEND_NODE_MODULES_CREATED=0
 
 cleanup() {
     if [ "$ROOT_NODE_MODULES_CREATED" = "1" ]; then
@@ -21,6 +23,9 @@ cleanup() {
     fi
     if [ "$WEWORK_NODE_MODULES_CREATED" = "1" ]; then
         rmdir "$PROJECT_ROOT/wework/node_modules" 2>/dev/null || true
+    fi
+    if [ "$FRONTEND_NODE_MODULES_CREATED" = "1" ]; then
+        rmdir "$PROJECT_ROOT/frontend/node_modules" 2>/dev/null || true
     fi
     rm -rf "$TMP_DIR"
 }
@@ -55,6 +60,18 @@ ensure_wework_node_modules() {
     if [ ! -d "$PROJECT_ROOT/wework/node_modules" ]; then
         mkdir "$PROJECT_ROOT/wework/node_modules"
         WEWORK_NODE_MODULES_CREATED=1
+    fi
+}
+
+ensure_frontend_node_modules() {
+    if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
+        mkdir "$PROJECT_ROOT/node_modules"
+        ROOT_NODE_MODULES_CREATED=1
+    fi
+
+    if [ ! -d "$PROJECT_ROOT/frontend/node_modules" ]; then
+        mkdir "$PROJECT_ROOT/frontend/node_modules"
+        FRONTEND_NODE_MODULES_CREATED=1
     fi
 }
 
@@ -124,6 +141,35 @@ fi
 
 if ! grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     echo "Expected Wework changes to run unit tests through the Wework package script."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+# This range moved a Next.js route and verifies stale generated route types are
+# refreshed before the frontend TypeScript check.
+FRONTEND_REMOTE_SHA="1a08f48e8^"
+FRONTEND_LOCAL_SHA="1a08f48e8"
+
+ensure_frontend_node_modules
+
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$FRONTEND_TEST_OUT" 2>&1
+refs/heads/topic $FRONTEND_LOCAL_SHA refs/heads/topic $FRONTEND_REMOTE_SHA
+EOF
+
+if ! grep -qE '^pnpm --filter wecode-ai-assistant exec next typegen$' "$CALL_LOG"; then
+    echo "Expected frontend changes to regenerate Next.js route types."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --filter wecode-ai-assistant exec tsc --noEmit$' "$CALL_LOG"; then
+    echo "Expected frontend changes to run the TypeScript check after route type generation."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1

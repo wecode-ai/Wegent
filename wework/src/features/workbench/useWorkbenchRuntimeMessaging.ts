@@ -41,6 +41,7 @@ import type {
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import type {
+  CreateProjectRuntimeTaskOptions,
   CreateTemporaryRuntimeTaskOptions,
   RuntimePaneActionOptions,
   RuntimePaneGuidanceResult,
@@ -101,7 +102,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   runtimeTasks: WorkbenchRuntimeTasks
-  currentRuntimeTaskRunning: boolean
+  authoritativeRuntimeTaskRunning: boolean
   projectExecutionMode: string
   projectWorktreeBranch: string | null
   isOptionsLocked: boolean
@@ -141,7 +142,7 @@ export function useWorkbenchRuntimeMessaging({
   executorClient,
   services,
   runtimeTasks,
-  currentRuntimeTaskRunning,
+  authoritativeRuntimeTaskRunning,
   projectExecutionMode,
   projectWorktreeBranch,
   isOptionsLocked,
@@ -773,7 +774,7 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
           return false
         }
-        if (currentRuntimeTaskRunning) {
+        if (authoritativeRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'), undefined, options)
           return false
         }
@@ -881,7 +882,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       attachmentSelection,
       buildSendPayload,
-      currentRuntimeTaskRunning,
+      authoritativeRuntimeTaskRunning,
       modelSelection,
       reportSendBlocked,
       sendPreparedRuntimeMessage,
@@ -894,7 +895,11 @@ export function useWorkbenchRuntimeMessaging({
   )
 
   const retryFailedMessage = useCallback(
-    async (messageId: string, messagesOverride?: WorkbenchMessage[]) => {
+    async (
+      messageId: string,
+      messagesOverride?: WorkbenchMessage[],
+      retryUserMessageOverride?: WorkbenchMessage
+    ): Promise<boolean> => {
       const messageSource = messagesOverride ?? []
       const failedMessageIndex = messageSource.findIndex(
         message =>
@@ -902,64 +907,55 @@ export function useWorkbenchRuntimeMessaging({
       )
       if (failedMessageIndex === -1) {
         dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
-        return
+        return false
       }
 
-      const previousUserMessage = [...messageSource]
-        .slice(0, failedMessageIndex)
-        .reverse()
-        .find(message => message.role === 'user')
+      const previousUserMessage =
+        retryUserMessageOverride?.role === 'user'
+          ? retryUserMessageOverride
+          : [...messageSource]
+              .slice(0, failedMessageIndex)
+              .reverse()
+              .find(message => message.role === 'user')
       if (!previousUserMessage) {
         dispatch({ type: 'error_set', error: '未找到可重试的用户消息' })
-        return
+        return false
       }
 
       if (state.currentRuntimeTask) {
-        if (currentRuntimeTaskRunning) {
-          reportSendBlocked(i18n.t('workbench.runtime_task_running_message'))
-          return
+        const runtimeSelectedModel =
+          modelSelection.getSelectedModel?.() ??
+          modelSelection.selectedModel ??
+          resolveAutomaticModel(modelSelection.models)
+        const runtimeSelectedModelOptions =
+          modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+        if (
+          isConfiguredLocalModel(runtimeSelectedModel) &&
+          !isLocalDeviceTarget(state.devices, state.currentRuntimeTask.deviceId)
+        ) {
+          reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
+          return false
         }
-        try {
-          const runtimeSelectedModel =
-            modelSelection.getSelectedModel?.() ??
-            modelSelection.selectedModel ??
-            resolveAutomaticModel(modelSelection.models)
-          const runtimeSelectedModelOptions =
-            modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
-          if (
-            isConfiguredLocalModel(runtimeSelectedModel) &&
-            !isLocalDeviceTarget(state.devices, state.currentRuntimeTask.deviceId)
-          ) {
-            reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
-            return
-          }
-          const response = await executorClient.runtime.sendRuntimeMessage({
-            address: state.currentRuntimeTask,
-            message: previousUserMessage.content,
-            ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
-          })
-          if (!response.accepted) {
-            throw new Error(response.error || '发送失败')
-          }
-          await refreshWorkLists()
-        } catch (error) {
-          dispatch({
-            type: 'error_set',
-            error: error instanceof Error ? error.message : '发送失败',
-          })
-        }
-        return
+        const previousAttachments = previousUserMessage.attachments ?? []
+        const attachmentIds = remoteAttachmentIds(previousAttachments)
+        const attachments = localRuntimeAttachments(previousAttachments)
+        return sendRuntimePaneMessage({
+          address: state.currentRuntimeTask,
+          message: previousUserMessage.content,
+          ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
+        })
       }
 
       reportSendBlocked('当前没有可重试的 LocalTask')
+      return false
     },
     [
-      currentRuntimeTaskRunning,
       dispatch,
-      executorClient,
       modelSelection,
-      refreshWorkLists,
       reportSendBlocked,
+      sendRuntimePaneMessage,
       state.currentRuntimeTask,
       state.devices,
     ]
@@ -1014,6 +1010,58 @@ export function useWorkbenchRuntimeMessaging({
     [
       buildSendPayload,
       modelSelection,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.defaultTeam,
+      state.devices,
+    ]
+  )
+
+  const createProjectRuntimeTask = useCallback(
+    async (
+      input: string,
+      options: CreateProjectRuntimeTaskOptions
+    ): Promise<RuntimeTaskAddress | false> => {
+      const message = input.trim()
+      if (!message) {
+        reportSendBlocked('请输入内容后再发送', undefined, options)
+        return false
+      }
+
+      const prepared = buildSendPayload(message, options.attachments, options.project)
+      if (!prepared) {
+        reportSendBlocked(
+          'Wework default team is not configured',
+          { hasDefaultTeam: Boolean(state.defaultTeam) },
+          options
+        )
+        return false
+      }
+      if (prepared.activeDeviceId) {
+        const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
+        if (!isWorkbenchDeviceOnline(activeDevice)) {
+          const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
+          reportSendBlocked(`${deviceName} 当前不可用`, undefined, options)
+          return false
+        }
+        if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
+          reportSendBlocked(
+            `${getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}`,
+            undefined,
+            options
+          )
+          return false
+        }
+      }
+
+      return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
+        initialGoal: options.initialGoal,
+        onError: options.onError,
+        openInMainPane: false,
+      })
+    },
+    [
+      buildSendPayload,
       reportSendBlocked,
       sendPreparedRuntimeMessage,
       state.defaultTeam,
@@ -1158,6 +1206,7 @@ export function useWorkbenchRuntimeMessaging({
     cancelRuntimePaneTask,
     sendCurrentInput,
     createTemporaryRuntimeTask,
+    createProjectRuntimeTask,
     retryFailedMessage,
     pauseCurrentResponse,
     loadTurnFileChangesDiff,

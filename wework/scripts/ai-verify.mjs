@@ -7,9 +7,9 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,11 +26,12 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|press|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
+  --target SELECTOR         Event target selector for pointer-move (default: body)
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
@@ -198,7 +199,6 @@ async function runServer(sessionPath, token) {
   const executorHome = join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
   await mkdir(codexHome, { recursive: true })
-  await symlink(join(homedir(), '.codex', 'auth.json'), join(codexHome, 'auth.json'))
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
@@ -316,7 +316,10 @@ async function main() {
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
     fill: 'fill',
+    hover: 'hover',
+    'pointer-move': 'pointerMove',
     press: 'press',
+    'select-text': 'selectText',
     'wait-for': 'waitFor',
     text: 'getText',
   }[command]
@@ -330,6 +333,7 @@ async function main() {
     (command === 'capture' ||
     command === 'snapshot' ||
     command === 'text' ||
+    command === 'pointer-move' ||
     command === 'close-to-tray'
       ? 'body'
       : null)
@@ -337,6 +341,7 @@ async function main() {
   const value = await request(session, session.token, '/command', 'POST', {
     action,
     selector,
+    target: options.target,
     value: options.value,
     key: options.key,
     text: options.text,

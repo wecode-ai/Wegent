@@ -19,6 +19,7 @@ import { createUserApi } from '@/api/users'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import { createChatStream } from '@/stream/chatStream'
 import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 
 export interface WorkbenchServices {
@@ -47,6 +48,7 @@ export interface WorkbenchServices {
     | 'readWorkspaceTextFile'
     | 'readWorkspaceFileChunk'
   > & {
+    writeWorkspaceTextFile?: NonNullable<WorkspaceFileApi['writeWorkspaceTextFile']>
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi
     >['createDockerRemoteDeviceCommand']
@@ -111,7 +113,6 @@ export function createDefaultWorkbenchServices(
       cloudConnection.token
     ) {
       return createHybridWorkbenchServices({
-        backendUrl: cloudConnection.backendUrl,
         apiBaseUrl: cloudConnection.apiBaseUrl,
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,

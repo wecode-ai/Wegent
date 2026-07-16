@@ -1,7 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
-  "version": "0.0.14",
+  "mainBinaryName": "WeWork",
+  "version": "0.0.18",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",

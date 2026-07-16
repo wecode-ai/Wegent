@@ -387,6 +387,8 @@
         "title": "Document Detail",
         "backToList": "Back to List",
         "summary": "Document Summary",
+        "derivedSummary": "AI Summary (based on parsed content)",
+        "refreshSummary": "Refresh AI summary",
         "status": "Status",
         "statusValues": {
           "pending": "Pending",
@@ -397,6 +399,8 @@
         "topics": "Topics",
         "metaInfo": "Metadata",
         "content": "Document Content",
+        "parsedContent": "Parsed Content",
+        "sourceFile": "Original File",
         "truncated": "Content Truncated",
         "copy": "Copy",
         "copied": "Copied",
@@ -429,7 +433,18 @@
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype",
         "qaPairsDetected": "{{count}} Q/A pairs detected",
-        "contentUpdatedAt": "Updated"
+        "contentUpdatedAt": "Updated",
+        "sourcePreview": {
+          "loading": "Loading original file...",
+          "download": "Download original",
+          "downloadFailed": "Failed to download the original file",
+          "tooLargeTitle": "File is too large for online preview",
+          "tooLargeDescription": "This file is {{size}}, which exceeds the current {{limit}} preview limit. Download it to continue.",
+          "fetchFailedTitle": "Unable to load the original file",
+          "fetchFailedDescription": "The original file could not be loaded. Check your network connection or access permissions, then retry.",
+          "renderFailedTitle": "Original file preview failed",
+          "renderFailedDescription": "The file may be damaged, encrypted, or use unsupported Office features. Retry the preview or download the original file."
+        }
       },
       "downloadFailed": "Failed to download file",
       "fetchFailed": "Failed to fetch documents",

@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wegent_executor::local::{
     app_ipc::{
-        app_ipc_listening_log_line, app_ipc_socket_path, AppIpcError, AppIpcServer,
-        RuntimeWorkHandler,
+        app_ipc_listening_log_line, local_app_ipc_addr_file_path, read_app_ipc_addr_file,
+        AppIpcError, AppIpcServer, RuntimeWorkHandler,
     },
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
@@ -805,6 +805,27 @@ async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
 }
 
 #[tokio::test]
+async fn app_ipc_health_check_confirms_bidirectional_transport() {
+    let server = AppIpcServer::new();
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-health",
+                "method": "executor.health",
+                "params": {}
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["status"], "healthy");
+}
+
+#[tokio::test]
 async fn app_ipc_unknown_method_returns_protocol_error() {
     let server = AppIpcServer::new();
 
@@ -826,25 +847,33 @@ async fn app_ipc_unknown_method_returns_protocol_error() {
 }
 
 #[tokio::test]
-async fn app_ipc_socket_path_can_be_overridden() {
+async fn app_ipc_addr_can_be_overridden() {
     let _lock = env_lock().await;
-    let socket_path = std::env::temp_dir().join("wegent-executor-local-app.sock");
-    let _socket = EnvGuard::set(
-        "WEGENT_EXECUTOR_APP_IPC_SOCKET",
-        &socket_path.display().to_string(),
-    );
+    let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:17490");
+    let server = AppIpcServer::new();
+    let task = tokio::spawn(async move { server.serve_forever().await });
 
-    assert_eq!(app_ipc_socket_path(), socket_path);
+    let mut addr = None;
+    for _ in 0..50 {
+        if let Some(found) = read_app_ipc_addr_file() {
+            addr = Some(found);
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+
+    task.abort();
+    let _ = std::fs::remove_file(local_app_ipc_addr_file_path());
+
+    assert_eq!(addr, Some("127.0.0.1:17490".parse().unwrap()));
 }
 
 #[test]
-fn app_ipc_listening_log_line_includes_device_and_socket_path() {
-    let line = app_ipc_listening_log_line("device-1", "/tmp/wegent executor/app-ipc.sock");
+fn app_ipc_listening_log_line_includes_device_and_addr() {
+    let line = app_ipc_listening_log_line("device-1", "127.0.0.1:17490");
 
     assert_log_timestamp(&line);
-    assert!(line.ends_with(
-        " app IPC listening device_id=device-1 socket_path=\"/tmp/wegent executor/app-ipc.sock\""
-    ));
+    assert!(line.ends_with(" app IPC listening device_id=device-1 addr=127.0.0.1:17490"));
 }
 
 fn assert_log_timestamp(line: &str) {
@@ -856,31 +885,30 @@ fn assert_log_timestamp(line: &str) {
     assert_eq!(timestamp.as_bytes()[16], b':');
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn app_ipc_socket_serves_ready_event_and_responses() {
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::UnixStream,
+        net::TcpStream,
         time::{sleep, Duration},
     };
 
-    let socket_path = std::env::temp_dir().join(format!(
-        "wegent-executor-local-app-ipc-{}.sock",
-        std::process::id()
-    ));
+    let _lock = env_lock().await;
+    let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:0");
     let server = AppIpcServer::new().with_device_id("device-1");
-    let server_socket_path = socket_path.clone();
-    let task = tokio::spawn(async move { server.serve_forever(server_socket_path).await });
+    let task = tokio::spawn(async move { server.serve_forever().await });
 
+    let mut bound_addr = None;
     for _ in 0..50 {
-        if socket_path.exists() {
+        if let Some(addr) = read_app_ipc_addr_file() {
+            bound_addr = Some(addr);
             break;
         }
         sleep(Duration::from_millis(10)).await;
     }
+    let bound_addr = bound_addr.expect("server did not write app IPC address file");
 
-    let stream = UnixStream::connect(&socket_path).await.unwrap();
+    let stream = TcpStream::connect(bound_addr).await.unwrap();
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -914,7 +942,7 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 
     task.abort();
-    let _ = std::fs::remove_file(socket_path);
+    let _ = std::fs::remove_file(local_app_ipc_addr_file_path());
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {

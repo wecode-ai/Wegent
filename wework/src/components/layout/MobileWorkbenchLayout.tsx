@@ -82,7 +82,6 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     upgradingDevices,
     projectChat,
     upgradeDevice,
-    retryFailedMessage,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
@@ -325,7 +324,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
               onRetryFailedMessage={message => {
-                void retryFailedMessage(message.id, paneMessages)
+                void paneSession.retryFailedMessage(message)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={(subtaskId, fileChanges) =>

@@ -1,6 +1,9 @@
 import type { ModelType, UnifiedModel } from '@/types/api'
 
 const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
+const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
+const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
+const RESPONSES_API_FORMAT = 'responses'
 
 export type HybridModelSource = 'local' | 'cloud'
 
@@ -8,12 +11,29 @@ export interface ModelExecutionOverride {
   source: HybridModelSource
   modelName: string
   modelType: ModelType
+  modelNamespace?: string
+  resourceUserId?: number
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+function normalizedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+export function supportsResponsesApi(model: UnifiedModel): boolean {
+  const config = recordValue(model.config)
+  return (
+    normalizedString(model.runtime?.family) === OPENAI_RESPONSES_RUNTIME_FAMILY ||
+    normalizedString(config?.protocol) === OPENAI_RESPONSES_PROTOCOL ||
+    normalizedString(config?.apiFormat) === RESPONSES_API_FORMAT ||
+    normalizedString(config?.api_format) === RESPONSES_API_FORMAT ||
+    normalizedString(config?.wire_api) === RESPONSES_API_FORMAT
+  )
 }
 
 export function withModelExecutionOverride(
@@ -47,6 +67,12 @@ export function getModelExecutionOverride(
       source: override.source,
       modelName: override.modelName,
       modelType: override.modelType,
+      ...(typeof override.modelNamespace === 'string'
+        ? { modelNamespace: override.modelNamespace }
+        : {}),
+      ...(typeof override.resourceUserId === 'number'
+        ? { resourceUserId: override.resourceUserId }
+        : {}),
     }
   }
   return null
@@ -55,16 +81,22 @@ export function getModelExecutionOverride(
 export function resolveModelExecutionSelection(model: UnifiedModel): {
   modelName: string
   modelType: ModelType
+  modelNamespace?: string
+  resourceUserId?: number
 } {
   const override = getModelExecutionOverride(model)
   if (override) {
     return {
       modelName: override.modelName,
       modelType: override.modelType,
+      modelNamespace: override.modelNamespace,
+      resourceUserId: override.resourceUserId,
     }
   }
   return {
     modelName: model.name,
     modelType: model.type,
+    modelNamespace: model.namespace,
+    resourceUserId: model.resourceUserId,
   }
 }

@@ -21,15 +21,19 @@ type DesktopControlAction =
   | 'closeMainWindowToTray'
   | 'fill'
   | 'getText'
+  | 'hover'
+  | 'pointerMove'
   | 'snapshot'
   | 'waitFor'
   | 'press'
+  | 'selectText'
 
 interface DesktopControlCommand {
   id: string
   action: DesktopControlAction
   selector: string
   value?: string
+  target?: string
   text?: string
   timeoutMs?: number
   enabled?: boolean
@@ -261,6 +265,55 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
   return !('disabled' in element) || !(element as HTMLButtonElement).disabled
 }
 
+function desktopControlEventOptions(element: HTMLElement): MouseEventInit & PointerEventInit {
+  const rect = element.getBoundingClientRect()
+  const clientX = Math.max(0, Math.floor(rect.left + rect.width / 2))
+  const clientY = Math.max(0, Math.floor(rect.top + rect.height / 2))
+  return {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+    clientY,
+    composed: true,
+    pointerId: 1,
+    pointerType: 'mouse',
+    isPrimary: true,
+  }
+}
+
+function dispatchDesktopControlPointerEvent(
+  element: HTMLElement,
+  type: string,
+  options: MouseEventInit & PointerEventInit
+) {
+  if (typeof PointerEvent === 'function' && type.startsWith('pointer')) {
+    element.dispatchEvent(new PointerEvent(type, options))
+    return
+  }
+  element.dispatchEvent(new MouseEvent(type.replace(/^pointer/, 'mouse'), options))
+}
+
+function hoverDesktopControlElement(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  element.scrollIntoView({ block: 'center', inline: 'center' })
+  const options = desktopControlEventOptions(element)
+  for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove']) {
+    dispatchDesktopControlPointerEvent(element, type, options)
+  }
+  return element.textContent?.trim() ?? ''
+}
+
+function moveDesktopControlPointer(command: DesktopControlCommand): string {
+  const selector = command.target ?? command.selector
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const options = desktopControlEventOptions(element)
+  dispatchDesktopControlPointerEvent(element, 'pointermove', options)
+  element.dispatchEvent(new MouseEvent('mousemove', options))
+  return element.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -327,6 +380,26 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
+function selectDesktopControlText(selector: string, value: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node && !node.textContent?.includes(value)) node = walker.nextNode()
+  if (!node) throw new Error(`Unable to find text "${value}" inside selector "${selector}"`)
+
+  const start = node.textContent?.indexOf(value) ?? -1
+  const range = document.createRange()
+  range.setStart(node, start)
+  range.setEnd(node, start + value.length)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  document.dispatchEvent(new Event('selectionchange'))
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  return value
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -370,6 +443,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'hover':
+      return hoverDesktopControlElement(command.selector)
+    case 'pointerMove':
+      return moveDesktopControlPointer(command)
     case 'press': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -380,6 +457,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return element.textContent?.trim() ?? ''
     }
+    case 'selectText':
+      return selectDesktopControlText(command.selector, command.value ?? '')
   }
 }
 

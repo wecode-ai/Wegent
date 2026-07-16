@@ -1,3 +1,4 @@
+mod appshots;
 mod desktop_capture;
 mod embedded_browser;
 mod local_executor;
@@ -22,6 +23,8 @@ struct PickedWorkspacePath {
 #[cfg(all(desktop, target_os = "macos"))]
 fn pick_workspace_paths_on_macos(
     initial_directory: Option<String>,
+    directories_only: bool,
+    multiple: bool,
 ) -> Result<Vec<PickedWorkspacePath>, String> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
@@ -30,16 +33,17 @@ fn pick_workspace_paths_on_macos(
     let main_thread = MainThreadMarker::new()
         .ok_or_else(|| "The workspace picker must run on the main thread".to_string())?;
     let panel = NSOpenPanel::openPanel(main_thread);
-    panel.setCanChooseFiles(true);
+    panel.setCanChooseFiles(!directories_only);
     panel.setCanChooseDirectories(true);
-    panel.setAllowsMultipleSelection(true);
+    panel.setAllowsMultipleSelection(multiple);
     panel.setCanCreateDirectories(true);
     if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
         let directory = NSString::from_str(&directory);
         let url = NSURL::fileURLWithPath_isDirectory(&directory, true);
         panel.setDirectoryURL(Some(&url));
     }
-    if panel.runModal() != NSModalResponseOK {
+    let response = panel.runModal();
+    if response != NSModalResponseOK {
         return Ok(Vec::new());
     }
 
@@ -61,21 +65,40 @@ fn pick_workspace_paths_on_macos(
 async fn pick_workspace_paths(
     app: tauri::AppHandle,
     initial_directory: Option<String>,
+    directories_only: Option<bool>,
+    multiple: Option<bool>,
+    default_to_home: Option<bool>,
 ) -> Result<Vec<PickedWorkspacePath>, String> {
+    let directories_only = directories_only.unwrap_or(false);
+    let multiple = multiple.unwrap_or(true);
+    let initial_directory = initial_directory
+        .filter(|path| !path.trim().is_empty())
+        .or_else(|| {
+            default_to_home
+                .unwrap_or(false)
+                .then(|| app.path().home_dir().ok())
+                .flatten()
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+
     #[cfg(all(desktop, target_os = "macos"))]
     {
         let (sender, receiver) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
-            let _ = sender.send(pick_workspace_paths_on_macos(initial_directory));
+            let _ = sender.send(pick_workspace_paths_on_macos(
+                initial_directory,
+                directories_only,
+                multiple,
+            ));
         })
         .map_err(|error| format!("Failed to open the workspace picker: {error}"))?;
-        return tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             receiver
                 .recv()
                 .map_err(|_| "Workspace picker closed unexpectedly".to_string())?
         })
         .await
-        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
     }
 
     #[cfg(not(all(desktop, target_os = "macos")))]
@@ -83,13 +106,24 @@ async fn pick_workspace_paths(
         use tauri_plugin_dialog::DialogExt;
 
         let mut picker = app.dialog().file();
-        if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
+        if let Some(directory) = initial_directory {
             picker = picker.set_directory(directory);
         }
-        let files = tauri::async_runtime::spawn_blocking(move || picker.blocking_pick_files())
-            .await
-            .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
-            .unwrap_or_default();
+        let files = tauri::async_runtime::spawn_blocking(move || {
+            if directories_only {
+                if multiple {
+                    picker.blocking_pick_folders().unwrap_or_default()
+                } else {
+                    picker.blocking_pick_folder().into_iter().collect()
+                }
+            } else if multiple {
+                picker.blocking_pick_files().unwrap_or_default()
+            } else {
+                picker.blocking_pick_file().into_iter().collect()
+            }
+        })
+        .await
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
         return Ok(files
             .into_iter()
             .filter_map(|file| file.into_path().ok())
@@ -134,6 +168,13 @@ const TRAY_MENU_TASK_PREFIX: &str = "task:";
 const TRAY_ID: &str = "wework-main";
 #[cfg(desktop)]
 const TRAY_USAGE_ICON_HEIGHT: u32 = 22;
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_STATUS_ICON_SIZE: u32 = TRAY_USAGE_ICON_HEIGHT;
+#[cfg(all(desktop, not(target_os = "macos")))]
+const TRAY_STATUS_ICON_SIZE: u32 = 32;
+#[cfg(all(desktop, target_os = "windows"))]
+const WINDOWS_TRAY_ICON_BYTES: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/128x128.png"));
 #[cfg(desktop)]
 const TRAY_USAGE_ICON_LEFT_PADDING: u32 = 0;
 #[cfg(desktop)]
@@ -239,7 +280,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory.clone(),
-                file_name: Some(rust_log_file_name.into()),
+                file_name: Some(rust_log_file_name),
             })
             .filter(|metadata| {
                 !metadata
@@ -250,7 +291,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory,
-                file_name: Some(webview_log_file_name.into()),
+                file_name: Some(webview_log_file_name),
             })
             .filter(|metadata| {
                 metadata
@@ -346,6 +387,16 @@ struct AppPreferences {
     tray_running_enabled: bool,
     #[serde(default = "default_true")]
     tray_usage_enabled: bool,
+    #[serde(default = "default_browser_external_link_target")]
+    browser_external_link_target: String,
+    #[serde(default = "default_browser_local_link_target")]
+    browser_local_link_target: String,
+    #[serde(default)]
+    browser_download_directory: Option<String>,
+    #[serde(default)]
+    browser_ask_before_download: bool,
+    #[serde(default = "default_true")]
+    appshots_play_sound: bool,
 }
 
 #[cfg(desktop)]
@@ -356,6 +407,16 @@ fn default_true() -> bool {
 #[cfg(desktop)]
 fn default_language_preference() -> String {
     "zh-CN".to_string()
+}
+
+#[cfg(desktop)]
+fn default_browser_external_link_target() -> String {
+    "system".to_string()
+}
+
+#[cfg(desktop)]
+fn default_browser_local_link_target() -> String {
+    "wework".to_string()
 }
 
 #[cfg(desktop)]
@@ -371,6 +432,11 @@ impl Default for AppPreferences {
             tray_unread_enabled: true,
             tray_running_enabled: true,
             tray_usage_enabled: true,
+            browser_external_link_target: default_browser_external_link_target(),
+            browser_local_link_target: default_browser_local_link_target(),
+            browser_download_directory: None,
+            browser_ask_before_download: false,
+            appshots_play_sound: true,
         }
     }
 }
@@ -388,6 +454,11 @@ struct AppPreferencesPatch {
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
     tray_usage_enabled: Option<bool>,
+    browser_external_link_target: Option<String>,
+    browser_local_link_target: Option<String>,
+    browser_download_directory: Option<String>,
+    browser_ask_before_download: Option<bool>,
+    appshots_play_sound: Option<bool>,
 }
 
 #[cfg(desktop)]
@@ -517,7 +588,25 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
     let Ok(content) = std::fs::read_to_string(path) else {
         return AppPreferences::default();
     };
-    serde_json::from_str::<AppPreferences>(&content).unwrap_or_default()
+    serde_json::from_str::<AppPreferences>(&content)
+        .map(normalize_app_preferences)
+        .unwrap_or_default()
+}
+
+#[cfg(desktop)]
+fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
+    preferences.browser_external_link_target = normalized_browser_link_target(
+        preferences.browser_external_link_target,
+        &default_browser_external_link_target(),
+    );
+    preferences.browser_local_link_target = normalized_browser_link_target(
+        preferences.browser_local_link_target,
+        &default_browser_local_link_target(),
+    );
+    preferences.browser_download_directory = preferences
+        .browser_download_directory
+        .and_then(normalized_non_empty);
+    preferences
 }
 
 #[cfg(desktop)]
@@ -762,6 +851,22 @@ fn update_app_preferences(
     if let Some(value) = patch.tray_usage_enabled {
         preferences.tray_usage_enabled = value;
     }
+    if let Some(value) = patch.browser_external_link_target {
+        preferences.browser_external_link_target = value;
+    }
+    if let Some(value) = patch.browser_local_link_target {
+        preferences.browser_local_link_target = value;
+    }
+    if let Some(value) = patch.browser_download_directory {
+        preferences.browser_download_directory = normalized_non_empty(value);
+    }
+    if let Some(value) = patch.browser_ask_before_download {
+        preferences.browser_ask_before_download = value;
+    }
+    preferences = normalize_app_preferences(preferences);
+    if let Some(value) = patch.appshots_play_sound {
+        preferences.appshots_play_sound = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -779,6 +884,11 @@ struct AppPreferences {
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
     tray_usage_enabled: bool,
+    browser_external_link_target: String,
+    browser_local_link_target: String,
+    browser_download_directory: Option<String>,
+    browser_ask_before_download: bool,
+    appshots_play_sound: bool,
 }
 
 #[cfg(not(desktop))]
@@ -794,6 +904,11 @@ struct AppPreferencesPatch {
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
     tray_usage_enabled: Option<bool>,
+    browser_external_link_target: Option<String>,
+    browser_local_link_target: Option<String>,
+    browser_download_directory: Option<String>,
+    browser_ask_before_download: Option<bool>,
+    appshots_play_sound: Option<bool>,
 }
 
 #[cfg(not(desktop))]
@@ -809,6 +924,11 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         tray_unread_enabled: true,
         tray_running_enabled: true,
         tray_usage_enabled: true,
+        browser_external_link_target: "system".to_string(),
+        browser_local_link_target: "wework".to_string(),
+        browser_download_directory: None,
+        browser_ask_before_download: false,
+        appshots_play_sound: true,
     })
 }
 
@@ -832,6 +952,19 @@ fn update_app_preferences(
         tray_unread_enabled: patch.tray_unread_enabled.unwrap_or(true),
         tray_running_enabled: patch.tray_running_enabled.unwrap_or(true),
         tray_usage_enabled: patch.tray_usage_enabled.unwrap_or(true),
+        browser_external_link_target: patch
+            .browser_external_link_target
+            .map(|value| normalized_browser_link_target(value, "system"))
+            .unwrap_or_else(|| "system".to_string()),
+        browser_local_link_target: patch
+            .browser_local_link_target
+            .map(|value| normalized_browser_link_target(value, "wework"))
+            .unwrap_or_else(|| "wework".to_string()),
+        browser_download_directory: patch
+            .browser_download_directory
+            .and_then(normalized_non_empty),
+        browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
+        appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
     })
 }
 
@@ -890,6 +1023,7 @@ struct ProcessDiagnosticsSnapshot {
     processes: Vec<ProcessDiagnosticsProcess>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
 struct RawProcessInfo {
     pid: u32,
@@ -899,6 +1033,7 @@ struct RawProcessInfo {
     command: String,
 }
 
+#[cfg(target_os = "macos")]
 fn parse_process_snapshot_line(line: &str) -> Option<RawProcessInfo> {
     let mut parts = line.split_whitespace();
     let pid = parts.next()?.parse::<u32>().ok()?;
@@ -919,6 +1054,7 @@ fn parse_process_snapshot_line(line: &str) -> Option<RawProcessInfo> {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn collect_descendant_pids(processes: &[RawProcessInfo], roots: &[u32]) -> HashSet<u32> {
     let mut children_by_parent = HashMap::<u32, Vec<u32>>::new();
     for process in processes {
@@ -1052,6 +1188,7 @@ fn process_physical_footprint_kib(pid: u32) -> Option<u64> {
     (result == 0).then_some(usage.ri_phys_footprint / 1024)
 }
 
+#[cfg(target_os = "macos")]
 fn classify_process(
     process: &RawProcessInfo,
     main_pid: u32,
@@ -1089,6 +1226,7 @@ fn classify_process(
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
+#[cfg(target_os = "macos")]
 fn get_wework_process_snapshot(
     local_terminal_state: tauri::State<'_, local_terminal::LocalTerminalState>,
 ) -> Result<ProcessDiagnosticsSnapshot, String> {
@@ -1189,6 +1327,14 @@ fn normalized_non_empty(value: String) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn normalized_browser_link_target(value: String, fallback: &str) -> String {
+    match value.trim() {
+        "system" => "system".to_string(),
+        "wework" => "wework".to_string(),
+        _ => fallback.to_string(),
     }
 }
 
@@ -1461,7 +1607,7 @@ fn reveal_local_file(path: String) -> Result<(), String> {
         if !status.success() {
             return Err("Failed to reveal local file".to_string());
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1555,6 +1701,7 @@ fn open_local_file_with_application(application_path: String, path: String) -> R
     open_local_workspace_with_app(&application_path, &path)
 }
 
+#[cfg(target_os = "macos")]
 fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -1875,8 +2022,7 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         }
         candidates.push(executor_home.join("device_id"));
     }
-    if let Ok(home) = std::env::var("HOME") {
-        let home = std::path::PathBuf::from(home);
+    if let Some(home) = dirs::home_dir() {
         if let Some(device_id) = read_device_config(
             home.join(".wecode")
                 .join("wegent-executor")
@@ -2285,6 +2431,15 @@ struct TrayMenuLabels {
 }
 
 #[cfg(desktop)]
+struct TrayTaskSection<'a> {
+    title: &'a str,
+    empty_text: &'a str,
+    items: &'a [TrayMenuTaskItem],
+    more_items: &'a [TrayMenuTaskItem],
+    always_visible: bool,
+}
+
+#[cfg(desktop)]
 fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     manager: &M,
     state: &TrayMenuStatePayload,
@@ -2295,46 +2450,54 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.unread_completed,
         labels.untitled_task,
-        "",
         labels.more,
-        &state.unread,
-        &state.unread_more,
-        false,
+        TrayTaskSection {
+            title: labels.unread_completed,
+            empty_text: "",
+            items: &state.unread,
+            more_items: &state.unread_more,
+            always_visible: false,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.running,
         labels.untitled_task,
-        "",
         labels.more,
-        &state.running,
-        &state.running_more,
-        false,
+        TrayTaskSection {
+            title: labels.running,
+            empty_text: "",
+            items: &state.running,
+            more_items: &state.running_more,
+            always_visible: false,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.pinned,
         labels.untitled_task,
-        labels.no_pinned_tasks,
         labels.more,
-        &state.pinned,
-        &state.pinned_more,
-        true,
+        TrayTaskSection {
+            title: labels.pinned,
+            empty_text: labels.no_pinned_tasks,
+            items: &state.pinned,
+            more_items: &state.pinned_more,
+            always_visible: true,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.tasks,
         labels.untitled_task,
-        labels.no_tasks,
         labels.more,
-        &state.recent,
-        &state.recent_more,
-        true,
+        TrayTaskSection {
+            title: labels.tasks,
+            empty_text: labels.no_tasks,
+            items: &state.recent,
+            more_items: &state.recent_more,
+            always_visible: true,
+        },
     )?;
 
     builder
@@ -2350,32 +2513,28 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
 fn append_tray_task_section<'m, M: Manager<tauri::Wry>>(
     mut builder: MenuBuilder<'m, tauri::Wry, M>,
     manager: &M,
-    title: &str,
     untitled_task: &str,
-    empty_text: &str,
     more: &str,
-    items: &[TrayMenuTaskItem],
-    more_items: &[TrayMenuTaskItem],
-    always_visible: bool,
+    section: TrayTaskSection<'_>,
 ) -> tauri::Result<MenuBuilder<'m, tauri::Wry, M>> {
-    if items.is_empty() && more_items.is_empty() && !always_visible {
+    if section.items.is_empty() && section.more_items.is_empty() && !section.always_visible {
         return Ok(builder);
     }
 
-    let heading = MenuItem::new(manager, title, false, None::<&str>)?;
+    let heading = MenuItem::new(manager, section.title, false, None::<&str>)?;
     builder = builder.item(&heading);
 
-    if items.is_empty() && more_items.is_empty() {
-        let empty_item = MenuItem::new(manager, empty_text, false, None::<&str>)?;
+    if section.items.is_empty() && section.more_items.is_empty() {
+        let empty_item = MenuItem::new(manager, section.empty_text, false, None::<&str>)?;
         builder = builder.item(&empty_item);
     } else {
-        for item in items {
+        for item in section.items {
             let title = normalized_menu_task_title(item, untitled_task);
             builder = builder.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
         }
-        if !more_items.is_empty() {
+        if !section.more_items.is_empty() {
             let mut submenu = SubmenuBuilder::new(manager, more);
-            for item in more_items {
+            for item in section.more_items {
                 let title = normalized_menu_task_title(item, untitled_task);
                 submenu = submenu.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
             }
@@ -2564,12 +2723,12 @@ fn draw_tray_text_scaled(
     buffer: &mut [u8],
     width: u32,
     height: u32,
-    x: u32,
-    y: u32,
+    origin: (u32, u32),
     text: &str,
     scale: (u32, u32),
     rgba: [u8; 4],
 ) {
+    let (x, y) = origin;
     let (numerator, denominator) = scale;
     let mut source_cursor_x = 0;
     for character in text.chars() {
@@ -2748,8 +2907,7 @@ fn draw_tray_unread_badge(
         buffer,
         width,
         height,
-        text_x,
-        text_y,
+        (text_x, text_y),
         &text,
         (3, 2),
         if cfg!(target_os = "macos") {
@@ -2847,17 +3005,24 @@ fn tray_status_icon(
     unread_count: usize,
 ) -> Option<tauri::image::Image<'static>> {
     let base_icon = base_icon?;
-    let icon_size = base_icon
-        .width()
-        .min(base_icon.height())
-        .min(TRAY_USAGE_ICON_HEIGHT);
-    let meter_width = TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP;
-    let width = icon_size + meter_width;
-    let height = TRAY_USAGE_ICON_HEIGHT.max(icon_size);
-    let mut buffer = vec![0; (width * height * 4) as usize];
     let source_width = base_icon.width();
     let source_height = base_icon.height();
     let source_size = source_width.min(source_height);
+    let icon_size = source_size.min(TRAY_STATUS_ICON_SIZE);
+    let meter_width = if show_running_status {
+        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP
+    } else {
+        0
+    };
+    let (width, height) = if cfg!(target_os = "macos") {
+        (
+            icon_size + meter_width,
+            TRAY_USAGE_ICON_HEIGHT.max(icon_size),
+        )
+    } else {
+        (icon_size + meter_width, icon_size)
+    };
+    let mut buffer = vec![0; (width * height * 4) as usize];
     let source_x = (source_width - source_size) / 2;
     let source_y = (source_height - source_size) / 2;
     let icon_y = (height - icon_size) / 2;
@@ -2926,11 +3091,31 @@ fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
             }
         });
 
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         tray = tray.icon_as_template(true);
+        if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
+            tray = tray.icon(icon);
+        }
     }
-    if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
-        tray = tray.icon(icon);
+    #[cfg(target_os = "windows")]
+    {
+        let icon = match tauri::image::Image::from_bytes(WINDOWS_TRAY_ICON_BYTES) {
+            Ok(icon) => Some(icon),
+            Err(error) => {
+                log::warn!("Failed to load embedded Windows tray icon: {error}");
+                app.default_window_icon().map(|icon| icon.to_owned())
+            }
+        };
+        if let Some(icon) = icon {
+            tray = tray.icon(icon);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
+            tray = tray.icon(icon);
+        }
     }
 
     tray.build(app)?;
@@ -2953,6 +3138,7 @@ fn update_tray_visual<R: tauri::Runtime>(
         return Ok(());
     }
 
+    #[cfg(target_os = "macos")]
     let icon = state
         .usage_title
         .as_deref()
@@ -2973,6 +3159,21 @@ fn update_tray_visual<R: tauri::Runtime>(
                 state.unread_count,
             )
         });
+    #[cfg(target_os = "windows")]
+    let icon = match tauri::image::Image::from_bytes(WINDOWS_TRAY_ICON_BYTES) {
+        Ok(icon) => Some(icon),
+        Err(error) => {
+            log::warn!("Failed to load embedded Windows tray icon: {error}");
+            app.default_window_icon().map(|icon| icon.to_owned())
+        }
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let icon = tray_status_icon(
+        app.default_window_icon(),
+        state.running_count,
+        state.show_running_status,
+        state.unread_count,
+    );
     if let Some(icon) = icon {
         tray.set_icon_with_as_template(Some(icon), cfg!(target_os = "macos"))
             .map_err(|error| format!("Failed to update tray icon: {error}"))?;
@@ -3007,17 +3208,19 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
-        can_replace_wework_cli_path, classify_process, collect_descendant_pids,
-        executor_home_attachment_root, install_wework_cli_impl, local_workspace_opener_app_name,
-        parse_local_workspace_open_request, parse_process_snapshot_line, tray_template_pixel,
-        tray_usage_icon, wework_cli_launcher_content, RawProcessInfo,
+        can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
+        local_workspace_opener_app_name, normalized_browser_link_target,
+        parse_local_workspace_open_request, tray_template_pixel, tray_usage_icon,
+        wework_cli_launcher_content,
     };
     #[cfg(target_os = "macos")]
     use super::{
-        parse_launch_services_processes, process_physical_footprint_kib,
-        related_macos_webkit_process_ids, LaunchServicesProcess,
+        classify_process, collect_descendant_pids, parse_launch_services_processes,
+        parse_process_snapshot_line, process_physical_footprint_kib,
+        related_macos_webkit_process_ids, LaunchServicesProcess, RawProcessInfo,
     };
     use std::collections::HashSet;
 
@@ -3104,6 +3307,23 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_browser_link_targets() {
+        assert_eq!(
+            normalized_browser_link_target("wework".to_string(), "system"),
+            "wework"
+        );
+        assert_eq!(
+            normalized_browser_link_target("  system  ".to_string(), "wework"),
+            "system"
+        );
+        assert_eq!(
+            normalized_browser_link_target("chrome".to_string(), "system"),
+            "system"
+        );
+    }
+
+    #[cfg(all(desktop, target_os = "macos"))]
+    #[test]
     fn renders_wework_cli_launcher_for_app_bundle() {
         let content = wework_cli_launcher_content(
             std::path::Path::new("/Applications/WeWork.app/Contents/MacOS/WeWork"),
@@ -3118,6 +3338,7 @@ mod tests {
         assert!(content.contains("exec open \"$APP_BUNDLE\" --args --open-workspace"));
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn bakes_configured_executor_sidecar_into_cli_launcher() {
         let previous = std::env::var_os("WEWORK_EXECUTOR_SIDECAR");
@@ -3138,6 +3359,7 @@ mod tests {
         }
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn installs_wework_cli_launcher_and_replaces_managed_files() {
         let temp_dir = test_temp_dir("install");
@@ -3163,6 +3385,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn refuses_to_replace_unmanaged_wework_cli_file() {
         let temp_dir = test_temp_dir("unmanaged");
@@ -3183,6 +3406,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn parses_process_snapshot_lines_with_spaced_commands() {
         let process =
@@ -3196,6 +3420,7 @@ mod tests {
         assert_eq!(process.command, "/Applications/WeWork.app/a b c");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn collects_descendant_processes() {
         let processes = vec![
@@ -3302,6 +3527,7 @@ mod tests {
         assert!(process_physical_footprint_kib(std::process::id()).is_some_and(|value| value > 0));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn classifies_wework_process_groups() {
         let terminal_roots = HashSet::from([3]);
@@ -3354,6 +3580,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     fn raw_process(pid: u32, ppid: u32, command: &str) -> RawProcessInfo {
         RawProcessInfo {
             pid,
@@ -3375,6 +3602,21 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init());
 
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| {
+                use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+
+                if event.state == ShortcutState::Pressed
+                    && shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Digit2)
+                {
+                    appshots::handle_shortcut(app);
+                }
+            })
+            .build(),
+    );
+
     #[cfg(all(desktop, not(debug_assertions)))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
         let action = if let Some(request) = parse_local_workspace_open_request(&argv) {
@@ -3389,6 +3631,7 @@ pub fn run() {
     }));
 
     let app = builder
+        .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
@@ -3430,10 +3673,8 @@ pub fn run() {
             }
 
             #[cfg(desktop)]
-            app.handle().plugin(
-                create_log_plugin(app.handle())
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?,
-            )?;
+            app.handle()
+                .plugin(create_log_plugin(app.handle()).map_err(std::io::Error::other)?)?;
 
             #[cfg(desktop)]
             println!(
@@ -3450,6 +3691,8 @@ pub fn run() {
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
+            #[cfg(desktop)]
+            appshots::setup(app.handle());
             #[cfg(desktop)]
             match install_wework_cli_link(app.handle()) {
                 Ok(path) => log::info!("Installed Wework CLI launcher: {}", path.display()),
@@ -3469,8 +3712,7 @@ pub fn run() {
                 maybe_show_main_window_on_launch(app.handle());
             }
             #[cfg(desktop)]
-            install_shutdown_signal_handler(app.handle().clone())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            install_shutdown_signal_handler(app.handle().clone()).map_err(std::io::Error::other)?;
             #[cfg(desktop)]
             if let Err(error) =
                 embedded_browser::start_embedded_browser_bridge(app.handle().clone())
@@ -3486,17 +3728,26 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            appshots::acknowledge_appshot,
+            appshots::get_appshots_status,
+            appshots::open_appshots_permission_settings,
+            appshots::take_pending_appshots,
+            appshots::take_pending_appshots_permission,
             desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_clear_data,
+            embedded_browser::embedded_browser_delete_download,
             embedded_browser::embedded_browser_eval,
             embedded_browser::embedded_browser_eval_json,
             embedded_browser::embedded_browser_go_back,
             embedded_browser::embedded_browser_go_forward,
             embedded_browser::embedded_browser_navigate,
             embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_pause_download,
             embedded_browser::embedded_browser_page_state,
             embedded_browser::embedded_browser_reload,
             embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
             pick_workspace_paths,
@@ -3507,6 +3758,7 @@ pub fn run() {
             local_executor::local_executor_disconnect_backend,
             local_executor::local_executor_ensure_started,
             local_executor::local_executor_initialize_codex_home,
+            local_executor::local_executor_import_external_content,
             local_executor::local_executor_migrate_native_codex_home,
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
@@ -3547,13 +3799,11 @@ pub fn run() {
         match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
-                has_visible_windows,
+                has_visible_windows: false,
                 ..
             } => {
-                if !has_visible_windows {
-                    if let Err(error) = ensure_main_window(app_handle, None) {
-                        log::warn!("Failed to reopen main window from macOS activation: {error}");
-                    }
+                if let Err(error) = ensure_main_window(app_handle, None) {
+                    log::warn!("Failed to reopen main window from macOS activation: {error}");
                 }
             }
             tauri::RunEvent::ExitRequested { api, .. } => {

@@ -1,20 +1,27 @@
+#[cfg(target_os = "macos")]
+use std::process::Command;
 use std::{
     collections::HashMap,
     env,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
-    process::Command,
-    sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Condvar, Mutex,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
-    webview::PageLoadEvent, Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size,
-    Webview, WebviewUrl, Wry,
+    webview::{DownloadEvent, PageLoadEvent},
+    Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
 };
+#[cfg(desktop)]
+use tauri_plugin_dialog::DialogExt;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const BROWSER_WEBVIEW_LABEL: &str = "workspace-browser";
@@ -25,10 +32,17 @@ const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
+const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
+const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
+const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
+static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Default)]
 pub struct EmbeddedBrowserState {
     webviews: Arc<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
+    downloads: Arc<Mutex<HashMap<String, EmbeddedBrowserDownloadControl>>>,
 }
 
 #[derive(Clone)]
@@ -84,6 +98,128 @@ struct EmbeddedBrowserOpenRequest {
     label: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddedBrowserDownloadPayload {
+    id: String,
+    label: String,
+    url: String,
+    path: Option<String>,
+    status: String,
+    received_bytes: Option<u64>,
+    total_bytes: Option<u64>,
+}
+
+#[derive(Clone)]
+struct EmbeddedBrowserDownloadControl {
+    app: tauri::AppHandle,
+    id: String,
+    label: String,
+    url: String,
+    path: PathBuf,
+    paused: Arc<(Mutex<bool>, Condvar)>,
+    cancelled: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    received_bytes: Arc<AtomicU64>,
+    total_bytes: Arc<AtomicU64>,
+}
+
+impl EmbeddedBrowserDownloadControl {
+    fn payload(&self, status: &str) -> EmbeddedBrowserDownloadPayload {
+        let received_bytes = self.received_bytes.load(Ordering::Relaxed);
+        let total_bytes = self.total_bytes.load(Ordering::Relaxed);
+        EmbeddedBrowserDownloadPayload {
+            id: self.id.clone(),
+            label: self.label.clone(),
+            url: self.url.clone(),
+            path: Some(self.path.to_string_lossy().to_string()),
+            status: status.to_string(),
+            received_bytes: Some(received_bytes),
+            total_bytes: (total_bytes > 0).then_some(total_bytes),
+        }
+    }
+
+    fn emit(&self, status: &str) {
+        let _ = self
+            .app
+            .emit(EMBEDDED_BROWSER_DOWNLOAD_EVENT, self.payload(status));
+    }
+}
+
+fn run_browser_download(state: EmbeddedBrowserState, control: EmbeddedBrowserDownloadControl) {
+    thread::spawn(move || {
+        if let Err(error) = stream_browser_download(&control) {
+            if !control.cancelled.load(Ordering::Relaxed) {
+                control.failed.store(true, Ordering::Relaxed);
+                log::warn!("Embedded browser download failed: {error}");
+                control.emit("failed");
+            }
+            return;
+        }
+        control.emit("finished");
+        if let Ok(mut downloads) = state.downloads.lock() {
+            downloads.remove(&control.id);
+        }
+    });
+}
+
+fn stream_browser_download(control: &EmbeddedBrowserDownloadControl) -> Result<(), String> {
+    let mut response = reqwest::blocking::Client::new()
+        .get(&control.url)
+        .send()
+        .map_err(|error| format!("Failed to request download: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Download request failed: {error}"))?;
+    if let Some(total_bytes) = response.content_length() {
+        control.total_bytes.store(total_bytes, Ordering::Relaxed);
+    }
+    let mut file = std::fs::File::create(&control.path)
+        .map_err(|error| format!("Failed to create download file: {error}"))?;
+    control.emit("progress");
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut last_progress_emit = Instant::now();
+    loop {
+        let (paused, wake) = &*control.paused;
+        let mut is_paused = paused
+            .lock()
+            .map_err(|_| "Download pause lock poisoned".to_string())?;
+        while *is_paused && !control.cancelled.load(Ordering::Relaxed) {
+            is_paused = wake
+                .wait(is_paused)
+                .map_err(|_| "Download pause lock poisoned".to_string())?;
+        }
+        drop(is_paused);
+        if control.cancelled.load(Ordering::Relaxed) {
+            return Err("Download cancelled".to_string());
+        }
+        let read = response
+            .read(&mut buffer)
+            .map_err(|error| format!("Failed to read download: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|error| format!("Failed to write download: {error}"))?;
+        control
+            .received_bytes
+            .fetch_add(read as u64, Ordering::Relaxed);
+        let is_paused = control
+            .paused
+            .0
+            .lock()
+            .map(|paused| *paused)
+            .unwrap_or(false);
+        if is_paused {
+            control.emit("paused");
+        } else if last_progress_emit.elapsed() >= Duration::from_millis(100) {
+            control.emit("progress");
+            last_progress_emit = Instant::now();
+        }
+    }
+    file.flush()
+        .map_err(|error| format!("Failed to finish download: {error}"))
+}
+
 struct NormalizedBounds {
     position: LogicalPosition<f64>,
     size: LogicalSize<f64>,
@@ -119,6 +255,77 @@ fn browser_label(label: Option<String>) -> String {
     label.unwrap_or_else(|| BROWSER_WEBVIEW_LABEL.to_string())
 }
 
+fn browser_data_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join(EMBEDDED_BROWSER_DATA_DIRECTORY))
+        .map_err(|error| format!("Failed to locate embedded browser data directory: {error}"))
+}
+
+#[cfg(desktop)]
+fn browser_download_destination(
+    app: &tauri::AppHandle,
+    suggested_destination: &Path,
+) -> Result<(PathBuf, String, bool), String> {
+    let preferences = crate::read_app_preferences_impl(app);
+    let suggested_name = suggested_destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("download")
+        .to_string();
+    let download_directory = preferences
+        .browser_download_directory
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(|| {
+            app.path()
+                .download_dir()
+                .map_err(|error| format!("Failed to locate download directory: {error}"))
+        })?;
+
+    std::fs::create_dir_all(&download_directory)
+        .map_err(|error| format!("Failed to create browser download directory: {error}"))?;
+    let destination = download_directory.join(&suggested_name);
+    Ok((
+        destination,
+        suggested_name,
+        preferences.browser_ask_before_download,
+    ))
+}
+
+fn start_managed_browser_download(
+    app: tauri::AppHandle,
+    state: EmbeddedBrowserState,
+    label: String,
+    url: String,
+    path: PathBuf,
+) {
+    let id = format!(
+        "browser-download-{}",
+        EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let control = EmbeddedBrowserDownloadControl {
+        app,
+        id: id.clone(),
+        label,
+        url,
+        path,
+        paused: Arc::new((Mutex::new(false), Condvar::new())),
+        cancelled: Arc::new(AtomicBool::new(false)),
+        failed: Arc::new(AtomicBool::new(false)),
+        received_bytes: Arc::new(AtomicU64::new(0)),
+        total_bytes: Arc::new(AtomicU64::new(0)),
+    };
+    if let Ok(mut downloads) = state.downloads.lock() {
+        downloads.insert(id, control.clone());
+    }
+    control.emit("started");
+    run_browser_download(state, control);
+}
+
 fn get_entry(state: &EmbeddedBrowserState, label: &str) -> Result<EmbeddedBrowserEntry, String> {
     state
         .webviews
@@ -149,15 +356,9 @@ fn page_state_for_label(
     label: &str,
 ) -> Result<EmbeddedBrowserPageState, String> {
     let entry = get_entry(state, label)?;
-    let url = entry
-        .webview
-        .url()
-        .ok()
-        .map(|url| url.to_string())
-        .or(entry.url);
     Ok(EmbeddedBrowserPageState {
         title: entry.title,
-        url,
+        url: entry.url,
     })
 }
 
@@ -223,7 +424,7 @@ fn eval_json(
     let result = receiver
         .recv_timeout(Duration::from_millis(timeout_ms))
         .map_err(|_| "Timed out waiting for embedded browser evaluation".to_string())?;
-    serde_json::from_str(&result).or_else(|_| Ok(Value::String(result)))
+    serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 
 async fn eval_json_nonblocking(
@@ -248,7 +449,7 @@ async fn eval_json_nonblocking(
     })
     .await
     .map_err(|error| format!("Failed to join embedded browser evaluation task: {error}"))??;
-    serde_json::from_str(&result).or_else(|_| Ok(Value::String(result)))
+    serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 
 fn json_string(value: &str) -> String {
@@ -429,6 +630,7 @@ fn screenshot_embedded_browser(
     Err("Embedded browser screenshots are currently supported on macOS only".to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn screenshot_path() -> Result<PathBuf, String> {
     let directory = std::env::temp_dir().join("wework-embedded-browser");
     std::fs::create_dir_all(&directory).map_err(|error| {
@@ -662,11 +864,7 @@ fn handle_bridge_connection(
 }
 
 pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String> {
-    let requested_addr = env::var(EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
-    let listener = TcpListener::bind(&requested_addr)
+    let listener = TcpListener::bind(EMBEDDED_BROWSER_BRIDGE_ADDR)
         .map_err(|error| format!("Failed to bind embedded browser bridge: {error}"))?;
     let listening_addr = listener
         .local_addr()
@@ -741,11 +939,17 @@ pub async fn embedded_browser_open(
     let label_for_title = label.clone();
 
     let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed_url))
+        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
+        .data_directory(browser_data_directory(&app)?)
+        .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
         .accept_first_mouse(true)
-        .on_page_load(move |webview, payload| {
+        .on_page_load(move |_webview, payload| {
             if matches!(payload.event(), PageLoadEvent::Finished) {
-                let current_url = webview.url().ok().map(|url| url.to_string());
-                let _ = set_entry_url(&load_state_handle, &label_for_load, current_url);
+                let _ = set_entry_url(
+                    &load_state_handle,
+                    &label_for_load,
+                    Some(payload.url().to_string()),
+                );
             }
         })
         .on_document_title_changed(move |_webview, title| {
@@ -755,6 +959,66 @@ pub async fn embedded_browser_open(
                 }
             }
         });
+
+    #[cfg(desktop)]
+    let builder = {
+        let download_app = app.clone();
+        let download_label = label.clone();
+        let download_state = state.inner().clone();
+        builder.on_download(move |_webview, event| match event {
+            DownloadEvent::Requested { url, destination } => {
+                match browser_download_destination(&download_app, destination) {
+                    Ok((path, suggested_name, ask_before_download)) => {
+                        let url = url.to_string();
+                        if ask_before_download {
+                            let callback_app = download_app.clone();
+                            let callback_state = download_state.clone();
+                            let callback_label = download_label.clone();
+                            download_app
+                                .dialog()
+                                .file()
+                                .set_directory(
+                                    path.parent().unwrap_or_else(|| std::path::Path::new("/")),
+                                )
+                                .set_file_name(&suggested_name)
+                                .save_file(move |selected| {
+                                    let Some(selected) = selected else {
+                                        return;
+                                    };
+                                    match selected.into_path() {
+                                        Ok(path) => start_managed_browser_download(
+                                            callback_app,
+                                            callback_state,
+                                            callback_label,
+                                            url,
+                                            path,
+                                        ),
+                                        Err(_) => {
+                                            log::warn!("Invalid browser download destination")
+                                        }
+                                    }
+                                });
+                        } else {
+                            start_managed_browser_download(
+                                download_app.clone(),
+                                download_state.clone(),
+                                download_label.clone(),
+                                url,
+                                path,
+                            );
+                        }
+                        false
+                    }
+                    Err(error) => {
+                        log::warn!("Failed to prepare embedded browser download: {error}");
+                        false
+                    }
+                }
+            }
+            DownloadEvent::Finished { .. } => true,
+            _ => true,
+        })
+    };
 
     let webview = window
         .add_child(builder, normalized_bounds.position, normalized_bounds.size)
@@ -811,6 +1075,77 @@ pub fn embedded_browser_set_bounds(
             .hide()
             .map_err(|error| format!("Failed to hide embedded browser: {error}"))?;
     }
+    Ok(())
+}
+
+fn browser_download_control(
+    state: &EmbeddedBrowserState,
+    id: &str,
+) -> Result<EmbeddedBrowserDownloadControl, String> {
+    state
+        .downloads
+        .lock()
+        .map_err(|_| "Embedded browser download state lock poisoned".to_string())?
+        .get(id)
+        .cloned()
+        .ok_or_else(|| "Browser download not found".to_string())
+}
+
+#[tauri::command]
+pub fn embedded_browser_pause_download(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    id: String,
+) -> Result<(), String> {
+    let control = browser_download_control(&state, &id)?;
+    let (paused, _) = &*control.paused;
+    *paused
+        .lock()
+        .map_err(|_| "Download pause lock poisoned".to_string())? = true;
+    control.emit("paused");
+    Ok(())
+}
+
+#[tauri::command]
+pub fn embedded_browser_resume_download(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    id: String,
+) -> Result<(), String> {
+    let control = browser_download_control(&state, &id)?;
+    if control.failed.load(Ordering::Relaxed) {
+        return Err("Failed downloads cannot be resumed".to_string());
+    }
+    let (paused, wake) = &*control.paused;
+    *paused
+        .lock()
+        .map_err(|_| "Download pause lock poisoned".to_string())? = false;
+    wake.notify_all();
+    control.emit("progress");
+    Ok(())
+}
+
+#[tauri::command]
+pub fn embedded_browser_delete_download(
+    state: tauri::State<'_, EmbeddedBrowserState>,
+    id: String,
+) -> Result<(), String> {
+    let control = browser_download_control(&state, &id)?;
+    let is_paused = *control
+        .paused
+        .0
+        .lock()
+        .map_err(|_| "Download pause lock poisoned".to_string())?;
+    if !is_paused && !control.failed.load(Ordering::Relaxed) {
+        return Err("Pause the download before deleting it".to_string());
+    }
+    control.cancelled.store(true, Ordering::Relaxed);
+    control.paused.1.notify_all();
+    let _ = std::fs::remove_file(&control.path);
+    state
+        .downloads
+        .lock()
+        .map_err(|_| "Embedded browser download state lock poisoned".to_string())?
+        .remove(&id);
+    control.emit("deleted");
     Ok(())
 }
 
@@ -944,4 +1279,63 @@ pub fn embedded_browser_close(
             .map_err(|error| format!("Failed to close embedded browser: {error}"))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn embedded_browser_clear_data(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, EmbeddedBrowserState>,
+) -> Result<usize, String> {
+    let webviews = state
+        .webviews
+        .lock()
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
+        .values()
+        .map(|entry| entry.webview.clone())
+        .collect::<Vec<_>>();
+
+    if !webviews.is_empty() {
+        for webview in &webviews {
+            webview
+                .clear_all_browsing_data()
+                .map_err(|error| format!("Failed to clear embedded browser data: {error}"))?;
+        }
+        return Ok(webviews.len());
+    }
+
+    let window = app
+        .get_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "Main window not found".to_string())?;
+    let cleanup_label = format!(
+        "browser-data-cleanup-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let cleanup_url = tauri::Url::parse("about:blank")
+        .map_err(|error| format!("Failed to create browser cleanup URL: {error}"))?;
+    let builder =
+        tauri::webview::WebviewBuilder::new(&cleanup_label, WebviewUrl::External(cleanup_url))
+            .data_directory(browser_data_directory(&app)?)
+            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID);
+    let webview = window
+        .add_child(
+            builder,
+            LogicalPosition::new(-10_000.0, -10_000.0),
+            LogicalSize::new(1.0, 1.0),
+        )
+        .map_err(|error| format!("Failed to create browser data cleanup view: {error}"))?;
+    webview
+        .hide()
+        .map_err(|error| format!("Failed to hide browser data cleanup view: {error}"))?;
+    let clear_result = webview
+        .clear_all_browsing_data()
+        .map_err(|error| format!("Failed to clear embedded browser data: {error}"));
+    let close_result = webview
+        .close()
+        .map_err(|error| format!("Failed to close browser data cleanup view: {error}"));
+    clear_result?;
+    close_result?;
+    Ok(0)
 }

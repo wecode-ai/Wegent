@@ -130,8 +130,8 @@ async fn runtime_task_list_trusts_native_thread_status_without_rollout_probe() {
     assert_eq!(running_by_rollout["running"], false);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
-    assert_eq!(active_completed["status"], "active");
-    assert_eq!(active_completed["running"], false);
+    assert_eq!(active_completed["status"], "running");
+    assert_eq!(active_completed["running"], true);
 }
 
 #[tokio::test]
@@ -281,7 +281,7 @@ async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
 }
 
 #[tokio::test]
-async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_still_looks_running() {
+async fn runtime_task_list_ignores_local_failed_state_when_codex_thread_is_idle() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-failed-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -334,7 +334,7 @@ async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_stil
         .find(|task| task["taskId"] == "local-failed-running-rollout")
         .unwrap();
 
-    assert_eq!(locally_failed["status"], "failed");
+    assert_eq!(locally_failed["status"], "active");
     assert_eq!(locally_failed["running"], false);
 }
 
