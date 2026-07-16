@@ -296,6 +296,45 @@ class TestLoadSkillToolDynamicTools:
 class TestDynamicToolSelectionIntegration:
     """Integration tests for dynamic tool selection with LangGraphAgentBuilder."""
 
+    @pytest.mark.parametrize(
+        ("provider", "expected_kwargs"),
+        [("openai", {"strict": False}), ("anthropic", {})],
+    )
+    def test_tool_binding_options_are_provider_specific(
+        self, provider, expected_kwargs
+    ):
+        """OpenAI function tools explicitly opt out of strict mode."""
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+        mock_llm = MagicMock()
+        mock_llm._wegent_provider = provider
+        mock_llm.bind_tools = MagicMock(return_value=mock_llm)
+        builder = LangGraphAgentBuilder(llm=mock_llm)
+        tools = [MagicMock()]
+
+        builder._bind_tools(mock_llm, tools)
+
+        mock_llm.bind_tools.assert_called_once_with(tools, **expected_kwargs)
+
+    def test_openai_tool_schema_declares_strict_false_on_function(self):
+        """OpenAI's serialized function definition contains strict=false."""
+        from langchain_openai import ChatOpenAI
+
+        from chat_shell.agents.graph_builder import LangGraphAgentBuilder
+
+        @tool
+        def example_tool(value: str) -> str:
+            """Return the provided value."""
+            return value
+
+        llm = ChatOpenAI(model="gpt-5", api_key="test-key")
+        llm._wegent_provider = "openai"
+        builder = LangGraphAgentBuilder(llm=llm)
+
+        bound_model = builder._bind_tools(llm, [example_tool])
+
+        assert bound_model.kwargs["tools"][0]["function"]["strict"] is False
+
     def test_model_configurator_selects_tools_based_on_loaded_skills(self):
         """Test that model configurator correctly selects tools based on loaded skills."""
         from chat_shell.agents.graph_builder import LangGraphAgentBuilder

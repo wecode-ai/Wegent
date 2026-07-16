@@ -1243,9 +1243,15 @@ class LangGraphAgentBuilder:
                 list(load_skill_tool.get_loaded_skills()),
             )
 
-            return llm.bind_tools(selected_tools)
+            return self._bind_tools(llm, selected_tools)
 
         return configure_model, all_tools
+
+    def _bind_tools(self, llm: BaseChatModel, tools: list[BaseTool]) -> Runnable:
+        """Bind tools with provider-specific function calling options."""
+        if self._provider == "openai":
+            return llm.bind_tools(tools, strict=False)
+        return llm.bind_tools(tools)
 
     def _create_gemini_prompt_modifier(
         self, gemini_search_tool: GeminiSearchTool
@@ -1379,6 +1385,8 @@ class LangGraphAgentBuilder:
 
         # Add llm built-in search tool if supported
         model_with_tools: BaseChatModel | Callable = self.llm
+        if self._provider == "openai" and all_tools and not model_configurator:
+            model_with_tools = self._bind_tools(self.llm, all_tools)
         if isinstance(self.llm, ChatGoogleGenerativeAI):
             # For Gemini models, create a GeminiSearchTool instead of directly binding
             # google_search. This is because Gemini server forbids using google_search
@@ -1471,7 +1479,7 @@ class LangGraphAgentBuilder:
                         has_other_search_tools,
                         len(tools_for_model),
                     )
-                    return base_llm.bind_tools(tools_for_model)
+                    return self._bind_tools(base_llm, tools_for_model)
                 else:
                     # First call, include gemini_search but hide other search tools.
                     hidden_search_count = sum(
@@ -1489,7 +1497,7 @@ class LangGraphAgentBuilder:
                         hidden_search_count,
                         len(tools_for_model),
                     )
-                    return base_llm.bind_tools(tools_for_model)
+                    return self._bind_tools(base_llm, tools_for_model)
 
             model_with_tools = gemini_model_callable
 
