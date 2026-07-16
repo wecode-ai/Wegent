@@ -95,7 +95,7 @@ python3 -m http.server 8787 --directory src-tauri/target/release/local-update-se
 https://github.com/<owner>/<repo>/releases/latest/download/latest.json
 ```
 
-workflow 会创建或更新 `wework-v<version>` draft release。两个架构构建完成后，workflow 生成 `latest.json`，上传到同一个 Release，最后把 Release 发布为 GitHub latest。客户端启动后的自动检查或标题栏手动更新都会读取这个 manifest。
+workflow 只能通过 GitHub Actions 手动触发，不会响应 tag push。正式发布会创建或更新 `wework-v<version>` draft release；两个架构构建完成后，workflow 生成 `latest.json`，上传到同一个 Release，最后把 Release 发布为 GitHub latest。客户端启动后的自动检查或标题栏手动更新都会读取这个 manifest。禁止 tag push 自动触发可以避免 workflow 发布 Release 时创建的 tag 再次启动同版本构建并覆盖已签名产物。
 
 GitHub Actions 需要配置这些 repository secrets：
 
@@ -119,7 +119,7 @@ workflow 分别上传这些 Release assets：
 
 正式发布时，workflow 会在构建前把 `wework/package.json`、`wework/src-tauri/tauri.conf.json`、`wework/src-tauri/Cargo.toml` 和 `wework/src-tauri/Cargo.lock` 同步到本次 release version，并直接提交回触发 workflow 的 `main` 分支。后续 macOS 构建和 GitHub Release 都会使用这个版本提交，确保关于页版本、Tauri 包版本和源码版本一致。
 
-手动触发但未勾选正式发布时只生成测试 artifacts，不会提交版本文件。通过 `wework-vX.Y.Z` tag 触发发布时，tag 已经指向固定提交，workflow 不会改写源码；如果 tag 指向的版本文件和 tag 版本不一致，发布会失败，需要先更新版本文件并重新打 tag。
+手动触发但未勾选正式发布时只生成测试 artifacts，不会提交版本文件。也可以在 GitHub Actions 中选择已有的 `wework-vX.Y.Z` tag 后手动运行 workflow；此时 tag 已经指向固定提交，workflow 不会改写源码。如果 tag 指向的版本文件和 tag 版本不一致，发布会失败，需要先更新版本文件并重新打 tag。仅推送 tag 不会启动发布。
 
 ## 无 Apple Developer 账号的 CI DMG
 
