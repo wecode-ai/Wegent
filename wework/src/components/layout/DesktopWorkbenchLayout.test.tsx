@@ -6729,10 +6729,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
+    expect(panel).toHaveClass('transition-none')
+    expect(panel).not.toHaveClass('transition-[height,opacity,transform]')
     fireEvent.pointerMove(document, { clientY: 620 })
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+    expect(panel).toHaveClass('transition-[height,opacity,transform]', 'duration-300')
   })
 
   test('opens the terminal by default when the bottom workspace panel opens', async () => {
