@@ -72,6 +72,9 @@ REQUESTED_WEWORK_PORT=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --)
+      shift
+      ;;
     -p|--port)
       if [ "$#" -lt 2 ]; then
         echo "Error: $1 requires a port value." >&2
