@@ -1,4 +1,8 @@
-use std::env;
+use std::{
+    env,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
 
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -6,38 +10,102 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const DEFAULT_BRIDGE_URL: &str = "http://127.0.0.1:9231";
 const BRIDGE_URL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL";
 const BROWSER_LABEL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_LABEL";
+const BRIDGE_CONNECT_TIMEOUT_SECONDS: u64 = 5;
+const BRIDGE_REQUEST_TIMEOUT_SECONDS: u64 = 45;
+static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub fn is_browser_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("browser-mcp-server")
 }
 
 pub async fn run() -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(BRIDGE_CONNECT_TIMEOUT_SECONDS))
+        .timeout(Duration::from_secs(BRIDGE_REQUEST_TIMEOUT_SECONDS))
+        .build()
+        .map_err(|error| format!("Failed to build embedded browser bridge client: {error}"))?;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
+    eprintln!(
+        "[wework-browser-mcp] lifecycle=start pid={} bridge_url={} label={} request_timeout_seconds={BRIDGE_REQUEST_TIMEOUT_SECONDS}",
+        std::process::id(),
+        bridge_url(),
+        browser_label().unwrap_or_else(|| "<default>".to_owned())
+    );
 
     while let Some(line) = lines.next_line().await.map_err(|error| error.to_string())? {
         if line.trim().is_empty() {
             continue;
         }
+        let sequence = REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let started = Instant::now();
         let response = match serde_json::from_str::<Value>(&line) {
-            Ok(request) => handle_request(&client, &request).await,
-            Err(error) => Some(error_response(Value::Null, -32700, error.to_string())),
+            Ok(request) => {
+                let method = request_method(&request);
+                let tool = request_tool(&request);
+                log_request(sequence, "received", method, tool, started, None);
+                handle_request(&client, &request, sequence, started).await
+            }
+            Err(error) => {
+                log_request(
+                    sequence,
+                    "parse_error",
+                    "<invalid>",
+                    None,
+                    started,
+                    Some(&error.to_string()),
+                );
+                Some(error_response(Value::Null, -32700, error.to_string()))
+            }
         };
         if let Some(response) = response {
             let mut encoded = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
             encoded.push(b'\n');
+            log_request(
+                sequence,
+                "response_write_start",
+                "<response>",
+                None,
+                started,
+                None,
+            );
             stdout
                 .write_all(&encoded)
                 .await
                 .map_err(|error| error.to_string())?;
             stdout.flush().await.map_err(|error| error.to_string())?;
+            log_request(
+                sequence,
+                "response_flushed",
+                "<response>",
+                None,
+                started,
+                None,
+            );
+        } else {
+            log_request(
+                sequence,
+                "notification_complete",
+                "<notification>",
+                None,
+                started,
+                None,
+            );
         }
     }
+    eprintln!(
+        "[wework-browser-mcp] lifecycle=stdin_eof pid={}",
+        std::process::id()
+    );
     Ok(())
 }
 
-async fn handle_request(client: &reqwest::Client, request: &Value) -> Option<Value> {
+async fn handle_request(
+    client: &reqwest::Client,
+    request: &Value,
+    sequence: u64,
+    started: Instant,
+) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request
         .get("method")
@@ -63,13 +131,22 @@ async fn handle_request(client: &reqwest::Client, request: &Value) -> Option<Val
                 return Some(error_response(id, -32602, "tools/call requires params.name"));
             };
             let arguments = request.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
-            Some(result_response(id, execute_tool(client, name, &arguments).await))
+            Some(result_response(
+                id,
+                execute_tool(client, name, &arguments, sequence, started).await,
+            ))
         }
         _ => id.map(|id| error_response(id, -32601, format!("Unknown method: {method}"))),
     }
 }
 
-async fn execute_tool(client: &reqwest::Client, name: &str, arguments: &Value) -> Value {
+async fn execute_tool(
+    client: &reqwest::Client,
+    name: &str,
+    arguments: &Value,
+    sequence: u64,
+    started: Instant,
+) -> Value {
     let bridge_payload = match name {
         "browser_navigate" | "browser_tab_new" => {
             json!({ "action": "navigate", "url": string_arg(arguments, "url") })
@@ -141,23 +218,46 @@ async fn execute_tool(client: &reqwest::Client, name: &str, arguments: &Value) -
         _ => return text_result(format!("Unknown tool: {name}"), true),
     };
 
-    match call_bridge(client, bridge_payload).await {
+    log_request(
+        sequence,
+        "bridge_call_start",
+        "tools/call",
+        Some(name),
+        started,
+        None,
+    );
+    let result = match call_bridge(client, bridge_payload).await {
         Ok(value) => text_result(value, false),
-        Err(error) => text_result(error, true),
-    }
+        Err(error) => {
+            log_request(
+                sequence,
+                "bridge_call_error",
+                "tools/call",
+                Some(name),
+                started,
+                Some(&error),
+            );
+            return text_result(error, true);
+        }
+    };
+    log_request(
+        sequence,
+        "bridge_call_complete",
+        "tools/call",
+        Some(name),
+        started,
+        None,
+    );
+    result
 }
 
 async fn call_bridge(client: &reqwest::Client, mut payload: Value) -> Result<Value, String> {
-    if let (Some(label), Some(object)) = (env::var(BROWSER_LABEL_ENV).ok(), payload.as_object_mut())
-    {
+    if let (Some(label), Some(object)) = (browser_label(), payload.as_object_mut()) {
         if !label.trim().is_empty() {
             object.insert("label".to_owned(), Value::String(label));
         }
     }
-    let base_url = env::var(BRIDGE_URL_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_BRIDGE_URL.to_owned());
+    let base_url = bridge_url();
     let response = client
         .post(format!("{}/browser", base_url.trim_end_matches('/')))
         .json(&payload)
@@ -184,6 +284,53 @@ async fn call_bridge(client: &reqwest::Client, mut payload: Value) -> Result<Val
         .get("data")
         .cloned()
         .unwrap_or_else(|| json!({ "ok": true })))
+}
+
+fn bridge_url() -> String {
+    env::var(BRIDGE_URL_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_BRIDGE_URL.to_owned())
+}
+
+fn browser_label() -> Option<String> {
+    env::var(BROWSER_LABEL_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn request_method(request: &Value) -> &str {
+    request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>")
+}
+
+fn request_tool(request: &Value) -> Option<&str> {
+    request.pointer("/params/name").and_then(Value::as_str)
+}
+
+fn log_request(
+    sequence: u64,
+    stage: &str,
+    method: &str,
+    tool: Option<&str>,
+    started: Instant,
+    error: Option<&str>,
+) {
+    let tool = tool.unwrap_or("-");
+    let elapsed_ms = started.elapsed().as_millis();
+    if let Some(error) = error {
+        eprintln!(
+            "[wework-browser-mcp] pid={} request={sequence} stage={stage} method={method} tool={tool} elapsed_ms={elapsed_ms} error={error}",
+            std::process::id()
+        );
+    } else {
+        eprintln!(
+            "[wework-browser-mcp] pid={} request={sequence} stage={stage} method={method} tool={tool} elapsed_ms={elapsed_ms}",
+            std::process::id()
+        );
+    }
 }
 
 fn tools() -> Vec<Value> {

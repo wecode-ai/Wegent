@@ -687,7 +687,10 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
-    launch_config.config_overrides.push("goals=true".to_owned());
+    launch_config.config_overrides.extend([
+        "goals=true".to_owned(),
+        "features.code_mode_host=true".to_owned(),
+    ]);
     launch_config
 }
 
@@ -4722,7 +4725,10 @@ mod tests {
             launch_config.env.get("HTTP_PROXY").map(String::as_str),
             Some("http://127.0.0.1:7890")
         );
-        assert_eq!(launch_config.config_overrides, vec!["goals=true"]);
+        assert_eq!(
+            launch_config.config_overrides,
+            vec!["goals=true", "features.code_mode_host=true"]
+        );
         assert!(launch_config.model_provider.is_none());
         assert!(launch_config.effort.is_none());
         assert!(launch_config.summary.is_none());
