@@ -401,14 +401,14 @@ fn write_browser_log(message: &str) {
         writeln!(file, "{timestamp} {message}")?;
         file.flush()
     })();
-    if let Err(error) = result
-        && !LOG_WRITE_ERROR_REPORTED.swap(true, Ordering::Relaxed)
-    {
-        eprintln!(
-            "[wework-browser-mcp] lifecycle=file_log_error pid={} path={} error={error}",
-            std::process::id(),
-            path.display()
-        );
+    if let Err(error) = result {
+        if !LOG_WRITE_ERROR_REPORTED.swap(true, Ordering::Relaxed) {
+            eprintln!(
+                "[wework-browser-mcp] lifecycle=file_log_error pid={} path={} error={error}",
+                std::process::id(),
+                path.display()
+            );
+        }
     }
 }
 
