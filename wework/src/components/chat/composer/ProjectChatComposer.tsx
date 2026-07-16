@@ -251,7 +251,10 @@ export function ProjectChatComposer({
   }, [])
 
   return (
-    <div className="relative w-full rounded-[26px] bg-surface shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
+    <div
+      data-testid="project-chat-composer"
+      className="relative w-full rounded-[26px] bg-surface shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]"
+    >
       {showProjectWorkBar && (
         <ProjectWorkBar
           projects={projectWork.projects}
@@ -282,7 +285,7 @@ export function ProjectChatComposer({
           projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
           projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
           className="min-h-10 rounded-t-[26px] bg-surface px-4"
-          buttonClassName="text-[13px] leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+          buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
         />
       )}
       <form
@@ -337,7 +340,7 @@ export function ProjectChatComposer({
           onOpenSkillFile={onOpenSkillFile}
           workspaceTarget={workspaceTarget}
           workspaceFileApi={workspaceFileApi}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-[18px] text-text-secondary outline-none placeholder:text-text-muted/55"
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-secondary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}

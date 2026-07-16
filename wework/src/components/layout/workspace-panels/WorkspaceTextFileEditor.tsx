@@ -93,11 +93,14 @@ export function WorkspaceTextFileEditor({
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())
           }),
           EditorView.theme({
-            '&': { height: '100%', fontSize: '12px', backgroundColor: 'rgb(255 255 255)' },
+            '&': {
+              height: '100%',
+              fontSize: 'var(--text-code)',
+              backgroundColor: 'rgb(255 255 255)',
+            },
             '.cm-scroller': {
               overflow: 'auto',
-              fontFamily:
-                'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+              fontFamily: 'var(--font-code)',
             },
             '.cm-gutters': {
               backgroundColor: 'rgb(247 247 248)',

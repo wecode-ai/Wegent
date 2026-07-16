@@ -529,8 +529,13 @@ def _resolve_model_for_bot(
                 f"Model '{model_name}' passed allowed_models whitelist check for bot '{bot.name}'"
             )
 
-    # Find the model Kind object
+    # Find the model Kind object, following any bind_model pointer chain
+    # (e.g. a Bot's private Model that only carries an allowed_models
+    # whitelist and points onward to the model with the real env config).
     model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    model_kind, model_spec = _resolve_bind_model_pointer(
+        db, user_id, model_kind, model_spec
+    )
     return model_kind, model_spec, model_name, raw_agent_config
 
 
@@ -739,6 +744,79 @@ def _find_model_with_namespace(
     return None, None
 
 
+# Maximum number of bind_model pointer hops to follow before giving up.
+# Guards against misconfigured or accidentally-cyclic pointer chains.
+_MAX_BIND_MODEL_POINTER_DEPTH = 5
+
+
+def _resolve_bind_model_pointer(
+    db: Session,
+    user_id: int,
+    model_kind: Optional[Kind],
+    model_spec: Optional[Dict[str, Any]],
+) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
+    """
+    Follow a Model's modelConfig.bind_model pointer to the Model it references.
+
+    Some Models (e.g. a Bot's private Model created to carry a restricted
+    allowed_models whitelist) only store {"bind_model": ..., "allowed_models": [...]}
+    without their own "env" section - the actual provider config lives on the
+    Model named by bind_model. Without this resolution, callers would silently
+    fall back to placeholder defaults (gpt-4 / empty api_key) instead of the
+    real credentials.
+
+    Args:
+        db: Database session
+        user_id: User ID for querying user-specific models
+        model_kind: The Model Kind object to start from (may be None for
+            runtime-only models)
+        model_spec: The Model spec dict to start from
+
+    Returns:
+        Tuple of (model_kind, model_spec) once a Model with a real "env"
+        section is reached, or the last unresolved (model_kind, model_spec)
+        if there was no bind_model to follow.
+
+    Raises:
+        ValueError: If a bind_model pointer target cannot be found, or the
+            pointer chain is too deep or cyclic.
+    """
+    visited: set[str] = set()
+    while model_spec:
+        model_config = model_spec.get("modelConfig") or {}
+        if model_config.get("env"):
+            return model_kind, model_spec
+
+        bind_model = model_config.get("bind_model")
+        if not isinstance(bind_model, str) or not bind_model.strip():
+            return model_kind, model_spec
+        bind_model = bind_model.strip()
+
+        if bind_model in visited or len(visited) >= _MAX_BIND_MODEL_POINTER_DEPTH:
+            raise ValueError(
+                f"Model bind_model pointer chain is too deep or cyclic "
+                f"while resolving '{bind_model}'"
+            )
+        visited.add(bind_model)
+
+        current_name = model_kind.name if model_kind else bind_model
+        logger.info(
+            "[model_resolver] Model '%s' has no env, following bind_model "
+            "pointer to '%s'",
+            current_name,
+            bind_model,
+        )
+        next_kind, next_spec = _find_model_with_namespace(db, bind_model, user_id)
+        if not next_spec:
+            raise ValueError(
+                f"Model '{current_name}' binds to model '{bind_model}', "
+                f"which was not found"
+            )
+        model_kind, model_spec = next_kind, next_spec
+
+    return model_kind, model_spec
+
+
 def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract API configuration from model spec.
@@ -748,6 +826,14 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns:
         Dict with api_key, base_url, model_id, model type, and default_headers
+
+    Raises:
+        ValueError: If modelConfig has no usable "env" section. This can happen
+            when a Model is a bind_model pointer wrapper that was never resolved
+            to its target (see _resolve_bind_model_pointer), or when modelConfig
+            is entirely empty. We raise instead of silently falling back to
+            placeholder defaults (gpt-4 / openai / empty api_key), which look
+            like a valid config but produce authentication failures downstream.
     """
     logger.info(
         f"[model_resolver] _extract_model_config: model_spec keys = {list(model_spec.keys())}"
@@ -758,7 +844,15 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         f"[model_resolver] _extract_model_config: modelConfig keys = {list(model_config.keys()) if model_config else 'empty'}"
     )
 
-    env = model_config.get("env", {})
+    env = model_config.get("env")
+    if not env:
+        bind_model = model_config.get("bind_model")
+        if bind_model:
+            raise ValueError(
+                f"Model config has an unresolved bind_model pointer to "
+                f"'{bind_model}' with no env configuration"
+            )
+        raise ValueError("Model config has no env configuration")
     logger.info(
         f"[model_resolver] _extract_model_config: env keys = {list(env.keys()) if env else 'empty'}"
     )

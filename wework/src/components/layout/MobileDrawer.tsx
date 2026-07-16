@@ -246,7 +246,7 @@ export function MobileDrawer({
   return (
     <div className="fixed inset-0 z-critical isolate flex h-dvh select-none flex-col overflow-hidden bg-white pb-[max(24px,env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))] text-[#111111]">
       <header className="flex shrink-0 items-center justify-between gap-4 px-6">
-        <h1 className="text-[26px] font-bold leading-8 tracking-normal text-[#111111]">
+        <h1 className="text-xl font-bold leading-8 tracking-normal text-[#111111]">
           {t('workbench.brand', 'Wework')}
         </h1>
         <div className="flex items-center gap-5">
@@ -326,7 +326,7 @@ export function MobileDrawer({
                   type="button"
                   data-testid="mobile-new-project-button"
                   onClick={() => openProjectCreateDialog()}
-                  className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 text-[#111111] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:text-[#6B7280]"
+                  className="mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 text-[#111111] hover:bg-[#F7F7F7] disabled:cursor-not-allowed disabled:text-[#6B7280]"
                   disabled={!canOpenProjectSheet}
                 >
                   <FolderPlus className="h-6 w-6 shrink-0 stroke-[2.4]" />
@@ -334,14 +334,14 @@ export function MobileDrawer({
                 </button>
               </div>
               <section className="mt-5" data-testid="mobile-runtime-chat-section">
-                <div className="mb-2 px-6 text-[18px] font-bold leading-6 text-[#111111]">
+                <div className="mb-2 px-6 text-heading-sm font-bold leading-6 text-[#111111]">
                   {t('workbench.chats', '对话')}
                 </div>
                 <div className="space-y-1">
                   {chatTaskItems.length === 0 ? (
                     <div
                       data-testid="mobile-runtime-chat-empty"
-                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-[15px] text-[#6B7280]"
+                      className="mx-3 flex h-10 items-center rounded-lg px-3 text-left text-base text-[#6B7280]"
                     >
                       {t('workbench.no_chats', '暂无会话')}
                     </div>
@@ -366,7 +366,7 @@ export function MobileDrawer({
                             onClose()
                           }}
                           className={[
-                            'mx-3 flex h-12 min-w-[44px] w-[calc(100%-24px)] items-center rounded-[14px] px-3 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                            'mx-3 flex h-12 min-w-[44px] w-[calc(100%-24px)] items-center rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
                             selectedTask
                               ? 'bg-[#F1F1F1] text-[#111111]'
                               : 'text-[#111111] hover:bg-[#F7F7F7]',
@@ -445,7 +445,7 @@ export function MobileDrawer({
                       }}
                       aria-expanded={expanded}
                       className={[
-                        'mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-[18px] font-normal leading-6',
+                        'mx-3 flex h-[54px] min-w-[44px] w-[calc(100%-24px)] items-center gap-[18px] rounded-[14px] px-3 text-left text-heading-sm font-normal leading-6',
                         selected
                           ? 'bg-[#F1F1F1] text-[#111111]'
                           : 'text-[#111111] hover:bg-[#F7F7F7]',
@@ -476,7 +476,7 @@ export function MobileDrawer({
                               setRenamingProjectId(null)
                             }
                           }}
-                          className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-[18px] leading-6 outline-none focus:border-[#111111]"
+                          className="min-w-0 flex-1 select-text rounded-lg border border-[#D8D8D8] bg-white px-2 py-1 text-heading-sm leading-6 outline-none focus:border-[#111111]"
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate">{project.name}</span>
@@ -488,7 +488,7 @@ export function MobileDrawer({
                           const taskItems = getRuntimeSidebarTaskItems(workspaces)
                           if (taskItems.length === 0) {
                             return (
-                              <div className="flex h-10 items-center rounded-lg px-2 text-left text-[15px] text-[#6B7280]">
+                              <div className="flex h-10 items-center rounded-lg px-2 text-left text-base text-[#6B7280]">
                                 {t('workbench.no_chats', '暂无会话')}
                               </div>
                             )
@@ -534,7 +534,7 @@ export function MobileDrawer({
                                       onClose()
                                     }}
                                     className={[
-                                      'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-[18px] font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
+                                      'flex h-12 min-w-[44px] w-full items-center rounded-[14px] px-2 text-left text-heading-sm font-normal leading-6 disabled:cursor-not-allowed disabled:opacity-50',
                                       selectedTask
                                         ? 'bg-[#F1F1F1] text-[#111111]'
                                         : 'text-[#111111] hover:bg-[#F7F7F7]',
@@ -593,7 +593,7 @@ export function MobileDrawer({
                                           ),
                                         }))
                                       }
-                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
                                     >
                                       {t('workbench.expand_display', '展开显示')}
                                     </button>
@@ -608,7 +608,7 @@ export function MobileDrawer({
                                           return next
                                         })
                                       }
-                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-[15px] font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
+                                      className="flex h-10 min-w-[44px] items-center rounded-lg px-2 text-left text-base font-semibold text-[#6B7280] hover:bg-[#F7F7F7]"
                                     >
                                       {t('workbench.collapse_display', '折叠显示')}
                                     </button>
@@ -632,7 +632,7 @@ export function MobileDrawer({
         type="button"
         data-testid="mobile-new-chat-button"
         onClick={() => closeAfter(onNewChat ?? onStartStandaloneChat)}
-        className="absolute bottom-[max(32px,env(safe-area-inset-bottom))] right-8 z-10 flex h-14 items-center gap-3 rounded-full bg-[#1F1F1F] px-6 text-[18px] font-semibold text-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] hover:bg-[#111111]"
+        className="absolute bottom-[max(32px,env(safe-area-inset-bottom))] right-8 z-10 flex h-14 items-center gap-3 rounded-full bg-[#1F1F1F] px-6 text-heading-sm font-semibold text-white shadow-[0_12px_32px_rgba(0,0,0,0.18)] hover:bg-[#111111]"
         aria-label={t('workbench.new_chat', '新对话')}
       >
         <SquarePen className="h-6 w-6" />
@@ -682,7 +682,7 @@ export function MobileDrawer({
                 setRenamingProjectId(projectActionTarget.id)
                 setProjectActionTarget(null)
               }}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] text-[#111111] hover:bg-[#F7F7F7]"
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-[#111111] hover:bg-[#F7F7F7]"
             >
               <Edit3 className="h-6 w-6 shrink-0" />
               <span>{t('workbench.rename_project', '重命名项目')}</span>
@@ -691,7 +691,7 @@ export function MobileDrawer({
               type="button"
               data-testid="mobile-remove-project-button"
               onClick={() => handleAction(() => onRemoveProject?.(projectActionTarget.id))}
-              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-[18px] text-[#EF4444] hover:bg-[#FFF5F5]"
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-[#EF4444] hover:bg-[#FFF5F5]"
             >
               <X className="h-6 w-6 shrink-0" />
               <span>{t('workbench.remove_project', '移除')}</span>

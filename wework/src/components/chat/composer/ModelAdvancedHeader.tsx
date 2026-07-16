@@ -29,7 +29,7 @@ export function ModelAdvancedHeader({
       data-testid="model-advanced-row"
       onMouseEnter={onClearSubmenu}
       onPointerEnter={onClearSubmenu}
-      className="flex h-8 items-center px-3 text-[13px] font-medium leading-[18px] text-text-muted"
+      className="flex h-8 items-center px-3 text-sm font-medium leading-[18px] text-text-muted"
     >
       {interacting ? (
         <>

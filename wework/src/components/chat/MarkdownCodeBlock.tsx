@@ -73,8 +73,8 @@ const codeCustomStyle: CSSProperties = {
   margin: 0,
   padding: '0.75rem 1rem',
   background: 'transparent',
-  fontSize: '0.8125rem',
-  lineHeight: '1.6',
+  fontSize: 'var(--text-code)',
+  lineHeight: '1.8',
 }
 
 const markdownWrapStateByKey = new Map<string, boolean>()

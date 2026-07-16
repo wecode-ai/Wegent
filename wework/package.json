@@ -17,7 +17,8 @@
     "dev:ios": "bash scripts/dev-ios-app.sh",
     "build:ios": "bash scripts/build-ios-app.sh",
     "tauri:build": "pnpm run prepare:codex && tauri build",
-    "lint": "eslint .",
+    "lint": "eslint . && pnpm run lint:typography",
+    "lint:typography": "node scripts/check-typography.mjs",
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "test": "vitest run",
@@ -121,7 +122,8 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,css,md}": [
       "prettier --write",
-      "eslint --fix"
+      "eslint --fix",
+      "node scripts/check-typography.mjs"
     ]
   }
 }

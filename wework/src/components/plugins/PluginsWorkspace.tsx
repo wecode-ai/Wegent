@@ -386,7 +386,7 @@ function InstalledPluginStrip({
   return (
     <section className="space-y-4" data-testid="plugins-installed-strip">
       <div className="flex items-center justify-between border-b border-border pb-3">
-        <h2 className="text-[16px] font-medium leading-6 text-text-primary">{title}</h2>
+        <h2 className="text-lg font-medium leading-6 text-text-primary">{title}</h2>
         <button
           type="button"
           data-testid="plugins-installed-manage-button"
@@ -475,16 +475,16 @@ function PluginMarketplaceRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-[14px] font-normal leading-5 text-text-primary">
+          <h3 className="truncate text-base font-normal leading-5 text-text-primary">
             {item.displayName || item.name}
           </h3>
           {item.version && (
-            <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-normal leading-4 text-text-muted">
+            <span className="shrink-0 rounded-md bg-surface px-1.5 py-0.5 text-xs font-normal leading-4 text-text-muted">
               {item.version}
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-text-muted">
+        <p className="mt-0.5 truncate text-sm leading-[18px] text-text-muted">
           {item.interface?.shortDescription || item.description}
         </p>
       </div>
@@ -494,7 +494,7 @@ function PluginMarketplaceRow({
           data-testid={`plugin-marketplace-install-${item.id}`}
           disabled={isInstalling}
           className={[
-            'flex h-8 min-w-[58px] items-center justify-center rounded-xl border px-3 text-[12px] font-normal leading-[18px] transition-colors',
+            'flex h-8 min-w-[58px] items-center justify-center rounded-xl border px-3 text-xs font-normal leading-[18px] transition-colors',
             item.installed
               ? 'border-border bg-background text-text-primary hover:bg-surface'
               : 'border-border bg-background text-text-primary hover:bg-surface',
@@ -540,7 +540,7 @@ function PluginMarketplaceRow({
                 <button
                   type="button"
                   data-testid={`plugin-marketplace-uninstall-${item.id}`}
-                  className="flex h-8 w-full items-center rounded-lg px-3 text-left text-[13px] leading-[18px] text-red-600 transition-colors hover:bg-red-50"
+                  className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-red-600 transition-colors hover:bg-red-50"
                   onClick={() => {
                     setIsActionMenuOpen(false)
                     onUninstall()
@@ -589,7 +589,7 @@ function PluginMarketplaceWelcome({
         </span>
       </div>
       <div className="max-w-[440px] space-y-2">
-        <h2 className="text-xl font-semibold leading-7 text-text-primary">{title}</h2>
+        <h2 className="heading-base text-text-primary">{title}</h2>
         <p className="text-sm leading-6 text-text-secondary">{description}</p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2">
@@ -1660,7 +1660,7 @@ export function PluginsWorkspace({
               <button
                 type="button"
                 data-testid="plugins-manage-button"
-                className="flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg bg-transparent px-2 text-[13px] font-medium leading-[18px] transition-colors hover:bg-black/[0.06] active:bg-black/[0.10]"
+                className="flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg bg-transparent px-2 text-sm font-medium leading-[18px] transition-colors hover:bg-black/[0.06] active:bg-black/[0.10]"
                 onClick={() => navigateTo('/plugins/manage')}
               >
                 <Settings className="h-[18px] w-[18px] stroke-[2]" />
@@ -1691,10 +1691,10 @@ export function PluginsWorkspace({
 
       <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-7 px-5 pb-14 pt-5 md:px-8 md:pt-4">
         <section className="space-y-1.5">
-          <h1 className="text-[30px] font-normal leading-9 tracking-normal text-text-primary">
+          <h1 className="text-xl font-normal leading-9 tracking-normal text-text-primary">
             {t('workbench.plugin_management_tab_plugins', '插件')}
           </h1>
-          <p className="text-[16px] leading-6 text-text-secondary">
+          <p className="text-lg leading-6 text-text-secondary">
             {t('workbench.plugins_subtitle', '通过插件扩展 WeWork 能力')}
           </p>
         </section>
@@ -1716,7 +1716,7 @@ export function PluginsWorkspace({
                     }}
                     placeholder={t('workbench.plugins_search_plugins', '搜索插件')}
                     data-testid="plugins-search-input"
-                    className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-[15px] leading-5 text-text-primary shadow-[0_1px_2px_rgba(15,23,42,0.03)] outline-none transition-colors placeholder:text-text-muted focus:border-text-muted"
+                    className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-base leading-5 text-text-primary shadow-[0_1px_2px_rgba(15,23,42,0.03)] outline-none transition-colors placeholder:text-text-muted focus:border-text-muted"
                   />
                 </label>
               </div>
@@ -1783,7 +1783,7 @@ export function PluginsWorkspace({
                       type="button"
                       data-testid={`plugins-marketplace-tab-${marketplace.id}`}
                       className={[
-                        'h-8 shrink-0 rounded-xl px-3 text-[15px] font-medium leading-5 transition-colors',
+                        'h-8 shrink-0 rounded-xl px-3 text-base font-medium leading-5 transition-colors',
                         isSelected
                           ? 'bg-surface text-text-primary'
                           : 'text-text-muted hover:bg-surface hover:text-text-primary',
@@ -1930,7 +1930,7 @@ export function PluginsWorkspace({
                   return (
                     <section key={title} className="space-y-4">
                       <div className="border-b border-border pb-3">
-                        <h2 className="text-[16px] font-normal leading-6 tracking-normal text-text-primary">
+                        <h2 className="text-lg font-normal leading-6 tracking-normal text-text-primary">
                           {title}
                         </h2>
                       </div>
@@ -1965,7 +1965,7 @@ export function PluginsWorkspace({
                         <button
                           type="button"
                           data-testid={`plugins-marketplace-expand-${title}`}
-                          className="flex min-h-9 max-w-full items-center gap-3 rounded-lg px-1 text-left text-[13px] leading-5 text-text-muted transition-colors hover:text-text-primary"
+                          className="flex min-h-9 max-w-full items-center gap-3 rounded-lg px-1 text-left text-sm leading-5 text-text-muted transition-colors hover:text-text-primary"
                           onClick={() => toggleMarketplaceSectionExpanded(title)}
                         >
                           <span className="flex h-7 min-w-11 items-center">

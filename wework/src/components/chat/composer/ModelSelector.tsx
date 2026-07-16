@@ -499,7 +499,7 @@ export function ModelSelector({
         onFocus={() => activateControl(control.id)}
         onClick={() => activateControl(control.id)}
         className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+          'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
           active
             ? 'bg-muted text-text-primary'
             : 'text-text-secondary hover:bg-muted hover:text-text-primary',
@@ -780,7 +780,7 @@ export function ModelSelector({
                       onFocus={() => setActiveDesktopSubmenu({ type: 'models' })}
                       onClick={() => setActiveDesktopSubmenu({ type: 'models' })}
                       className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+                        'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
                         modelRowActive
                           ? 'bg-muted text-text-primary'
                           : 'text-text-secondary hover:bg-muted hover:text-text-primary'
@@ -799,7 +799,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-reasoning"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.reasoning_level', '推理强度')}
@@ -814,7 +814,7 @@ export function ModelSelector({
                         type="button"
                         data-testid="model-control-menu-speed"
                         disabled
-                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-muted opacity-60"
+                        className="flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-muted opacity-60"
                       >
                         <span className="min-w-0 flex-1 truncate">
                           {t('workbench.speed', '速度')}
@@ -914,7 +914,7 @@ export function ModelSelector({
                   styles.submenu
                 )}
               >
-                <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
+                <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold leading-[18px] text-text-muted">
                   {t('workbench.model_version', '模型')}
                 </div>
                 <div className="space-y-0.5">
@@ -948,7 +948,7 @@ export function ModelSelector({
                             handleSelectModel(model)
                           }}
                           className={[
-                            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px]',
+                            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm leading-[18px]',
                             modelDisabled
                               ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
                               : 'text-text-primary hover:bg-muted',

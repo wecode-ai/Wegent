@@ -82,6 +82,8 @@ Wework separates high-frequency executor text deltas from the visible Markdown c
 
 Streaming messages skip full Pretext height measurement and use a stable offscreen intrinsic height. Completed messages are measured precisely and cached. Height lookup first uses the message object and width, avoiding repeated full-text hashes for unchanged historical messages during every stream update. Stable props and memo boundaries also keep the composer, workspace actions, right workspace, and bottom terminal from rerendering for every text delta.
 
+While the bottom Terminal panel is being resized, height updates are coalesced to browser animation frames and height transitions are disabled. This prevents high-frequency pointer events from causing excessive React updates and Terminal layout work. Releasing the pointer must commit the final height and restore the transitions used when opening or closing the panel.
+
 Distinguish these cases when investigating streaming stalls:
 
 - The frame rate is stable but output alternates between fast and slow: inspect stream `message` event intervals. Executor batching or network/IPC delivery gaps are usually responsible.

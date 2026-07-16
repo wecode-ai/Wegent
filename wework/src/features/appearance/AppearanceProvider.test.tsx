@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppearanceProvider } from './AppearanceProvider'
 import { darkPalette, lightPalette } from './presets'
 import { useAppearance } from './useAppearance'
+import { WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 
 let mediaQueryMatches = false
 let mediaQueryListener: ((event: MediaQueryListEvent) => void) | null = null
@@ -34,6 +35,8 @@ function Harness() {
       <span data-testid="resolved-mode">{resolvedMode}</span>
       <span data-testid="appearance-mode">{appearance.mode}</span>
       <span data-testid="accent-color">{appearance.accentColor}</span>
+      <span data-testid="ui-font-size">{appearance.uiFontSize}</span>
+      <span data-testid="code-font-size">{appearance.codeFontSize}</span>
       <button type="button" data-testid="set-dark" onClick={() => setAppearance({ mode: 'dark' })}>
         dark
       </button>
@@ -53,6 +56,13 @@ function Harness() {
       </button>
       <button type="button" data-testid="reset" onClick={resetAppearance}>
         reset
+      </button>
+      <button
+        type="button"
+        data-testid="set-font-sizes"
+        onClick={() => setAppearance({ uiFontSize: 16, codeFontSize: 15 })}
+      >
+        font sizes
       </button>
     </div>
   )
@@ -74,7 +84,7 @@ describe('AppearanceProvider', () => {
     render(
       <AppearanceProvider>
         <Harness />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     await userEvent.click(screen.getByTestId('set-dark'))
@@ -89,7 +99,7 @@ describe('AppearanceProvider', () => {
     render(
       <AppearanceProvider>
         <Harness />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     expect(screen.getByTestId('resolved-mode')).toHaveTextContent('light')
@@ -108,7 +118,7 @@ describe('AppearanceProvider', () => {
     render(
       <AppearanceProvider>
         <Harness />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     await userEvent.click(screen.getByTestId('set-accent'))
@@ -117,6 +127,50 @@ describe('AppearanceProvider', () => {
 
     await userEvent.click(screen.getByTestId('reset'))
     expect(screen.getByTestId('accent-color')).toHaveTextContent('#2563eb')
+  })
+
+  test('applies and persists Codex typography variables', async () => {
+    render(
+      <AppearanceProvider>
+        <Harness />
+      </AppearanceProvider>
+    )
+
+    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('14px')
+    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('12px')
+
+    await userEvent.click(screen.getByTestId('set-font-sizes'))
+
+    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('16')
+    expect(screen.getByTestId('code-font-size')).toHaveTextContent('15')
+    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('16px')
+    expect(document.documentElement.style.getPropertyValue('--text-sm')).toBe('15px')
+    expect(document.documentElement.style.getPropertyValue('--text-code')).toBe('15px')
+    expect(localStorage.getItem('wework.appearance')).toContain('"uiFontSize":16')
+    expect(localStorage.getItem('wework.appearance')).toContain('"codeFontSize":15')
+  })
+
+  test('steps UI and code font sizes together within their own bounds', async () => {
+    render(
+      <AppearanceProvider>
+        <Harness />
+      </AppearanceProvider>
+    )
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta: 1 } }))
+    })
+
+    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('15')
+    expect(screen.getByTestId('code-font-size')).toHaveTextContent('13')
+    expect(document.documentElement.style.getPropertyValue('--text-base')).toBe('15px')
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta: -1 } }))
+    })
+
+    expect(screen.getByTestId('ui-font-size')).toHaveTextContent('14')
+    expect(screen.getByTestId('code-font-size')).toHaveTextContent('12')
   })
 
   test('keeps mobile drawer backgrounds opaque enough to hide page content', () => {
@@ -132,20 +186,20 @@ describe('AppearanceProvider', () => {
         dark: {
           mobileDrawer: '29 45 66 / 0.94',
         },
-      }),
+      })
     )
 
     render(
       <AppearanceProvider>
         <Harness />
-      </AppearanceProvider>,
+      </AppearanceProvider>
     )
 
     expect(document.documentElement.style.getPropertyValue('--color-mobile-drawer')).toBe(
-      darkPalette.mobileDrawer,
+      darkPalette.mobileDrawer
     )
     expect(localStorage.getItem('wework.appearance')).toContain(
-      `"mobileDrawer":"${darkPalette.mobileDrawer}"`,
+      `"mobileDrawer":"${darkPalette.mobileDrawer}"`
     )
   })
 })

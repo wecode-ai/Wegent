@@ -77,7 +77,7 @@ export function ProjectSidebarHoverCardContent({
           type="button"
           data-testid={`project-hover-rename-${project.id}`}
           onClick={onRename}
-          className="min-w-0 flex-1 truncate rounded-md text-left text-[15px] font-medium leading-6 text-text-primary hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+          className="min-w-0 flex-1 truncate rounded-md text-left text-base font-medium leading-6 text-text-primary hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
           aria-label={t('workbench.rename_project')}
         >
           {project.name}
@@ -98,7 +98,7 @@ export function ProjectSidebarHoverCardContent({
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-1.5 text-[12px] leading-5 text-text-secondary">
+      <div className="flex flex-wrap items-center gap-x-1.5 text-xs leading-5 text-text-secondary">
         {statuses.map((status, index) => (
           <span key={status} className="inline-flex items-center gap-1.5">
             {index > 0 && <span aria-hidden="true">·</span>}
@@ -117,8 +117,8 @@ export function ProjectSidebarHoverCardContent({
                 </span>
                 <span
                   className={cn(
-                    'min-w-0 flex-1 text-[13px] leading-5 text-text-primary',
-                    source.kind === 'path' ? 'break-all font-mono text-[11px]' : 'truncate'
+                    'min-w-0 flex-1 text-sm leading-5 text-text-primary',
+                    source.kind === 'path' ? 'break-all font-mono text-xs' : 'truncate'
                   )}
                 >
                   {source.value}

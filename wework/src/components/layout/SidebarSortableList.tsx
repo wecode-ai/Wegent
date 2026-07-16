@@ -137,7 +137,7 @@ export function SidebarSortableList<T>({
       </SortableContext>
       <DragOverlay dropAnimation={null}>
         {activeItem ? (
-          <div className="max-w-[280px] truncate rounded-lg border border-border bg-background px-3 py-2 text-[13px] text-text-primary shadow-lg">
+          <div className="max-w-[280px] truncate rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary shadow-lg">
             {getLabel(activeItem)}
           </div>
         ) : null}

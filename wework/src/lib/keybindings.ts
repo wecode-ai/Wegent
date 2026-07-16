@@ -8,7 +8,10 @@ export const GO_FORWARD_COMMAND = 'goForward'
 export const TOGGLE_SIDEBAR_COMMAND = 'toggleSidebar'
 export const TOGGLE_SIDE_PANEL_COMMAND = 'toggleSidePanel'
 export const TOGGLE_MODEL_SELECTOR_COMMAND = 'toggleModelSelector'
+export const INCREASE_FONT_SIZE_COMMAND = 'increaseFontSize'
+export const DECREASE_FONT_SIZE_COMMAND = 'decreaseFontSize'
 export const WEWORK_OPEN_TERMINAL_EVENT = 'wework:open-terminal'
+export const WEWORK_STEP_FONT_SIZE_EVENT = 'wework:step-font-size'
 export const KEYBINDINGS_CHANGED_EVENT = 'wework:keybindings-changed'
 export const ACTIVE_KEYBINDINGS_CHANGED_EVENT = 'wework:active-keybindings-changed'
 export const TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID = 'toggle-bottom-workspace-panel-button'
@@ -57,6 +60,14 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
     command: TOGGLE_MODEL_SELECTOR_COMMAND,
     defaultKey: 'Control+Shift+M',
   },
+  {
+    command: INCREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+Plus',
+  },
+  {
+    command: DECREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+Minus',
+  },
 ]
 
 let activeKeybindings = mergeKeybindings([])
@@ -88,10 +99,11 @@ export function normalizeKeybinding(value: string): string {
 
 export function keybindingFromKeyboardEvent(event: KeyboardEvent): string {
   const key = normalizeKeyPart(event.key)
+  const includeShift = event.shiftKey && key !== 'Plus' && key !== 'Minus'
   return [
     event.ctrlKey ? 'Control' : null,
     event.altKey ? 'Alt' : null,
-    event.shiftKey ? 'Shift' : null,
+    includeShift ? 'Shift' : null,
     event.metaKey ? 'Command' : null,
     key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null,
   ]
@@ -179,6 +191,10 @@ export function dispatchToggleModelSelectorShortcut() {
   if (button && !button.disabled) button.click()
 }
 
+export function dispatchStepFontSizeShortcut(delta: -1 | 1) {
+  window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta } }))
+}
+
 export function shortcutsAvailable(): boolean {
   return isTauriRuntime()
 }
@@ -191,6 +207,8 @@ function normalizeKeyPart(value: string): string {
   if (['shift', '⇧'].includes(lower)) return 'Shift'
   if (lower === ' ') return 'Space'
   if (lower === 'escape') return 'Esc'
+  if (lower === '+' || lower === '=' || lower === 'plus') return 'Plus'
+  if (lower === '-' || lower === '_' || lower === 'minus') return 'Minus'
   if (value.length === 1) return value.toUpperCase()
   return value
 }

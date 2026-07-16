@@ -31,8 +31,8 @@ function HoverRow({
       <span
         className={
           mono
-            ? 'min-w-0 flex-1 break-all font-mono text-[11px] leading-5 text-text-primary'
-            : 'min-w-0 flex-1 truncate text-[13px] leading-5 text-text-primary'
+            ? 'min-w-0 flex-1 break-all font-mono text-xs leading-5 text-text-primary'
+            : 'min-w-0 flex-1 truncate text-sm leading-5 text-text-primary'
         }
       >
         {value}
@@ -56,11 +56,11 @@ export function TaskSidebarHoverCardContent({
   return (
     <div data-testid={`runtime-local-task-hover-content-${taskId}`} className="space-y-2.5">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="line-clamp-2 min-w-0 flex-1 text-[15px] font-medium leading-5 text-text-primary">
+        <div className="line-clamp-2 min-w-0 flex-1 text-base font-medium leading-5 text-text-primary">
           {title}
         </div>
         {updatedLabel && (
-          <span className="shrink-0 text-[13px] leading-5 text-text-muted">{updatedLabel}</span>
+          <span className="shrink-0 text-sm leading-5 text-text-muted">{updatedLabel}</span>
         )}
       </div>
       <div className="space-y-1">
@@ -76,7 +76,7 @@ export function TaskSidebarHoverCardContent({
         {hostLabel && <HoverRow icon={<Server className="h-4 w-4" />} value={hostLabel} />}
       </div>
       {branchWarning && (
-        <div className="flex items-start gap-2 text-[13px] leading-5 text-orange-500">
+        <div className="flex items-start gap-2 text-sm leading-5 text-orange-500">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{t('workbench.runtime_task_branch_warning')}</span>
         </div>

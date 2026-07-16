@@ -236,12 +236,12 @@ export function DesktopSettingsMenu({
           className="px-4 pb-3 pl-[44px] pt-1"
         >
           {isQuotaLoading ? (
-            <div className="py-1 text-[13px] leading-[18px] text-text-secondary">
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">
               {t('common.loading', '加载中...')}
             </div>
           ) : null}
           {quotaError ? (
-            <div className="py-1 text-[13px] leading-[18px] text-text-secondary">{quotaError}</div>
+            <div className="py-1 text-sm leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
           {!quotaError ? (
             <div className="space-y-2 text-xs leading-5 text-text-secondary">
@@ -270,7 +270,7 @@ function UsageWindowRow({ window }: { window: CodexUsageWindowDisplay }) {
       <div className="min-w-0">
         <div className="whitespace-nowrap">{window.title}</div>
         {resetTime ? (
-          <div className="mt-0.5 whitespace-nowrap text-[11px] leading-4 text-text-muted">
+          <div className="mt-0.5 whitespace-nowrap text-xs leading-4 text-text-muted">
             {resetTime} 重置
           </div>
         ) : null}
@@ -317,7 +317,7 @@ function SettingsMenuItem({
       disabled={disabled}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
-      className={`flex w-full items-center gap-3 px-4 text-left text-[13px] font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
+      className={`flex w-full items-center gap-3 px-4 text-left text-sm font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
         description ? 'min-h-12 py-2' : 'h-9'
       } ${active ? 'bg-hover' : ''}`}
     >
@@ -325,7 +325,7 @@ function SettingsMenuItem({
       <span className="min-w-0 flex-1">
         <span className="block truncate">{label}</span>
         {description ? (
-          <span className="block truncate text-[11px] font-medium leading-4 text-text-secondary">
+          <span className="block truncate text-xs font-medium leading-4 text-text-secondary">
             {description}
           </span>
         ) : null}
@@ -333,7 +333,7 @@ function SettingsMenuItem({
       {shortcut ? (
         <KeyboardShortcut
           value={shortcut}
-          className="h-6 bg-muted px-2 text-[13px] text-text-secondary"
+          className="h-6 bg-muted px-2 text-sm text-text-secondary"
         />
       ) : null}
       {trailing}
