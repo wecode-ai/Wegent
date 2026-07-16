@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.auth_utils import is_api_key
 from app.models.user import User
 from app.schemas.device_chat_task import (
     DeviceChatTaskRequest,
@@ -25,7 +26,8 @@ router = APIRouter()
 async def create_device_chat_task(
     payload: DeviceChatTaskRequest,
     authorization: Annotated[str | None, Header()] = None,
-    current_user: User = Depends(security.get_current_user),
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ) -> DeviceChatTaskResponse:
     """Create a new device chat task or append a message to an existing one."""
@@ -34,8 +36,17 @@ async def create_device_chat_task(
         db=db,
         user=current_user,
         request=payload,
-        auth_token=_bearer_token(authorization),
+        auth_token=_request_auth_token(authorization, x_api_key),
     )
+
+
+def _request_auth_token(
+    authorization: str | None,
+    x_api_key: str | None,
+) -> str:
+    if x_api_key and is_api_key(x_api_key):
+        return x_api_key
+    return _bearer_token(authorization)
 
 
 def _bearer_token(authorization: str | None) -> str:
