@@ -350,6 +350,9 @@ class DesktopE2EServer {
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
     })
+    this.retryCompletionRelease = new Promise(resolvePromise => {
+      this.releaseRetryCompletion = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
   }
@@ -407,6 +410,10 @@ class DesktopE2EServer {
 
   releaseInitialToolExecution() {
     this.releaseInitialTool()
+  }
+
+  releaseRetryResponse() {
+    this.releaseRetryCompletion()
   }
 
   async command(action, selector, options = {}) {
@@ -627,13 +634,12 @@ class DesktopE2EServer {
         ])
         return
       }
-      setTimeout(() => {
-        this.writeSse(response, [
-          responseCreated(responseId),
-          assistantMessage(RETRY_COMPLETION_TEXT),
-          responseCompleted(responseId),
-        ])
-      }, 500)
+      await this.retryCompletionRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(RETRY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -1045,11 +1051,12 @@ async function main() {
     )
     await control.command(
       'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant-waiting"]`,
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
       {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
+    control.releaseRetryResponse()
     await control.command(
       'waitFor',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
