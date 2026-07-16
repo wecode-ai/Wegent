@@ -22,6 +22,7 @@ import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 interface ProjectChatComposerProps {
   value: string
@@ -215,6 +216,14 @@ export function ProjectChatComposer({
     onRemoveAttachment(attachment.id)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
+  const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    onClearPlanMode?.()
+    onCancelGoalDraft?.()
+    if (phrase.mode === 'plan') onSetPlanMode?.()
+    if (phrase.mode === 'goal') onSetGoal?.()
+    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   useEffect(() => {
     disabledRef.current = disabled
@@ -377,6 +386,7 @@ export function ProjectChatComposer({
           onCancelGoalDraft={onCancelGoalDraft}
           isStreaming={isStreaming}
           onPause={onPause}
+          onQuickPhraseSelect={handleQuickPhraseSelect}
         />
       </form>
     </div>

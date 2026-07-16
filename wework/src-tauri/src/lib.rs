@@ -401,6 +401,40 @@ struct AppPreferences {
     browser_ask_before_download: bool,
     #[serde(default = "default_true")]
     appshots_play_sound: bool,
+    #[serde(default = "default_quick_phrases")]
+    quick_phrases: Vec<QuickPhrase>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickPhrase {
+    id: String,
+    title: String,
+    content: String,
+    mode: String,
+}
+
+fn default_quick_phrases() -> Vec<QuickPhrase> {
+    vec![
+        QuickPhrase {
+            id: "default-summary-progress".into(),
+            title: "总结当前进展".into(),
+            content: "总结目前完成的工作和下一步建议".into(),
+            mode: "normal".into(),
+        },
+        QuickPhrase {
+            id: "default-create-plan".into(),
+            title: "制定实施计划".into(),
+            content: "分析需求并制定详细的实施计划".into(),
+            mode: "plan".into(),
+        },
+        QuickPhrase {
+            id: "default-pursue-goal".into(),
+            title: "持续完成这个目标".into(),
+            content: "持续推进这个目标，直到真正完成".into(),
+            mode: "goal".into(),
+        },
+    ]
 }
 
 #[cfg(desktop)]
@@ -441,6 +475,7 @@ impl Default for AppPreferences {
             browser_download_directory: None,
             browser_ask_before_download: false,
             appshots_play_sound: true,
+            quick_phrases: default_quick_phrases(),
         }
     }
 }
@@ -463,6 +498,7 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
 #[cfg(desktop)]
@@ -871,6 +907,9 @@ fn update_app_preferences(
     if let Some(value) = patch.appshots_play_sound {
         preferences.appshots_play_sound = value;
     }
+    if let Some(value) = patch.quick_phrases {
+        preferences.quick_phrases = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -893,6 +932,7 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
     appshots_play_sound: bool,
+    quick_phrases: Vec<QuickPhrase>,
 }
 
 #[cfg(not(desktop))]
@@ -913,6 +953,7 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
 #[cfg(not(desktop))]
@@ -933,6 +974,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_download_directory: None,
         browser_ask_before_download: false,
         appshots_play_sound: true,
+        quick_phrases: default_quick_phrases(),
     })
 }
 
@@ -969,6 +1011,7 @@ fn update_app_preferences(
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
         appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
+        quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
     })
 }
 

@@ -11,6 +11,7 @@ import {
   Globe2,
   Info,
   Keyboard,
+  MessageSquareText,
   Loader2,
   LogOut,
   Monitor,
@@ -69,6 +70,7 @@ import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
+import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
@@ -142,6 +144,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Keyboard,
     label: 'settings_nav_keyboard_shortcuts',
     fallback: '快捷键',
+    category: 'personal',
+  },
+  {
+    key: 'quick-phrases',
+    icon: MessageSquareText,
+    label: 'settings_nav_quick_phrases',
+    fallback: '快捷短语',
     category: 'personal',
   },
   {
@@ -223,6 +232,7 @@ function getSettingsNavPath(key: string): string {
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
+  if (key === 'quick-phrases') return '/settings/personal/quick-phrases'
   if (key === 'general') return '/settings'
   return `/settings/${key}`
 }
@@ -1411,6 +1421,8 @@ export function ConnectionsSettingsPage({
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
+        ) : activeNav === 'quick-phrases' ? (
+          <QuickPhrasesSettingsPage />
         ) : activeNav === 'appshots' ? (
           <AppshotsSettingsPage />
         ) : activeNav === 'plugins' ? (

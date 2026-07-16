@@ -74,6 +74,12 @@ Select **Files and folders** to open the native system picker. The macOS desktop
 
 Workspace search is restricted to the execution directory bound to the current task or project. The native picker can reference local paths outside that workspace, but those paths are useful only to a local execution device that can access them; remote and cloud tasks cannot rely on paths from the user's computer. Previously sent path references remain visible in message history.
 
+## Use Quick Phrases
+
+Select **Quick phrases** in the lower-left area of the Wework composer to open the phrases stored on this device. Choose a phrase with the pointer, or type in the search field and use the arrow keys to move, `Enter` to confirm, and `Esc` to close. Wework appends the selected phrase to the current draft on a new line; it does not send the message immediately.
+
+Open **Settings > Quick phrases** to create, edit, delete, and reorder phrases. Each phrase can use Normal, Plan mode, or Goal; selecting it also switches the composer to that mode. Quick phrases are stored on the current device, remain available offline, and are not synchronized to other devices.
+
 ## Commit and Push Changes
 
 In desktop Wework, open **Environment info** in the upper-right corner, then select **Commit or push** to run one of these actions in the current task or project's actual workspace directory:
