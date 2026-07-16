@@ -14,6 +14,7 @@ from wecode.config.orphan_pod_config import (
     EXECUTOR_DELETE_BY_TASK_ID_URL,
     EXECUTOR_DELETE_POD_BY_NAME_URL,
     EXECUTOR_OLD_TASK_IDS_URL,
+    EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,59 @@ async def delete_pod_by_name_async(
         )
 
 
+async def cleanup_sandbox_by_task_id_async(
+    self,
+    task_id: int,
+    archive_before_delete: bool = True,
+) -> Dict[str, Any]:
+    """Archive and delete a sandbox runtime by task_id for orphan cleanup.
+
+    Routes to executor_manager's sandbox cleanup-by-task endpoint, which
+    archives the sandbox workspace (best-effort) before terminating it,
+    mirroring the normal stale sandbox cleanup path.
+    """
+    if not task_id or task_id <= 0:
+        raise HTTPException(
+            status_code=400, detail="task_id must be a positive integer"
+        )
+    try:
+        payload = {
+            "task_id": task_id,
+            "archive_before_delete": archive_before_delete,
+        }
+        logger.info(
+            "+++ sandbox.cleanup_by_task async request url=%s task_id=%d",
+            EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL,
+            task_id,
+        )
+        # connect timeout (10s) fails fast when executor_manager is unreachable
+        # instead of blocking the orphan cleanup loop for the full read timeout.
+        # read timeout (180s) must exceed the archive callback window
+        # (executor_manager allows up to 130s for the archive upload) plus pod
+        # deletion.
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+        ) as client:
+            response = await client.post(
+                EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            result = _validate_delete_response(
+                response.json(), "sandbox-cleanup-by-task"
+            )
+            logger.info(
+                f"+++ sandbox.cleanup_by_task async response task_id={task_id} result={result}"
+            )
+            return result
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error cleaning up sandbox by task_id: {str(e)}",
+        )
+
+
 def apply_patch():
     """Attach orphan pod cleanup methods to executor_kinds_service."""
     global _patch_applied
@@ -156,6 +210,9 @@ def apply_patch():
     )
     executor_kinds_service.delete_pod_by_name_async = delete_pod_by_name_async.__get__(
         executor_kinds_service
+    )
+    executor_kinds_service.cleanup_sandbox_by_task_id_async = (
+        cleanup_sandbox_by_task_id_async.__get__(executor_kinds_service)
     )
 
     _patch_applied = True
