@@ -87,6 +87,8 @@ interface ScrollableMessageAreaProps {
   canEditLastUserMessage?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onAddSelectionToConversation?: (text: string) => void
+  onAskSelectionInSidebar?: (text: string) => void
   autoScrollSuspended?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadFullTranscript?: () => Promise<void> | void
@@ -154,6 +156,12 @@ function areScrollableMessageAreaPropsEqual(
     previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
       ? 'hiddenRequestUserInputIds'
       : null,
+    previous.onAddSelectionToConversation !== next.onAddSelectionToConversation
+      ? 'onAddSelectionToConversation'
+      : null,
+    previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
+      ? 'onAskSelectionInSidebar'
+      : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
@@ -199,6 +207,8 @@ function ScrollableMessagePaneContent({
   canEditLastUserMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onAddSelectionToConversation,
+  onAskSelectionInSidebar,
   autoScrollSuspended = false,
   onLoadMoreBefore,
   onLoadFullTranscript,
@@ -769,6 +779,8 @@ function ScrollableMessagePaneContent({
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onAddSelectionToConversation={onAddSelectionToConversation}
+                onAskSelectionInSidebar={onAskSelectionInSidebar}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
             </>

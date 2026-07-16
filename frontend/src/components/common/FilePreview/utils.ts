@@ -62,13 +62,18 @@ export function isFilePreviewable(mimeType: string, filename: string): boolean {
   ) {
     return true
   }
-  // Office documents (excluding PPT)
+  // Legacy PowerPoint files are not supported by the Office renderer.
+  if (mimeType === 'application/vnd.ms-powerpoint' || /\.ppt$/i.test(filename)) {
+    return false
+  }
+  // Office documents
   if (
     mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
     mimeType === 'application/msword' ||
     mimeType === 'application/vnd.ms-excel' ||
-    filename.match(/\.(xlsx|xls|csv|docx|doc)$/i)
+    filename.match(/\.(xlsx|xls|csv|docx|doc|pptx)$/i)
   ) {
     return true
   }
@@ -105,7 +110,7 @@ export function getPreviewType(mimeType: string, filename: string): PreviewType 
   ) {
     return 'text'
   }
-  // Office documents (Word/Excel only, PPT excluded)
+  // Office documents
   return 'office'
 }
 
@@ -118,16 +123,6 @@ export function formatFileSize(bytes?: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
-}
-
-/**
- * Get Office document type
- */
-export function getOfficeType(filename: string): 'excel' | 'word' | 'powerpoint' {
-  const ext = filename.toLowerCase()
-  if (ext.match(/\.(xlsx|xls|csv)$/)) return 'excel'
-  if (ext.match(/\.(pptx|ppt)$/)) return 'powerpoint'
-  return 'word'
 }
 
 /**

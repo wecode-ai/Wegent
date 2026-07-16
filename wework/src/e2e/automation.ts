@@ -26,6 +26,7 @@ type DesktopControlAction =
   | 'snapshot'
   | 'waitFor'
   | 'press'
+  | 'selectText'
 
 interface DesktopControlCommand {
   id: string
@@ -379,6 +380,26 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
+function selectDesktopControlText(selector: string, value: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node && !node.textContent?.includes(value)) node = walker.nextNode()
+  if (!node) throw new Error(`Unable to find text "${value}" inside selector "${selector}"`)
+
+  const start = node.textContent?.indexOf(value) ?? -1
+  const range = document.createRange()
+  range.setStart(node, start)
+  range.setEnd(node, start + value.length)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  document.dispatchEvent(new Event('selectionchange'))
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  return value
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -436,6 +457,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
       return element.textContent?.trim() ?? ''
     }
+    case 'selectText':
+      return selectDesktopControlText(command.selector, command.value ?? '')
   }
 }
 

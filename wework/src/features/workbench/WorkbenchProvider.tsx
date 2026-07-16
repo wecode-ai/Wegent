@@ -902,6 +902,7 @@ export function WorkbenchProvider({
   const stableCreateTemporaryRuntimeTask = useStableEvent(
     runtimeMessaging.createTemporaryRuntimeTask
   )
+  const stableCreateProjectRuntimeTask = useStableEvent(runtimeMessaging.createProjectRuntimeTask)
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
@@ -1214,6 +1215,7 @@ export function WorkbenchProvider({
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
     createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
+    createProjectRuntimeTask: runtimeMessaging.createProjectRuntimeTask,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
     loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
@@ -1297,6 +1299,7 @@ export function WorkbenchProvider({
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
       createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
+      createProjectRuntimeTask: stableCreateProjectRuntimeTask,
       retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
       loadTurnFileChangesDiff: stableLoadTurnFileChangesDiff,
@@ -1327,6 +1330,7 @@ export function WorkbenchProvider({
       stableCreateGitWorkspaceProject,
       stableCreateProject,
       stableCreateTemporaryRuntimeTask,
+      stableCreateProjectRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
       stableGetDeviceHomeDirectory,
