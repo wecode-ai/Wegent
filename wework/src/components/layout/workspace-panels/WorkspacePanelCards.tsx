@@ -24,6 +24,7 @@ import {
 import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { buildVncPageUrl } from '@/lib/vnc'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
+import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
@@ -32,6 +33,7 @@ import { RemoteTerminal } from './RemoteTerminal'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 
 interface WorkspacePanelCardsProps {
+  showWorkbenchBackground?: boolean
   currentProject: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
@@ -157,6 +159,7 @@ function buildLocalTerminalEnv({
 }
 
 export function WorkspacePanelCards({
+  showWorkbenchBackground = false,
   currentProject,
   devices = [],
   workspaceTarget = null,
@@ -744,7 +747,10 @@ export function WorkspacePanelCards({
   const terminalWindow = activeTerminalSession ? (
     <div
       data-testid={testId('workspace-terminal-window')}
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
+      className={cn(
+        'flex h-full min-h-0 w-full flex-col overflow-hidden',
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+      )}
     >
       {!hideTerminalChrome && (
         <div className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-surface px-2">
@@ -811,6 +817,7 @@ export function WorkspacePanelCards({
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ) : (
           <RemoteTerminal
@@ -825,6 +832,7 @@ export function WorkspacePanelCards({
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )
       })}

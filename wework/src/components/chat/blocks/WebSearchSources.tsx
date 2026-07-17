@@ -13,7 +13,11 @@ export function WebSearchActivityRows({ items }: { items: WebSearchActivityItem[
     >
       {items.map(item => (
         <div key={item.id} className="flex min-w-0 items-start gap-1.5">
-          {item.iconUrl ? <WebSearchFavicon iconUrl={item.iconUrl} domain={item.domain} /> : null}
+          {item.iconUrl ? (
+            <WebSearchFavicon iconUrl={item.iconUrl} domain={item.domain} />
+          ) : (
+            <Globe2 className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+          )}
           <span className="min-w-0 break-words">{item.label}</span>
         </div>
       ))}

@@ -71,4 +71,20 @@ describe('xterm-theme', () => {
       'rgb(17, 19, 22)'
     )
   })
+
+  test('applies a transparent background to the terminal and generated nodes', () => {
+    const terminal = { options: {} }
+    const container = document.createElement('div')
+    container.innerHTML = '<div class="xterm"><div class="xterm-viewport"></div></div>'
+
+    applyTerminalTheme(terminal as never, container, getTerminalTheme(), true)
+
+    expect(terminal.options).toEqual({
+      theme: expect.objectContaining({ background: 'rgba(0, 0, 0, 0)' }),
+    })
+    expect(container.style.backgroundColor).toBe('rgba(0, 0, 0, 0)')
+    expect(container.querySelector<HTMLElement>('.xterm-viewport')?.style.backgroundColor).toBe(
+      'rgba(0, 0, 0, 0)'
+    )
+  })
 })

@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -146,13 +146,20 @@ describe('ToolBlocksDisplay', () => {
     vi.useRealTimers()
   })
 
-  test('groups completed tools into an activity summary', () => {
+  test('renders concrete tool rows without a second aggregation inside the summary', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
-    expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
+  })
+
+  test('hides zero-second duration while restoring a completed transcript', () => {
+    render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
+
+    expect(screen.queryByText('已处理 0 秒')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '已调用 1 个工具 已处理' })).toBeInTheDocument()
   })
 
   test('renders completed conversation guidance as a static activity label', () => {
@@ -160,12 +167,11 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    expect(screen.getByTestId('processing-activity-group-label')).toHaveTextContent('已引导对话')
-    expect(screen.queryByRole('button', { name: '已引导对话' })).not.toBeInTheDocument()
-    expect(screen.queryByTestId('processing-activity-group-content')).not.toBeInTheDocument()
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
-  test('renders context compaction as an independent divider while preserving tool groups', () => {
+  test('renders context compaction independently between flat tool rows', () => {
     const completedSearchBlock: ProcessingBlock = {
       id: 'search-1',
       subtaskId: 1,
@@ -186,10 +192,9 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
     expect(screen.getByTestId('context-compaction-indicator')).toHaveTextContent('上下文已自动压缩')
-    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
-    expect(activityToggles).toHaveLength(2)
-    expect(activityToggles[0]).toHaveTextContent('已运行 1 条命令')
-    expect(activityToggles[1]).toHaveTextContent('已搜索代码')
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
+    expect(screen.getByText('已搜索代码')).toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
   test('renders running context compaction status without the generic thinking placeholder', () => {
@@ -220,36 +225,32 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
+    expect(screen.getAllByText('已搜索网页')).toHaveLength(completedWebSearchBlocks.length)
     expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '已搜索网页' }))
+    screen.getAllByRole('button', { name: '已搜索网页' }).forEach(button => {
+      fireEvent.click(button)
+    })
 
-    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
-      'Beijing weather today June 17 2026 temperature rain'
-    )
-    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
-      'https://www.weather.com/weather/today/l/Beijing+China'
-    )
-    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
-      'https://docs.wegent.ai/guide'
-    )
+    const resultText = screen
+      .getAllByTestId('web-search-activity-results')
+      .map(result => result.textContent)
+      .join(' ')
+    expect(resultText).toContain('Beijing weather today June 17 2026 temperature rain')
+    expect(resultText).toContain('https://www.weather.com/weather/today/l/Beijing+China')
+    expect(resultText).toContain('https://docs.wegent.ai/guide')
     expect(screen.getByText('https://docs.wegent.ai/guide')).toBeInTheDocument()
-    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
-      "'install' in https://docs.wegent.ai/guide"
-    )
-    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
-      'weather today Beijing China | weather.com'
-    )
+    expect(resultText).toContain("'install' in https://docs.wegent.ai/guide")
+    expect(resultText).toContain('weather today Beijing China | weather.com')
     expect(
       screen.queryByText('Beijing China current weather forecast today AccuWeather')
     ).toBeNull()
     expect(screen.getAllByText('Beijing weather today June 17 2026 temperature rain')).toHaveLength(
       1
     )
-    expect(screen.getByTestId('web-search-activity-results').parentElement).not.toHaveClass(
-      'border-l'
-    )
+    screen.getAllByTestId('web-search-activity-results').forEach(result => {
+      expect(result.parentElement).not.toHaveClass('border-l')
+    })
     expect(screen.getAllByTestId('web-search-source-icon').length).toBeGreaterThanOrEqual(2)
   })
 
@@ -286,10 +287,8 @@ describe('ToolBlocksDisplay', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-    fireEvent.click(screen.getByRole('button', { name: /已读取 2 个文件/ }))
-
-    expect(screen.getByText('Read toolBlockActivity.ts')).toBeInTheDocument()
-    expect(screen.getByText('Read toolBlockKinds.ts')).toBeInTheDocument()
+    expect(screen.getByText('已读取 toolBlockActivity.ts')).toBeInTheDocument()
+    expect(screen.getByText('已读取 toolBlockKinds.ts')).toBeInTheDocument()
     expect(screen.queryByText('Read sed')).not.toBeInTheDocument()
     expect(screen.queryByText('Read 180,220p')).not.toBeInTheDocument()
     expect(screen.queryByText(/已运行 nl -ba/)).not.toBeInTheDocument()
@@ -341,24 +340,10 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
-    expect(activityToggles).toHaveLength(2)
-    expect(activityToggles[0]).toHaveTextContent('已搜索代码')
-    expect(activityToggles[1]).toHaveTextContent('已运行 1 条命令')
-    expect(screen.getByTestId('processing-activity-search-icon')).toBeInTheDocument()
-
-    activityToggles.forEach(toggle => fireEvent.click(toggle))
-
+    expect(screen.getAllByText('已搜索代码')).toHaveLength(2)
     expect(screen.getByText('已运行 git diff --name-only')).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'Searched for ToolBlockItem|toolBlock|file_changes|renderPayload|read.*file|command in blocks'
-      )
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('Searched for 已编辑|edited|edited_file|edit.*file in wework')
-    ).toBeInTheDocument()
     expect(screen.queryByText(/已运行 rg -n/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
   test('renders mixed code search and read file activity with specialized rows', () => {
@@ -393,20 +378,10 @@ describe('ToolBlocksDisplay', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
-    expect(activityToggles).toHaveLength(2)
-    expect(activityToggles[0]).toHaveTextContent('已搜索代码')
-    expect(activityToggles[1]).toHaveTextContent('已读取 1 个文件')
-    activityToggles.forEach(toggle => fireEvent.click(toggle))
-
-    screen.getAllByTestId('processing-activity-group-content').forEach(content => {
-      const activityContent = content.firstElementChild?.firstElementChild as HTMLElement
-      expect(activityContent).toHaveClass('mt-1.5', 'gap-1.5')
-      expect(activityContent).not.toHaveClass('border-l', 'pl-4', 'gap-3')
-    })
-    expect(screen.getByText('Searched for toolBlock in blocks')).toBeInTheDocument()
-    expect(screen.getByText('Read toolBlockActivity.ts')).toBeInTheDocument()
+    expect(screen.getByText('已搜索代码')).toBeInTheDocument()
+    expect(screen.getByText('已读取 toolBlockActivity.ts')).toBeInTheDocument()
     expect(screen.queryByText(/已运行 sed -n/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
   test('hides internal stdin polling tools from completed activity', () => {
@@ -430,7 +405,7 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    expect(screen.getByTestId('processing-activity-group-label')).toHaveTextContent('已引导对话')
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已执行 1 个工具/ })).not.toBeInTheDocument()
     expect(screen.queryByText('已执行')).not.toBeInTheDocument()
   })
@@ -444,12 +419,9 @@ describe('ToolBlocksDisplay', () => {
 
     render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
 
+    expect(screen.getByRole('button', { name: /已编辑 1 个文件 已处理/ })).toBeInTheDocument()
+    expect(screen.getByLabelText('编辑 1')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-
-    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
-    expect(screen.queryByText('已编辑 env')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
 
     expect(screen.getByText('已编辑 env')).toBeInTheDocument()
     expect(screen.getByText('+2')).toBeInTheDocument()
@@ -479,6 +451,34 @@ describe('ToolBlocksDisplay', () => {
     expect(
       await screen.findByTestId('process-file-change-diff-copy-success-icon')
     ).toBeInTheDocument()
+  })
+
+  test('counts every edited file as one tool activity', () => {
+    const multiFileChangesBlock: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        file_count: 3,
+        files: Array.from({ length: 3 }, (_, index) => ({
+          path: `src/file-${index + 1}.ts`,
+          change_type: 'modified' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        })),
+      },
+    }
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock, multiFileChangesBlock]}
+        isStreaming={false}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: /已调用 4 个工具 已处理/ })).toBeInTheDocument()
+    expect(screen.getByLabelText('命令 1')).toBeInTheDocument()
+    expect(screen.getByLabelText('编辑 3')).toBeInTheDocument()
   })
 
   test('merges consecutive file change blocks into one activity row', () => {
@@ -515,23 +515,21 @@ describe('ToolBlocksDisplay', () => {
 
     const fileChangeBlocks = screen.getAllByTestId('process-file-changes-block')
     expect(fileChangeBlocks).toHaveLength(1)
-    expect(fileChangeBlocks[0]).toHaveTextContent('已编辑 1 个文件')
+    expect(fileChangeBlocks[0]).toHaveTextContent('已编辑 env')
     expect(fileChangeBlocks[0]).toHaveTextContent('+5')
     expect(fileChangeBlocks[0]).toHaveTextContent('-1')
   })
 
-  test('renders static file change stat bars for historical file changes', () => {
+  test('renders historical file changes directly without an intermediate summary row', () => {
     render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    const statBars = screen
-      .getByTestId('process-file-changes-block')
-      .querySelectorAll('.file-change-stat-block')
-    expect(statBars).toHaveLength(1)
+    expect(screen.getByText('已编辑 env')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^已编辑 1 个文件$/ })).not.toBeInTheDocument()
   })
 
-  test('keeps streaming file change stat animation until final diff replaces the summary', async () => {
+  test('replaces streaming file rows with the final file rows', () => {
     const streamingSummaryBlock: ProcessingBlock = {
       ...completedFileChangesBlock,
       status: 'streaming',
@@ -591,37 +589,21 @@ describe('ToolBlocksDisplay', () => {
       <ToolBlocksDisplay blocks={[streamingSummaryBlock]} isStreaming={false} forceExpanded />
     )
 
-    expect(
-      screen.getByTestId('process-file-changes-block').querySelectorAll('.file-change-stat-block')
-    ).toHaveLength(1)
+    expect(screen.getByText('正在编辑 streaming.ts')).toBeInTheDocument()
 
     rerender(
       <ToolBlocksDisplay blocks={[updatedStreamingSummaryBlock]} isStreaming={true} forceExpanded />
     )
 
-    await waitFor(() => {
-      const streamingStatBars = screen
-        .getByTestId('process-file-changes-block')
-        .querySelectorAll<HTMLElement>('.file-change-stat-block')
-      expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+5')
-      expect(streamingStatBars).toHaveLength(1)
-      expect(
-        streamingStatBars[0].style.getPropertyValue('--file-change-stat-addition-height')
-      ).toBe('9.4px')
-    })
+    expect(screen.getAllByText(/正在编辑 file-/)).toHaveLength(5)
 
     rerender(<ToolBlocksDisplay blocks={[finalSummaryBlock]} isStreaming={false} forceExpanded />)
 
-    const statBars = screen
-      .getByTestId('process-file-changes-block')
-      .querySelectorAll<HTMLElement>('.file-change-stat-block')
-    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+4')
-    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('-0')
-    expect(statBars).toHaveLength(1)
-    expect(statBars[0].style.getPropertyValue('--file-change-stat-addition-height')).toBe('9.4px')
+    expect(screen.getByText('已编辑 final.ts')).toBeInTheDocument()
+    expect(screen.queryByText('正在编辑 streaming.ts')).not.toBeInTheDocument()
   })
 
-  test('uses an edit icon for completed edit activity groups', () => {
+  test('renders completed edit tools as flat concrete rows', () => {
     render(
       <ToolBlocksDisplay
         blocks={[
@@ -650,8 +632,8 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    expect(screen.getByRole('button', { name: /已编辑 1 个文件/ })).toBeInTheDocument()
-    expect(screen.getByTestId('processing-activity-edit-icon')).toBeInTheDocument()
+    expect(screen.getByText('已编辑 mod.rs')).toBeInTheDocument()
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
   test('hides redundant apply_patch activity when file changes are already rendered', () => {
@@ -685,7 +667,7 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
-    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 env')
   })
 
   test('only persists the top-level processing expansion state', () => {
@@ -698,8 +680,9 @@ describe('ToolBlocksDisplay', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-    fireEvent.click(screen.getByRole('button', { name: /已编辑 1 个文件/ }))
     expect(screen.getByText('已编辑 env')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
+    expect(screen.getByTestId('process-file-change-diff')).toBeInTheDocument()
 
     unmount()
     render(
@@ -714,8 +697,8 @@ describe('ToolBlocksDisplay', () => {
       'aria-hidden',
       'false'
     )
-    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 1 个文件')
-    expect(screen.queryByText('已编辑 env')).toBeNull()
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 env')
+    expect(screen.queryByTestId('process-file-change-diff')).not.toBeInTheDocument()
   })
 
   test('opens completed processing details with a short content transition', () => {
@@ -829,13 +812,14 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
-  test('keeps running process visible with inner tool details collapsed', () => {
+  test('keeps a compact live preview with full processing details collapsed', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
     const collapseContent = screen.getByTestId('processing-collapse-content')
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
-    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByRole('button', { name: /已处理/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByText('运行命令')).toBeInTheDocument()
     expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
@@ -843,10 +827,8 @@ describe('ToolBlocksDisplay', () => {
   test('leaves generic thinking placeholders to the message list', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
-    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
@@ -869,10 +851,10 @@ describe('ToolBlocksDisplay', () => {
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByText('已运行 1 条命令')).toBeInTheDocument()
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
   })
 
-  test('groups completed tools while keeping the current running command visible', () => {
+  test('keeps completed and running tools as flat preview rows', () => {
     const completedSearchBlock: ProcessingBlock = {
       id: 'search-1',
       subtaskId: 1,
@@ -899,15 +881,41 @@ describe('ToolBlocksDisplay', () => {
       />
     )
 
-    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
-
-    expect(activityToggles).toHaveLength(2)
-    expect(activityToggles[0]).toHaveTextContent('已运行 1 条命令')
-    expect(activityToggles[1]).toHaveTextContent('已搜索代码')
-    activityToggles.forEach(toggle => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
+    const preview = screen.getByTestId('processing-live-preview')
+    expect(preview).toHaveTextContent('运行命令')
+    expect(preview).toHaveTextContent('搜索代码')
+    expect(preview).toHaveTextContent('运行命令')
+    expect(screen.getByLabelText('命令 2')).toBeInTheDocument()
+    expect(screen.getByLabelText('搜索 1')).toBeInTheDocument()
     expect(screen.queryByText(/已运行 \/bin\/zsh/)).not.toBeInTheDocument()
-    expect(screen.getByText('正在运行 bin/paas-context --help')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /已调用 3 个工具 已处理/ }))
+
+    expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
+    expect(screen.getByText('已搜索代码')).toBeInTheDocument()
+    expect(screen.getByText('正在运行 bin/paas-context --help')).toBeInTheDocument()
+  })
+
+  test('limits the collapsed live preview to the latest three processing rows', () => {
+    const runningBlocks: ProcessingBlock[] = Array.from({ length: 4 }, (_, index) => ({
+      id: `running-${index + 1}`,
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: `command-${index + 1}` },
+      status: 'streaming',
+      createdAt: Date.now() + index,
+    }))
+
+    render(<ToolBlocksDisplay blocks={runningBlocks} isStreaming={true} />)
+
+    const preview = screen.getByTestId('processing-live-preview')
+    expect(preview.querySelector('[data-processing-block-id="running-1"]')).toBeNull()
+    expect(preview.querySelector('[data-processing-block-id="running-2"]')).not.toBeNull()
+    expect(preview.querySelector('[data-processing-block-id="running-3"]')).not.toBeNull()
+    expect(preview.querySelector('[data-processing-block-id="running-4"]')).not.toBeNull()
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {
@@ -936,7 +944,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 10 秒')).toBeInTheDocument()
   })
 
-  test('renders the running header as plain text', () => {
+  test('renders the running header as an expandable summary', () => {
     const runningBlock: ProcessingBlock = {
       ...completedCommandBlock,
       status: 'streaming',
@@ -944,7 +952,10 @@ describe('ToolBlocksDisplay', () => {
 
     render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
 
-    expect(screen.queryByRole('button', { name: /已处理 .* 秒/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /已调用 1 个工具 已处理 .* 秒/ })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
     expect(screen.getByText(/已处理 .* 秒/)).toBeInTheDocument()
   })
 

@@ -233,6 +233,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   active,
   context,
   workspaceSessionApi,
+  showWorkbenchBackground,
   onRequestClose,
   onTerminalTabsEmpty,
 }: {
@@ -241,6 +242,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   active: boolean
   context: BottomPanelRenderContext
   workspaceSessionApi?: WorkspaceSessionApi
+  showWorkbenchBackground: boolean
   onRequestClose: (key: string) => void
   onTerminalTabsEmpty: () => void
 }) {
@@ -258,6 +260,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
       preferLocalTerminal={context.preferLocalTerminal}
       terminalContextTitle={context.terminalContextTitle}
       workspaceSessionApi={workspaceSessionApi}
+      showWorkbenchBackground={showWorkbenchBackground}
       onRequestClose={closePanel}
       onTerminalTabsEmpty={onTerminalTabsEmpty}
     />
@@ -1871,7 +1874,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
+            'relative z-popover min-w-0 shrink-0 overflow-hidden',
+            hasMainBackground ? 'bg-background/20' : 'bg-background',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
             rightPanelOpen
               ? 'pointer-events-auto border-l border-border/60 opacity-100'
@@ -1882,6 +1886,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
+              showWorkbenchBackground={hasMainBackground}
               visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
@@ -1929,6 +1934,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             active={active}
             context={context}
             workspaceSessionApi={workspaceSessionApi}
+            showWorkbenchBackground={hasMainBackground}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />

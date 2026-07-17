@@ -161,8 +161,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已执行')).toBeInTheDocument()
-    expect(screen.queryByText('custom_agent_tool')).not.toBeInTheDocument()
+    expect(screen.getByText('已调用 custom agent tool')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
     expect(screen.queryByText(/raw details should stay hidden/)).not.toBeInTheDocument()
   })

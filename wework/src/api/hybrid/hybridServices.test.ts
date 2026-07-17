@@ -828,6 +828,39 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('discovers a local device before routing task creation', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'runtime-local-device',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+      },
+    ])
+    mocks.localCreateRuntimeTask.mockResolvedValue({
+      accepted: true,
+      deviceId: 'runtime-local-device',
+      taskId: 'local-task',
+      workspacePath: '/tmp/local',
+    })
+    const services = createServices()
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'runtime-local-device',
+      workspacePath: '/tmp/local',
+      teamId: 1,
+      runtime: 'codex',
+      message: 'local',
+    })
+
+    expect(mocks.localListDevices).toHaveBeenCalledTimes(1)
+    expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
   it('routes cloud runtime IPC through socket_device_id when provided', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {

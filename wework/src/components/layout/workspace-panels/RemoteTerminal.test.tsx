@@ -5,6 +5,7 @@ import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { RemoteTerminal } from './RemoteTerminal'
 
 const testState = vi.hoisted(() => ({
+  terminalConstructorOptions: [] as Array<Record<string, unknown>>,
   terminalInstances: [] as Array<{
     rows: number
     cols: number
@@ -54,7 +55,8 @@ vi.mock('@xterm/addon-web-links', () => ({
 }))
 
 vi.mock('@xterm/xterm', () => ({
-  Terminal: vi.fn().mockImplementation(function TerminalMock() {
+  Terminal: vi.fn().mockImplementation(function TerminalMock(options: Record<string, unknown>) {
+    testState.terminalConstructorOptions.push(options)
     const dataHandlers: Array<(data: string) => void> = []
     const terminal = {
       rows: 24,
@@ -122,6 +124,7 @@ describe('RemoteTerminal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     testState.terminalInstances.length = 0
+    testState.terminalConstructorOptions.length = 0
     testState.webLinksAddonInstances.length = 0
     testState.resizeObserverInstances.length = 0
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
@@ -276,5 +279,28 @@ describe('RemoteTerminal', () => {
     expect(terminal.loadAddon).toHaveBeenCalledWith(webLinksAddon)
     webLinksAddon.openUri('https://example.com/docs')
     expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/docs')
+  })
+
+  test('enables xterm transparency for a workbench background', () => {
+    createRemoteTerminalClientMock.mockReturnValue(
+      createClient({ attach: vi.fn(() => new Promise(() => undefined)) })
+    )
+
+    const { getByTestId } = render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active
+        showWorkbenchBackground
+      />
+    )
+
+    expect(testState.terminalConstructorOptions[0]).toEqual(
+      expect.objectContaining({
+        allowTransparency: true,
+        theme: expect.objectContaining({ background: 'rgba(0, 0, 0, 0)' }),
+      })
+    )
+    expect(getByTestId('remote-terminal')).toHaveClass('bg-transparent')
   })
 })
