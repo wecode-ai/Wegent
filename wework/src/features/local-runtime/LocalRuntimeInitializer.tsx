@@ -247,12 +247,12 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
   return (
     <div
       data-testid="local-runtime-slow-startup-help"
-      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-amber-200/70 bg-amber-50/70 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
+      className="mt-5 flex w-full max-w-[480px] flex-col items-stretch gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3.5 py-3 text-left sm:flex-row sm:items-center sm:px-4"
     >
       <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
         <span
           data-testid="local-runtime-slow-startup-icon"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-100 text-amber-700 sm:h-8 sm:w-8"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-amber-500/15 text-amber-700 sm:h-8 sm:w-8 dark:text-amber-300"
         >
           <AlertCircle className="h-4 w-4" />
         </span>
@@ -266,7 +266,7 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
       <Button
         type="button"
         variant="outline"
-        className="h-11 min-w-[44px] border-amber-200/80 bg-base px-3 text-xs text-text-primary hover:bg-amber-50 sm:h-9 sm:w-auto"
+        className="h-11 min-w-[44px] border-border bg-base px-3 text-xs text-text-primary hover:bg-muted sm:h-9 sm:w-auto"
         onClick={onCopyDebugInfo}
         disabled={copying}
         data-testid="local-runtime-copy-debug-button"
