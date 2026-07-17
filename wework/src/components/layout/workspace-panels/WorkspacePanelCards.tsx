@@ -796,6 +796,7 @@ export function WorkspacePanelCards({
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ) : (
           <RemoteTerminal
@@ -809,6 +810,7 @@ export function WorkspacePanelCards({
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )
       })}
