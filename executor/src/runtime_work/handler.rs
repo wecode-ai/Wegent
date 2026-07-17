@@ -4572,6 +4572,18 @@ fn cached_user_message(
     message.insert("content".to_owned(), Value::String(content.to_owned()));
     message.insert("status".to_owned(), Value::String("done".to_owned()));
     message.insert("createdAt".to_owned(), Value::Number(now_ms().into()));
+    if let Some(client_message_id) = payload
+        .get("clientMessageId")
+        .or_else(|| payload.get("client_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        message.insert(
+            "clientMessageId".to_owned(),
+            Value::String(client_message_id.to_owned()),
+        );
+    }
     if let Some(source) = payload
         .get("source")
         .filter(|value| value.is_object())
@@ -5642,11 +5654,15 @@ mod tests {
         let message = cached_user_message(
             "local-task",
             &request,
-            &json!({"message": "visible user text"}),
+            &json!({
+                "message": "visible user text",
+                "clientMessageId": "runtime-local-pane-1"
+            }),
         )
         .expect("payload message should create a cached user message");
 
         assert_eq!(message["content"], "visible user text");
+        assert_eq!(message["clientMessageId"], "runtime-local-pane-1");
 
         let content_message = cached_user_message(
             "local-task",

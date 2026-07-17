@@ -277,6 +277,8 @@ export interface RuntimeMessageSource {
 
 export interface NormalizedRuntimeMessage {
   id: string
+  clientMessageId?: string | null
+  client_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
   contentTruncated?: boolean | null
@@ -556,6 +558,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  clientMessageId?: string
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
@@ -1011,6 +1014,7 @@ export interface RuntimeTaskCreateRequest {
   teamId: number
   runtime: RuntimeName
   message: string
+  clientMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null

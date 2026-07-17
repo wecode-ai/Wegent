@@ -699,6 +699,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
+      clientMessageId: 'runtime-local-pane-1',
       modelId: 'gpt-5.5',
       modelOptions: {
         collaborationMode: 'default',
@@ -732,6 +733,7 @@ describe('createLocalAppServices', () => {
           taskId: 'task-1',
         },
         message: 'continue',
+        clientMessageId: 'runtime-local-pane-1',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -757,6 +759,7 @@ describe('createLocalAppServices', () => {
           task_id: 'task-1',
           subtask_id: expect.any(String),
           prompt: 'continue',
+          client_user_message_id: 'runtime-local-pane-1',
           model_config: expect.objectContaining({
             model: 'openai',
             model_id: 'gpt-5.5',

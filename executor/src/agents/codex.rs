@@ -4129,6 +4129,19 @@ fn turn_start_params(
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
     params.insert("input".to_owned(), Value::Array(input));
+    if let Some(client_user_message_id) = request
+        .extra
+        .get("client_user_message_id")
+        .or_else(|| request.extra.get("clientUserMessageId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        params.insert(
+            "clientUserMessageId".to_owned(),
+            Value::String(client_user_message_id.to_owned()),
+        );
+    }
     params.insert(
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
@@ -5418,6 +5431,24 @@ mod tests {
             "high"
         );
         assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn turn_start_params_includes_client_user_message_id() {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "client_user_message_id".to_owned(),
+            Value::String("runtime-local-pane-1".to_owned()),
+        );
+
+        let params = turn_start_params(
+            "thread-1",
+            &request,
+            &CodexLaunchConfig::default(),
+            Vec::new(),
+        );
+
+        assert_eq!(params["clientUserMessageId"], "runtime-local-pane-1");
     }
 
     #[test]

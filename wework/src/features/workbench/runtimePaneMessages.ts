@@ -422,6 +422,7 @@ function runtimeStreamTaskSubtaskIdentity(
 
 function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): WorkbenchMessage {
   const role = message.role.toLowerCase() === 'user' ? 'user' : 'assistant'
+  const clientMessageId = message.clientMessageId ?? message.client_message_id ?? undefined
   const subtaskId = runtimeMessageSubtaskId(message)
   const normalizedStatus = String(message.status ?? '').toLowerCase()
   const status: WorkbenchMessage['status'] =
@@ -452,7 +453,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
       : []
   const contentTruncated = hasTruncatedRuntimeContent(message)
   return {
-    id: message.id,
+    id: role === 'user' && clientMessageId ? clientMessageId : message.id,
     role,
     subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,

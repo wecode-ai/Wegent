@@ -597,6 +597,27 @@ describe('createRuntimeTaskStreamHandlers', () => {
 })
 
 describe('runtimeMessagesToWorkbenchMessages', () => {
+  test('uses the client message id to reconcile a persisted user message', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'codex-user-item-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'hello',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: 'hello',
+    })
+  })
+})
+
+describe('runtimeMessagesToWorkbenchMessages', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })

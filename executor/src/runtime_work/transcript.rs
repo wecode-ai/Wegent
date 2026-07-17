@@ -940,6 +940,16 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, t
         "createdAt": item_timestamp(item).unwrap_or(created_at),
         "subtaskId": turn_id,
     });
+    if let Some(client_message_id) =
+        string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
+    {
+        if let Some(object) = message.as_object_mut() {
+            object.insert(
+                "clientMessageId".to_owned(),
+                Value::String(client_message_id),
+            );
+        }
+    }
     if !attachments.is_empty() {
         if let Some(object) = message.as_object_mut() {
             object.insert("attachments".to_owned(), Value::Array(attachments));
@@ -2937,6 +2947,7 @@ mod tests {
                             "payload": {
                                 "id": "user-event",
                                 "type": "user_message",
+                                "clientId": "runtime-local-pane-1",
                                 "message": "start app\n"
                             }
                         },
@@ -2963,6 +2974,7 @@ mod tests {
 
         assert_eq!(user_messages.len(), 1);
         assert_eq!(user_messages[0]["content"], "start app");
+        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
         assert!(!messages.iter().any(|message| {
             message["content"]
                 .as_str()

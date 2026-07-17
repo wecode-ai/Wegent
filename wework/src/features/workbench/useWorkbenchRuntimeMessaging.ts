@@ -447,7 +447,7 @@ export function useWorkbenchRuntimeMessaging({
       activeDeviceId?: string,
       options?: Pick<
         SendCurrentInputOptions,
-        'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
+        'clientMessageId' | 'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
       > & {
         ephemeral?: boolean
         openInMainPane?: boolean
@@ -541,6 +541,7 @@ export function useWorkbenchRuntimeMessaging({
         teamId: payload.team_id,
         runtime,
         message: payload.message,
+        ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
@@ -804,6 +805,7 @@ export function useWorkbenchRuntimeMessaging({
           {
             address: state.currentRuntimeTask,
             message: payloadMessage,
+            ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
             ...runtimeModelFields,
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
@@ -882,6 +884,7 @@ export function useWorkbenchRuntimeMessaging({
           initialGoal: options?.initialGoal,
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
+          clientMessageId: options?.clientMessageId,
         }
       )
       if (sent) {
@@ -952,6 +955,7 @@ export function useWorkbenchRuntimeMessaging({
         return sendRuntimePaneMessage({
           address: state.currentRuntimeTask,
           message: previousUserMessage.content,
+          clientMessageId: previousUserMessage.id,
           ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
