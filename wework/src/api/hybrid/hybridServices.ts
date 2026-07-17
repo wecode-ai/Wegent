@@ -456,6 +456,12 @@ export function createHybridWorkbenchServices(
     const results = await Promise.allSettled(
       runtimeDevices.map(device => cloudRuntimeApi(device.device_id).listRuntimeWork())
     )
+    const failedResult = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (failedResult) {
+      throw failedResult.reason
+    }
     return removeCurrentAppCloudRuntimeWork(
       results.reduce(
         (merged, result) =>

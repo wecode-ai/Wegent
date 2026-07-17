@@ -29,7 +29,6 @@ import {
 } from '@/tauri/localExecutor'
 
 const LOCAL_EXECUTOR_LOG_PATH = '~/.wegent-executor/logs/executor.log'
-const LOCAL_RUNTIME_ANIMATION_CYCLE_MS = 4800
 const LOCAL_RUNTIME_SLOW_STARTUP_MS = 10000
 
 type LocalRuntimePhase = 'starting' | 'ready' | 'failed'
@@ -56,7 +55,6 @@ interface LocalRuntimeDebugInfo {
   runtimeMode: string
   phase: LocalRuntimePhase
   startupReady: boolean
-  minimumDelayElapsed: boolean
   ensureCallState: string
   error: string | null
   log: LocalExecutorLog | null
@@ -83,10 +81,6 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function sanitizeLocalRuntimeDebugText(text: string): string {
   return text.replace(/\btauri\b/gi, 'desktop app').replace(/\bsidecar\b/gi, 'executor process')
-}
-
-function localRuntimeMinimumReadyDelayMs(): number {
-  return import.meta.env.DEV ? LOCAL_RUNTIME_ANIMATION_CYCLE_MS : 0
 }
 
 async function resolveLocalRuntimeState(
@@ -120,7 +114,6 @@ function formatLocalRuntimeDebugInfo(info: LocalRuntimeDebugInfo): string {
     `App mode: ${info.runtimeMode}`,
     `Startup phase: ${info.phase}`,
     `Startup ready: ${info.startupReady ? 'true' : 'false'}`,
-    `Minimum delay elapsed: ${info.minimumDelayElapsed ? 'true' : 'false'}`,
     `Startup check: ${info.ensureCallState}`,
     `Error: ${info.error ?? 'none'}`,
     `Socket path: ${info.log?.socketPath ?? 'unknown'}`,
@@ -294,8 +287,6 @@ export function LocalRuntimeInitializer({
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
   const initialCloudConnectionRef = useRef(initialCloudConnection)
-  const minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
-  const [minimumDelayElapsed, setMinimumDelayElapsed] = useState(() => minimumReadyDelayMs === 0)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
@@ -321,17 +312,6 @@ export function LocalRuntimeInitializer({
     }, LOCAL_RUNTIME_SLOW_STARTUP_MS)
     return () => window.clearTimeout(timer)
   }, [enabled, startupAttempt])
-
-  useEffect(() => {
-    if (minimumReadyDelayMs === 0) {
-      return undefined
-    }
-
-    const timer = window.setTimeout(() => {
-      setMinimumDelayElapsed(true)
-    }, minimumReadyDelayMs)
-    return () => window.clearTimeout(timer)
-  }, [minimumReadyDelayMs])
 
   const retryInitialize = useCallback(async () => {
     if (!enabled) return
@@ -379,7 +359,6 @@ export function LocalRuntimeInitializer({
       runtimeMode: getRuntimeConfig().runtimeMode,
       phase: state.phase,
       startupReady,
-      minimumDelayElapsed,
       ensureCallState:
         state.phase === 'starting' ? 'pending' : state.phase === 'failed' ? 'failed' : 'resolved',
       error: state.error,
@@ -393,10 +372,10 @@ export function LocalRuntimeInitializer({
     } catch {
       setCopyDebugState('failed')
     }
-  }, [minimumDelayElapsed, startupReady, state.error, state.phase, t])
+  }, [startupReady, state.error, state.phase, t])
 
   const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren && (!enabled || minimumDelayElapsed)
+  const canRevealChildren = canMountChildren
   const shouldShowStartupScreen = !canRevealChildren
   const failed = state.phase === 'failed'
 

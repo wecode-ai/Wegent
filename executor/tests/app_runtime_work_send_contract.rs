@@ -614,7 +614,7 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
 }
 
 #[tokio::test]
-async fn runtime_tasks_reuse_one_codex_process_across_follow_up_turns() {
+async fn runtime_tasks_keep_thread_subscription_until_archive() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -713,8 +713,21 @@ async fn runtime_tasks_reuse_one_codex_process_across_follow_up_turns() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        2
+        0
     );
+
+    let archived = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.archive",
+            "payload": {
+                "taskId": "local-task-persistent",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("archive should succeed");
+    assert_eq!(archived["success"], true);
+    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
 }
 
 #[tokio::test]
@@ -2011,6 +2024,9 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
       ;;
     *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"thread/archive"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
       ;;
     *'"method":"turn/start"'*)

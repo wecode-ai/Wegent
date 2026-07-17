@@ -3,7 +3,6 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Attachment } from '@/types/api'
 
 export const APPSHOT_CAPTURED_EVENT = 'wework-appshot-captured'
-export const APPSHOT_PERMISSION_REQUIRED_EVENT = 'wework-appshot-permission-required'
 
 export type AppshotPermission = 'screenCapture' | 'accessibility'
 
@@ -81,8 +80,7 @@ export async function openAppshotsPermissionSettings(permission: AppshotPermissi
 }
 
 export async function subscribeToAppshots(
-  onAttachments: (attachments: Attachment[]) => void,
-  onPermissionRequired: (permission: AppshotPermission) => void
+  onAttachments: (attachments: Attachment[]) => void
 ): Promise<UnlistenFn> {
   const deliveredIds = new Set<string>()
   const acknowledge = async (id: string) => {
@@ -104,22 +102,9 @@ export async function subscribeToAppshots(
       console.error('[Wework] Failed to deliver Appshot:', error)
     })
   })
-  const unlistenPermission = await listen<AppshotPermission>(
-    APPSHOT_PERMISSION_REQUIRED_EVENT,
-    event => {
-      onPermissionRequired(event.payload)
-    }
-  )
-  const permissionRequired = await invoke<AppshotPermission | null>(
-    'take_pending_appshots_permission'
-  )
-  if (permissionRequired) onPermissionRequired(permissionRequired)
   const pending = await invoke<AppshotPayload[]>('take_pending_appshots')
   for (const payload of pending) {
     await deliver(payload)
   }
-  return () => {
-    unlistenCaptured()
-    unlistenPermission()
-  }
+  return unlistenCaptured
 }

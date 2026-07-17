@@ -1289,6 +1289,8 @@ impl RuntimeWorkRpcHandler {
                     ("thread_id", thread_id.to_owned()),
                 ],
             );
+            self.codex_app_server.unsubscribe_thread(thread_id).await;
+            self.remove_thread_event_route(thread_id);
         } else {
             log_executor_event(
                 "runtime task archive skipped codex",
@@ -3104,6 +3106,13 @@ impl RuntimeWorkRpcHandler {
         {
             route.active = false;
         }
+    }
+
+    fn remove_thread_event_route(&self, thread_id: &str) {
+        self.thread_event_routes
+            .lock()
+            .expect("thread event route lock should not be poisoned")
+            .remove(thread_id);
     }
 
     fn mark_thread_event_routes_idle_for_local_task(&self, local_task_id: &str) {

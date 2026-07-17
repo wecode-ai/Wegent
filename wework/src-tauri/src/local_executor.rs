@@ -970,7 +970,7 @@ fn cleanup_stale_local_executor_processes() -> Result<(), String> {
     remove_stale_app_ipc_addr_file_at(&addr_file_path)
 }
 
-fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), String> {
+fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<bool, String> {
     let should_cleanup = {
         let inner = state
             .inner
@@ -979,7 +979,7 @@ fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), S
         !inner.startup_cleanup_done && inner.child.is_none()
     };
     if !should_cleanup {
-        return Ok(());
+        return Ok(false);
     }
 
     cleanup_stale_local_executor_processes()?;
@@ -989,7 +989,7 @@ fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), S
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     inner.startup_cleanup_done = true;
-    Ok(())
+    Ok(true)
 }
 
 fn sidecar_source_and_path() -> (String, String) {
@@ -2195,14 +2195,22 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
-    if let Err(error) = cleanup_stale_local_executor_once(state) {
-        set_executor_error(state, error.clone());
-        return Err(error);
-    }
+    let startup_cleanup_performed = match cleanup_stale_local_executor_once(state) {
+        Ok(performed) => performed,
+        Err(error) => {
+            set_executor_error(state, error.clone());
+            return Err(error);
+        }
+    };
 
-    if connect_and_attach_sidecar_socket(app.clone(), state)
-        .await
-        .is_ok()
+    // A release cold start removes the stale address file and terminates any
+    // executor that owned it. Waiting for that file to reappear can only time
+    // out, so spawn the new executor immediately. Reconnect paths still attach
+    // first because their existing child may already be opening the socket.
+    if !startup_cleanup_performed
+        && connect_and_attach_sidecar_socket(app.clone(), state)
+            .await
+            .is_ok()
     {
         return Ok(());
     }
@@ -2701,6 +2709,14 @@ mod tests {
     use std::sync::{Mutex as TestMutex, MutexGuard, OnceLock};
     #[cfg(unix)]
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn startup_cleanup_reports_only_the_first_cold_start_pass() {
+        let state = LocalExecutorState::default();
+
+        assert!(cleanup_stale_local_executor_once(&state).unwrap());
+        assert!(!cleanup_stale_local_executor_once(&state).unwrap());
+    }
 
     fn env_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();

@@ -31,7 +31,6 @@ const connectMock = vi.mocked(connectLocalExecutorToBackend)
 const disconnectMock = vi.mocked(disconnectLocalExecutorFromBackend)
 const ensureMock = vi.mocked(ensureLocalExecutorStarted)
 const readLogMock = vi.mocked(readLocalExecutorLog)
-const DEV_STARTUP_HOLD_MS = 4800
 const SLOW_STARTUP_WARNING_MS = 10000
 
 function enableTauri() {
@@ -411,9 +410,7 @@ describe('LocalRuntimeInitializer', () => {
     expect(onMount).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps the startup animation visible for one cycle in dev mode', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-06-26T00:00:00Z'))
+  test('reveals the app immediately when the executor is ready in dev mode', async () => {
     vi.stubEnv('DEV', true)
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
@@ -423,18 +420,8 @@ describe('LocalRuntimeInitializer', () => {
       </LocalRuntimeInitializer>
     )
 
-    expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
-    expect(screen.queryByTestId('main-app')).not.toBeInTheDocument()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(DEV_STARTUP_HOLD_MS - 1)
-    })
-    expect(screen.getByTestId('main-app')).not.toBeVisible()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
-    expect(screen.getByTestId('main-app')).toBeInTheDocument()
+    expect(await screen.findByTestId('main-app')).toBeVisible()
+    expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
   test('shows startup error and retries initialization', async () => {

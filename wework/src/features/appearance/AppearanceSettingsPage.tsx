@@ -343,6 +343,22 @@ export function AppearanceSettingsPage() {
                 className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
               />
             </label>
+            <label className="grid gap-2 text-sm text-text-secondary">
+              <span className="flex justify-between">
+                {t('workbench.appearance_background_blur', '背景模糊')}
+                <span>{appearance.backgroundBlur}px</span>
+              </span>
+              <input
+                data-testid="appearance-background-blur-slider"
+                type="range"
+                min="0"
+                max="20"
+                value={appearance.backgroundBlur}
+                disabled={!appearance.backgroundImagePath}
+                onChange={event => setAppearance({ backgroundBlur: Number(event.target.value) })}
+                className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
+              />
+            </label>
             <fieldset className="grid gap-2">
               <legend className="mb-1 text-sm text-text-secondary">
                 {t('workbench.appearance_background_areas', '显示区域')}
@@ -380,22 +396,6 @@ export function AppearanceSettingsPage() {
                 </label>
               ))}
             </fieldset>
-            <label className="grid gap-2 text-sm text-text-secondary">
-              <span className="flex justify-between">
-                {t('workbench.appearance_background_blur', '背景模糊')}
-                <span>{appearance.backgroundBlur}px</span>
-              </span>
-              <input
-                data-testid="appearance-background-blur-slider"
-                type="range"
-                min="0"
-                max="20"
-                value={appearance.backgroundBlur}
-                disabled={!appearance.backgroundImagePath}
-                onChange={event => setAppearance({ backgroundBlur: Number(event.target.value) })}
-                className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
-              />
-            </label>
             {backgroundError && (
               <p data-testid="appearance-background-error" className="text-sm text-red-500">
                 {backgroundError}

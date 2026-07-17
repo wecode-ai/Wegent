@@ -12,6 +12,12 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 开发环境默认让这些实例复用同一个 Cargo target 目录，以便 executor 源码变化后继续使用增量编译产物。需要排查共享构建缓存问题时，可以设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`，让当前启动过程使用项目内的默认 target 目录。
 
+## 启动耗时诊断
+
+桌面端的启动页只等待本地 executor 报告 ready；debug 构建不会为了播放完整动画而延迟工作台。冷启动时，Tauri 会先清理旧 executor 和 IPC 地址文件，然后直接启动新的 sidecar。只有运行中的连接断开并进入重连路径时，才会尝试连接已有 sidecar。
+
+排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC listening`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
+
 ## 开启方式
 
 在 Wework 窗口中按隐藏快捷键：

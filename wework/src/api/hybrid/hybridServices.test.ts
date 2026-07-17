@@ -640,6 +640,16 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
   })
 
+  it('rejects an incomplete background runtime work refresh', async () => {
+    mocks.cloudRuntimeIpcRequest.mockRejectedValue(new Error('remote runtime unavailable'))
+
+    const services = createServices()
+
+    await expect(services.cloudBackgroundApi?.listRuntimeWork?.()).rejects.toThrow(
+      'remote runtime unavailable'
+    )
+  })
+
   it('does not request background runtime work from another route on the same runtime instance', async () => {
     mocks.localListDevices.mockResolvedValue([
       {

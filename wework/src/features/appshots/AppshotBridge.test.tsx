@@ -1,21 +1,18 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { AppshotBridge } from './AppshotBridge'
 
-const { addExistingAttachment, openAppshotsPermissionSettings, subscribeToAppshots } = vi.hoisted(
-  () => ({
-    addExistingAttachment: vi.fn(),
-    openAppshotsPermissionSettings: vi.fn(),
-    subscribeToAppshots: vi.fn(),
-  })
-)
+const { addExistingAttachment, subscribeToAppshots } = vi.hoisted(() => ({
+  addExistingAttachment: vi.fn(),
+  subscribeToAppshots: vi.fn(),
+}))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({ projectChat: { addExistingAttachment } }),
 }))
 
-vi.mock('@/tauri/appshots', () => ({ openAppshotsPermissionSettings, subscribeToAppshots }))
+vi.mock('@/tauri/appshots', () => ({ subscribeToAppshots }))
 
 describe('AppshotBridge', () => {
   beforeEach(() => {
@@ -44,27 +41,5 @@ describe('AppshotBridge', () => {
 
     expect(onOpenWework).toHaveBeenCalledOnce()
     expect(addExistingAttachment).toHaveBeenCalledWith(attachment)
-  })
-
-  test('explains how to grant screen capture permission', async () => {
-    const onOpenWework = vi.fn()
-    render(<AppshotBridge onOpenWework={onOpenWework} />)
-    await waitFor(() => expect(subscribeToAppshots).toHaveBeenCalledOnce())
-
-    const onPermissionRequired = subscribeToAppshots.mock.calls[0][1]
-    act(() => onPermissionRequired('screenCapture'))
-
-    expect(onOpenWework).toHaveBeenCalledOnce()
-    expect(document.querySelector('[data-testid="appshots-permission-dialog"]')).not.toBeNull()
-  })
-
-  test('explains that accessibility access provides off-screen window text', async () => {
-    render(<AppshotBridge onOpenWework={vi.fn()} />)
-    await waitFor(() => expect(subscribeToAppshots).toHaveBeenCalledOnce())
-
-    const onPermissionRequired = subscribeToAppshots.mock.calls[0][1]
-    act(() => onPermissionRequired('accessibility'))
-
-    expect(document.body.textContent).toContain('滚动区域外文本')
   })
 })
