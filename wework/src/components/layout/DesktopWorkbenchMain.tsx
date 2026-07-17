@@ -1483,7 +1483,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <div
         data-testid="titlebar-right-workspace-zone"
         className={cn(
-          'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden bg-background/95',
+          'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
+          appearance.backgroundImagePath && appearance.backgroundInTopBar
+            ? 'bg-transparent'
+            : 'bg-background/95',
           rightPanelOpen ? 'border-l border-border/60' : undefined,
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}

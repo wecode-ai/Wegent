@@ -777,13 +777,15 @@ describe('DesktopWorkbenchLayout', () => {
     paneSessionMockRef.current = paneSession
 
     return (
-      <AuthContext.Provider value={authValue}>
-        <WorkbenchContext.Provider value={workbenchValue}>
-          <WorkbenchPaneContext.Provider value={paneValue}>
-            <ActualDesktopWorkbenchLayout />
-          </WorkbenchPaneContext.Provider>
-        </WorkbenchContext.Provider>
-      </AuthContext.Provider>
+      <AppearanceProvider>
+        <AuthContext.Provider value={authValue}>
+          <WorkbenchContext.Provider value={workbenchValue}>
+            <WorkbenchPaneContext.Provider value={paneValue}>
+              <ActualDesktopWorkbenchLayout />
+            </WorkbenchPaneContext.Provider>
+          </WorkbenchContext.Provider>
+        </AuthContext.Provider>
+      </AppearanceProvider>
     )
   }
 
@@ -2374,6 +2376,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
+  })
+
+  test('lets the workbench background show through the Tauri right workspace titlebar', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInTopBar: true,
+      })
+    )
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-main-header')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('bg-background/95')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
