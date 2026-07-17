@@ -2,38 +2,51 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Schemas returned by the external Sites service."""
+"""Schemas exchanged with the external Sites project API."""
 
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AnyHttpUrl, BaseModel
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
 
-SitePublishStatus = Literal["unpublished", "publishing", "published", "failed"]
+SiteNetwork = Literal["inner", "outer"]
 
 
 class SiteResponse(BaseModel):
-    """A generated site registered with the Sites service."""
+    """A project returned by the Sites service."""
 
-    siteid: str
-    taskid: str
-    username: str
-    name: str
-    slug: str
-    internal_url: AnyHttpUrl
-    external_url: AnyHttpUrl | None = None
-    publish_status: SitePublishStatus
-    last_publish_error: str | None = None
-    thumbnail_url: AnyHttpUrl | None = None
+    id: str
+    network: SiteNetwork
+    title: str
+    url: AnyHttpUrl
+    snapshot: AnyHttpUrl
     created_at: datetime
-    updated_at: datetime
-    published_at: datetime | None = None
 
 
 class SiteListResponse(BaseModel):
-    """A page of sites owned by the authenticated user."""
+    """A cursor page of projects owned by the authenticated user."""
 
     items: list[SiteResponse]
-    total: int
-    offset: int
-    limit: int
+    next_cursor: str | None = None
+
+
+class SiteDeleteResponse(BaseModel):
+    """Result returned after deleting a Sites project."""
+
+    deleted: bool
+
+
+class SiteRenameRequest(BaseModel):
+    """Validated project title for a rename request."""
+
+    title: str = Field(min_length=1, max_length=255)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def strip_title(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        title = value.strip()
+        if not title:
+            raise ValueError("title must not be blank")
+        return title

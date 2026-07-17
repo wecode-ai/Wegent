@@ -6,13 +6,14 @@
 
 from typing import NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core import security
 from app.models.user import User
-from app.schemas.site import SiteListResponse, SiteResponse
+from app.schemas.site import SiteListResponse
 from app.services.sites import (
     SitesNotAvailableError,
+    SitesUpstreamAuthenticationError,
     SitesUpstreamResponseError,
     SitesUpstreamUnavailableError,
     sites_service,
@@ -28,6 +29,14 @@ def _raise_sites_error(error: Exception) -> NoReturn:
             detail={
                 "code": "sites_not_available",
                 "message": "Sites is not available yet",
+            },
+        ) from error
+    if isinstance(error, SitesUpstreamAuthenticationError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "sites_upstream_auth_failed",
+                "message": "Sites service authentication failed",
             },
         ) from error
     if isinstance(error, SitesUpstreamUnavailableError):
@@ -46,72 +55,24 @@ def _raise_sites_error(error: Exception) -> NoReturn:
     raise error
 
 
-def _ensure_site_owner(site: SiteResponse, current_user: User) -> None:
-    if site.username != current_user.user_name:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "site_not_found", "message": "Site not found"},
-        )
-
-
 @router.get("", response_model=SiteListResponse)
 async def list_sites(
     q: str | None = Query(default=None),
-    offset: int = Query(default=0, ge=0),
+    cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(security.get_current_user),
 ) -> SiteListResponse:
-    """List sites owned by the authenticated user."""
+    """Search projects owned by the authenticated user."""
     try:
         return await sites_service.list_sites(
             username=current_user.user_name,
-            query=q.strip() if q and q.strip() else None,
-            offset=offset,
+            query=q.strip() if q else None,
+            cursor=cursor,
             limit=limit,
         )
     except (
         SitesNotAvailableError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
-        _raise_sites_error(error)
-
-
-@router.post("/{siteid}/publish", response_model=SiteResponse)
-async def publish_site(
-    siteid: str,
-    current_user: User = Depends(security.get_current_user),
-) -> SiteResponse:
-    """Publish an owned site to the public internet."""
-    try:
-        site = await sites_service.get_site(siteid)
-        _ensure_site_owner(site, current_user)
-        return await sites_service.publish_site(siteid)
-    except HTTPException:
-        raise
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
-        _raise_sites_error(error)
-
-
-@router.delete("/{siteid}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_site(
-    siteid: str,
-    current_user: User = Depends(security.get_current_user),
-) -> Response:
-    """Delete an owned site registration and its public entry."""
-    try:
-        site = await sites_service.get_site(siteid)
-        _ensure_site_owner(site, current_user)
-        await sites_service.delete_site(siteid)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except HTTPException:
-        raise
-    except (
-        SitesNotAvailableError,
+        SitesUpstreamAuthenticationError,
         SitesUpstreamUnavailableError,
         SitesUpstreamResponseError,
     ) as error:

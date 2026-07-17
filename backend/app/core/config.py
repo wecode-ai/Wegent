@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -222,8 +222,9 @@ class Settings(BaseSettings):
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
-    # Optional upstream for the Sites service. Wework accesses it through Backend.
+    # Optional Sites project API. Wework only accesses it through Backend.
     SITES_API_BASE_URL: str = ""
+    SITES_API_TOKEN: SecretStr = SecretStr("")
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
