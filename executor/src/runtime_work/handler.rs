@@ -24,9 +24,8 @@ use tokio::time::sleep;
 use crate::{
     agents::{
         combined_codex_developer_instructions, strip_wework_browser_instructions,
-        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexActiveTurnCallback, CodexAppServerClient, CodexAppServerTurnOptions,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::{log_executor_event, wework_debug_log},
@@ -1190,16 +1189,7 @@ impl RuntimeWorkRpcHandler {
         } else {
             transcript_messages(&thread, &self.device_id)
         };
-        let mut messages = transcript_messages;
-        if local_link
-            .as_ref()
-            .is_some_and(|link| link.running || link.status.eq_ignore_ascii_case("failed"))
-        {
-            append_missing_cached_user_messages(
-                &mut messages,
-                local_link.as_ref().map(cached_messages).unwrap_or_default(),
-            );
-        }
+        let messages = transcript_messages;
         let running = codex_thread_has_active_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -2619,15 +2609,6 @@ impl RuntimeWorkRpcHandler {
         let handler = self.clone();
         let turn_local_task_id = local_task_id.clone();
         let turn_handle = tokio::spawn(async move {
-            emit_response_event(
-                &handler.event_tx,
-                &handler.device_id,
-                "response.created",
-                &turn_local_task_id,
-                &request,
-                json!({"response": {"status": "in_progress"}}),
-            );
-
             handler.ensure_notification_router().await;
             let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
             let mapper_handler = handler.clone();
@@ -2654,19 +2635,24 @@ impl RuntimeWorkRpcHandler {
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_request = request.clone();
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         thread_id,
-                        turn_id,
+                        turn_id.clone(),
+                    );
+                    let request = request_with_subtask_id(&active_turn_request, turn_id);
+                    emit_response_event(
+                        &active_turn_handler.event_tx,
+                        &active_turn_handler.device_id,
+                        "response.created",
+                        &active_turn_local_task_id,
+                        &request,
+                        json!({"response": {"status": "in_progress"}}),
                     );
                 });
-            let finished_turn_handler = handler.clone();
-            let finished_turn_local_task_id = turn_local_task_id.clone();
-            let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
-                finished_turn_handler.clear_active_codex_turn(&finished_turn_local_task_id);
-            });
             let result = handler
                 .codex_app_server
                 .run_turn_with_cancel(
@@ -2683,18 +2669,22 @@ impl RuntimeWorkRpcHandler {
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
                         active_turn_started: Some(active_turn_started),
-                        active_turn_finished: Some(active_turn_finished),
+                        active_turn_finished: None,
                     },
                 )
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                let effective_request = handler
+                    .active_codex_turn(&turn_local_task_id)
+                    .map(|active_turn| request_with_subtask_id(&request, active_turn.turn_id))
+                    .unwrap_or_else(|| request.clone());
                 emit_response_event(
                     &handler.event_tx,
                     &handler.device_id,
                     "response.incomplete",
                     &turn_local_task_id,
-                    &request,
+                    &effective_request,
                     json!({
                         "type": "cancelled",
                         "error": {"message": "cancelled"},
@@ -2729,6 +2719,11 @@ impl RuntimeWorkRpcHandler {
         request: &ExecutionRequest,
         result: Result<crate::agents::CodexAppServerTurn, String>,
     ) {
+        let effective_request = self
+            .active_codex_turn(local_task_id)
+            .map(|active_turn| request_with_subtask_id(request, active_turn.turn_id))
+            .unwrap_or_else(|| request.clone());
+        let request = &effective_request;
         match result {
             Ok(turn) => {
                 let status = match &turn.outcome {
@@ -4511,31 +4506,10 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
         .collect()
 }
 
-fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_messages: Vec<Value>) {
-    let mut provider_user_message_counts = HashMap::<String, usize>::new();
-    for message in messages.iter() {
-        if let Some(signature) = cached_user_message_signature(message) {
-            *provider_user_message_counts.entry(signature).or_default() += 1;
-        }
-    }
-
-    for message in cached_messages {
-        let Some(signature) = cached_user_message_signature(&message) else {
-            continue;
-        };
-        let remaining = provider_user_message_counts.entry(signature).or_default();
-        if *remaining > 0 {
-            *remaining -= 1;
-        } else {
-            messages.push(message);
-        }
-    }
-}
-
-fn cached_user_message_signature(message: &Value) -> Option<String> {
-    string_field(message, "role")
-        .filter(|role| role.eq_ignore_ascii_case("user"))
-        .and_then(|_| string_field(message, "content"))
+fn request_with_subtask_id(request: &ExecutionRequest, subtask_id: String) -> ExecutionRequest {
+    let mut request = request.clone();
+    request.subtask_id = subtask_id;
+    request
 }
 
 fn cached_user_message(
@@ -5664,40 +5638,6 @@ mod tests {
         assert!(cached_user_message("local-task", &request, &json!({})).is_none());
     }
 
-    #[test]
-    fn transcript_appends_cached_user_message_missing_from_failed_provider_turn() {
-        let mut provider_messages = vec![
-            json!({"id": "user-1", "role": "user", "content": "first"}),
-            json!({"id": "assistant-1", "role": "assistant", "content": "done"}),
-        ];
-        let cached_messages = vec![
-            json!({"id": "cached-user-1", "role": "user", "content": "first"}),
-            json!({"id": "cached-user-2", "role": "user", "content": "retry this"}),
-        ];
-
-        append_missing_cached_user_messages(&mut provider_messages, cached_messages);
-
-        assert_eq!(provider_messages.len(), 3);
-        assert_eq!(provider_messages[2]["id"], "cached-user-2");
-        assert_eq!(provider_messages[2]["content"], "retry this");
-    }
-
-    #[test]
-    fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
-        let mut provider_messages = vec![
-            json!({"id": "user-1", "role": "user", "content": "same"}),
-            json!({"id": "user-2", "role": "user", "content": "same"}),
-        ];
-        let cached_messages = vec![
-            json!({"id": "cached-user-1", "role": "user", "content": "same"}),
-            json!({"id": "cached-user-2", "role": "user", "content": "same"}),
-        ];
-
-        append_missing_cached_user_messages(&mut provider_messages, cached_messages);
-
-        assert_eq!(provider_messages.len(), 2);
-    }
-
     #[tokio::test]
     async fn codex_stream_debug_rpc_toggles_runtime_flag() {
         set_codex_stream_debug_enabled(false);
@@ -6013,7 +5953,7 @@ mod tests {
             .expect("idle route should emit notification");
         assert_eq!(event["event"], "response.output_text.delta");
         assert_eq!(event["payload"]["taskId"], local_task_id);
-        assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
+        assert_eq!(event["payload"]["subtaskId"], "turn-1");
         assert_eq!(event["payload"]["data"]["delta"], "Hi");
 
         let _ = fs::remove_file(index_path);
