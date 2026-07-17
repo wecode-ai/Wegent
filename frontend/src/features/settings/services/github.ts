@@ -80,3 +80,7 @@ export async function deleteGitToken(user: User, gitInfo: GitInfo): Promise<bool
     return false
   }
 }
+
+export async function reorderGitTokens(orderedKeys: string[]): Promise<void> {
+  await userApis.reorderGitTokens(orderedKeys)
+}
