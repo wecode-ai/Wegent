@@ -116,6 +116,40 @@ class TestUserServiceValidateGitInfo:
 
 
 @pytest.mark.unit
+class TestUserServiceReorderGitTokens:
+    def test_reorders_and_persists_tokens(self, mocker):
+        service = UserService(User)
+        db = mocker.Mock(spec=Session)
+        user = User(user_name="tester", password_hash="hash")
+        first = {"id": "first", "git_domain": "github.com"}
+        second = {"id": "second", "git_domain": "gitlab.com"}
+        user.git_info = [first, second]
+
+        result = service.reorder_git_tokens(
+            db, user=user, ordered_keys=["second", "first"]
+        )
+
+        assert result.git_info == [second, first]
+        db.add.assert_called_once_with(user)
+        db.commit.assert_called_once_with()
+        db.refresh.assert_called_once_with(user)
+
+    def test_rejects_stale_or_partial_order(self, mocker):
+        service = UserService(User)
+        db = mocker.Mock(spec=Session)
+        user = User(user_name="tester", password_hash="hash")
+        user.git_info = [
+            {"id": "first", "git_domain": "github.com"},
+            {"id": "second", "git_domain": "gitlab.com"},
+        ]
+
+        with pytest.raises(ValidationException):
+            service.reorder_git_tokens(db, user=user, ordered_keys=["first"])
+
+        db.commit.assert_not_called()
+
+
+@pytest.mark.unit
 class TestUserServiceGetUser:
     """Test UserService get user methods"""
 

@@ -386,6 +386,8 @@ struct AppPreferences {
     #[serde(default = "default_true")]
     terminal_context_injection_enabled: bool,
     #[serde(default)]
+    experimental_features_enabled: bool,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -468,6 +470,7 @@ impl Default for AppPreferences {
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
+            experimental_features_enabled: false,
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -491,6 +494,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    experimental_features_enabled: Option<bool>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -881,6 +885,9 @@ fn update_app_preferences(
     if let Some(value) = patch.terminal_context_injection_enabled {
         preferences.terminal_context_injection_enabled = value;
     }
+    if let Some(value) = patch.experimental_features_enabled {
+        preferences.experimental_features_enabled = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -925,6 +932,7 @@ struct AppPreferences {
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
+    experimental_features_enabled: bool,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -946,6 +954,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    experimental_features_enabled: Option<bool>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -967,6 +976,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
+        experimental_features_enabled: false,
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -994,6 +1004,7 @@ fn update_app_preferences(
         terminal_context_injection_enabled: patch
             .terminal_context_injection_enabled
             .unwrap_or(true),
+        experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),

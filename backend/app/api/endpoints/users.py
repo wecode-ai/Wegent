@@ -35,6 +35,7 @@ from app.schemas.quick_launch import (
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import (
+    GitTokenOrderUpdate,
     UserCreate,
     UserInDB,
     UserUpdate,
@@ -670,6 +671,18 @@ async def delete_git_token(
         return _build_user_response(user)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put("/me/git-token-order", response_model=UserInDB)
+async def reorder_git_tokens(
+    order: GitTokenOrderUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Persist the display and selection priority of Git tokens."""
+    return user_service.reorder_git_tokens(
+        db=db, user=current_user, ordered_keys=order.ordered_keys
+    )
 
 
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)

@@ -387,7 +387,10 @@ async fn runtime_task_list_applies_manual_order_to_projectless_chats() {
         json!({
             "projectless-thread-ids": ["thread-newer", "thread-older"],
             "sidebar-project-thread-orders": {
-                "chats": {"threadIds": ["thread-older", "thread-newer"]}
+                "chats": {
+                    "threadIds": ["thread-older", "thread-newer"],
+                    "sortKey": "manual"
+                }
             }
         }),
     );

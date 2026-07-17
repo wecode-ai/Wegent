@@ -100,6 +100,14 @@ pub(crate) struct WorktreeManager {
 }
 
 impl WorktreeManager {
+    pub fn source_path_for(&self, workspace_path: &str) -> Option<String> {
+        let normalized_path = normalized_path_key(Path::new(workspace_path));
+        self.load()
+            .records
+            .get(&normalized_path)
+            .and_then(|record| record.source_path.clone())
+    }
+
     pub fn from_env() -> Self {
         Self::new(runtime_work_dir().join("worktrees.json"))
     }
@@ -875,6 +883,36 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn source_path_lookup_survives_missing_worktree_git_metadata() {
+        let root = test_directory("wegent-worktree-source-lookup-test");
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        let worktree_path = root.join("managed/task-1/project");
+        let source_path = root.join("source/project");
+        let mut records = HashMap::new();
+        records.insert(
+            normalized_path_key(&worktree_path),
+            ManagedWorktree {
+                path: worktree_path.display().to_string(),
+                source_path: Some(source_path.display().to_string()),
+                ..ManagedWorktree::default()
+            },
+        );
+        manager
+            .save(&WorktreeState {
+                version: STATE_VERSION,
+                records,
+                ..WorktreeState::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            manager.source_path_for(&worktree_path.display().to_string()),
+            Some(source_path.display().to_string())
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn test_directory(prefix: &str) -> PathBuf {
         env::temp_dir().join(format!(
             "{prefix}-{}-{}",
@@ -916,6 +954,7 @@ mod tests {
             git_info: None,
             created_at: 0,
             updated_at: 0,
+            completed_at: None,
             runtime_handle: Value::Null,
             parent: None,
             ephemeral: false,
