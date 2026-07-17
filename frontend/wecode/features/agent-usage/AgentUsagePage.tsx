@@ -420,9 +420,9 @@ export function AgentUsagePage() {
                           </TableCell>
                         </TableRow>
                       ) : (
-                        result.rows.map(row => (
+                        result.rows.map((row, index) => (
                           <TableRow
-                            key={`${row.author_name}-${row.agent_namespace}-${row.agent_name}`}
+                            key={`${row.author_name}-${row.agent_namespace}-${row.agent_name}-${index}`}
                           >
                             <TableCell className="text-left">{row.agent_name}</TableCell>
                             <TableCell className="text-left">{row.agent_namespace}</TableCell>
