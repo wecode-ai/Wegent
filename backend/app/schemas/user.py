@@ -95,6 +95,12 @@ class GitInfo(BaseModel):
     )
 
 
+class GitTokenOrderUpdate(BaseModel):
+    """Ordered stable keys for the current user's Git tokens."""
+
+    ordered_keys: List[str]
+
+
 class UserBase(BaseModel):
     """User base model"""
 
