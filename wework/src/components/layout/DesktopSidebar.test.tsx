@@ -2502,6 +2502,55 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('creates a permanent worktree from a runtime project', async () => {
+    const user = userEvent.setup()
+    const onCreatePermanentWorktree = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/dev/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'local',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onCreatePermanentWorktree,
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('create-permanent-worktree-7'))
+
+    expect(screen.getByTestId('permanent-worktree-name-7')).toHaveValue('Wegent_2')
+    await user.clear(screen.getByTestId('permanent-worktree-name-7'))
+    await user.type(screen.getByTestId('permanent-worktree-name-7'), 'Wegent docs')
+    await user.click(screen.getByTestId('confirm-create-permanent-worktree-7'))
+
+    await waitFor(() => {
+      expect(onCreatePermanentWorktree).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        sourcePath: '/Users/alice/dev/Wegent',
+        name: 'Wegent docs',
+      })
+    })
+  })
+
   test('hides the Finder action for remote runtime project folders', async () => {
     const user = userEvent.setup()
 

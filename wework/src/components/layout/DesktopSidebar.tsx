@@ -190,6 +190,11 @@ interface DesktopSidebarProps {
     workspacePath: string,
     label?: string
   ) => Promise<void> | void
+  onCreatePermanentWorktree?: (data: {
+    deviceId: string
+    sourcePath: string
+    name: string
+  }) => Promise<void>
   onSelectStandaloneDevice?: (deviceId: string | null) => void
   onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -1872,6 +1877,7 @@ function ProjectItem({
   sidebarStateDeviceId,
   onStartNewProjectChat,
   onRemoveProject,
+  onCreatePermanentWorktree,
   onSetRuntimeProjectPinned,
   onSetRuntimeProjectAppearance,
   onReorderRuntimeProjectTasks,
@@ -1896,6 +1902,11 @@ function ProjectItem({
   sidebarStateDeviceId?: string | null
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
+  onCreatePermanentWorktree?: (data: {
+    deviceId: string
+    sourcePath: string
+    name: string
+  }) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
@@ -1935,6 +1946,7 @@ function ProjectItem({
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
   const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
+  const [createPermanentWorktreeOpen, setCreatePermanentWorktreeOpen] = useState(false)
   const [removingProject, setRemovingProject] = useState(false)
   const [optimisticProjectPinned, setOptimisticProjectPinned] = useState<{
     base: boolean
@@ -1971,6 +1983,9 @@ function ProjectItem({
     Boolean(onArchiveProjectConversations) &&
     !projectArchiving
   const finderWorkspacePath = getProjectFinderWorkspacePath(project, runtimeProjectWork, devices)
+  const permanentWorktreeSource = runtimeWorkspaces?.find(
+    workspace => workspace.deviceId.trim() && workspace.workspacePath.trim()
+  )
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
@@ -2232,6 +2247,13 @@ function ProjectItem({
                     ]
                   : []),
                 {
+                  label: t('workbench.create_permanent_worktree'),
+                  icon: GitCompareArrows,
+                  testId: `create-permanent-worktree-${project.id}`,
+                  disabled: !permanentWorktreeSource || !onCreatePermanentWorktree,
+                  onSelect: () => setCreatePermanentWorktreeOpen(true),
+                },
+                {
                   label: projectArchiving
                     ? t('workbench.archiving_conversations', '归档中...')
                     : t('workbench.archive_project_conversations', '归档对话'),
@@ -2268,6 +2290,26 @@ function ProjectItem({
           </div>
         </div>
       </SidebarHoverCard>
+      <TextInputDialog
+        open={createPermanentWorktreeOpen}
+        title={t('workbench.create_permanent_worktree_title')}
+        description={t('workbench.create_permanent_worktree_description')}
+        label={t('workbench.project_name')}
+        initialValue={`${project.name}_2`}
+        confirmLabel={t('workbench.create')}
+        cancelLabel={t('workbench.cancel')}
+        inputTestId={`permanent-worktree-name-${project.id}`}
+        confirmTestId={`confirm-create-permanent-worktree-${project.id}`}
+        onClose={() => setCreatePermanentWorktreeOpen(false)}
+        onSubmit={async name => {
+          if (!permanentWorktreeSource || !onCreatePermanentWorktree) return
+          await onCreatePermanentWorktree({
+            deviceId: permanentWorktreeSource.deviceId,
+            sourcePath: permanentWorktreeSource.workspacePath,
+            name,
+          })
+        }}
+      />
       <div
         data-testid={`project-local-tasks-panel-${project.id}`}
         aria-hidden={!expanded}
@@ -2463,6 +2505,7 @@ export function DesktopSidebar({
   onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
+  onCreatePermanentWorktree,
   onSelectStandaloneDevice,
   onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
@@ -3200,6 +3243,7 @@ export function DesktopSidebar({
                         onToggleProject={handleToggleProject}
                         onStartNewProjectChat={onStartNewProjectChat}
                         onRemoveProject={onRemoveProject}
+                        onCreatePermanentWorktree={onCreatePermanentWorktree}
                         onReorderRuntimeProjects={onReorderRuntimeProjects}
                         onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                         onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
@@ -3374,6 +3418,7 @@ export function DesktopSidebar({
                       onToggleProject={handleToggleProject}
                       onStartNewProjectChat={onStartNewProjectChat}
                       onRemoveProject={onRemoveProject}
+                      onCreatePermanentWorktree={onCreatePermanentWorktree}
                       onReorderRuntimeProjects={onReorderRuntimeProjects}
                       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                       onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}

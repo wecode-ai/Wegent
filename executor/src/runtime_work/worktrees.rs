@@ -54,6 +54,7 @@ pub(crate) struct ManagedWorktree {
     pub path: String,
     pub repository_name: String,
     pub source_path: Option<String>,
+    pub permanent: bool,
     pub created_at: i64,
     pub updated_at: i64,
     pub snapshot_ref: Option<String>,
@@ -72,6 +73,7 @@ impl Default for ManagedWorktree {
             path: String::new(),
             repository_name: String::new(),
             source_path: None,
+            permanent: false,
             created_at: now,
             updated_at: now,
             snapshot_ref: None,
@@ -162,6 +164,7 @@ impl WorktreeManager {
         source_path: &Path,
         worktree_id: &str,
         git_ref: Option<&str>,
+        permanent: bool,
     ) -> Result<ManagedWorktree, String> {
         let _guard = self
             .mutation_lock
@@ -196,6 +199,7 @@ impl WorktreeManager {
         record.path = path.display().to_string();
         record.repository_name = repository_name;
         record.source_path = Some(source_path.display().to_string());
+        record.permanent = permanent;
         record.updated_at = now;
         record.state = "active".to_owned();
         record.last_error = None;
@@ -712,6 +716,7 @@ fn same_path(left: &str, right: &str) -> bool {
 
 fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTaskLink]) -> bool {
     record.state == "active"
+        && !record.permanent
         && !linked_tasks.is_empty()
         && linked_tasks.iter().all(|task| task.status == "archived")
 }
@@ -801,7 +806,7 @@ mod tests {
                 ..WorktreeSettingsPatch::default()
             })
             .unwrap();
-        let record = manager.prepare(&source, "task-1", None).unwrap();
+        let record = manager.prepare(&source, "task-1", None, false).unwrap();
         let path = PathBuf::from(&record.path);
         fs::write(path.join("tracked.txt"), "changed\n").unwrap();
         fs::write(path.join("untracked.txt"), "new\n").unwrap();
@@ -831,8 +836,15 @@ mod tests {
         archived_task.status = "archived".to_owned();
 
         assert!(!is_auto_prune_candidate(&record, &[active_task]));
-        assert!(is_auto_prune_candidate(&record, &[archived_task]));
+        assert!(is_auto_prune_candidate(&record, &[archived_task.clone()]));
         assert!(!is_auto_prune_candidate(&record, &[]));
+        assert!(!is_auto_prune_candidate(
+            &ManagedWorktree {
+                permanent: true,
+                ..record
+            },
+            &[archived_task]
+        ));
     }
 
     #[test]

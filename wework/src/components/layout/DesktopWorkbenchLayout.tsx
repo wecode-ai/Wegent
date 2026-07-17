@@ -40,6 +40,15 @@ type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: Ru
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
 
+function getPermanentWorktreeError(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = String(error.message).trim()
+    if (message) return message
+  }
+  return fallback
+}
+
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
@@ -97,6 +106,47 @@ export function DesktopWorkbenchLayout() {
   const todoOpen = currentPath === '/todo'
   const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
+  const createPermanentWorktree = useCallback(
+    async ({
+      deviceId,
+      sourcePath,
+      name,
+    }: {
+      deviceId: string
+      sourcePath: string
+      name: string
+    }) => {
+      const runtimeWorkApi = services?.runtimeWorkApi
+      if (!runtimeWorkApi) {
+        throw new Error(t('workbench.create_permanent_worktree_unavailable'))
+      }
+      const worktreeId = `permanent-${crypto.randomUUID()}`
+      let prepared
+      try {
+        prepared = await runtimeWorkApi.prepareWorktree({
+          deviceId,
+          sourcePath,
+          worktreeId,
+          permanent: true,
+        })
+      } catch (error) {
+        throw new Error(
+          getPermanentWorktreeError(error, t('workbench.create_permanent_worktree_failed')),
+          { cause: error }
+        )
+      }
+      const workspacePath = prepared.path ?? prepared.worktree.path
+      try {
+        await onOpenStandaloneWorkspace(deviceId, workspacePath, name)
+      } catch (error) {
+        await runtimeWorkApi
+          .deleteWorktree({ deviceId, path: workspacePath, preserveSnapshot: false })
+          .catch(() => undefined)
+        throw error
+      }
+    },
+    [onOpenStandaloneWorkspace, services?.runtimeWorkApi, t]
+  )
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
@@ -513,6 +563,7 @@ export function DesktopWorkbenchLayout() {
       onToggleGlobalImNotification={toggleGlobalImNotification}
       onOpenGlobalImNotificationSettings={() => openImNotificationTargetDialog({ type: 'global' })}
       onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+      onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => navigateTo('/plugins')}

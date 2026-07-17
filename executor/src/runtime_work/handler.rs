@@ -517,9 +517,18 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "worktree_id"))
             .ok_or_else(|| AppIpcError::new("bad_request", "worktreeId is required"))?;
         let git_ref = string_field(&payload, "ref");
+        let permanent = payload
+            .get("permanent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let record = self
             .worktrees
-            .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
+            .prepare(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                permanent,
+            )
             .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
         self.schedule_worktree_prune();
         Ok(json!({

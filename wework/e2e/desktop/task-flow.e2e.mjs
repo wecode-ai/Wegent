@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1243,6 +1243,52 @@ async function main() {
         snapshot.testIds.includes('project-work-button') &&
         (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
       'The global new-task action did not preserve the standalone project state'
+    )
+
+    phase = 'permanent-worktree-create'
+    const sourceProjectId = projectId
+    const sourceProjectMenuTestId = `project-menu-${sourceProjectId}`
+    await control.command('waitFor', `[data-testid="${sourceProjectMenuTestId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', `[data-testid="${sourceProjectMenuTestId}"]`)
+    await control.command('click', `[data-testid="create-permanent-worktree-${sourceProjectId}"]`)
+    await control.command('waitFor', `[data-testid="permanent-worktree-name-${sourceProjectId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', `[data-testid="permanent-worktree-name-${sourceProjectId}"]`, {
+      value: 'Permanent E2E',
+    })
+    await control.command(
+      'click',
+      `[data-testid="confirm-create-permanent-worktree-${sourceProjectId}"]`
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.text.includes('Permanent E2E'),
+      'The permanent worktree was not added to the project list'
+    )
+    const appRuntimeEntries = await readdir(join(executorHome, 'app-runtime'), {
+      withFileTypes: true,
+    })
+    const appRuntimeDirectory = appRuntimeEntries.find(entry => entry.isDirectory())
+    assert.ok(appRuntimeDirectory, 'The isolated app runtime directory was not created')
+    const worktreeState = JSON.parse(
+      await readFile(
+        join(
+          executorHome,
+          'app-runtime',
+          appRuntimeDirectory.name,
+          'runtime-work',
+          'worktrees.json'
+        ),
+        'utf8'
+      )
+    )
+    assert.equal(
+      Object.values(worktreeState.records ?? {}).some(record => record.permanent === true),
+      true,
+      'The created worktree was not marked permanent'
     )
 
     await writeFile(
