@@ -340,6 +340,34 @@ def test_sites_api_token_repr_hides_secret(monkeypatch: pytest.MonkeyPatch) -> N
     assert SITES_API_TOKEN not in repr(settings.SITES_API_TOKEN)
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("POST", "/api/v1/sites/prj_publish/publish", None),
+        ("DELETE", "/api/v1/sites/prj_delete", None),
+        (
+            "POST",
+            "/api/v1/sites/prj_rename/rename",
+            {"title": "Renamed site"},
+        ),
+    ],
+)
+def test_site_mutations_require_authentication_without_calling_upstream(
+    test_client: TestClient,
+    httpx_mock,
+    method: str,
+    path: str,
+    json_body: dict[str, str] | None,
+) -> None:
+    if json_body is None:
+        response = test_client.request(method, path)
+    else:
+        response = test_client.request(method, path, json=json_body)
+
+    assert response.status_code == 401
+    assert httpx_mock.get_requests() == []
+
+
 def test_publish_site_proxies_authenticated_identity(
     test_client: TestClient,
     test_token: str,
@@ -416,6 +444,30 @@ def test_delete_site_requires_valid_upstream_confirmation(
 
     response = test_client.delete(
         f"/api/v1/sites/{project_id}",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+@pytest.mark.parametrize("deleted", [1, "true", "yes"])
+def test_delete_site_rejects_coerced_upstream_confirmation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+    deleted: Any,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        json={"deleted": deleted},
+    )
+
+    response = test_client.delete(
+        "/api/v1/sites/prj_delete",
         headers=_authorization(test_token),
     )
 

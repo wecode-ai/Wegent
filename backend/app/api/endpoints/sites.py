@@ -20,6 +20,12 @@ from app.services.sites import (
 )
 
 router = APIRouter()
+SITES_ERRORS = (
+    SitesNotAvailableError,
+    SitesUpstreamAuthenticationError,
+    SitesUpstreamUnavailableError,
+    SitesUpstreamResponseError,
+)
 
 
 def _raise_sites_error(error: Exception) -> NoReturn:
@@ -70,12 +76,7 @@ async def list_sites(
             cursor=cursor,
             limit=limit,
         )
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamAuthenticationError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+    except SITES_ERRORS as error:
         _raise_sites_error(error)
 
 
@@ -90,12 +91,7 @@ async def publish_site(
             current_user.user_name,
             project_id,
         )
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamAuthenticationError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+    except SITES_ERRORS as error:
         _raise_sites_error(error)
 
 
@@ -110,12 +106,7 @@ async def delete_site(
             current_user.user_name,
             project_id,
         )
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamAuthenticationError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+    except SITES_ERRORS as error:
         _raise_sites_error(error)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -133,10 +124,5 @@ async def rename_site(
             project_id,
             request.title,
         )
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamAuthenticationError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+    except SITES_ERRORS as error:
         _raise_sites_error(error)

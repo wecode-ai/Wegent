@@ -189,7 +189,7 @@ class SitesService:
             json_body={"username": username, "project_id": project_id},
         )
         try:
-            response = SiteDeleteResponse.model_validate(payload)
+            response = SiteDeleteResponse.model_validate(payload, strict=True)
         except ValidationError as exc:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid delete response"
