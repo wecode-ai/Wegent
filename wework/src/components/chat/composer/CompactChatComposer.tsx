@@ -25,6 +25,8 @@ import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 interface CompactChatComposerProps {
   value: string
@@ -112,6 +114,14 @@ export function CompactChatComposer({
 
     onChange(value ? `${value}\n${text}` : text)
     onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    onClearPlanMode?.()
+    onCancelGoalDraft?.()
+    if (phrase.mode === 'plan') onSetPlanMode?.()
+    if (phrase.mode === 'goal') onSetGoal?.()
+    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
@@ -220,6 +230,7 @@ export function CompactChatComposer({
         >
           <Plus className="h-6 w-6" />
         </button>
+        <QuickPhraseMenu compact disabled={disabled} onSelect={handleQuickPhraseSelect} />
         <div
           data-testid="compact-input-pill"
           className={[

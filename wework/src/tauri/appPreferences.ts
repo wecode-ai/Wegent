@@ -16,6 +16,16 @@ export interface AppPreferences {
   browserDownloadDirectory: string | null
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
+  quickPhrases: QuickPhrase[]
+}
+
+export type QuickPhraseMode = 'normal' | 'plan' | 'goal'
+
+export interface QuickPhrase {
+  id: string
+  title: string
+  content: string
+  mode: QuickPhraseMode
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
@@ -36,7 +46,29 @@ export interface AppPreferencesPatch {
   browserDownloadDirectory?: string | null
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
+  quickPhrases?: QuickPhrase[]
 }
+
+export const defaultQuickPhrases: QuickPhrase[] = [
+  {
+    id: 'default-summary-progress',
+    title: '总结当前进展',
+    content: '总结目前完成的工作和下一步建议',
+    mode: 'normal',
+  },
+  {
+    id: 'default-create-plan',
+    title: '制定实施计划',
+    content: '分析需求并制定详细的实施计划',
+    mode: 'plan',
+  },
+  {
+    id: 'default-pursue-goal',
+    title: '持续完成这个目标',
+    content: '持续推进这个目标，直到真正完成',
+    mode: 'goal',
+  },
+]
 
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
@@ -53,6 +85,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  quickPhrases: defaultQuickPhrases,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
@@ -140,7 +173,21 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.appshotsPlaySound === 'boolean'
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
+    quickPhrases: Array.isArray(record.quickPhrases)
+      ? record.quickPhrases.flatMap(item => normalizeQuickPhrase(item))
+      : defaultAppPreferences.quickPhrases,
   }
+}
+
+function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
+  if (!value || typeof value !== 'object') return []
+  const record = value as Partial<QuickPhrase>
+  const id = typeof record.id === 'string' ? record.id : ''
+  const title = typeof record.title === 'string' ? record.title.trim() : ''
+  const content = typeof record.content === 'string' ? record.content.trim() : ''
+  const mode = record.mode
+  if (!id || !title || !content || !['normal', 'plan', 'goal'].includes(mode ?? '')) return []
+  return [{ id, title, content, mode: mode as QuickPhraseMode }]
 }
 
 function emitAppPreferencesChanged(preferences: AppPreferences) {

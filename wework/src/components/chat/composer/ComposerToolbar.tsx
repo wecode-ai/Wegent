@@ -5,6 +5,8 @@ import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -29,6 +31,7 @@ interface ComposerToolbarProps {
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  onQuickPhraseSelect: (phrase: QuickPhrase) => void
 }
 
 export function ComposerToolbar({
@@ -54,6 +57,7 @@ export function ComposerToolbar({
   onCancelGoalDraft,
   isStreaming = false,
   onPause,
+  onQuickPhraseSelect,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
@@ -66,6 +70,7 @@ export function ComposerToolbar({
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
+        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
