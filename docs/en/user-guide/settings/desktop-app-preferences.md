@@ -18,6 +18,8 @@ Open **Settings → Appearance → Workbench background** to choose a local JPEG
 
 **Background visibility** controls how strongly the image appears through the theme surface; at 100, the original image is shown clearly. **Background blur** ranges from 0–20px and defaults to 0. You can independently show the background in the main area, sidebar, and top bar. The corresponding settings-page regions follow the same choices.
 
+When the background is enabled in the main area, it remains continuous across the conversation, right workspace, and bottom panels, including around the composer without an additional opaque bottom gradient.
+
 The image and these appearance preferences stay on the current device and are not uploaded or synchronized. **Remove** and **Reset** delete the background image managed by Wework.
 
 ## Show the Main Window on Launch
@@ -49,7 +51,7 @@ When no conversation is open, the newly created main window keeps the task launc
 
 On macOS desktop, **Settings → Integrations → Appshots** shows the Appshots status and sound preference. The default shortcut is `⌘⇧2`. When pressed, Wework captures the frontmost application window and uses macOS Accessibility to read text exposed by that window, which can include text outside the visible scroll area. It then adds both the PNG and text context to the current composer attachments.
 
-On first use, macOS requests Screen & System Audio Recording and Accessibility access. The former captures the image; the latter reads available window text. Allow both, restart Wework, and press the shortcut again. If access was previously denied, Wework shows recovery guidance with a direct link to the relevant System Settings page.
+On first use, macOS requests Screen & System Audio Recording and Accessibility access. The former captures the image; the latter reads available window text. Allow both, restart Wework, and press the shortcut again. Wework does not show an additional in-app permission dialog. If access was previously denied, check its status under Appshots settings and select the corresponding **Open System Settings** action to grant it.
 
 Text extraction depends on the accessibility information exposed by the target application. Some apps and websites expose only visible content, so complete off-screen text is not guaranteed for every window.
 

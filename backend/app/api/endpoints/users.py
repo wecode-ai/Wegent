@@ -34,7 +34,7 @@ from app.schemas.quick_launch import (
 )
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.subtask_context import AttachmentDetailResponse
-from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.schemas.user import GitTokenOrderUpdate, UserCreate, UserInDB, UserUpdate
 from app.services.admin_password_bootstrap import (
     get_cached_admin_password_setup_required,
     raise_admin_password_setup_required,
@@ -585,6 +585,18 @@ async def delete_git_token(
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.put("/me/git-token-order", response_model=UserInDB)
+async def reorder_git_tokens(
+    order: GitTokenOrderUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Persist the display and selection priority of Git tokens."""
+    return user_service.reorder_git_tokens(
+        db=db, user=current_user, ordered_keys=order.ordered_keys
+    )
 
 
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
@@ -1149,6 +1161,31 @@ async def search_users(
 
     # Get results with limit
     users = query.limit(limit).all()
+
+    return SearchUsersResponse(
+        users=[
+            UserSearchItem(id=user.id, user_name=user.user_name, email=user.email)
+            for user in users
+        ],
+        total=len(users),
+    )
+
+
+@router.get("/by-ids", response_model=SearchUsersResponse)
+async def get_users_by_ids(
+    ids: list[int] = Query(..., description="User IDs to resolve"),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
+):
+    """Resolve active users by ID while preserving the requested order."""
+    unique_ids = list(dict.fromkeys(user_id for user_id in ids if user_id > 0))
+    users_by_id = {
+        user.id: user
+        for user in db.query(User)
+        .filter(User.id.in_(unique_ids), User.is_active == True)
+        .all()
+    }
+    users = [users_by_id[user_id] for user_id in unique_ids if user_id in users_by_id]
 
     return SearchUsersResponse(
         users=[

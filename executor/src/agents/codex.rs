@@ -455,7 +455,7 @@ impl CodexAppServerClient {
         self.state.lock().await.active_threads.remove(thread_id);
     }
 
-    async fn unsubscribe_thread(&self, thread_id: &str) {
+    pub(crate) async fn unsubscribe_thread(&self, thread_id: &str) {
         let result: Result<(), String> = async {
             let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
             let message = json!({
@@ -923,13 +923,11 @@ async fn run_codex_app_server_turn_on_shared_client(
                 .await?;
         }
 
-        let mut goal_run_active = false;
         if !request.ephemeral {
             if let Some(goal) = initial_thread_goal.as_ref() {
                 let goal_params = thread_goal_set_params(&thread_id, goal)?;
                 let goal_response = client.request("thread/goal/set", goal_params).await?;
                 if goal_response_goal_is_active(&goal_response) {
-                    goal_run_active = true;
                     state.set_goal_status("active");
                 }
             } else if resuming_thread {
@@ -938,7 +936,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                     .await
                 {
                     if goal_response_goal_is_active(&goal_response) {
-                        goal_run_active = true;
                         state.set_goal_status("active");
                     }
                 }
@@ -1011,7 +1008,6 @@ async fn run_codex_app_server_turn_on_shared_client(
                 notifications,
                 cancellation,
                 request_user_input_answers,
-                goal_run_active,
                 active_turn_started,
                 active_turn_finished,
             },
@@ -1030,9 +1026,6 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     if let Some(thread_id) = subscribed_thread_id {
         client.mark_thread_idle(&thread_id).await;
-        if !prepared.request.ephemeral {
-            client.unsubscribe_thread(&thread_id).await;
-        }
     }
 
     if let Err(error) = &result {
@@ -1294,7 +1287,6 @@ struct SharedTurnNotificationOptions {
     notifications: Option<CodexNotificationSender>,
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
-    goal_run_active: bool,
     active_turn_started: Option<CodexActiveTurnCallback>,
     active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
@@ -1424,16 +1416,17 @@ async fn read_shared_turn_notifications(
             if let Some(callback) = options.active_turn_finished.as_ref() {
                 callback();
             }
-            if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
-                return Ok(outcome);
-            }
-            if !options.goal_run_active || !state.goal_is_active() {
+            if !should_wait_for_goal_continuation(&outcome, state) {
                 return Ok(outcome);
             }
             last_outcome = Some(outcome);
             state.reset_turn_output();
         }
     }
+}
+
+fn should_wait_for_goal_continuation(outcome: &ExecutionOutcome, state: &CodexRunState) -> bool {
+    matches!(outcome, ExecutionOutcome::Completed { .. }) && state.goal_is_active()
 }
 
 async fn recover_stalled_shared_turn(
@@ -5196,6 +5189,32 @@ mod tests {
                 content: String::new()
             }
         );
+    }
+
+    #[test]
+    fn goal_created_during_turn_keeps_notification_reader_alive() {
+        let mut state = CodexRunState::default();
+
+        assert!(state
+            .handle_message(&json!({
+                "method": "thread/goal/updated",
+                "params": {
+                    "threadId": "thread-1",
+                    "goal": { "status": "active" }
+                }
+            }))
+            .is_none());
+        let outcome = state
+            .handle_message(&json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-1",
+                    "turn": { "status": "completed" }
+                }
+            }))
+            .expect("turn completion should produce an outcome");
+
+        assert!(should_wait_for_goal_continuation(&outcome, &state));
     }
 
     #[test]

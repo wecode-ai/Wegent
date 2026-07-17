@@ -53,11 +53,13 @@ function cssVariableColor(name: string, fallback: string, alpha?: number): strin
   return `rgb(${red}, ${green}, ${blue})`
 }
 
-export function getTerminalTheme(): ITheme {
+export function getTerminalTheme(transparentBackground = false): ITheme {
   const fallbackTheme = isDarkAppearance() ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME
 
   return {
-    background: cssVariableColor('--color-bg-base', fallbackTheme.background),
+    background: transparentBackground
+      ? 'rgba(0, 0, 0, 0)'
+      : cssVariableColor('--color-bg-base', fallbackTheme.background),
     foreground: cssVariableColor('--color-text-primary', fallbackTheme.foreground),
     cursor: cssVariableColor('--color-primary', fallbackTheme.cursor),
     selectionBackground: cssVariableColor(
@@ -71,9 +73,13 @@ export function getTerminalTheme(): ITheme {
 export function applyTerminalTheme(
   terminal: Terminal,
   container: HTMLElement,
-  theme = getTerminalTheme()
+  theme = getTerminalTheme(),
+  transparentBackground = false
 ): ITheme {
-  const appliedTheme = { ...theme }
+  const appliedTheme = {
+    ...theme,
+    ...(transparentBackground ? { background: 'rgba(0, 0, 0, 0)' } : {}),
+  }
   terminal.options.theme = appliedTheme
 
   if (appliedTheme.background) {
@@ -92,7 +98,8 @@ export function applyTerminalTheme(
 
 export function createTerminalThemeScheduler(
   terminal: Terminal,
-  container: HTMLElement
+  container: HTMLElement,
+  transparentBackground = false
 ): () => void {
   let frameId: number | null = null
 
@@ -101,7 +108,7 @@ export function createTerminalThemeScheduler(
 
     frameId = window.requestAnimationFrame(() => {
       frameId = null
-      applyTerminalTheme(terminal, container)
+      applyTerminalTheme(terminal, container, getTerminalTheme(), transparentBackground)
     })
   }
 }

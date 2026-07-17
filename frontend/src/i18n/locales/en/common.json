@@ -544,7 +544,9 @@
     "edit_token": "Edit Token",
     "delete": "Delete",
     "no_tokens": "No git tokens configured",
-    "new_token": "New Token"
+    "new_token": "New Token",
+    "drag_to_reorder": "Drag to reorder",
+    "reorder_failed": "Failed to reorder Git tokens"
   },
   "dingtalk": {
     "loading": "Loading DingTalk configuration...",

@@ -7,6 +7,8 @@ WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 TARGET="local"
 VERSION_OVERRIDE=""
@@ -603,6 +605,12 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+if [ -n "$app_sign_identity" ]; then
+  wework_sign_prepared_codex_macos_binaries \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "$app_sign_identity"
+fi
 pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
 
 archive_path="$(find_update_archive)"

@@ -394,6 +394,9 @@ const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
+const startDeviceTerminalSessionMock = vi.fn()
+const getDeviceVncConfigMock = vi.fn()
+const createRemoteTerminalClientMock = vi.fn()
 
 function createDefaultImNotificationSettings() {
   return {
@@ -455,7 +458,7 @@ describe('DesktopWorkbenchLayout', () => {
           disk_usage: 57,
         },
       ]),
-      startTerminal: vi.fn(),
+      startTerminal: startDeviceTerminalSessionMock,
       startCodeServer: vi.fn(),
       createCloudDevice: vi.fn(),
       renameDevice: vi.fn(),
@@ -471,7 +474,7 @@ describe('DesktopWorkbenchLayout', () => {
         memory: [],
         disk: [],
       }),
-      getVncConfig: vi.fn(),
+      getVncConfig: getDeviceVncConfigMock,
       ...overrides,
     }
   }
@@ -893,6 +896,15 @@ describe('DesktopWorkbenchLayout', () => {
       ...props.projectChat,
     }
     const workbenchValue = {
+      services: {
+        workspaceSessionApi: {
+          startProjectTerminal: startTerminalSessionMock,
+          startProjectCodeServer: startCodeServerSessionMock,
+          startDeviceTerminal: startDeviceTerminalSessionMock,
+          getDeviceVncConfig: getDeviceVncConfigMock,
+          createRemoteTerminalClient: createRemoteTerminalClientMock,
+        },
+      },
       state,
       isStartupReady: true,
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
@@ -1104,13 +1116,16 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  function renderWorkspacePanelLayout({ mainWidth }: { mainWidth?: number } = {}) {
+  function renderWorkspacePanelLayout({
+    mainWidth,
+    withAppearance = false,
+  }: { mainWidth?: number; withAppearance?: boolean } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
 
     const workspacePanelState = createCloudWorkspacePanelState()
-    return render(
+    const layout = (
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
@@ -1125,6 +1140,7 @@ describe('DesktopWorkbenchLayout', () => {
         }}
       />
     )
+    return render(withAppearance ? <AppearanceProvider>{layout}</AppearanceProvider> : layout)
   }
 
   function createLocalRuntimeTaskPanelFixture() {
@@ -2264,9 +2280,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-wework')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-todo')
-    )
+    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-apps')
     )
@@ -2344,7 +2358,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workbench-main-header-left-controls')
     )
     expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
-    expect(collapsedHeaderControls.getByTestId('chrome-tab-todo')).toBeInTheDocument()
+    expect(collapsedHeaderControls.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
@@ -4101,6 +4115,27 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
 
+  test('shows the workbench background through the right and bottom panels', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInMain: true,
+      })
+    )
+    renderWorkspacePanelLayout({ withAppearance: true })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('right-workspace-tabbar')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-transparent')
+  })
+
   test('opens the browser from the right workspace launcher row', async () => {
     renderWorkspacePanelLayout()
 
@@ -4975,7 +5010,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
+    await user.click(screen.getByRole('button', { name: /编辑文件 README\.md/ }))
 
     expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))

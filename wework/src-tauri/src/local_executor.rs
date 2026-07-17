@@ -25,6 +25,7 @@ const LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV: &str = "WEWORK_EXECUTOR_ISOLATION_O
 const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
 const LOCAL_EXECUTOR_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
+const LOCAL_EXECUTOR_NAMESPACE: Option<&str> = option_env!("WEWORK_EXECUTOR_NAMESPACE");
 const LOCAL_EXECUTOR_SHARED_HOME_ENV: &str = "WEWORK_SHARED_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
@@ -597,7 +598,17 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
     }
 
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    Ok(home.join(".wegent-executor"))
+    Ok(default_local_executor_home_path(
+        &home,
+        LOCAL_EXECUTOR_NAMESPACE,
+    ))
+}
+
+fn default_local_executor_home_path(home: &Path, namespace: Option<&str>) -> PathBuf {
+    let root = home.join(".wegent-executor");
+    namespace
+        .filter(|value| !value.is_empty())
+        .map_or(root.clone(), |value| root.join("apps").join(value))
 }
 
 fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
@@ -970,7 +981,7 @@ fn cleanup_stale_local_executor_processes() -> Result<(), String> {
     remove_stale_app_ipc_addr_file_at(&addr_file_path)
 }
 
-fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), String> {
+fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<bool, String> {
     let should_cleanup = {
         let inner = state
             .inner
@@ -979,7 +990,7 @@ fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), S
         !inner.startup_cleanup_done && inner.child.is_none()
     };
     if !should_cleanup {
-        return Ok(());
+        return Ok(false);
     }
 
     cleanup_stale_local_executor_processes()?;
@@ -989,7 +1000,7 @@ fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), S
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     inner.startup_cleanup_done = true;
-    Ok(())
+    Ok(true)
 }
 
 fn sidecar_source_and_path() -> (String, String) {
@@ -2195,14 +2206,22 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
-    if let Err(error) = cleanup_stale_local_executor_once(state) {
-        set_executor_error(state, error.clone());
-        return Err(error);
-    }
+    let startup_cleanup_performed = match cleanup_stale_local_executor_once(state) {
+        Ok(performed) => performed,
+        Err(error) => {
+            set_executor_error(state, error.clone());
+            return Err(error);
+        }
+    };
 
-    if connect_and_attach_sidecar_socket(app.clone(), state)
-        .await
-        .is_ok()
+    // A release cold start removes the stale address file and terminates any
+    // executor that owned it. Waiting for that file to reappear can only time
+    // out, so spawn the new executor immediately. Reconnect paths still attach
+    // first because their existing child may already be opening the socket.
+    if !startup_cleanup_performed
+        && connect_and_attach_sidecar_socket(app.clone(), state)
+            .await
+            .is_ok()
     {
         return Ok(());
     }
@@ -2702,6 +2721,14 @@ mod tests {
     #[cfg(unix)]
     use std::time::{Duration, Instant};
 
+    #[test]
+    fn startup_cleanup_reports_only_the_first_cold_start_pass() {
+        let state = LocalExecutorState::default();
+
+        assert!(cleanup_stale_local_executor_once(&state).unwrap());
+        assert!(!cleanup_stale_local_executor_once(&state).unwrap());
+    }
+
     fn env_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| TestMutex::new(()))
@@ -3126,6 +3153,21 @@ command = "example"
 
     #[cfg(unix)]
     #[test]
+    fn branded_executor_home_stays_under_shared_root() {
+        let home = Path::new("/tmp/wework-test-home");
+
+        assert_eq!(
+            default_local_executor_home_path(home, None),
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+        );
+        assert_eq!(
+            default_local_executor_home_path(home, Some("com.example.demo-wework")),
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor/apps/com.example.demo-wework")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn default_runtime_paths_follow_build_mode() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("HOME");
@@ -3148,7 +3190,10 @@ command = "example"
 
         assert_eq!(
             home,
-            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+            default_local_executor_home_path(
+                Path::new("/tmp/wework-test-home"),
+                LOCAL_EXECUTOR_NAMESPACE,
+            )
         );
         if cfg!(debug_assertions) {
             assert_eq!(

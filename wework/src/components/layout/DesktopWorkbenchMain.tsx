@@ -4,7 +4,8 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
@@ -102,11 +103,10 @@ const DESKTOP_CHAT_CONTENT_BASE_CLASS =
 const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_MESSAGE_LIST_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_6rem))] max-w-[calc(100%_-_6rem)]`
 const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} px-0`
-const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS =
-  'pt-6 pb-2 bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
 const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
 const DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS =
-  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t from-background via-background to-transparent'
+  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-4 z-popover bg-background/95 shadow-md'
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
@@ -232,6 +232,8 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   open,
   active,
   context,
+  workspaceSessionApi,
+  showWorkbenchBackground,
   onRequestClose,
   onTerminalTabsEmpty,
 }: {
@@ -239,6 +241,8 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   open: boolean
   active: boolean
   context: BottomPanelRenderContext
+  workspaceSessionApi?: WorkspaceSessionApi
+  showWorkbenchBackground: boolean
   onRequestClose: (key: string) => void
   onTerminalTabsEmpty: () => void
 }) {
@@ -255,6 +259,8 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
       workspaceTarget={context.workspaceTarget}
       preferLocalTerminal={context.preferLocalTerminal}
       terminalContextTitle={context.terminalContextTitle}
+      workspaceSessionApi={workspaceSessionApi}
+      showWorkbenchBackground={showWorkbenchBackground}
       onRequestClose={closePanel}
       onTerminalTabsEmpty={onTerminalTabsEmpty}
     />
@@ -263,6 +269,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const { services } = useWorkbench()
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
@@ -311,6 +318,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
+          workspaceSessionApi={services?.workspaceSessionApi}
           environmentInfoPinned={environmentInfoPinned}
           environmentInfoOverlayOpen={environmentInfoOverlayOpen}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
@@ -347,6 +355,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
+  workspaceSessionApi,
   environmentInfoPinned,
   environmentInfoOverlayOpen,
   onSidebarCollapsedChange,
@@ -359,6 +368,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
+  workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoPinned: boolean
   environmentInfoOverlayOpen: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -804,6 +814,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const hasMainBackground = Boolean(appearance.backgroundImagePath && appearance.backgroundInMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
@@ -1522,9 +1533,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ref={workbenchMainRef}
       className={cn(
         'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden',
-        appearance.backgroundImagePath && appearance.backgroundInMain
-          ? 'bg-background/20'
-          : 'bg-background',
+        hasMainBackground ? 'bg-background/20' : 'bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
@@ -1604,12 +1613,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
                 stickyFooterClassName={cn(
                   DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+                  hasMainBackground
+                    ? 'from-transparent via-transparent'
+                    : 'from-background via-background',
                   chatContentResizing && 'transition-none'
                 )}
                 stickyFooter={
                   <>
                     <div
-                      className={DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS}
+                      className={cn(
+                        DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+                        hasMainBackground
+                          ? 'from-transparent via-transparent'
+                          : 'from-background via-background'
+                      )}
                       data-testid="desktop-floating-composer-backdrop"
                     />
                     <div
@@ -1857,7 +1874,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
+            'relative z-popover min-w-0 shrink-0 overflow-hidden',
+            hasMainBackground ? 'bg-background/20' : 'bg-background',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
             rightPanelOpen
               ? 'pointer-events-auto border-l border-border/60 opacity-100'
@@ -1868,6 +1886,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
+              showWorkbenchBackground={hasMainBackground}
               visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
@@ -1879,6 +1898,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               fileWorkspaceTarget={fileWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
               terminalContextTitle={runtimeTaskTitle}
+              workspaceSessionApi={workspaceSessionApi}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
@@ -1913,6 +1933,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             open={active && (bottomPanelOpenByKey[context.key] ?? false)}
             active={active}
             context={context}
+            workspaceSessionApi={workspaceSessionApi}
+            showWorkbenchBackground={hasMainBackground}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />

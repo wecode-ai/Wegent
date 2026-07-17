@@ -5,8 +5,10 @@ use std::process::Command;
 
 const SIDECAR_NAME: &str = "wegent-executor";
 const SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
+const EXECUTOR_NAMESPACE_ENV: &str = "WEWORK_EXECUTOR_NAMESPACE";
 
 fn main() {
+    println!("cargo:rerun-if-env-changed={EXECUTOR_NAMESPACE_ENV}");
     prepare_local_executor_sidecar();
     verify_bundled_codex_binary();
     ensure_codex_resource_glob_exists();

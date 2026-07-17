@@ -318,6 +318,62 @@ export function selectRuntimeWorkView(
     : localRuntimeWork
 }
 
+function isRemoteRuntimeWorkspace(workspace: RuntimeDeviceWorkspace): boolean {
+  return workspace.workspaceSource === 'remote' || Boolean(workspace.remoteHostId)
+}
+
+function isRemoteRuntimeProject(project: RuntimeProjectWork): boolean {
+  return (
+    project.project.kind === 'remote' ||
+    project.project.source === 'remote_project' ||
+    (project.deviceWorkspaces.length > 0 &&
+      project.deviceWorkspaces.every(isRemoteRuntimeWorkspace))
+  )
+}
+
+export function filterDisconnectedRemoteRuntimeWork(
+  runtimeWork: RuntimeWorkListResponse
+): RuntimeWorkListResponse {
+  let changed = false
+  const projects = runtimeWork.projects.flatMap(project => {
+    if (isRemoteRuntimeProject(project)) {
+      changed = true
+      return []
+    }
+
+    const deviceWorkspaces = project.deviceWorkspaces.filter(
+      workspace => !isRemoteRuntimeWorkspace(workspace)
+    )
+    if (deviceWorkspaces.length === project.deviceWorkspaces.length) {
+      return [project]
+    }
+
+    changed = true
+    if (deviceWorkspaces.length === 0) return []
+    return [
+      {
+        ...project,
+        deviceWorkspaces,
+        totalTasks: countWorkspaceTasks(deviceWorkspaces),
+      },
+    ]
+  })
+  const chats = runtimeWork.chats.filter(workspace => !isRemoteRuntimeWorkspace(workspace))
+  if (chats.length !== runtimeWork.chats.length) changed = true
+  if (!changed) return runtimeWork
+
+  return {
+    ...runtimeWork,
+    projects,
+    chats,
+    totalTasks:
+      projects.reduce(
+        (total, project) => total + countWorkspaceTasks(project.deviceWorkspaces),
+        0
+      ) + countWorkspaceTasks(chats),
+  }
+}
+
 export function createDeviceResolver(input: {
   localDevices: DeviceInfo[]
   cloudState: CloudRuntimeState
@@ -703,6 +759,10 @@ function mergeRuntimeWorkspaces(
       workspace: {
         ...canonicalWorkspace,
         ...(existing ?? {}),
+        deviceName:
+          existing?.workspaceSource === 'remote' && canonicalWorkspace.workspaceSource === 'remote'
+            ? (canonicalWorkspace.deviceName ?? existing.deviceName)
+            : (existing?.deviceName ?? canonicalWorkspace.deviceName),
         available: (existing?.available ?? false) || canonicalWorkspace.available,
         tasks,
       },

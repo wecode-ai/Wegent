@@ -30,7 +30,7 @@ import {
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -75,6 +75,7 @@ import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
+  createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
 
@@ -587,6 +588,16 @@ function CloudDeviceConnectionInfoDialog({
 
 function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
   const cloudConnection = useOptionalCloudConnection()
+  const remoteTerminalClientFactory = useMemo(
+    () =>
+      cloudConnection.isConnected &&
+      cloudConnection.socketBaseUrl &&
+      cloudConnection.socketPath &&
+      cloudConnection.token
+        ? createSettingsRemoteTerminalClientFactory(cloudConnection)
+        : null,
+    [cloudConnection]
+  )
   const [sessionLoading, setSessionLoading] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(device.name)
@@ -609,13 +620,16 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         await openExternalUrl(result.url)
         return
       }
+      if (!remoteTerminalClientFactory) {
+        throw new Error('Cloud terminal connection is unavailable')
+      }
       setTerminalSession(result)
     } catch (e) {
       console.error('Failed to start terminal:', e)
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device])
+  }, [cloudConnection, device, remoteTerminalClientFactory])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
@@ -874,7 +888,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         </div>
       </div>
 
-      {terminalSession && (
+      {terminalSession && remoteTerminalClientFactory && (
         <section
           data-testid="settings-device-terminal-panel"
           className="mt-3 flex h-[360px] min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
@@ -898,7 +912,11 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             </button>
           </div>
           <div className="min-h-0 flex-1">
-            <RemoteTerminal sessionId={terminalSession.session_id} active />
+            <RemoteTerminal
+              sessionId={terminalSession.session_id}
+              clientFactory={remoteTerminalClientFactory}
+              active
+            />
           </div>
         </section>
       )}

@@ -5,7 +5,27 @@
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _strip_sensitive_ext(value: Any) -> Any:
+    """Remove the internal content-write token from generation ext on serialization.
+
+    Historically the wiki flow stored the internal write token in ext under
+    ``wiki_env`` and ``content_write.auth_token``. These must never be returned by
+    the API. Stripping here covers every response carrying generation ext without
+    mutating the underlying ORM object.
+    """
+    if not isinstance(value, dict):
+        return value
+
+    cleaned = {k: v for k, v in value.items() if k != "wiki_env"}
+    content_write = cleaned.get("content_write")
+    if isinstance(content_write, dict) and "auth_token" in content_write:
+        cleaned["content_write"] = {
+            k: v for k, v in content_write.items() if k != "auth_token"
+        }
+    return cleaned
 
 
 # ========== Project Schemas ==========
@@ -100,6 +120,8 @@ class WikiGenerationInDB(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
+
+    _strip_ext = field_validator("ext", mode="before")(_strip_sensitive_ext)
 
     class Config:
         from_attributes = True

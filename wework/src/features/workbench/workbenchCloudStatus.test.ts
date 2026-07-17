@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
+  filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   mergeRuntimeWorkLists,
   selectCloudWorkStatus,
@@ -331,6 +332,52 @@ describe('cloud runtime sync state', () => {
     expect(twice.totalTasks).toBe(1)
   })
 
+  test('hides remote work while the cloud connection is explicitly disconnected', () => {
+    const localWorkspace = workspace('local-device', [{ taskId: 'local-task' }])
+    const remoteWorkspace = {
+      ...workspace('remote-device', [{ taskId: 'remote-task' }]),
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
+      deviceName: '127.0.0.1',
+      deviceStatus: 'offline',
+      available: false,
+    }
+    const filtered = filterDisconnectedRemoteRuntimeWork({
+      projects: [
+        {
+          project: {
+            key: 'remote-project-id',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Remote',
+            kind: 'remote',
+            source: 'remote_project',
+          },
+          deviceWorkspaces: [remoteWorkspace],
+          totalTasks: 1,
+        },
+        {
+          project: { key: 'local-project-id', name: 'Local' },
+          deviceWorkspaces: [localWorkspace, remoteWorkspace],
+          totalTasks: 2,
+        },
+      ],
+      chats: [
+        {
+          ...remoteWorkspace,
+          workspaceKind: 'chat',
+        },
+      ],
+      totalTasks: 4,
+    })
+
+    expect(filtered.projects).toHaveLength(1)
+    expect(filtered.projects[0].project.name).toBe('Local')
+    expect(filtered.projects[0].deviceWorkspaces).toEqual([localWorkspace])
+    expect(filtered.projects[0].totalTasks).toBe(1)
+    expect(filtered.chats).toEqual([])
+    expect(filtered.totalTasks).toBe(1)
+  })
+
   test('canonicalizes cloud runtime workspaces to the local route for the same runtime', () => {
     const localDevice = device({
       device_id: 'local-device',
@@ -577,5 +624,76 @@ describe('cloud runtime sync state', () => {
         tasks: [expect.objectContaining({ taskId: 'remote-task' })],
       }),
     ])
+  })
+
+  test('keeps the cached public IP when a disconnected remote descriptor reports loopback', () => {
+    const localDescriptor: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'remote-project-id',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Remote',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '127.0.0.1',
+              deviceStatus: 'offline',
+              available: false,
+              workspacePath: '/srv/repo',
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+              mapped: true,
+              tasks: [],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cachedRemoteWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: '/srv/repo', name: 'Remote executor project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '10.201.3.200',
+              deviceStatus: 'offline',
+              available: false,
+              workspacePath: '/srv/repo',
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'cached-task',
+                  workspacePath: '/srv/repo',
+                  title: 'Cached task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    const merged = mergeRuntimeWorkLists(localDescriptor, cachedRemoteWork)
+
+    expect(merged.projects).toHaveLength(1)
+    expect(merged.projects[0].deviceWorkspaces[0]).toMatchObject({
+      deviceName: '10.201.3.200',
+      deviceStatus: 'offline',
+      available: false,
+      tasks: [expect.objectContaining({ taskId: 'cached-task' })],
+    })
   })
 })

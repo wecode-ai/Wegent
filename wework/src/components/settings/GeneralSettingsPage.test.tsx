@@ -10,6 +10,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -40,6 +41,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
+    experimentalFeaturesEnabled: false,
     taskCompletionNotificationsEnabled: false,
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
@@ -122,6 +124,20 @@ describe('GeneralSettingsPage', () => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
     })
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
+  })
+
+  test('keeps experimental features off by default and persists enabling them', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-experimental-features-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
+    })
   })
 
   test('rolls back language selection when saving fails', async () => {

@@ -544,7 +544,9 @@
     "edit_token": "编辑令牌",
     "delete": "删除",
     "no_tokens": "没有配置 Git 令牌",
-    "new_token": "新建令牌"
+    "new_token": "新建令牌",
+    "drag_to_reorder": "拖拽排序",
+    "reorder_failed": "Git 令牌排序失败"
   },
   "dingtalk": {
     "loading": "加载钉钉配置中...",

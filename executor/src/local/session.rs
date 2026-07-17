@@ -7,7 +7,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::local::{command::build_env, pty::UnixPtyProcess};
@@ -25,6 +25,7 @@ pub trait TerminalPty: Send {
     fn pid(&self) -> u32;
     fn fd(&self) -> Option<i32>;
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize>;
+    fn read_available(&mut self, timeout: Duration) -> std::io::Result<Option<Vec<u8>>>;
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String>;
     fn poll(&mut self) -> std::io::Result<Option<u32>>;
     fn terminate(&mut self, force: bool);
@@ -49,6 +50,21 @@ impl TerminalPty for UnixPtyProcess {
 
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         self.write(data)
+    }
+
+    fn read_available(&mut self, timeout: Duration) -> std::io::Result<Option<Vec<u8>>> {
+        #[cfg(unix)]
+        {
+            self.read_available(timeout)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = timeout;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "PTY output polling is not supported on this platform",
+            ))
+        }
     }
 
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
@@ -111,6 +127,7 @@ pub struct LocalSession {
     pub path: PathBuf,
     pub port: u16,
     pub terminal: Option<Box<dyn TerminalPty>>,
+    pub terminal_attached: bool,
     pub expires_at: u64,
     pub code_server_authenticated: bool,
 }
@@ -132,6 +149,7 @@ impl LocalSession {
             path,
             port,
             terminal: None,
+            terminal_attached: false,
             expires_at,
             code_server_authenticated: false,
         }
@@ -153,6 +171,7 @@ impl LocalSession {
             path,
             port: 0,
             terminal: Some(terminal),
+            terminal_attached: false,
             expires_at,
             code_server_authenticated: false,
         }
@@ -436,6 +455,8 @@ pub struct LocalSessionHandler {
     pty_manager: Arc<dyn SessionPtyManager>,
 }
 
+const MAX_TERMINAL_READS_PER_DRAIN: usize = 16;
+
 impl LocalSessionHandler {
     pub fn new(
         public_base_url: &str,
@@ -486,6 +507,14 @@ impl LocalSessionHandler {
         SessionResult::success()
     }
 
+    pub fn handle_terminal_attach(&mut self, session_id: &str) -> SessionResult {
+        let Some(session) = self.terminal_session_mut(session_id) else {
+            return SessionResult::error("Terminal session not found");
+        };
+        session.terminal_attached = true;
+        SessionResult::success()
+    }
+
     pub fn handle_terminal_resize(
         &mut self,
         session_id: &str,
@@ -514,6 +543,76 @@ impl LocalSessionHandler {
             terminal.close();
         }
         SessionResult::success()
+    }
+
+    pub fn drain_terminal_events(&mut self) -> Vec<TerminalEvent> {
+        let session_ids = self
+            .sessions
+            .values()
+            .filter(|session| {
+                session.session_type == SessionType::Terminal && session.terminal_attached
+            })
+            .map(|session| session.session_id.clone())
+            .collect::<Vec<_>>();
+        let mut events = Vec::new();
+        let mut finished_session_ids = Vec::new();
+
+        for session_id in session_ids {
+            let Some(session) = self.sessions.get_mut(&session_id) else {
+                continue;
+            };
+            let Some(terminal) = session.terminal.as_mut() else {
+                continue;
+            };
+            let mut output = Vec::new();
+            let mut terminal_error = None;
+
+            for _ in 0..MAX_TERMINAL_READS_PER_DRAIN {
+                match terminal.read_available(Duration::ZERO) {
+                    Ok(Some(chunk)) if chunk.is_empty() => break,
+                    Ok(Some(chunk)) => output.extend_from_slice(&chunk),
+                    Ok(None) => break,
+                    Err(error) => {
+                        terminal_error = Some(format!("Failed to read terminal output: {error}"));
+                        break;
+                    }
+                }
+            }
+
+            if !output.is_empty() {
+                events.push(TerminalEvent::Output {
+                    session_id: session_id.clone(),
+                    data: String::from_utf8_lossy(&output).into_owned(),
+                });
+            }
+
+            let exit_code = match terminal.poll() {
+                Ok(exit_code) => exit_code,
+                Err(error) => {
+                    terminal_error =
+                        Some(format!("Failed to poll terminal process status: {error}"));
+                    None
+                }
+            };
+            if exit_code.is_some() || terminal_error.is_some() {
+                events.push(TerminalEvent::Exit {
+                    session_id: session_id.clone(),
+                    exit_code,
+                    error: terminal_error,
+                });
+                finished_session_ids.push(session_id);
+            }
+        }
+
+        for session_id in finished_session_ids {
+            if let Some(mut session) = self.sessions.remove(&session_id) {
+                if let Some(mut terminal) = session.terminal.take() {
+                    terminal.close();
+                }
+            }
+        }
+
+        events
     }
 
     fn start_code_server_session(
@@ -645,6 +744,19 @@ impl LocalSessionHandler {
         let session = self.sessions.get_mut(session_id)?;
         (session.session_type == SessionType::Terminal).then_some(session)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalEvent {
+    Output {
+        session_id: String,
+        data: String,
+    },
+    Exit {
+        session_id: String,
+        exit_code: Option<u32>,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

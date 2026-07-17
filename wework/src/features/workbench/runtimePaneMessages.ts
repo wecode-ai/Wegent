@@ -20,7 +20,7 @@ import type {
 } from '@/types/api'
 import type { MessageSource, ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { stripCodexUiDirectives } from '@/lib/codex-directives'
-import { normalizeTurnFileChanges } from './turnFileChanges'
+import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
@@ -44,6 +44,8 @@ export function createRuntimeTaskStreamHandlers(
   address: RuntimeTaskAddress,
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
+  const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
+
   return {
     scope: {
       deviceId: address.deviceId,
@@ -118,9 +120,15 @@ export function createRuntimeTaskStreamHandlers(
         warnAndDropRuntimeStreamEvent('chat:done', address, payload)
         return
       }
+      const blocks = getResultBlocks(identity.subtaskId, payload.result)
+      const fileChanges =
+        normalizeTurnFileChanges(payload.result.fileChanges) ??
+        fileChangesFromBlocks(blocks) ??
+        mergeTurnFileChanges([...(streamedFileChanges.get(identity.subtaskId)?.values() ?? [])])
+      streamedFileChanges.delete(identity.subtaskId)
       debugRuntimeStreamEvent('chat:done', address, payload, true, {
-        hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.fileChanges)),
-        blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
+        hasFileChanges: Boolean(fileChanges),
+        blockCount: blocks?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
       if (payload.result.contextUsage) {
@@ -130,8 +138,8 @@ export function createRuntimeTaskStreamHandlers(
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
         content: doneContent(payload.result),
-        blocks: getResultBlocks(identity.subtaskId, payload.result),
-        fileChanges: normalizeTurnFileChanges(payload.result.fileChanges),
+        blocks,
+        fileChanges,
       })
       handlers.onRefreshWorkLists?.()
     },
@@ -162,6 +170,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
+      streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
     onBlockCreated: payload => {
@@ -179,6 +188,14 @@ export function createRuntimeTaskStreamHandlers(
         normalizedBlockType: block?.type ?? null,
       })
       if (!block) return
+      if (block.type === 'file_changes') {
+        rememberStreamedFileChanges(
+          streamedFileChanges,
+          identity.subtaskId,
+          block.id,
+          block.fileChanges
+        )
+      }
       handlers.onMessageAction({
         type: 'block_created',
         subtaskId: identity.subtaskId,
@@ -215,6 +232,15 @@ export function createRuntimeTaskStreamHandlers(
         hasRenderPayload: payload.renderPayload !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
+      const fileChanges = normalizeTurnFileChanges(payload.fileChanges)
+      if (fileChanges) {
+        rememberStreamedFileChanges(
+          streamedFileChanges,
+          identity.subtaskId,
+          payload.blockId,
+          fileChanges
+        )
+      }
       handlers.onMessageAction({
         type: 'block_updated',
         subtaskId: identity.subtaskId,
@@ -835,6 +861,28 @@ function getResultBlocks(subtaskId: string, result: unknown): ProcessingBlock[] 
   if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined
   const blocks = normalizeProcessingBlocks(subtaskId, result.blocks)
   return blocks.length > 0 ? blocks : undefined
+}
+
+function fileChangesFromBlocks(
+  blocks: ProcessingBlock[] | undefined
+): TurnFileChangesSummary | undefined {
+  return mergeTurnFileChanges(
+    (blocks ?? []).flatMap(block => (block.type === 'file_changes' ? [block.fileChanges] : []))
+  )
+}
+
+function rememberStreamedFileChanges(
+  summaries: Map<string, Map<string, TurnFileChangesSummary>>,
+  subtaskId: string,
+  blockId: string,
+  fileChanges: TurnFileChangesSummary
+) {
+  let blocks = summaries.get(subtaskId)
+  if (!blocks) {
+    blocks = new Map()
+    summaries.set(subtaskId, blocks)
+  }
+  blocks.set(blockId, fileChanges)
 }
 
 function doneContent(result: unknown): string | undefined {
