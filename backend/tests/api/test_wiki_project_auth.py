@@ -9,6 +9,7 @@ authentication entirely and performed no repository-access filtering, allowing
 any caller to read any project by enumerating IDs.
 """
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -36,24 +37,30 @@ def _create_project(
     return project
 
 
-def _use_wiki_db(test_client: TestClient, test_db: Session) -> None:
-    """Route get_wiki_db to the same in-memory test session."""
+@pytest.fixture
+def wiki_client(test_client: TestClient, test_db: Session) -> TestClient:
+    """Client whose get_wiki_db is routed to the shared test session.
+
+    Clears the override on teardown so it cannot leak into other tests even if
+    test_client ever becomes broader-scoped.
+    """
 
     def override_get_wiki_db():
         yield test_db
 
     test_client.app.dependency_overrides[get_wiki_db] = override_get_wiki_db
+    yield test_client
+    test_client.app.dependency_overrides.pop(get_wiki_db, None)
 
 
 class TestWikiProjectDetailAuth:
     def test_detail_no_auth_returns_401(
-        self, test_client: TestClient, test_db: Session
+        self, wiki_client: TestClient, test_db: Session
     ) -> None:
         """Without a token the detail endpoint must reject before any DB access."""
-        _use_wiki_db(test_client, test_db)
         project = _create_project(test_db)
 
-        response = test_client.get(f"/api/wiki/projects/{project.id}")
+        response = wiki_client.get(f"/api/wiki/projects/{project.id}")
 
         assert response.status_code == 401
 
@@ -69,14 +76,13 @@ class TestWikiProjectDetailAuth:
         assert response.status_code == 401
 
     def test_detail_without_repo_access_returns_404(
-        self, test_client: TestClient, test_db: Session, test_token: str
+        self, wiki_client: TestClient, test_db: Session, test_token: str
     ) -> None:
         """Authenticated user without repository access must not read the project."""
-        _use_wiki_db(test_client, test_db)
         project = _create_project(test_db)
 
         # test_user has git_info=None, so it has access to no repositories.
-        response = test_client.get(
+        response = wiki_client.get(
             f"/api/wiki/projects/{project.id}",
             headers={"Authorization": f"Bearer {test_token}"},
         )
