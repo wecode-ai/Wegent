@@ -102,11 +102,10 @@ const DESKTOP_CHAT_CONTENT_BASE_CLASS =
 const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_MESSAGE_LIST_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_6rem))] max-w-[calc(100%_-_6rem)]`
 const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} px-0`
-const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS =
-  'pt-6 pb-2 bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
 const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
 const DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS =
-  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t from-background via-background to-transparent'
+  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-4 z-popover bg-background/95 shadow-md'
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
@@ -804,6 +803,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const hasMainBackground = Boolean(appearance.backgroundImagePath && appearance.backgroundInMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
@@ -1522,9 +1522,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ref={workbenchMainRef}
       className={cn(
         'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden',
-        appearance.backgroundImagePath && appearance.backgroundInMain
-          ? 'bg-background/20'
-          : 'bg-background',
+        hasMainBackground ? 'bg-background/20' : 'bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
@@ -1604,12 +1602,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
                 stickyFooterClassName={cn(
                   DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+                  hasMainBackground
+                    ? 'from-transparent via-transparent'
+                    : 'from-background via-background',
                   chatContentResizing && 'transition-none'
                 )}
                 stickyFooter={
                   <>
                     <div
-                      className={DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS}
+                      className={cn(
+                        DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+                        hasMainBackground
+                          ? 'from-transparent via-transparent'
+                          : 'from-background via-background'
+                      )}
                       data-testid="desktop-floating-composer-backdrop"
                     />
                     <div
