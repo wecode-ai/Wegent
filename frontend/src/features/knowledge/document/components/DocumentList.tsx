@@ -326,8 +326,8 @@ export function DocumentList({
 
   // Direct child folders for display
   const directFolders = useMemo(() => {
-    if (isExpandAllView) return folders
     if (searchQuery) return searchResultFolders ?? []
+    if (isExpandAllView) return folders
     if (currentFolderId === 0) return folders.map(f => ({ ...f, children: [] }))
     const parentFolder = fullTree.index.folderById.get(currentFolderId)
     return (parentFolder?.children ?? []).map(f => ({ ...f, children: [] }))
@@ -392,6 +392,7 @@ export function DocumentList({
   const handleNavigateIntoFolder = useCallback(
     (folderId: number) => {
       setCurrentFolderId(folderId)
+      setSearchQuery('')
       resetSelection()
     },
     [resetSelection]
@@ -400,6 +401,9 @@ export function DocumentList({
   // Toggle expand-all view
   const handleToggleExpandAll = useCallback(() => {
     setIsExpandAllView(prev => {
+      if (!prev) {
+        setCurrentFolderId(0)
+      }
       resetSelection()
       return !prev
     })
@@ -1220,7 +1224,7 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : documents.length > 0 || folders.length > 0 ? (
+      ) : documents.length > 0 || directFolders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
           {canManageDocumentArea && selectionSummary.canTransfer && !onSelectionChange && (
@@ -1356,6 +1360,7 @@ export function DocumentList({
                 onSelectFolder={handleSelectFolder}
                 activeFolderId={isExpandAllView ? undefined : currentFolderId}
                 onActivateFolder={isExpandAllView ? undefined : handleNavigateIntoFolder}
+                expandAllFolders={isExpandAllView}
               />
               {paginationEnabled && !isExpandAllView && (
                 <Pagination

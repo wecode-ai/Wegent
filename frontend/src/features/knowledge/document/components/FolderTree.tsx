@@ -77,6 +77,7 @@ interface FolderTreeProps {
   onSelectFolder?: (folderId: number, selected: boolean) => void
   activeFolderId?: number
   onActivateFolder?: (folderId: number) => void
+  expandAllFolders?: boolean
 }
 
 export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
@@ -629,6 +630,7 @@ export function FolderTree({
   onSelectFolder,
   activeFolderId,
   onActivateFolder,
+  expandAllFolders = false,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
 
@@ -649,6 +651,19 @@ export function FolderTree({
     }
     return Array.from(paths)
   }, [folders, documents])
+
+  const allFolderPaths = useMemo(() => {
+    if (!expandAllFolders) return []
+    const paths: string[] = []
+    function walk(list: KnowledgeFolder[]) {
+      for (const f of list) {
+        paths.push(`folder:${f.id}`)
+        if (f.children?.length) walk(f.children)
+      }
+    }
+    walk(folders)
+    return paths
+  }, [folders, expandAllFolders])
 
   // Default: expand root-level folders only; active/result paths are expanded separately.
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
@@ -684,6 +699,17 @@ export function FolderTree({
       return next
     })
   }, [resultDocumentFolderPaths])
+
+  useEffect(() => {
+    if (allFolderPaths.length === 0) return
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of allFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
+  }, [allFolderPaths])
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {
