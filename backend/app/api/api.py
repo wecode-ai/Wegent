@@ -92,7 +92,6 @@ from app.api.endpoints.internal import (
     rag_content_router,
     services_router,
     skills_router,
-    subscriptions_router,
     tables_router,
     workspace_archives_router,
 )
@@ -313,9 +312,6 @@ api_router.include_router(
     workspace_archives_router,
     prefix="/internal",
     tags=["internal-workspace-archives"],
-)
-api_router.include_router(
-    subscriptions_router, prefix="/internal", tags=["internal-subscriptions"]
 )
 api_router.include_router(
     callback_router, prefix="/internal", tags=["internal-callback"]
