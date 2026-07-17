@@ -187,9 +187,10 @@ export function createInMemoryExecutorRegistry(
     }
     let entry = entries.find(item => item.deviceId === deviceId)
     if (!entry && loadEntry) {
-      entry = (await loadEntry(deviceId)) ?? undefined
-      if (entry) {
-        entries = [...entries.filter(item => item.deviceId !== entry.deviceId), entry]
+      const loadedEntry = await loadEntry(deviceId)
+      if (loadedEntry) {
+        entry = loadedEntry
+        entries = [...entries.filter(item => item.deviceId !== loadedEntry.deviceId), loadedEntry]
       }
     }
     if (!entry) {
