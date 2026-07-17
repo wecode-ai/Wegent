@@ -11,6 +11,7 @@ import {
   Globe2,
   Info,
   Keyboard,
+  MessageSquareText,
   Loader2,
   LogOut,
   Monitor,
@@ -57,6 +58,7 @@ import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel 
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
@@ -69,6 +71,7 @@ import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
+import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
@@ -142,6 +145,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Keyboard,
     label: 'settings_nav_keyboard_shortcuts',
     fallback: '快捷键',
+    category: 'personal',
+  },
+  {
+    key: 'quick-phrases',
+    icon: MessageSquareText,
+    label: 'settings_nav_quick_phrases',
+    fallback: '快捷短语',
     category: 'personal',
   },
   {
@@ -223,6 +233,7 @@ function getSettingsNavPath(key: string): string {
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
+  if (key === 'quick-phrases') return '/settings/personal/quick-phrases'
   if (key === 'general') return '/settings'
   return `/settings/${key}`
 }
@@ -1288,6 +1299,7 @@ export function ConnectionsSettingsPage({
   onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
@@ -1311,10 +1323,23 @@ export function ConnectionsSettingsPage({
   return (
     <div
       data-testid="wework-settings-page"
-      className="relative flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
+      className={cn(
+        'relative flex h-screen min-w-0 flex-1 overflow-hidden text-text-primary',
+        appearance.backgroundImagePath &&
+          (appearance.backgroundInMain ||
+            appearance.backgroundInSidebar ||
+            appearance.backgroundInTopBar)
+          ? 'bg-transparent'
+          : 'bg-background'
+      )}
     >
       <aside
-        className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
+        className={cn(
+          'relative flex shrink-0 flex-col border-r border-border/70 px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))]',
+          appearance.backgroundImagePath && appearance.backgroundInSidebar
+            ? 'bg-background/25'
+            : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150'
+        )}
         style={{ width: sidebarWidth }}
       >
         <DesktopTopBar
@@ -1393,9 +1418,13 @@ export function ConnectionsSettingsPage({
       )}
 
       <main
-        className={`min-w-0 flex-1 overflow-auto bg-background px-8 pb-8 ${
+        className={cn(
+          'min-w-0 flex-1 overflow-auto px-8 pb-8',
+          appearance.backgroundImagePath && appearance.backgroundInMain
+            ? 'bg-background/20'
+            : 'bg-background',
           usesOverlayTitlebar ? 'pt-16' : 'pt-8'
-        }`}
+        )}
       >
         {activeNav === 'general' ? (
           <GeneralSettingsPage />
@@ -1411,6 +1440,8 @@ export function ConnectionsSettingsPage({
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
+        ) : activeNav === 'quick-phrases' ? (
+          <QuickPhrasesSettingsPage />
         ) : activeNav === 'appshots' ? (
           <AppshotsSettingsPage />
         ) : activeNav === 'plugins' ? (

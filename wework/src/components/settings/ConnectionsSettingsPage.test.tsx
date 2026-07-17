@@ -392,6 +392,25 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
   })
 
+  test('lets the configured workbench background show through the settings shell', () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({ backgroundImagePath: '/app-data/background.png' })
+    )
+
+    render(
+      <AppearanceProvider>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>
+    )
+
+    const settingsPage = screen.getByTestId('wework-settings-page')
+    expect(settingsPage).toHaveClass('bg-transparent')
+    expect(settingsPage.querySelector('aside')).toHaveClass('bg-background/25')
+    expect(settingsPage.querySelector('aside')).not.toHaveClass('backdrop-blur-xl')
+    expect(settingsPage.querySelector('main')).toHaveClass('bg-background/20')
+  })
+
   test('opens about settings from desktop settings navigation', async () => {
     api.getAllDevices.mockResolvedValue([])
 

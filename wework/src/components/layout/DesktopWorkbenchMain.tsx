@@ -27,6 +27,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
@@ -262,6 +263,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
@@ -328,7 +330,12 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       <header
         id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
         data-testid="workbench-main-header"
-        className="relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40 bg-background/95"
+        className={cn(
+          'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
+          appearance.backgroundImagePath && appearance.backgroundInTopBar
+            ? 'bg-background/20'
+            : 'bg-background/95'
+        )}
       />
       {paneStack}
     </div>
@@ -360,6 +367,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const {
     state,
     workspaceFileApi,
@@ -1513,7 +1521,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     <main
       ref={workbenchMainRef}
       className={cn(
-        'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden bg-background',
+        'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden',
+        appearance.backgroundImagePath && appearance.backgroundInMain
+          ? 'bg-background/20'
+          : 'bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
@@ -1536,7 +1547,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
+              appearance.backgroundImagePath && appearance.backgroundInTopBar
+                ? 'bg-background/20'
+                : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}

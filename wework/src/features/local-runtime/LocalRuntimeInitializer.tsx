@@ -91,13 +91,9 @@ function localRuntimeMinimumReadyDelayMs(): number {
 
 async function resolveLocalRuntimeState(
   fallbackError: string,
-  errorText: LocalRuntimeErrorText,
-  initialCloudConnection?: LocalExecutorCloudConnection
+  errorText: LocalRuntimeErrorText
 ): Promise<LocalRuntimeState> {
   try {
-    if (initialCloudConnection) {
-      await applyLocalExecutorCloudConnection(initialCloudConnection)
-    }
     const status = await ensureLocalExecutorStarted()
     const statusError = localRuntimeError(status, errorText)
     if (statusError) {
@@ -343,23 +339,13 @@ export function LocalRuntimeInitializer({
     setSlowStartupTimedOut(false)
     setCopyDebugState('idle')
     setState({ phase: 'starting', error: null })
-    setState(
-      await resolveLocalRuntimeState(
-        fallbackError,
-        runtimeErrorText,
-        initialCloudConnectionRef.current
-      )
-    )
+    setState(await resolveLocalRuntimeState(fallbackError, runtimeErrorText))
   }, [enabled, fallbackError, runtimeErrorText])
 
   useEffect(() => {
     if (!enabled) return undefined
     let cancelled = false
-    void resolveLocalRuntimeState(
-      fallbackError,
-      runtimeErrorText,
-      initialCloudConnectionRef.current
-    ).then(nextState => {
+    void resolveLocalRuntimeState(fallbackError, runtimeErrorText).then(nextState => {
       if (!cancelled) {
         setState(nextState)
       }
@@ -368,6 +354,14 @@ export function LocalRuntimeInitializer({
       cancelled = true
     }
   }, [enabled, fallbackError, runtimeErrorText])
+
+  useEffect(() => {
+    if (!enabled || state.phase !== 'ready' || !initialCloudConnectionRef.current) return
+
+    void applyLocalExecutorCloudConnection(initialCloudConnectionRef.current).catch(error => {
+      console.error('[Wework] Failed to apply cloud connection to local executor:', error)
+    })
+  }, [enabled, state.phase])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')
