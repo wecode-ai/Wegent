@@ -735,12 +735,14 @@ function getRuntimeProjectDeviceState(
 ): SidebarDeviceState | null {
   const workspace = runtimeProjectWork?.deviceWorkspaces[0]
   if (!workspace) return null
-  return (
-    getSidebarDeviceState(workspace.deviceId, devices) ?? {
-      deviceId: workspace.deviceId,
-      status: (workspace.deviceStatus ?? 'unavailable') as SidebarDeviceStatus,
-    }
-  )
+  const resolvedDevice = getSidebarDeviceState(workspace.deviceId, devices)
+  if (resolvedDevice?.device) return resolvedDevice
+  return {
+    deviceId: workspace.deviceName || workspace.remoteHostId || workspace.deviceId,
+    status: (workspace.deviceStatus ??
+      resolvedDevice?.status ??
+      'unavailable') as SidebarDeviceStatus,
+  }
 }
 
 function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefined): boolean {
@@ -889,19 +891,13 @@ function getProjectFinderWorkspacePath(
   return null
 }
 
-function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
-  const workspaces = runtimeProjectWork.deviceWorkspaces
-  if (workspaces.length === 0) return true
-  return workspaces.some(
-    workspace => workspace.workspaceSource !== 'remote' || workspace.tasks.length > 0
-  )
-}
-
 function shouldShowProjectDeviceStatus(
   deviceState: SidebarDeviceState | null,
-  devices: DeviceInfo[]
+  devices: DeviceInfo[],
+  remoteProject: boolean
 ): deviceState is SidebarDeviceState {
   if (!deviceState) return false
+  if (remoteProject) return true
   if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type !== 'local') {
     return true
   }
@@ -1504,7 +1500,7 @@ function RuntimeTaskRow({
     void onOpenRuntimeTask?.(taskAddress)
   }
   const toggleTaskPinned = async () => {
-    if (!threadId || !onSetRuntimeTaskPinned) return
+    if (!workspace.available || !threadId || !onSetRuntimeTaskPinned) return
     const nextMarked = !marked
     setOptimisticMarked({ base: persistedMarked, value: nextMarked })
     try {
@@ -1726,7 +1722,7 @@ function RuntimeTaskRow({
                 type="button"
                 data-testid={`runtime-local-task-mark-${task.taskId}`}
                 onClick={handleToggleMark}
-                disabled={!threadId || !onSetRuntimeTaskPinned}
+                disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
                 className={cn(
                   'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
                   marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
@@ -1776,14 +1772,14 @@ function RuntimeTaskRow({
             label: marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task'),
             icon: Pin,
             testId: `runtime-local-task-menu-pin-${task.taskId}`,
-            disabled: !threadId || !onSetRuntimeTaskPinned,
+            disabled: !workspace.available || !threadId || !onSetRuntimeTaskPinned,
             onSelect: toggleTaskPinned,
           },
           {
             label: t('workbench.rename_chat', '重命名任务'),
             icon: Edit3,
             testId: `runtime-local-task-menu-rename-${task.taskId}`,
-            disabled: !onRenameRuntimeTask,
+            disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
           {
@@ -1813,7 +1809,9 @@ function RuntimeTaskRow({
         inputTestId={`rename-runtime-local-task-input-${task.taskId}`}
         confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
         onClose={() => setRenameOpen(false)}
-        onSubmit={title => onRenameRuntimeTask?.(taskAddress, title)}
+        onSubmit={title => {
+          if (workspace.available) onRenameRuntimeTask?.(taskAddress, title)
+        }}
       />
       {archiveNoticeOpen &&
         createPortal(
@@ -1960,7 +1958,11 @@ function ProjectItem({
   const projectDeviceState =
     getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
     getSidebarDeviceState(getProjectDeviceId(project), devices)
-  const showProjectDeviceStatus = shouldShowProjectDeviceStatus(projectDeviceState, devices)
+  const showProjectDeviceStatus = shouldShowProjectDeviceStatus(
+    projectDeviceState,
+    devices,
+    isRuntimeRemoteProject(runtimeProjectWork)
+  )
   const canStartProjectChat = isSidebarDeviceOnline(projectDeviceState)
   const canArchiveProjectConversations =
     Boolean(runtimeProjectWork?.project.key) &&
@@ -2566,23 +2568,23 @@ export function DesktopSidebar({
       ),
     [devices, runtimeWork, standaloneDeviceId, standaloneWorkspacePath]
   )
-  const filteredRuntimeProjects = useMemo(() => {
-    const items = (runtimeWork?.projects ?? []).filter(shouldShowRuntimeProject)
+  const sidebarRuntimeProjects = useMemo(() => {
+    const items = runtimeWork?.projects ?? []
     return standaloneProjectWork ? [standaloneProjectWork, ...items] : items
   }, [runtimeWork?.projects, standaloneProjectWork])
   const sidebarProjects = useMemo(() => {
     if (runtimeWork || standaloneProjectWork) {
-      return filteredRuntimeProjects.map(runtimeProjectToProject)
+      return sidebarRuntimeProjects.map(runtimeProjectToProject)
     }
     return projects
-  }, [filteredRuntimeProjects, projects, runtimeWork, standaloneProjectWork])
+  }, [projects, runtimeWork, sidebarRuntimeProjects, standaloneProjectWork])
   const visibleExpandedProjectIds = useMemo(
     () => pruneProjectIdSet(expandedProjectIds, sidebarProjects),
     [expandedProjectIds, sidebarProjects]
   )
   const runtimeWorkByProjectId = useMemo(() => {
-    return new Map(filteredRuntimeProjects.map(item => [runtimeProjectUiId(item.project), item]))
-  }, [filteredRuntimeProjects])
+    return new Map(sidebarRuntimeProjects.map(item => [runtimeProjectUiId(item.project), item]))
+  }, [sidebarRuntimeProjects])
   const sortableProjects = useMemo(
     () =>
       sidebarProjects.map(project => ({
@@ -2634,7 +2636,7 @@ export function DesktopSidebar({
     [chatTaskItemsWithPinState]
   )
   const pinnedTaskItems = useMemo(() => {
-    const projectTasks = filteredRuntimeProjects.flatMap(projectWork =>
+    const projectTasks = sidebarRuntimeProjects.flatMap(projectWork =>
       getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces)
         .filter(({ task }) => task.pinned)
         .map(item => ({ ...item, projectWork }))
@@ -2647,7 +2649,7 @@ export function DesktopSidebar({
         (left.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER) -
         (right.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER)
     )
-  }, [chatTaskItemsWithPinState, filteredRuntimeProjects])
+  }, [chatTaskItemsWithPinState, sidebarRuntimeProjects])
   const setChatTaskPinned = async (data: RuntimeTaskPinRequest) => {
     if (!onSetRuntimeTaskPinned) return
     const chatTask = chatTaskItems.find(
@@ -2680,13 +2682,13 @@ export function DesktopSidebar({
     }
   }
   const projectSectionArchiveItems = useMemo(() => {
-    return filteredRuntimeProjects
+    return sidebarRuntimeProjects
       .map(projectWork => ({
         key: projectWork.project.key,
         count: getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).length,
       }))
       .filter(item => item.count > 0)
-  }, [filteredRuntimeProjects])
+  }, [sidebarRuntimeProjects])
   const projectSectionArchiveKeys = useMemo(
     () => projectSectionArchiveItems.map(item => item.key),
     [projectSectionArchiveItems]
@@ -2702,7 +2704,7 @@ export function DesktopSidebar({
   const chatSectionArchiveCount = chatSectionArchiveAddresses.length
   const selectedRuntimeProject = useMemo(() => {
     if (currentRuntimeTask) {
-      const projectWork = filteredRuntimeProjects.find(item =>
+      const projectWork = sidebarRuntimeProjects.find(item =>
         item.deviceWorkspaces.some(workspace =>
           workspace.tasks.some(task => isRuntimeTaskSelected(currentRuntimeTask, workspace, task))
         )
@@ -2721,7 +2723,7 @@ export function DesktopSidebar({
       : ''
     if (!normalizedDeviceId || !normalizedWorkspacePath) return null
 
-    const projectWork = filteredRuntimeProjects.find(item =>
+    const projectWork = sidebarRuntimeProjects.find(item =>
       item.deviceWorkspaces.some(
         workspace =>
           workspace.deviceId === normalizedDeviceId &&
@@ -2734,7 +2736,7 @@ export function DesktopSidebar({
           id: runtimeProjectUiId(projectWork.project),
         }
       : null
-  }, [currentRuntimeTask, filteredRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
+  }, [currentRuntimeTask, sidebarRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
   const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
   const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
