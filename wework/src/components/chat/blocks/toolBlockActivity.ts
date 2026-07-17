@@ -46,7 +46,7 @@ interface ActivityStats {
 
 const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack'])
-const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'du', 'file'])
+const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'file'])
 const HIDDEN_ACTIVITY_TOOLS = new Set(['write_stdin', 'functions.write_stdin'])
 
 export function buildProcessingDisplayRows(

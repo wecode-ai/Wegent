@@ -1625,18 +1625,19 @@ describe('MessageList', () => {
       processStatus.compareDocumentPosition(screen.getByText('最终建议放在 PR flow 里。')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    const collapseContent = screen.getAllByTestId('processing-collapse-content')[1]
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
-    expect(collapseContent).toHaveClass('opacity-0')
-    expect(collapseContent).toHaveStyle({ maxHeight: '0px' })
+    expect(screen.getAllByTestId('processing-collapse-content')).toHaveLength(1)
 
     fireEvent.click(processStatus)
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getAllByTestId('processing-collapse-content')[1]).toHaveAttribute(
+      'aria-hidden',
+      'true'
+    )
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByText('已搜索代码')).toBeInTheDocument()
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
-  test('collapses streaming processing as soon as final answer appears', () => {
+  test('keeps a running tool visible when streamed answer text appears', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'tool-1',
@@ -1667,21 +1668,21 @@ describe('MessageList', () => {
 
     const finalAnswer = screen.getByTestId('message-assistant').querySelector('p')
     expect(finalAnswer).toHaveTextContent('这是正在流式输出的最终答案。')
-    const processStatus = screen.getByRole('button', { name: /已处理/ })
+    const processStatus = screen.getByTestId('processing-summary-header')
     const collapseContent = screen.getByTestId('processing-collapse-content')
 
     expect(
       processStatus.compareDocumentPosition(finalAnswer) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(processStatus).toHaveAttribute('aria-expanded', 'false')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
-
-    fireEvent.click(processStatus)
-
-    expect(processStatus).toHaveAttribute('aria-expanded', 'true')
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByText('正在运行 pwd')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
   })
 
   test('keeps narrative visible but collapses tools before runtime guidance', () => {
@@ -1723,9 +1724,8 @@ describe('MessageList', () => {
     )
 
     const collapseContents = screen.getAllByTestId('processing-collapse-content')
-    expect(collapseContents).toHaveLength(2)
+    expect(collapseContents).toHaveLength(1)
     expect(collapseContents[0]).toHaveAttribute('aria-hidden', 'false')
-    expect(collapseContents[1]).toHaveAttribute('aria-hidden', 'true')
     expect(screen.getByText('我正在检查项目结构。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /已调用 1 个工具 已处理/ })).toHaveAttribute(
       'aria-expanded',
@@ -1866,25 +1866,19 @@ describe('MessageList', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
 
     rerender(
       <MessageList conversationKey="conversation-b" messages={[buildMessage('assistant-b')]} />
     )
 
-    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
 
     rerender(
       <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
     )
 
-    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
   })
 
   test('reserves enough marker gutter for multi-digit ordered lists', () => {
@@ -3920,7 +3914,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText('运行命令')).toBeInTheDocument()
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
@@ -3960,7 +3954,7 @@ describe('MessageList', () => {
       type: 'tool',
       toolName: 'Bash',
       toolInput: { command: 'rg -n "foo" src' },
-      status: 'streaming',
+      status: 'done',
       createdAt: 1770000000000,
     }
 
@@ -4022,9 +4016,47 @@ describe('MessageList', () => {
     )
 
     const processText = screen.getByTestId('process-text-block')
-    const runningTool = screen.getByText('搜索代码')
+    const runningTool = screen.getByText('正在搜索代码')
 
     expect(processText.compareDocumentPosition(runningTool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  test('ends the preceding live tool preview when process text starts', () => {
+    const completedBlock: ProcessingBlock = {
+      id: 'call-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'Bash',
+      toolInput: { command: 'uptime' },
+      status: 'done',
+      createdAt: 1770000000000,
+    }
+    const processBlock: ProcessingBlock = {
+      id: 'text-1',
+      subtaskId: 1,
+      type: 'text',
+      content: '负载均值明显偏高。',
+      status: 'streaming',
+      createdAt: 1770000000001,
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+            blocks: [completedBlock, processBlock],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('process-text-block')).toHaveTextContent('负载均值明显偏高。')
   })
 
   test('keeps context compaction visible between separate tool groups', () => {
@@ -4066,7 +4098,7 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('上下文已自动压缩')).toBeInTheDocument()
-    expect(screen.getAllByTestId('processing-summary-toggle')).toHaveLength(2)
+    expect(screen.getAllByTestId('processing-summary-toggle')).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: /已调用 1 个工具 已处理/ })).toHaveLength(2)
   })
 
@@ -4169,6 +4201,7 @@ describe('MessageList', () => {
     const editSummary = screen.getByRole('button', { name: /已编辑 3 个文件 已处理/ })
 
     expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    fireEvent.click(toolSummary)
     expect(screen.getByLabelText('搜索 1')).toBeInTheDocument()
     expect(screen.getByLabelText('读取 3')).toBeInTheDocument()
     expect(screen.getByLabelText('编辑 3')).toBeInTheDocument()
@@ -4182,7 +4215,6 @@ describe('MessageList', () => {
       Node.DOCUMENT_POSITION_FOLLOWING
     )
 
-    fireEvent.click(toolSummary)
     expect(screen.getByText('已读取 file-1.ts')).toBeInTheDocument()
     expect(screen.getByText('已读取 file-2.ts')).toBeInTheDocument()
     expect(screen.getByText('已读取 file-3.ts')).toBeInTheDocument()

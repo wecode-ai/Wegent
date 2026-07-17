@@ -82,6 +82,8 @@ If the command is not in your current `PATH`, use `~/.local/bin/wegent-standalon
 
 Download Wework and open a local project to start AI coding. Wework includes local execution and can also connect to a team deployment of Wegent from Settings.
 
+While a task runs, Wework keeps the latest tool activity visible. The tool list shows about 3.5 rows by default and remains scrollable, while command output, search details, and file changes can be expanded individually. Once the final answer starts, the processing timeline collapses into a separated processed row and expands back into the same tool list.
+
 **[Download Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
 ### Wegent Web Deployment Options

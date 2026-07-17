@@ -5012,7 +5012,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /编辑文件 README\.md/ }))
+    await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
     expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
 import {
   Archive,
@@ -44,8 +44,6 @@ import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
-const LIVE_PREVIEW_ROW_LIMIT = 3
-
 type ProcessingDisplayItem =
   | ProcessingDisplayRow
   | {
@@ -98,6 +96,10 @@ export function ToolBlocksDisplay({
   const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
     stateKey ? `${stateKey}:processing` : undefined
+  )
+  const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
+  const [finalContentExpanded, setFinalContentExpanded] = usePersistentProcessingExpansion(
+    stateKey ? `${stateKey}:final-processing` : undefined
   )
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
@@ -184,12 +186,45 @@ export function ToolBlocksDisplay({
     hasPlanResponse ||
     hasRequestUserInput ||
     hasActiveContextCompaction
-  const expanded = isLockedOpen || userExpanded
-  const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
-  const previewRows = useMemo(
-    () => (isRunning && !hasFinalContent && !expanded ? rows.slice(-LIVE_PREVIEW_ROW_LIMIT) : []),
-    [expanded, hasFinalContent, isRunning, rows]
+  const hasRunningToolActivity = rows.some(row =>
+    row.type === 'activity_group'
+      ? row.blocks.some(block => block.status !== 'done' && block.status !== 'error')
+      : (row.block.type === 'tool' || row.block.type === 'file_changes') &&
+        row.block.status !== 'done' &&
+        row.block.status !== 'error'
   )
+  const usesUnifiedToolList = showSummary && !isLockedOpen
+  const expanded = isLockedOpen || (userExpanded && !usesUnifiedToolList)
+  const canToggleSummary =
+    showSummary && !isLockedOpen && !hasRunningToolActivity && rows.length > 0
+  const hasLivePreview =
+    isRunning && (!hasFinalContent || hasRunningToolActivity) && !expanded && rows.length > 0
+  const previewRows = useMemo(
+    () =>
+      !expanded &&
+      (hasRunningToolActivity ||
+        (hasLivePreview && !livePreviewCollapsed) ||
+        (usesUnifiedToolList && userExpanded))
+        ? rows
+        : [],
+    [
+      expanded,
+      hasLivePreview,
+      hasRunningToolActivity,
+      livePreviewCollapsed,
+      rows,
+      userExpanded,
+      usesUnifiedToolList,
+    ]
+  )
+  const summaryExpanded = expanded || previewRows.length > 0
+  const toggleSummary = () => {
+    if (hasLivePreview) {
+      setLivePreviewCollapsed(value => !value)
+      return
+    }
+    setUserExpanded(value => !value)
+  }
   const hasToolActivity = rows.some(
     row =>
       row.type === 'activity_group' ||
@@ -264,16 +299,16 @@ export function ToolBlocksDisplay({
 
   if (blocks.length === 0 && !isStreaming) return null
 
-  return (
-    <div className="mb-3 min-w-0 w-full">
+  const processingBody = (
+    <>
       {showSummary ? (
         <ProcessingSummaryHeader
           canToggle={canToggleSummary}
           duration={duration}
-          expanded={expanded}
+          expanded={summaryExpanded}
           isRunning={isRunning && !hasFinalContent}
           rows={rows}
-          onToggle={() => setUserExpanded(value => !value)}
+          onToggle={toggleSummary}
           title={summaryTitle}
           labels={{
             command: t('tool_activity.command'),
@@ -288,22 +323,41 @@ export function ToolBlocksDisplay({
         {processingContent}
       </CollapsibleProcessingContent>
       {previewRows.length > 0 ? (
-        <LiveProcessingPreview
-          rows={previewRows}
-          now={now}
-          onOpenWorkspaceFile={onOpenWorkspaceFile}
-          labels={{
-            command: t('tool_activity.command_action'),
-            file: t('tool_activity.file_action'),
-            search: t('tool_activity.search_action'),
-            edit: t('tool_activity.edit_action'),
-            create: t('tool_activity.create_action'),
-            other: t('tool_activity.other_action'),
-          }}
-        />
+        <LiveProcessingPreview rows={previewRows} onOpenWorkspaceFile={onOpenWorkspaceFile} />
       ) : null}
-    </div>
+    </>
   )
+  const usesFinalContentShell =
+    showSummary && hasFinalContent && !hasRunningToolActivity && rows.length > 0
+
+  if (usesFinalContentShell) {
+    return (
+      <div className="mb-3 min-w-0 w-full border-b border-border pb-2">
+        <button
+          type="button"
+          data-testid="final-processing-toggle"
+          aria-expanded={finalContentExpanded}
+          aria-label={duration ? `${summaryTitle} ${duration}` : `${summaryTitle} 已处理`}
+          className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
+          onClick={() => {
+            const nextExpanded = !finalContentExpanded
+            setFinalContentExpanded(nextExpanded)
+            if (nextExpanded) setUserExpanded(true)
+          }}
+        >
+          <span>{duration || '已处理'}</span>
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${finalContentExpanded ? '' : '-rotate-90'}`}
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+        </button>
+        {finalContentExpanded ? <div className="mt-1">{processingBody}</div> : null}
+      </div>
+    )
+  }
+
+  return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
 }
 
 type ToolActivityLabels = {
@@ -313,8 +367,6 @@ type ToolActivityLabels = {
   edit: string
   other: string
 }
-
-type ToolActionLabels = ToolActivityLabels & { create: string }
 
 function ProcessingSummaryHeader({
   canToggle,
@@ -424,29 +476,54 @@ function ToolActivityStats({
 
 function LiveProcessingPreview({
   rows,
-  now,
   onOpenWorkspaceFile,
-  labels,
 }: {
   rows: ProcessingDisplayRow[]
-  now: number
   onOpenWorkspaceFile?: (path: string) => void
-  labels: ToolActionLabels
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
+  const hasExpandedDetail = rows.some(row => expandedRowIds.has(row.id))
+
+  const updateExpandedRow = useCallback((rowId: string, expanded: boolean) => {
+    setExpandedRowIds(current => {
+      if (current.has(rowId) === expanded) return current
+      const next = new Set(current)
+      if (expanded) next.add(rowId)
+      else next.delete(rowId)
+      return next
+    })
+    if (!expanded) {
+      requestAnimationFrame(() => {
+        const scrollArea = scrollRef.current
+        if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+      })
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    const scrollArea = scrollRef.current
+    if (!scrollArea) return
+    scrollArea.scrollTop = scrollArea.scrollHeight
+  }, [rows.length])
+
   return (
-    <div className="relative min-w-0" data-testid="processing-live-preview">
+    <div className="ml-2 min-w-0 border-l border-border pl-3" data-testid="processing-live-preview">
       <div
-        className="pointer-events-none absolute inset-x-4 top-0 z-10 h-6 bg-gradient-to-b from-background to-transparent"
-        aria-hidden="true"
-      />
-      <div className="flex min-w-0 flex-col">
+        ref={scrollRef}
+        className="scrollbar-soft flex min-w-0 flex-col"
+        data-testid="processing-live-preview-scroll"
+        style={{
+          maxHeight: hasExpandedDetail ? 'none' : '7rem',
+          overflowY: hasExpandedDetail ? 'visible' : 'auto',
+        }}
+      >
         {rows.map(row => (
           <LiveProcessingPreviewRow
             key={row.id}
             row={row}
-            now={now}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
-            labels={labels}
+            onExpandedChange={updateExpandedRow}
           />
         ))}
       </div>
@@ -456,60 +533,46 @@ function LiveProcessingPreview({
 
 function LiveProcessingPreviewRow({
   row,
-  now,
   onOpenWorkspaceFile,
-  labels,
+  onExpandedChange,
 }: {
   row: ProcessingDisplayRow
-  now: number
   onOpenWorkspaceFile?: (path: string) => void
-  labels: ToolActionLabels
+  onExpandedChange: (rowId: string, expanded: boolean) => void
 }) {
+  const handleExpandedChange = useCallback(
+    (expanded: boolean) => onExpandedChange(row.id, expanded),
+    [onExpandedChange, row.id]
+  )
+
   if (row.type === 'activity_group') {
     return (
-      <div className="flex h-8 min-w-0 items-center gap-1.5 pl-5 text-sm text-text-muted">
-        {renderActivityGroupIcon(row.blocks)}
-        <span className="min-w-0 truncate">{row.label}</span>
+      <div className="min-h-8 min-w-0 py-1">
+        <ToolActivityGroup
+          row={row}
+          initialExpanded={false}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
       </div>
     )
   }
 
-  if (row.block.type !== 'tool') {
-    return <ToolBlockItem block={row.block} />
+  if (row.block.type === 'tool') {
+    if (isContextCompactionToolBlock(row.block)) {
+      return <ContextCompactionIndicator block={row.block} />
+    }
+
+    return (
+      <ToolBlockItem
+        block={row.block}
+        compact
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        onExpandedChange={handleExpandedChange}
+      />
+    )
   }
 
-  const block = row.block
-  const isActive = block.status !== 'done' && block.status !== 'error'
-  const elapsed = isActive ? formatPreviewElapsed(now - block.createdAt) : null
-  const workspacePath = getToolActivityFilePaths(block)[0]
-  const label = `${getToolActionLabel(block, labels)}${workspacePath ? ` ${basename(workspacePath)}` : ''}`
-  const labelContent = (
-    <span className={`min-w-0 truncate ${isActive ? 'tool-activity-shimmer' : ''}`}>{label}</span>
-  )
-
-  return (
-    <div
-      className="flex h-8 min-w-0 items-center gap-1.5 pl-5 text-sm text-text-muted"
-      data-processing-block-id={block.id}
-    >
-      {renderActivityGroupIcon([block])}
-      {workspacePath && onOpenWorkspaceFile ? (
-        <button
-          type="button"
-          data-testid="processing-live-file-button"
-          className="min-w-0 text-left hover:text-text-secondary"
-          onClick={() => onOpenWorkspaceFile(workspacePath)}
-        >
-          {labelContent}
-        </button>
-      ) : (
-        labelContent
-      )}
-      {elapsed ? (
-        <span className="tool-activity-shimmer ml-auto shrink-0 font-mono text-xs">{elapsed}</span>
-      ) : null}
-    </div>
-  )
+  return <ToolBlockItem block={row.block} onExpandedChange={handleExpandedChange} />
 }
 
 function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {
@@ -544,20 +607,6 @@ function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {
 function countProcessingActivities(rows: ProcessingDisplayRow[]): number {
   const stats = countProcessingActivityKinds(rows)
   return stats.command + stats.file + stats.search + stats.edit + stats.other
-}
-
-function getToolActionLabel(block: ToolBlock, labels: ToolActionLabels): string {
-  const kind = getToolActivityKind(block)
-  if (kind === 'command') return labels.command
-  if (kind === 'file') return labels.file
-  if (kind === 'search') return labels.search
-  if (kind === 'edit') return labels.edit
-  if (kind === 'create') return labels.create
-  return labels.other
-}
-
-function formatPreviewElapsed(durationMs: number): string {
-  return `${Math.max(0, Math.floor(durationMs / 1000))}s`
 }
 
 function CollapsibleProcessingContent({
@@ -649,12 +698,14 @@ function CollapsibleProcessingContent({
 
 function ToolActivityGroup({
   row,
+  initialExpanded = true,
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
+  initialExpanded?: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(initialExpanded)
   const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
   const isGuidanceGroup = isGuidanceActivityGroup(row.blocks)
   const icon = renderActivityGroupIcon(row.blocks)
@@ -672,10 +723,11 @@ function ToolActivityGroup({
   }
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm">
+    <div className="min-w-0 overflow-x-clip text-sm">
       <button
         type="button"
         data-testid="processing-activity-group-toggle"
+        data-tool-detail-toggle
         aria-expanded={expanded}
         onClick={() => setExpanded(value => !value)}
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
