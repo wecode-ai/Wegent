@@ -18,7 +18,7 @@ Open **Settings → Appearance → Workbench background** to choose a local JPEG
 
 **Background visibility** controls how strongly the image appears through the theme surface; at 100, the original image is shown clearly. **Background blur** ranges from 0–20px and defaults to 0. You can independently show the background in the main area, sidebar, and top bar. The corresponding settings-page regions follow the same choices.
 
-When the background is enabled in the main area, it remains continuous around the conversation composer without an additional opaque bottom gradient.
+When the background is enabled in the main area, it remains continuous across the conversation, right workspace, and bottom panels, including around the composer without an additional opaque bottom gradient.
 
 The image and these appearance preferences stay on the current device and are not uploaded or synchronized. **Remove** and **Reset** delete the background image managed by Wework.
 

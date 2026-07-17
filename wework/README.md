@@ -6,6 +6,7 @@ Wework is the Wegent desktop workbench for local-first AI coding and workplace w
 
 - Run local Codex-backed tasks through a managed executor sidecar.
 - Work with local projects, runtime conversations, attachments, terminals, file previews, and code change review without Backend login.
+- Follow long-running work without losing the conversation flow: active tool calls show a compact live preview, completed calls collapse to a summary, and expanding the summary lists every tool or edited file directly.
 - Connect to a Wegent Backend when cloud models, cloud devices, remote runtime work, or encrypted Codex auth sync are needed.
 - Package macOS builds as DMG releases with bundled Codex binaries and Tauri updater metadata.
 - Build iOS simulator, device, and App Store Connect packages from the same Tauri app.

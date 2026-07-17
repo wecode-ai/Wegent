@@ -372,6 +372,19 @@ export function createHybridWorkbenchServices(
   }
   const isLocalDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && localDeviceIds.has(deviceId))
+  const isKnownCloudDeviceId = (deviceId?: string | null) =>
+    Boolean(deviceId && rememberedCloudDevices.some(device => device.device_id === deviceId))
+  const runtimeApiForCreate = async (deviceId?: string | null) => {
+    if (isLocalDeviceId(deviceId)) return localServices.runtimeWorkApi!
+
+    // Device discovery and task creation race during bootstrap. An unknown route must
+    // not default to cloud because that makes a local task wait on an unavailable
+    // cloud connection. Refresh the authoritative local device identities first.
+    if (!isKnownCloudDeviceId(deviceId)) {
+      await listLocalDevices()
+    }
+    return runtimeApi(deviceId)
+  }
   const invalidateCloudArchiveCache = () => {
     rememberedCloudArchives.clear()
     cloudArchiveFetchedAt.clear()
@@ -842,8 +855,8 @@ export function createHybridWorkbenchServices(
     cancelRuntimeTask(address: RuntimeTaskAddress) {
       return routeByAddress(address).cancelRuntimeTask(address)
     },
-    createRuntimeTask(data: RuntimeTaskCreateRequest) {
-      return runtimeApi(data.deviceId).createRuntimeTask(data)
+    async createRuntimeTask(data: RuntimeTaskCreateRequest) {
+      return (await runtimeApiForCreate(data.deviceId)).createRuntimeTask(data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)

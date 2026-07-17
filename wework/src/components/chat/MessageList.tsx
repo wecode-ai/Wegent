@@ -47,6 +47,7 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { buildProcessingDisplayRows, isWebSearchToolName } from './blocks/toolBlockActivity'
@@ -1621,6 +1622,7 @@ function AssistantMessage({
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
+  const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
@@ -1662,7 +1664,7 @@ function AssistantMessage({
           {shouldShowStoppedNotice ? (
             <div
               data-testid="assistant-stopped-notice"
-              className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
+              className="mb-3 w-full pb-1 text-xs text-text-muted"
             >
               {stoppedElapsedDuration
                 ? t('assistant_status.stopped_after', {
@@ -1671,29 +1673,28 @@ function AssistantMessage({
                 : t('assistant_status.stopped')}
             </div>
           ) : null}
-          {shouldShowProcessingSummary && (
-            <ToolBlocksDisplay
-              blocks={displayBlocks}
-              isStreaming={isStreaming}
-              startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={
-                isCancelled ||
-                message.runtimeGuidanceSplitBefore === true ||
-                message.runtimeGuidanceContinuation === true
-              }
-              hasFinalContent={hasVisibleContent}
-              showSummary={!isCancelled}
-              stateKey={getMessageDisplayStateKey(conversationKey, message)}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-              onRequestUserInputSubmit={onRequestUserInputSubmit}
-              onRequestUserInputIgnore={onRequestUserInputIgnore}
-              onOpenAssistantPlan={onOpenAssistantPlan}
-              onLoadFullTranscript={onLoadFullTranscript}
-              loadingFullTranscript={loadingFullTranscript}
-              hideRequestUserInputBlocks={hideRequestUserInputBlocks}
-              hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-            />
-          )}
+          {shouldShowProcessingSummary
+            ? processingSegments.map((segment, index) => (
+                <ToolBlocksDisplay
+                  key={`${segment.kind}:${index}`}
+                  blocks={segment.blocks}
+                  isStreaming={isStreaming}
+                  startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
+                  forceExpanded={segment.kind === 'narrative'}
+                  hasFinalContent={hasVisibleContent}
+                  showSummary={segment.kind === 'tool'}
+                  stateKey={`${getMessageDisplayStateKey(conversationKey, message)}:${index}`}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onRequestUserInputSubmit={onRequestUserInputSubmit}
+                  onRequestUserInputIgnore={onRequestUserInputIgnore}
+                  onOpenAssistantPlan={onOpenAssistantPlan}
+                  onLoadFullTranscript={onLoadFullTranscript}
+                  loadingFullTranscript={loadingFullTranscript}
+                  hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                  hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                />
+              ))
+            : null}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
           {message.contentTruncated ? (
@@ -1849,6 +1850,35 @@ function getMessageDisplayStateKey(
 
 function hasRunningProcessingBlocks(blocks: ProcessingBlock[]): boolean {
   return blocks.some(block => block.status !== 'done' && block.status !== 'error')
+}
+
+type ProcessingSegment = {
+  kind: 'tool' | 'narrative'
+  blocks: ProcessingBlock[]
+}
+
+function splitProcessingBlocks(blocks: ProcessingBlock[]): ProcessingSegment[] {
+  if (blocks.length === 0) return [{ kind: 'tool', blocks: [] }]
+
+  const segments: ProcessingSegment[] = []
+
+  blocks.forEach(block => {
+    const kind = isCollapsibleToolBlock(block) ? 'tool' : 'narrative'
+    const previous = segments.at(-1)
+    if (previous?.kind === kind) {
+      previous.blocks.push(block)
+      return
+    }
+    segments.push({ kind, blocks: [block] })
+  })
+
+  return segments
+}
+
+function isCollapsibleToolBlock(block: ProcessingBlock): boolean {
+  if (block.type === 'file_changes') return true
+  if (block.type !== 'tool') return false
+  return !isGuidanceToolName(block.toolName) && !isContextCompactionToolName(block.toolName)
 }
 
 function hasLiveProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {

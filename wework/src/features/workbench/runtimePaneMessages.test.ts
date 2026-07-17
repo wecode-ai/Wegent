@@ -406,6 +406,106 @@ describe('createRuntimeTaskStreamHandlers', () => {
     ).toBeUndefined()
   })
 
+  test('builds the completed turn file changes summary from streamed blocks', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+    const summary = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 2,
+      deletions: 1,
+      files: [
+        {
+          path: 'src/main.ts',
+          change_type: 'modified' as const,
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+      ],
+    }
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: {
+        value: 'Done',
+        blocks: [
+          {
+            id: 'file-changes-1',
+            type: 'file_changes',
+            status: 'done',
+            fileChanges: summary,
+          },
+        ],
+      },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_done',
+      fileChanges: summary,
+    })
+  })
+
+  test('keeps file change blocks until a later completion event', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+    const fileChanges = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'qa.txt',
+          change_type: 'created' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+    }
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      block: {
+        id: 'file-changes-1',
+        type: 'file_changes',
+        status: 'streaming',
+        file_changes: fileChanges,
+      },
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'Done' },
+    })
+
+    expect(actions[1]).toMatchObject({
+      type: 'assistant_done',
+      fileChanges,
+    })
+  })
+
   test('treats interrupted runtime errors as cancellation events', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
