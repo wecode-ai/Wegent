@@ -33,6 +33,8 @@ const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
 const LOCAL_MODEL_ID = 'local-model:desktop-e2e-local'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_DEVICE_ID = 'wework-desktop-e2e-cloud-device'
+const CLOUD_DEVICE_SANDBOX_ID = 'wework-desktop-e2e-sandbox'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -372,6 +374,7 @@ class DesktopE2EServer {
     this.failCloudModels = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
+    this.vncConfigRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.toolLessPrewarmHandled = false
@@ -558,6 +561,44 @@ class DesktopE2EServer {
         id: 9001,
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/devices') {
+      json(response, 200, {
+        items: [
+          {
+            id: 9002,
+            device_id: CLOUD_DEVICE_ID,
+            name: 'Wework Desktop E2E Cloud Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            executor_version: '1.8.5',
+            client_ip: '127.0.0.1',
+            cloud_config: {
+              sandboxId: CLOUD_DEVICE_SANDBOX_ID,
+              deviceId: CLOUD_DEVICE_ID,
+              deviceName: 'Wework Desktop E2E Cloud Device',
+            },
+          },
+        ],
+        total: 1,
+      })
+      return
+    }
+
+    if (
+      request.method === 'GET' &&
+      url.pathname === `/api/cloud-devices/${CLOUD_DEVICE_ID}/vnc-config`
+    ) {
+      this.vncConfigRequests += 1
+      json(response, 200, {
+        wss_url: 'wss://unused.example.test/vnc',
+        signature: 'unused-signature',
+        sandbox_id: CLOUD_DEVICE_SANDBOX_ID,
       })
       return
     }
@@ -933,6 +974,53 @@ async function main() {
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
+    phase = 'cloud-vnc-browser'
+    await control.command('click', '[data-testid="settings-button"]')
+    await control.command('click', '[data-testid="settings-menu-button"]')
+    await control.command('waitFor', '[data-testid="wework-settings-page"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="settings-nav-connections"]')
+    await control.command('waitFor', `[data-testid="connection-vnc-button-${CLOUD_DEVICE_ID}"]`, {
+      enabled: true,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', `[data-testid="connection-vnc-button-${CLOUD_DEVICE_ID}"]`)
+    await control.command(
+      'waitFor',
+      '[data-testid="right-workspace-browser-tab"][aria-selected="true"]',
+      { timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('waitFor', '[data-testid="workspace-browser-panel"]:not(.hidden)', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      '[data-testid="workspace-browser-url-input"][value*="/vnc.html?"]',
+      { timeoutMs: UI_TIMEOUT_MS }
+    )
+    const vncBrowserSnapshot = await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('wework-settings-page'),
+      'Opening the cloud desktop did not leave settings'
+    )
+    assert.equal(
+      vncBrowserSnapshot.testIds.includes('workspace-browser-panel'),
+      true,
+      'Opening the cloud desktop did not show the built-in browser panel'
+    )
+    assert.equal(
+      control.vncConfigRequests,
+      1,
+      'Opening the cloud desktop did not make exactly one real VNC configuration request'
+    )
+    await control.command('click', '[data-testid="right-workspace-browser-tab-close-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes('right-workspace-browser-tab'),
+      'The VNC browser tab did not close after verification'
+    )
+
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-remote-option"]')
@@ -1259,6 +1347,7 @@ async function main() {
           phase,
           scenario: control.scenario,
           modelStage: control.modelStage,
+          vncConfigRequests: control.vncConfigRequests,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,

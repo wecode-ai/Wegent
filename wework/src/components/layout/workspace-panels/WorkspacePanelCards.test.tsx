@@ -11,11 +11,17 @@ import {
   openLocalWorkspace,
   startLocalTerminal,
 } from '@/lib/local-terminal'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => ({
+    appBasePath: '',
+    apiBaseUrl: '/api',
+    socketBaseUrl: 'http://localhost:3000',
+    socketPath: '/socket.io',
+  }),
   joinAppPath: (basePath: string, path: string) => {
     const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
     const normalizedPath = path.startsWith('/') ? path : `/${path}`
@@ -45,6 +51,11 @@ vi.mock('@/lib/local-terminal', () => ({
   localPathExists: vi.fn(),
   openLocalWorkspace: vi.fn(),
   startLocalTerminal: vi.fn(),
+}))
+
+vi.mock('@/lib/embedded-browser', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/embedded-browser')>()),
+  requestEmbeddedBrowserOpen: vi.fn(),
 }))
 
 vi.mock('./EmbeddedLocalTerminal', () => ({
@@ -96,6 +107,7 @@ const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
+const requestEmbeddedBrowserOpenMock = vi.mocked(requestEmbeddedBrowserOpen)
 const getVncConfigMock = vi.fn()
 const fetchMock = vi.fn()
 
@@ -183,6 +195,7 @@ describe('WorkspacePanelCards', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
+    requestEmbeddedBrowserOpenMock.mockReturnValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
@@ -348,7 +361,7 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('opens the project desktop using the cloud device VNC page', async () => {
+  test('opens the project desktop in the built-in browser', async () => {
     const onRequestClose = vi.fn()
     render(
       <WorkspacePanelCards
@@ -361,17 +374,34 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
     await waitFor(() => expect(getVncConfigMock).toHaveBeenCalledWith('device-1'))
-    expect(window.open).toHaveBeenCalledWith(
-      expect.stringContaining('/vnc.html?wsUrl='),
-      '_blank',
-      'noopener,noreferrer'
+    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
+    const openedUrl = new URL(requestEmbeddedBrowserOpenMock.mock.calls[0][0])
+    expect(openedUrl.pathname).toBe('/vnc.html')
+    expect(openedUrl.searchParams.get('wsUrl')).toBe(
+      'ws://localhost:3000/vnc-proxy/device-1?token=token-1'
     )
-    expect(window.open).toHaveBeenCalledWith(
-      expect.stringContaining('sandboxId=sandbox-1'),
-      '_blank',
-      'noopener,noreferrer'
+    expect(openedUrl.searchParams.get('sandboxId')).toBe('sandbox-1')
+    expect(window.open).not.toHaveBeenCalled()
+    expect(onRequestClose).not.toHaveBeenCalled()
+  })
+
+  test('marks the project desktop unavailable when the built-in browser rejects it', async () => {
+    const onRequestClose = vi.fn()
+    requestEmbeddedBrowserOpenMock.mockReturnValue(false)
+    render(
+      <WorkspacePanelCards
+        currentProject={cloudProject}
+        devices={cloudDevices}
+        onRequestClose={onRequestClose}
+      />
     )
-    expect(onRequestClose).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
+
+    await waitFor(() => expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled())
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1)
+    expect(window.open).not.toHaveBeenCalled()
+    expect(onRequestClose).not.toHaveBeenCalled()
   })
 
   test('launches the native terminal for local project devices without cloud-only tools', async () => {

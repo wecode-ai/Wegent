@@ -10,6 +10,7 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
@@ -19,6 +20,8 @@ const runtimeConfigMock = vi.hoisted(() => ({
   value: {
     appBasePath: '',
     apiBaseUrl: '/api',
+    socketBaseUrl: 'http://localhost:3000',
+    socketPath: '/socket.io',
     cloudDeviceScalingWikiUrl: '',
   },
 }))
@@ -27,7 +30,8 @@ const localCodexPluginApiMock = vi.hoisted(() => ({
   updateCodexLocalConfig: vi.fn(),
 }))
 
-vi.mock('@/config/runtime', () => ({
+vi.mock('@/config/runtime', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/config/runtime')>()),
   getRuntimeConfig: () => runtimeConfigMock.value,
   stripAppBasePath: (path: string) => path,
 }))
@@ -78,6 +82,11 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
+vi.mock('@/lib/embedded-browser', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/embedded-browser')>()),
+  requestEmbeddedBrowserOpen: vi.fn(),
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
@@ -95,6 +104,17 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
+const requestEmbeddedBrowserOpenMock = vi.mocked(requestEmbeddedBrowserOpen)
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -186,10 +206,13 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://localhost:3000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
+    requestEmbeddedBrowserOpenMock.mockReturnValue(true)
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -798,6 +821,112 @@ describe('ConnectionsSettingsPage', () => {
     )
   })
 
+  test('opens cloud desktop in the built-in browser before leaving settings', async () => {
+    const onBack = vi.fn()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={onBack} />)
+
+    await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
+
+    await waitFor(() => expect(api.getVncConfig).toHaveBeenCalledWith('device-1'))
+    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
+    const openedUrl = new URL(requestEmbeddedBrowserOpenMock.mock.calls[0][0])
+    expect(openedUrl.pathname).toBe('/vnc.html')
+    expect(openedUrl.searchParams.get('wsUrl')).toBe(
+      'ws://localhost:3000/vnc-proxy/device-1?token=fallback-token'
+    )
+    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(openExternalUrlMock).not.toHaveBeenCalled()
+  })
+
+  test('stays in settings when the built-in browser cannot accept the VNC page', async () => {
+    const onBack = vi.fn()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    requestEmbeddedBrowserOpenMock.mockReturnValue(false)
+
+    render(<ConnectionsSettingsPage onBack={onBack} />)
+
+    await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法在 Wework 中打开云桌面，请重试')
+    expect(onBack).not.toHaveBeenCalled()
+    expect(openExternalUrlMock).not.toHaveBeenCalled()
+  })
+
+  test('shows a recoverable error when VNC configuration fails', async () => {
+    const onBack = vi.fn()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.getVncConfig.mockRejectedValueOnce(new Error('VNC unavailable'))
+
+    try {
+      render(<ConnectionsSettingsPage onBack={onBack} />)
+
+      await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        '无法在 Wework 中打开云桌面，请重试'
+      )
+      expect(consoleError).toHaveBeenCalledWith('Failed to open device desktop:', expect.any(Error))
+      expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
+      expect(onBack).not.toHaveBeenCalled()
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  test('disables the VNC action while loading and prevents duplicate requests', async () => {
+    const deferred = createDeferred<{
+      wss_url: string
+      signature: string
+      sandbox_id: string
+    }>()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.getVncConfig.mockReturnValueOnce(deferred.promise)
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const button = await screen.findByTestId('connection-vnc-button-device-1')
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(api.getVncConfig).toHaveBeenCalledTimes(1)
+
+    deferred.resolve({
+      wss_url: 'wss://example.com/vnc',
+      signature: 'signature',
+      sandbox_id: 'sandbox-1',
+    })
+    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
+  })
+
+  test('disables the VNC action for an offline cloud device', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-vnc-button-device-1')).toBeDisabled()
+  })
+
+  test('clears the VNC error when a retry reaches the built-in browser', async () => {
+    const onBack = vi.fn()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    requestEmbeddedBrowserOpenMock.mockReturnValueOnce(false).mockReturnValueOnce(true)
+
+    render(<ConnectionsSettingsPage onBack={onBack} />)
+
+    const button = await screen.findByTestId('connection-vnc-button-device-1')
+    await userEvent.click(button)
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+
+    await userEvent.click(button)
+
+    await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(api.getVncConfig).toHaveBeenCalledTimes(2)
+  })
+
   test('falls back to legacy ubuntu password field in cloud device connection info', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
@@ -1032,6 +1161,8 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://localhost:3000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
     }
     api.getAllDevices.mockResolvedValue([cloudDevice(), localDevice()])

@@ -172,8 +172,14 @@ function getWorkspaceCodeViewSelectedLineNumbers() {
   )
 }
 
-vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+vi.mock('@/config/runtime', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/config/runtime')>()),
+  getRuntimeConfig: () => ({
+    appBasePath: '',
+    apiBaseUrl: '/api',
+    socketBaseUrl: 'http://localhost:3000',
+    socketPath: '/socket.io',
+  }),
   stripAppBasePath: (path: string) => path,
 }))
 
@@ -343,6 +349,11 @@ vi.mock('@tauri-apps/api/menu', () => ({
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: tauriMenuMocks.getCurrentWindow,
+}))
+
+vi.mock('@tauri-apps/api/event', async importOriginal => ({
+  ...(await importOriginal<typeof import('@tauri-apps/api/event')>()),
+  listen: vi.fn().mockResolvedValue(vi.fn()),
 }))
 
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
@@ -4027,6 +4038,70 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Cloud computing powered by Nevis')).not.toBeInTheDocument()
     expect(screen.queryByText('其他设置')).not.toBeInTheDocument()
     expect(screen.queryByText('Start Task')).not.toBeInTheDocument()
+  })
+
+  test('opens a cloud desktop in the right built-in browser and leaves settings', async () => {
+    const tauriInvoke = vi.fn((command: string, args?: Record<string, unknown>) => {
+      if (command === 'embedded_browser_open') {
+        return Promise.resolve({ title: null, url: args?.url ?? null })
+      }
+      if (command === 'embedded_browser_page_state') {
+        return Promise.resolve({ title: null, url: null })
+      }
+      return Promise.resolve(undefined)
+    })
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: { invoke: tauriInvoke },
+    })
+    window.history.pushState({}, '', '/settings/connections')
+    const browserBounds = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        if (this.dataset.testid === 'workspace-browser-native-view') {
+          return createRect({ left: 500, top: 120, width: 400, height: 300 })
+        }
+        return createRect({ left: 0, top: 0, width: 0, height: 0 })
+      })
+    const getVncConfig = vi.fn().mockResolvedValue({
+      wss_url: 'wss://unused.example.test/vnc',
+      signature: 'unused-signature',
+      sandbox_id: 'sandbox-1',
+    })
+    createDeviceApiMock.mockReturnValue(createMockDeviceApi({ getVncConfig }) as never)
+    try {
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+
+      await userEvent.click(
+        await screen.findByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd')
+      )
+
+      await waitFor(() =>
+        expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
+      )
+      expect(getVncConfig).toHaveBeenCalledWith('24a59054-4638-4744-983d-372706c30fcd')
+      expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
+      const openedUrl = new URL(
+        (screen.getByTestId('workspace-browser-url-input') as HTMLInputElement).value
+      )
+      expect(openedUrl.pathname).toBe('/vnc.html')
+      expect(openedUrl.searchParams.get('wsUrl')).toBe(
+        'ws://localhost:3000/vnc-proxy/24a59054-4638-4744-983d-372706c30fcd?token=fallback-token'
+      )
+      await waitFor(() =>
+        expect(tauriInvoke).toHaveBeenCalledWith(
+          'embedded_browser_open',
+          expect.objectContaining({ url: openedUrl.toString() }),
+          undefined
+        )
+      )
+    } finally {
+      browserBounds.mockRestore()
+    }
   })
 
   test('opens and resizes the right workspace panel', async () => {

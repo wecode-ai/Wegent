@@ -4,6 +4,8 @@ import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
+import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
@@ -15,6 +17,7 @@ import {
   supportsRemoteTerminalSessions,
 } from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -153,9 +156,17 @@ function createProjectSessionApi() {
   return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
-function createDeviceSessionApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
+function createDeviceSessionApi(connection: CloudConnectionContextValue) {
+  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
+    throw new Error('Cloud connection is required')
+  }
+  return createDeviceApi(
+    createHttpClient({
+      baseUrl: connection.apiBaseUrl,
+      getToken: () => connection.token,
+      redirectOnUnauthorized: false,
+    })
+  )
 }
 
 export function WorkspacePanelCards({
@@ -176,6 +187,7 @@ export function WorkspacePanelCards({
   onTerminalTitleChange,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const testId = useCallback(
     (value: string) => (testIdsEnabled ? value : undefined),
     [testIdsEnabled]
@@ -460,7 +472,7 @@ export function WorkspacePanelCards({
       }
 
       if (workspaceSource === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
-        const session = await createDeviceSessionApi().startTerminal(
+        const session = await createDeviceSessionApi(cloudConnection).startTerminal(
           activeWorkspaceDeviceId,
           activeWorkspacePath
         )
@@ -500,6 +512,7 @@ export function WorkspacePanelCards({
     activeWorkspaceDeviceId,
     activeWorkspacePath,
     availableTools.terminal,
+    cloudConnection,
     currentProject,
     getSessionStartErrorMessage,
     hasWorkspaceContext,
@@ -642,23 +655,30 @@ export function WorkspacePanelCards({
     if (!activeWorkspaceDeviceId || loadingTool || !availableTools.desktop) return
     setLoadingTool('desktop')
     setProjectError(null)
-    let shouldClosePanel = false
     try {
-      const config = await createDeviceSessionApi().getVncConfig(activeWorkspaceDeviceId)
+      if (!cloudConnection.socketBaseUrl || !cloudConnection.token) {
+        throw new Error('Cloud connection is required')
+      }
+      const config =
+        await createDeviceSessionApi(cloudConnection).getVncConfig(activeWorkspaceDeviceId)
       if (!config.sandbox_id) {
         throw new Error('Desktop sandbox ID is missing')
       }
-      await openExternalUrl(buildVncPageUrl(activeWorkspaceDeviceId, config.sandbox_id))
-      shouldClosePanel = true
+      const pageUrl = buildVncPageUrl({
+        deviceId: activeWorkspaceDeviceId,
+        sandboxId: config.sandbox_id,
+        socketBaseUrl: cloudConnection.socketBaseUrl,
+        token: cloudConnection.token,
+      })
+      if (!requestEmbeddedBrowserOpen(pageUrl)) {
+        throw new Error('Built-in browser is unavailable')
+      }
     } catch (e) {
       console.error('Failed to open project desktop:', e)
       markToolUnavailable('desktop')
       setProjectError(t('workbench.project_tool_start_failed', '启动失败'))
     } finally {
       setLoadingTool(null)
-      if (shouldClosePanel) {
-        onRequestClose?.()
-      }
     }
   }
 

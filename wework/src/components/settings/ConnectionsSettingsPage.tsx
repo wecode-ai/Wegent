@@ -36,6 +36,7 @@ import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -342,31 +343,75 @@ function deviceDisplayName(device: DeviceInfo): string {
   return device.client_ip?.trim() || name || device.device_id
 }
 
-function VncDesktopButton({ deviceId }: { deviceId: string }) {
+function VncDesktopButton({
+  deviceId,
+  disabled,
+  onOpened,
+}: {
+  deviceId: string
+  disabled: boolean
+  onOpened: () => void
+}) {
+  const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const openFailedMessage = t(
+    'workbench.connection_device_desktop_open_failed',
+    '无法在 Wework 中打开云桌面，请重试'
+  )
 
   const handleClick = useCallback(async () => {
-    if (loading) return
+    if (disabled || loading) return
     setLoading(true)
+    setError(null)
+
+    if (!cloudConnection.socketBaseUrl || !cloudConnection.token) {
+      setError(openFailedMessage)
+      setLoading(false)
+      return
+    }
+
     try {
       const config = await createSettingsDeviceApi(cloudConnection).getVncConfig(deviceId)
-      await openExternalUrl(buildVncPageUrl(deviceId, config.sandbox_id))
+      const pageUrl = buildVncPageUrl({
+        deviceId,
+        sandboxId: config.sandbox_id,
+        socketBaseUrl: cloudConnection.socketBaseUrl,
+        token: cloudConnection.token,
+      })
+      if (!requestEmbeddedBrowserOpen(pageUrl)) {
+        setError(openFailedMessage)
+        return
+      }
+      onOpened()
     } catch (e) {
       console.error('Failed to open device desktop:', e)
+      setError(openFailedMessage)
     } finally {
       setLoading(false)
     }
-  }, [cloudConnection, deviceId, loading])
+  }, [cloudConnection, deviceId, disabled, loading, onOpened, openFailedMessage])
 
   return (
-    <DeviceActionButton
-      testId={`connection-vnc-button-${deviceId}`}
-      icon={Monitor}
-      label="桌面"
-      onClick={handleClick}
-      disabled={loading}
-    />
+    <div className="flex flex-col items-end gap-1">
+      <DeviceActionButton
+        testId={`connection-vnc-button-${deviceId}`}
+        icon={Monitor}
+        label={t('workbench.connection_device_desktop', '桌面')}
+        onClick={handleClick}
+        disabled={disabled || loading}
+      />
+      {error && (
+        <p
+          role="alert"
+          data-testid={`connection-vnc-error-${deviceId}`}
+          className="max-w-48 text-right text-xs text-red-500"
+        >
+          {error}
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -585,7 +630,15 @@ function CloudDeviceConnectionInfoDialog({
   )
 }
 
-function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
+function DeviceCard({
+  device,
+  onChanged,
+  onVncDesktopOpened,
+}: {
+  device: DeviceInfo
+  onChanged: () => void
+  onVncDesktopOpened: () => void
+}) {
   const cloudConnection = useOptionalCloudConnection()
   const [sessionLoading, setSessionLoading] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
@@ -813,7 +866,13 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   onClick={() => handleStartCloudSession('code-server')}
                   disabled={!isOnline || sessionLoading === 'code-server'}
                 />
-                {canUseCloudSessions && <VncDesktopButton deviceId={device.device_id} />}
+                {canUseCloudSessions && (
+                  <VncDesktopButton
+                    deviceId={device.device_id}
+                    disabled={!isOnline}
+                    onOpened={onVncDesktopOpened}
+                  />
+                )}
               </>
             )}
             {canUseCloudLifecycleActions && (
@@ -926,11 +985,13 @@ function DeviceSection({
   title,
   devices,
   onChanged,
+  onVncDesktopOpened,
   icon: Icon,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
+  onVncDesktopOpened: () => void
   icon: ComponentType<{ className?: string }>
 }) {
   return (
@@ -944,7 +1005,12 @@ function DeviceSection({
       </div>
       <div className="space-y-3">
         {devices.map(device => (
-          <DeviceCard key={device.device_id} device={device} onChanged={onChanged} />
+          <DeviceCard
+            key={device.device_id}
+            device={device}
+            onChanged={onChanged}
+            onVncDesktopOpened={onVncDesktopOpened}
+          />
         ))}
       </div>
     </section>
@@ -1063,8 +1129,10 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
 
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
+  onVncDesktopOpened,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
+  onVncDesktopOpened: () => void
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1261,6 +1329,7 @@ function ConnectionsDeviceSettingsPage({
                       devices={cloudDevices}
                       icon={Cloud}
                       onChanged={fetchDevices}
+                      onVncDesktopOpened={onVncDesktopOpened}
                     />
                   )}
                   {remoteDevices.length > 0 && (
@@ -1269,6 +1338,7 @@ function ConnectionsDeviceSettingsPage({
                       devices={remoteDevices}
                       icon={Server}
                       onChanged={fetchDevices}
+                      onVncDesktopOpened={onVncDesktopOpened}
                     />
                   )}
                 </>
@@ -1466,6 +1536,7 @@ export function ConnectionsSettingsPage({
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+            onVncDesktopOpened={onBack}
           />
         )}
       </main>
