@@ -2377,7 +2377,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
   })
 
-  test('lets the workbench background show through the Tauri titlebar', () => {
+  test('lets the workbench background show through the Tauri right workspace titlebar', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -2392,8 +2392,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(screen.getByTestId('workbench-main-header')).toHaveClass('bg-transparent')
-    expect(screen.getByTestId('workbench-main-header')).not.toHaveClass('bg-background/20')
+    expect(screen.getByTestId('workbench-main-header')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('bg-background/95')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {

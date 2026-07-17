@@ -341,7 +341,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         className={cn(
           'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
           appearance.backgroundImagePath && appearance.backgroundInTopBar
-            ? 'bg-transparent'
+            ? 'bg-background/20'
             : 'bg-background/95'
         )}
       />
@@ -1482,7 +1482,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <div
         data-testid="titlebar-right-workspace-zone"
         className={cn(
-          'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden bg-background/95',
+          'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
+          appearance.backgroundImagePath && appearance.backgroundInTopBar
+            ? 'bg-transparent'
+            : 'bg-background/95',
           rightPanelOpen ? 'border-l border-border/60' : undefined,
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
@@ -1558,7 +1561,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             className={cn(
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
               appearance.backgroundImagePath && appearance.backgroundInTopBar
-                ? 'bg-transparent'
+                ? 'bg-background/20'
                 : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
