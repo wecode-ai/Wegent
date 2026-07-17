@@ -22,8 +22,12 @@ interface FileChangesCardProps {
   subtaskId: string
   summary: TurnFileChangesSummary
   deviceOnline: boolean
-  onLoadDiff: (subtaskId: string) => Promise<string>
-  onRevert: (subtaskId: string) => Promise<TurnFileChangesSummary>
+  diffPreviewDisabled?: boolean
+  onLoadDiff: (subtaskId: string, fileChanges: TurnFileChangesSummary) => Promise<string>
+  onRevert: (
+    subtaskId: string,
+    fileChanges: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenReview?: (request: {
     subtaskId: string
     loadDiff: () => Promise<string>
@@ -42,11 +46,13 @@ function FileChangeRow({
   file,
   summary,
   disabled,
+  diffPreviewDisabled = false,
   onPreview,
 }: {
   file: TurnFileChangeItem
   summary: TurnFileChangesSummary
   disabled: boolean
+  diffPreviewDisabled?: boolean
   onPreview: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -73,9 +79,9 @@ function FileChangeRow({
         ref={diffPreviewTriggerRef}
         data-testid="file-change-trigger"
         className="group/file-change-trigger relative min-w-0 flex-1"
-        onPointerEnter={openDiffPreviewAfterDelay}
+        onPointerEnter={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
         onPointerLeave={closeDiffPreview}
-        onFocus={openDiffPreviewAfterDelay}
+        onFocus={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
         onBlur={closeDiffPreview}
       >
         <button
@@ -87,7 +93,7 @@ function FileChangeRow({
         >
           <span
             data-testid="file-change-title-label"
-            className="min-w-0 truncate text-[13px] font-medium leading-5 text-text-primary"
+            className="min-w-0 truncate text-sm font-medium leading-5 text-text-primary"
           >
             {displayPath}
           </span>
@@ -133,11 +139,13 @@ function FileChangeSummaryTrigger({
   file,
   summary,
   disabled,
+  diffPreviewDisabled = false,
   onPreview,
 }: {
   file: TurnFileChangeItem
   summary: TurnFileChangesSummary
   disabled: boolean
+  diffPreviewDisabled?: boolean
   onPreview: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -161,9 +169,9 @@ function FileChangeSummaryTrigger({
       ref={diffPreviewTriggerRef}
       data-testid="file-change-trigger"
       className="group/file-change-trigger relative min-w-0 flex-1 self-stretch"
-      onPointerEnter={openDiffPreviewAfterDelay}
+      onPointerEnter={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
       onPointerLeave={closeDiffPreview}
-      onFocus={openDiffPreviewAfterDelay}
+      onFocus={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
       onBlur={closeDiffPreview}
     >
       <button
@@ -179,7 +187,7 @@ function FileChangeSummaryTrigger({
         <span className="min-w-0 flex-1">
           <span
             data-testid="file-changes-summary-title"
-            className="block truncate text-[13px] font-semibold leading-5 text-text-primary"
+            className="block truncate text-sm font-semibold leading-5 text-text-primary"
           >
             {t(fileChangeLabelKey(file.change_type), { filename })}
           </span>
@@ -405,14 +413,14 @@ function FileChangeDiffPreview({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      <div className="flex h-10 items-center gap-3 border-b border-border px-4 text-[13px] font-semibold">
+      <div className="flex h-10 items-center gap-3 border-b border-border px-4 text-sm font-semibold">
         <span className="min-w-0 flex-1 truncate" title={preview.displayPath}>
           {preview.displayPath}
         </span>
         <span className="shrink-0 font-medium text-green-400">+{preview.additions}</span>
         <span className="shrink-0 font-medium text-red-400">-{preview.deletions}</span>
       </div>
-      <div className="max-h-[min(24rem,calc(100vh-9rem))] overflow-auto py-1 font-mono text-[12px] leading-5">
+      <div className="max-h-[min(24rem,calc(100vh-9rem))] overflow-auto py-1 font-mono text-xs leading-5">
         {preview.lines.map(line =>
           line.type === 'separator' ? (
             <div key={line.key} className="my-1 h-px bg-border" />
@@ -591,6 +599,7 @@ export function FileChangesCard({
   subtaskId,
   summary,
   deviceOnline,
+  diffPreviewDisabled,
   onLoadDiff,
   onRevert,
   onOpenReview,
@@ -612,7 +621,7 @@ export function FileChangesCard({
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
       subtaskId,
-      loadDiff: () => onLoadDiff(subtaskId),
+      loadDiff: () => onLoadDiff(subtaskId, summary),
       reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
       focusFilePath,
@@ -623,7 +632,7 @@ export function FileChangesCard({
     setReverting(true)
     setActionError(undefined)
     try {
-      await onRevert(subtaskId)
+      await onRevert(subtaskId, summary)
       setConfirmOpen(false)
     } catch (error) {
       setActionError(getErrorMessage(error, t('file_changes.revert_failed')))
@@ -670,6 +679,7 @@ export function FileChangesCard({
               file={singleFile}
               summary={summary}
               disabled={reviewDisabled}
+              diffPreviewDisabled={diffPreviewDisabled}
               onPreview={() => openReview(singleFile.path)}
             />
           ) : (
@@ -680,7 +690,7 @@ export function FileChangesCard({
               <span className="min-w-0 flex-1">
                 <span
                   data-testid="file-changes-summary-title"
-                  className="block truncate text-[13px] font-semibold leading-5 text-text-primary"
+                  className="block truncate text-sm font-semibold leading-5 text-text-primary"
                 >
                   {t('file_changes.edited_files', { count: shownFileCount })}
                 </span>
@@ -726,6 +736,7 @@ export function FileChangesCard({
                 file={file}
                 summary={summary}
                 disabled={reviewDisabled}
+                diffPreviewDisabled={diffPreviewDisabled}
                 onPreview={() => openReview(file.path)}
               />
             ))}

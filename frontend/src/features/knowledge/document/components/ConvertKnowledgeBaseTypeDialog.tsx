@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { updateKnowledgeBaseType } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
 
 interface ConvertKnowledgeBaseTypeDialogProps {
@@ -38,31 +39,27 @@ export function ConvertKnowledgeBaseTypeDialog({
 
   if (!knowledgeBase) return null
 
-  // Determine current and target types
+  // Determine current and target default views
   const currentType = knowledgeBase.kb_type || 'notebook'
   const targetType: KnowledgeBaseType = currentType === 'notebook' ? 'classic' : 'notebook'
-  const isConvertingToNotebook = targetType === 'notebook'
 
-  // Get confirmation message based on conversion direction
-  const confirmMessage = isConvertingToNotebook
-    ? t('document.knowledgeBase.convertToNotebookConfirm')
-    : t('document.knowledgeBase.convertToClassicConfirm')
+  const confirmMessage = t('document.knowledgeBase.changeDefaultViewConfirm')
 
   const handleConfirm = async () => {
     setLoading(true)
     try {
       const updatedKb = await updateKnowledgeBaseType(knowledgeBase.id, targetType)
       toast({
-        description: t('document.knowledgeBase.convertSuccess'),
+        description: t('document.knowledgeBase.defaultViewUpdateSuccess'),
       })
       onOpenChange(false)
-      // Call onSuccess to notify parent components to refresh
-      // The parent page.tsx will re-fetch knowledge base data and re-route
-      // to the appropriate layout component based on the new kb_type
       onSuccess?.(updatedKb)
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : t('document.knowledgeBase.convertFailed')
+      const errorMessage = mapKnowledgeDocumentErrorMessage(
+        error,
+        t,
+        'document.knowledgeBase.defaultViewUpdateFailed'
+      )
       toast({
         variant: 'destructive',
         description: errorMessage,
@@ -76,7 +73,7 @@ export function ConvertKnowledgeBaseTypeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('document.knowledgeBase.convertType')}</DialogTitle>
+          <DialogTitle>{t('document.knowledgeBase.changeDefaultView')}</DialogTitle>
           <DialogDescription>{confirmMessage}</DialogDescription>
         </DialogHeader>
         <div className="py-4">

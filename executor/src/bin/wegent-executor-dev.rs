@@ -29,7 +29,7 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = executor_source_dir();
     let manifest_path = manifest_dir.join("Cargo.toml");
     let executor_args = env::args().skip(1).collect::<Vec<_>>();
     let (tx, rx) = mpsc::channel::<DevEvent>();
@@ -76,6 +76,13 @@ fn run() -> Result<(), String> {
             restart_requested = true;
         }
     }
+}
+
+fn executor_source_dir() -> PathBuf {
+    env::var_os("WEGENT_EXECUTOR_SOURCE_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
 }
 
 fn watch_executor_sources(
@@ -303,6 +310,15 @@ mod tests {
                 .join("debug")
                 .join(executable_name())
         );
+    }
+
+    #[test]
+    fn executor_source_dir_uses_runtime_override() {
+        let _guard = env_lock();
+        let source_dir = PathBuf::from("/tmp/wegent-executor-source");
+        let _env = EnvVarGuard::set("WEGENT_EXECUTOR_SOURCE_DIR", &source_dir);
+
+        assert_eq!(executor_source_dir(), source_dir);
     }
 
     fn executable_name() -> &'static str {

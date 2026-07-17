@@ -51,7 +51,7 @@ function createPaneStatus({
     isAssistantStreaming,
     isResponseActive,
     isBusy,
-    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant || taskRunning,
     canSendQueuedMessage: !isBusy,
   }
 }
@@ -153,7 +153,7 @@ type LegacyMobileWorkbenchLayoutProps = {
   onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
 }
 
-function createPendingRequestUserInputMessage(): WorkbenchMessage {
+function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
   return {
     id: 'assistant-request',
     role: 'assistant',
@@ -175,6 +175,15 @@ function createPendingRequestUserInputMessage(): WorkbenchMessage {
               question: '执行此计划?',
               options: [{ label: '是的，执行此计划' }],
             },
+            ...(includeAdjustment
+              ? [
+                  {
+                    id: 'adjustment',
+                    question: '否，请告知 WeWork 如何调整',
+                    is_other: true,
+                  },
+                ]
+              : []),
           ],
         },
       },
@@ -304,6 +313,8 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? vi.fn().mockResolvedValue(''),
     commitEnvironmentChanges:
       props.onCommitEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
+    commitAndPushEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
+    pushEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
     listEnvironmentBranches: props.onListEnvironmentBranches ?? vi.fn().mockResolvedValue([]),
     checkoutEnvironmentBranch:
       props.onCheckoutEnvironmentBranch ?? vi.fn().mockResolvedValue(undefined),
@@ -312,7 +323,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
     cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
     sendCurrentInput: props.onSend ?? vi.fn().mockResolvedValue(true),
-    retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+    retryFailedMessage: vi.fn().mockResolvedValue(true),
     pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
     loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
     revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -353,6 +364,7 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
     loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
     send: props.onSend ?? vi.fn().mockResolvedValue(undefined),
+    retryFailedMessage: vi.fn().mockResolvedValue(true),
     sendRequestUserInputResponse: props.onRequestUserInputSubmit ?? vi.fn().mockResolvedValue(true),
     ignoreRequestUserInput: vi.fn(),
     answeredRequestUserInputIds: new Set(),
@@ -563,6 +575,41 @@ describe('MobileWorkbenchLayout', () => {
     )
   })
 
+  test('keeps plan mode when submitting implementation plan adjustments on mobile', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage(true)]}
+        projectChat={baseProjectChat}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+
+    await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
+    await user.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      {
+        requestId: 42,
+        itemId: undefined,
+        answers: {
+          adjustment: { answers: ['先缩小范围'] },
+        },
+      },
+      { appendUserMessage: true, forceDefaultCollaborationMode: false }
+    )
+  })
+
   test('ignores the implementation plan confirmation through the pane session on mobile', async () => {
     renderAtMobileWidth(
       <MobileWorkbenchLayout
@@ -604,6 +651,7 @@ describe('MobileWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      client_ip: '10.201.3.200',
     }
     const project = {
       id: 1,
@@ -651,7 +699,7 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Device 已离线，恢复在线后可继续对话'
+      '10.201.3.200 已离线，恢复在线后可继续对话'
     )
     expect(
       within(screen.getByTestId('mobile-chat-input-dock')).getByTestId(
@@ -711,6 +759,8 @@ describe('MobileWorkbenchLayout', () => {
       />
     )
 
+    expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).not.toHaveAttribute('style')
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-mobile', 'true')
@@ -741,14 +791,10 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('model-option-claude-sonnet'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(claudeModel)
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('model-selector-confirm-button'))
-
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
-  test('updates mobile reasoning controls without closing the model picker', async () => {
+  test('keeps the mobile close-after-selection behavior for reasoning controls', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -795,9 +841,8 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
 
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-medium')).toHaveClass('bg-[#1f2933]')
-    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass('bg-surface')
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('中')
   })
 
   test('shows the selected project in the mobile empty project selector', () => {
@@ -885,7 +930,7 @@ describe('MobileWorkbenchLayout', () => {
     await new Promise(resolve => window.setTimeout(resolve, 0))
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
     expect(onListEnvironmentBranches).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-branch-button')).toBeInTheDocument()
     expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
     const controls = screen.getByTestId('project-work-button').parentElement?.parentElement
     expect(controls).toHaveClass('flex-col')
@@ -1655,7 +1700,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
-    expect(onOpenPlugins).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
+    expect(window.location.pathname).toBe('/plugins')
   })
 })

@@ -1,5 +1,5 @@
 import type { ComponentType, MouseEvent } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MoreHorizontal } from 'lucide-react'
 
@@ -7,7 +7,7 @@ const MENU_GAP = 8
 const VIEWPORT_PADDING = 8
 const MIN_MENU_WIDTH = 176
 
-interface ActionMenuItem {
+export interface ActionMenuItem {
   label: string
   icon: ComponentType<{ className?: string }>
   onSelect: () => void | Promise<void>
@@ -23,9 +23,12 @@ interface ActionMenuProps {
   icon?: ComponentType<{ className?: string }>
   variant?: 'horizontal' | 'vertical'
   triggerClassName?: string
+  placement?: 'side' | 'bottom-end'
+  contextMenuPosition?: MenuPosition | null
+  onContextMenuClose?: () => void
 }
 
-interface MenuPosition {
+export interface MenuPosition {
   left: number
   top: number
 }
@@ -37,6 +40,9 @@ export function ActionMenu({
   icon: Icon = MoreHorizontal,
   variant = 'horizontal',
   triggerClassName,
+  placement = 'side',
+  contextMenuPosition,
+  onContextMenuClose,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -44,45 +50,74 @@ export function ActionMenu({
   const pointerSelectionRef = useRef(false)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
 
+  const closeMenu = useCallback(() => {
+    setOpen(false)
+    setMenuPosition(null)
+    onContextMenuClose?.()
+  }, [onContextMenuClose])
+  const menuOpen = open || Boolean(contextMenuPosition)
+
   const handleTriggerClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
     if (!open) {
       setMenuPosition(null)
     }
-    setOpen(value => !value)
+    if (menuOpen) {
+      closeMenu()
+    } else {
+      setOpen(true)
+    }
   }
 
   const handleItemSelect = async (item: ActionMenuItem) => {
     if (item.disabled) return
-    setOpen(false)
-    setMenuPosition(null)
+    closeMenu()
     await item.onSelect()
   }
 
   useLayoutEffect(() => {
-    if (!open) return
+    if (!menuOpen) return
 
     const updatePosition = () => {
-      const trigger = containerRef.current
       const menu = menuRef.current
-      if (!trigger || !menu) return
+      if (!menu) return
 
-      const triggerRect = trigger.getBoundingClientRect()
       const menuRect = menu.getBoundingClientRect()
       const menuWidth = Math.max(menuRect.width, MIN_MENU_WIDTH)
       const menuHeight = menuRect.height
       const viewportWidth = window.innerWidth
       const viewportHeight = window.innerHeight
 
+      const maxLeft = viewportWidth - menuWidth - VIEWPORT_PADDING
+      const maxTop = viewportHeight - menuHeight - VIEWPORT_PADDING
+      if (contextMenuPosition) {
+        setMenuPosition({
+          left: Math.max(VIEWPORT_PADDING, Math.min(contextMenuPosition.left, maxLeft)),
+          top: Math.max(VIEWPORT_PADDING, Math.min(contextMenuPosition.top, maxTop)),
+        })
+        return
+      }
+
+      const trigger = containerRef.current
+      if (!trigger) return
+      const triggerRect = trigger.getBoundingClientRect()
+      if (placement === 'bottom-end') {
+        const belowTop = triggerRect.bottom + MENU_GAP
+        const aboveTop = triggerRect.top - menuHeight - MENU_GAP
+        const top =
+          belowTop + menuHeight <= viewportHeight - VIEWPORT_PADDING
+            ? belowTop
+            : Math.max(VIEWPORT_PADDING, aboveTop)
+        const left = Math.max(VIEWPORT_PADDING, Math.min(triggerRect.right - menuWidth, maxLeft))
+        setMenuPosition({ left, top })
+        return
+      }
+
       const rightSideLeft = triggerRect.right + MENU_GAP
       const leftSideLeft = triggerRect.left - menuWidth - MENU_GAP
       const hasRoomOnRight = rightSideLeft + menuWidth <= viewportWidth - VIEWPORT_PADDING
-
-      const maxLeft = viewportWidth - menuWidth - VIEWPORT_PADDING
       const preferredLeft = hasRoomOnRight ? rightSideLeft : leftSideLeft
       const left = Math.max(VIEWPORT_PADDING, Math.min(preferredLeft, maxLeft))
-
-      const maxTop = viewportHeight - menuHeight - VIEWPORT_PADDING
       const top = Math.max(VIEWPORT_PADDING, Math.min(triggerRect.top, maxTop))
 
       setMenuPosition({ left, top })
@@ -95,22 +130,28 @@ export function ActionMenu({
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
     }
-  }, [open])
+  }, [contextMenuPosition, menuOpen, placement])
 
   useEffect(() => {
-    if (!open) return
+    if (!menuOpen) return
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!containerRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        setOpen(false)
-        setMenuPosition(null)
+        closeMenu()
       }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu()
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [open])
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [closeMenu, menuOpen])
 
   return (
     <div
@@ -127,11 +168,12 @@ export function ActionMenu({
           'flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]'
         }
         aria-label={ariaLabel}
-        aria-expanded={open}
+        aria-expanded={menuOpen}
+        aria-haspopup="menu"
       >
         <Icon className={variant === 'vertical' ? 'h-4 w-4 rotate-90' : 'h-4 w-4'} />
       </button>
-      {open &&
+      {menuOpen &&
         createPortal(
           <div
             ref={menuRef}
@@ -164,7 +206,7 @@ export function ActionMenu({
                   void handleItemSelect(item)
                 }}
                 className={[
-                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
+                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                   item.danger ? 'text-red-500 hover:bg-red-50' : 'text-text-primary hover:bg-muted',
                   item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
                 ].join(' ')}

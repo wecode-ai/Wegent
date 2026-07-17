@@ -1,1 +1,1 @@
-export const SHOW_PLUGINS_NAVIGATION = false
+export const SHOW_PLUGINS_NAVIGATION = true

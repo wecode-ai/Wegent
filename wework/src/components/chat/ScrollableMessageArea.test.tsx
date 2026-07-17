@@ -130,6 +130,34 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('message-assistant').parentElement).not.toHaveClass('layout-width-a')
   })
 
+  test('renders an optional sticky footer inside the scroll flow', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        stickyFooterClassName="footer-shell"
+        stickyFooter={<div data-testid="composer-footer">Composer</div>}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const content = screen.getByTestId('chat-message-scroll-area-content')
+    const footer = screen.getByTestId('chat-message-scroll-area-sticky-footer')
+
+    expect(scroller).toHaveClass('flex', 'flex-col')
+    expect(content).toHaveClass('flex-1', 'shrink-0')
+    expect(footer).toHaveClass('sticky', 'bottom-0', 'z-10', 'footer-shell')
+    expect(footer).toContainElement(screen.getByTestId('composer-footer'))
+    expect(scroller.lastElementChild).toBe(footer)
+  })
+
   test('keeps older transcript loading controls at the top of the message flow', () => {
     render(
       <ScrollableMessageArea
@@ -1079,6 +1107,187 @@ describe('ScrollableMessageArea', () => {
     rerender(
       <ScrollableMessageArea
         conversationKey={1}
+        messages={[
+          {
+            ...streamingMessage,
+            content: '正在处理\n\n核心逻辑\n\n更多流式内容',
+          },
+        ]}
+      />
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 800,
+      behavior: 'auto',
+    })
+  })
+
+  test('keeps streaming content pinned within the bottom pixel tolerance', () => {
+    const streamingMessage = {
+      id: 'fractional-bottom-stream',
+      role: 'assistant' as const,
+      content: '正在处理',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="fractional-bottom-scroll"
+        messages={[streamingMessage]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 396,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="fractional-bottom-scroll"
+        messages={[
+          {
+            ...streamingMessage,
+            content: '正在处理\n\n核心逻辑\n\n更多流式内容',
+          },
+        ]}
+      />
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 800,
+      behavior: 'auto',
+    })
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+  })
+
+  test('does not follow streaming content after the user scrolls upward near the bottom', () => {
+    const streamingMessage = {
+      id: 'near-bottom-stream',
+      role: 'assistant' as const,
+      content: '正在处理',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="near-bottom-scroll" messages={[streamingMessage]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 400,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    scroller.scrollTop = 360
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="near-bottom-scroll"
+        messages={[
+          {
+            ...streamingMessage,
+            content: '正在处理\n\n核心逻辑\n\n更多流式内容',
+          },
+        ]}
+      />
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).not.toHaveBeenCalled()
+  })
+
+  test('resumes streaming follow after the user returns to the bottom', () => {
+    const streamingMessage = {
+      id: 'resume-stream',
+      role: 'assistant' as const,
+      content: '正在处理',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="resume-scroll" messages={[streamingMessage]} />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 360,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+    ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
+    scroller.scrollTop = 400
+    fireEvent.scroll(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="resume-scroll"
         messages={[
           {
             ...streamingMessage,

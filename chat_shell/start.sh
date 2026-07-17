@@ -59,7 +59,7 @@ export BACKEND_API_URL=$(get_local_ip):8000
 DEFAULT_PORT=8100
 DEFAULT_HOST="0.0.0.0"
 DEFAULT_BACKEND_URL="http://localhost:8000"
-DEFAULT_BACKEND_TOKEN="chat-shell-token"
+DEFAULT_BACKEND_TOKEN="${CHAT_SHELL_REMOTE_STORAGE_TOKEN:-${CHAT_SHELL_INTERNAL_SERVICE_TOKEN:-}}"
 
 PORT=$DEFAULT_PORT
 HOST=$DEFAULT_HOST
@@ -96,14 +96,14 @@ while [[ $# -gt 0 ]]; do
             echo "  --port PORT              Chat Shell server port (default: 8100)"
             echo "  --host HOST              Chat Shell server host (default: 0.0.0.0)"
             echo "  --python PATH            Python executable path (default: auto-detect)"
-            echo "  --backend-url URL        Backend internal API URL (default: http://localhost:8000/api/internal)"
-            echo "  --backend-token TOKEN    Backend service token (default: chat-shell-token)"
+            echo "  --backend-url URL        Backend base URL (default: http://localhost:8000)"
+            echo "  --backend-token TOKEN    Backend service token (must match Backend INTERNAL_SERVICE_TOKEN)"
             echo "  -h, --help               Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                                    # Use default configuration"
             echo "  $0 --port 8200                        # Use custom port"
-            echo "  $0 --backend-url http://backend:8000/api/internal"
+            echo "  $0 --backend-url http://backend:8000"
             exit 0
             ;;
         *)
@@ -292,7 +292,9 @@ echo -e "${BLUE}[4/4] Starting Chat Shell server...${NC}"
 export CHAT_SHELL_MODE="http"
 export CHAT_SHELL_STORAGE_TYPE="remote"
 export CHAT_SHELL_REMOTE_STORAGE_URL="$BACKEND_URL/api/internal"
-export CHAT_SHELL_REMOTE_STORAGE_TOKEN="$BACKEND_TOKEN"
+if [ -n "$BACKEND_TOKEN" ]; then
+    export CHAT_SHELL_REMOTE_STORAGE_TOKEN="$BACKEND_TOKEN"
+fi
 
 # Pass web search configuration if set
 if [ -n "$WEB_SEARCH_ENABLED" ]; then

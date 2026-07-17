@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { ChevronDown, CornerDownLeft, MessageCircleQuestion, Pencil } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import type { RequestUserInputResponse } from '@/types/api'
 import { hasImplementationPlanText } from './requestUserInputMessages'
@@ -62,7 +63,6 @@ export function RequestUserInputCard({
       .filter(question => question.allowCustom && question.options.length === 0)
       .map(question => question.id)
   )
-  const hasCustomQuestion = customQuestionIds.size > 0
 
   useEffect(() => {
     formRef.current?.focus({ preventScroll: true })
@@ -119,6 +119,8 @@ export function RequestUserInputCard({
       return
     }
 
+    if (isImeEnterEvent(event)) return
+
     if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
       return
     }
@@ -141,7 +143,7 @@ export function RequestUserInputCard({
         className="inline-flex h-9 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
       >
         {t('request_user_input.ignore')}
-        <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+        <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-xs font-semibold text-text-secondary">
           ESC
         </kbd>
       </button>
@@ -167,95 +169,95 @@ export function RequestUserInputCard({
       onSubmit={handleFormSubmit}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
-      className="w-full rounded-[1.5rem] border border-border bg-background px-4 py-2.5 shadow-[0_18px_42px_rgba(15,23,42,0.10)]"
+      className="flex max-h-[min(60dvh,36rem)] w-full flex-col rounded-[1.5rem] border border-border bg-background px-4 py-2.5 shadow-[0_18px_42px_rgba(15,23,42,0.10)]"
     >
-      <div className="flex flex-col gap-1.5">
-        {questions.map(question => (
-          <div key={question.id} className="min-w-0">
-            {question.header ? (
-              <div className="mb-1 text-[13px] font-semibold leading-5 text-text-primary">
-                {question.header}
-              </div>
-            ) : null}
-            {!customQuestionIds.has(question.id) ? (
-              <div className="mb-1.5 text-[13px] font-semibold leading-5 text-text-primary">
-                {question.question}
-              </div>
-            ) : null}
-            {question.options.length > 0 ? (
-              <div className="flex flex-col gap-1">
-                {question.options.map((option, index) => {
-                  const isSelected =
-                    selectedAnswers[question.id] === option.label &&
-                    (!isImplementationPlanRequest || activeQuestionId === question.id)
-                  return (
-                    <button
-                      key={`${question.id}-${option.label}-${index}`}
-                      type="button"
-                      data-testid={`request-user-input-option-${question.id}-${index}`}
-                      disabled={isDisabled}
-                      onClick={() => selectOption(question, option)}
-                      className={cn(
-                        'flex h-9 w-full min-w-0 items-center gap-2.5 rounded-2xl px-3 text-left transition-colors',
-                        isSelected ? 'bg-surface' : 'hover:bg-surface',
-                        isDisabled && 'cursor-not-allowed opacity-60'
-                      )}
-                    >
-                      <span
+      <div
+        data-testid="request-user-input-questions"
+        className="scrollbar-soft min-h-0 flex-1 overflow-y-auto pr-1"
+      >
+        <div className="flex flex-col gap-1.5">
+          {questions.map(question => (
+            <div key={question.id} className="min-w-0">
+              {question.header ? (
+                <div className="mb-1 text-sm font-semibold leading-5 text-text-primary">
+                  {question.header}
+                </div>
+              ) : null}
+              {!customQuestionIds.has(question.id) ? (
+                <div className="mb-1.5 text-sm font-semibold leading-5 text-text-primary">
+                  {question.question}
+                </div>
+              ) : null}
+              {question.options.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  {question.options.map((option, index) => {
+                    const isSelected =
+                      selectedAnswers[question.id] === option.label &&
+                      (!isImplementationPlanRequest || activeQuestionId === question.id)
+                    return (
+                      <button
+                        key={`${question.id}-${option.label}-${index}`}
+                        type="button"
+                        data-testid={`request-user-input-option-${question.id}-${index}`}
+                        disabled={isDisabled}
+                        onClick={() => selectOption(question, option)}
                         className={cn(
-                          'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none',
-                          isSelected
-                            ? 'bg-text-primary text-background'
-                            : 'bg-surface text-text-muted'
+                          'flex min-h-9 w-full min-w-0 items-start gap-2.5 rounded-2xl px-3 py-2 text-left transition-colors',
+                          isSelected ? 'bg-surface' : 'hover:bg-surface',
+                          isDisabled && 'cursor-not-allowed opacity-60'
                         )}
                       >
-                        {index + 1}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">
-                        <span className="text-[13px] font-semibold leading-5 text-text-primary">
-                          {option.label}
+                        <span
+                          className={cn(
+                            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none',
+                            isSelected
+                              ? 'bg-text-primary text-background'
+                              : 'bg-surface text-text-muted'
+                          )}
+                        >
+                          {index + 1}
                         </span>
-                        {option.description ? (
-                          <span className="ml-2 text-[13px] leading-5 text-text-muted">
-                            {option.description}
+                        <span className="min-w-0 flex-1 whitespace-normal break-words">
+                          <span className="text-sm font-semibold leading-5 text-text-primary">
+                            {option.label}
                           </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : null}
-            {question.allowCustom ? (
-              <div className="mt-1 flex min-w-0 items-center gap-2.5 px-3">
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted">
-                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                </span>
-                <input
-                  data-testid={`request-user-input-custom-${question.id}`}
-                  value={selectedAnswers[question.id] ?? ''}
-                  disabled={isDisabled}
-                  onChange={event => {
-                    setActiveQuestionId(question.id)
-                    setSelectedAnswers(current => ({
-                      ...current,
-                      [question.id]: event.target.value,
-                    }))
-                  }}
-                  className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-[13px] font-semibold leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
-                  placeholder={question.question || t('request_user_input.custom_placeholder')}
-                />
-                {customQuestionIds.has(question.id) ? (
-                  <div className="ml-auto flex shrink-0 items-center gap-2">{actionControls}</div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        ))}
+                          {option.description ? (
+                            <span className="ml-2 text-sm leading-5 text-text-muted">
+                              {option.description}
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
+              {question.allowCustom ? (
+                <div className="mt-1 flex min-w-0 items-center gap-2.5 px-3">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-background text-text-muted">
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  </span>
+                  <input
+                    data-testid={`request-user-input-custom-${question.id}`}
+                    value={selectedAnswers[question.id] ?? ''}
+                    disabled={isDisabled}
+                    onChange={event => {
+                      setActiveQuestionId(question.id)
+                      setSelectedAnswers(current => ({
+                        ...current,
+                        [question.id]: event.target.value,
+                      }))
+                    }}
+                    className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm font-semibold leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    placeholder={question.question || t('request_user_input.custom_placeholder')}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </div>
-      {!hasCustomQuestion ? (
-        <div className="mt-2 flex items-center justify-end gap-2">{actionControls}</div>
-      ) : null}
+      <div className="mt-2 flex shrink-0 items-center justify-end gap-2">{actionControls}</div>
     </form>
   )
 }
@@ -276,7 +278,7 @@ export function RequestUserInputSummary({ payload }: { payload: RequestUserInput
   return (
     <div
       data-testid="request-user-input-summary"
-      className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-sm leading-6 text-text-secondary"
     >
       <div className="mb-1.5 inline-flex max-w-full items-center gap-1.5 text-text-muted">
         <MessageCircleQuestion className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />

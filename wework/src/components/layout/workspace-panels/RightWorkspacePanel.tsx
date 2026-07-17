@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   FileChangesReviewPanel,
@@ -26,6 +26,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
@@ -76,15 +77,21 @@ interface RightWorkspacePanelProps {
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   currentProject: ProjectWithTasks | null
+  canBrowseFiles: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
+  fileWorkspaceTarget?: WorkspaceTarget | null
   preferLocalTerminal?: boolean
+  terminalContextTitle?: string | null
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   planContent?: string | null
+  embeddedBrowserLabel?: string
+  embeddedBrowserOpenRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  codeCommentCount?: number
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
@@ -97,22 +104,29 @@ interface RightWorkspacePanelProps {
   onSelectTab: (tab: RightWorkspacePanelTab) => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
   onRefreshReview?: () => void
+  getChatInitialInput?: (tab: RightWorkspaceChatTab) => string | undefined
 }
 
-export function RightWorkspacePanel({
+export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   visible,
   activeView,
   openTabs,
   currentProject,
+  canBrowseFiles,
   currentRuntimeTask,
   devices,
   workspaceTarget,
+  fileWorkspaceTarget = workspaceTarget,
   preferLocalTerminal = false,
+  terminalContextTitle,
   workspaceFileApi,
   openFileRequest,
   workspaceTargetError,
   review,
   planContent,
+  embeddedBrowserLabel = 'workspace-browser',
+  embeddedBrowserOpenRequest,
+  codeCommentCount = 0,
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
@@ -124,9 +138,11 @@ export function RightWorkspacePanel({
   onSelectTab,
   onCloseTab,
   onRefreshReview,
+  getChatInitialInput,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const showTabs = openTabs.length > 0
+  const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
+  const showTabs = visibleTabs.length > 0
   const renderTabsInTitlebar = isTauriRuntime() && visible && showTabs
   const browserOpen = openTabs.includes('browser')
   const [browserFaviconUrl, setBrowserFaviconUrl] = useState<string | null>(null)
@@ -163,7 +179,7 @@ export function RightWorkspacePanel({
       } else if (key === 's') {
         event.preventDefault()
         onSelectChat()
-      } else if (key === 'f') {
+      } else if (key === 'f' && canBrowseFiles) {
         event.preventDefault()
         onSelectFiles()
       }
@@ -173,6 +189,7 @@ export function RightWorkspacePanel({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
     browserOpen,
+    canBrowseFiles,
     canOpenReview,
     onSelectChat,
     onSelectFiles,
@@ -231,14 +248,18 @@ export function RightWorkspacePanel({
       shortcut: RIGHT_WORKSPACE_SHORTCUTS.chat,
       onSelect: onSelectChat,
     },
-    {
-      id: 'files',
-      testId: 'right-workspace-file-option',
-      icon: File,
-      label: t('workbench.workspace_tab_files', '文件'),
-      shortcut: RIGHT_WORKSPACE_SHORTCUTS.files,
-      onSelect: onSelectFiles,
-    },
+    ...(canBrowseFiles
+      ? [
+          {
+            id: 'files' as const,
+            testId: 'right-workspace-file-option',
+            icon: File,
+            label: t('workbench.workspace_tab_files', '文件'),
+            shortcut: RIGHT_WORKSPACE_SHORTCUTS.files,
+            onSelect: onSelectFiles,
+          },
+        ]
+      : []),
   ]
 
   const tabBar = showTabs ? (
@@ -252,7 +273,7 @@ export function RightWorkspacePanel({
           : 'h-10 border-b border-border bg-background px-3'
       )}
     >
-      {openTabs.map(tab => (
+      {visibleTabs.map(tab => (
         <RightWorkspaceTitleTab
           key={tab}
           tab={tab}
@@ -303,19 +324,13 @@ export function RightWorkspacePanel({
       className="relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col bg-background opacity-100 transition-[opacity,transform] duration-300 ease-out"
     >
       {renderTabsInTitlebar ? <TitlebarRightPanelPortal>{tabBar}</TitlebarRightPanelPortal> : null}
-      {renderTabsInTitlebar ? (
-        <header
-          data-testid="right-workspace-titlebar-spacer"
-          className="h-[38px] shrink-0 bg-background"
-        />
-      ) : (
-        tabBar
-      )}
+      {renderTabsInTitlebar ? null : tabBar}
       <div className="flex min-h-0 flex-1">
         {!isRightWorkspaceChatTab(activeView) && activeView === 'launcher' ? (
           <RightWorkspaceLauncher
             canOpenReview={canOpenReview}
             browserOpen={browserOpen}
+            canBrowseFiles={canBrowseFiles}
             onSelectReview={onSelectReview}
             onSelectBrowser={openBrowserTab}
             onSelectFiles={onSelectFiles}
@@ -342,6 +357,7 @@ export function RightWorkspacePanel({
             defaultOpenTool="terminal"
             hideTerminalChrome
             preferLocalTerminal={preferLocalTerminal}
+            terminalContextTitle={terminalContextTitle}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />
@@ -355,12 +371,15 @@ export function RightWorkspacePanel({
           </section>
         ) : (
           !isRightWorkspaceChatTab(activeView) &&
+          canBrowseFiles &&
           activeView === 'files' && (
             <FileWorkspacePanel
               key={
-                workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'
+                fileWorkspaceTarget
+                  ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
+                  : 'empty'
               }
-              target={workspaceTarget}
+              target={fileWorkspaceTarget}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               onAddCodeComment={onAddCodeComment}
@@ -376,6 +395,7 @@ export function RightWorkspacePanel({
               currentProject={currentProject}
               source={currentRuntimeTask}
               instanceId={tab}
+              initialInput={getChatInitialInput?.(tab)}
               testId={
                 activeView === tab
                   ? 'right-workspace-chat-panel'
@@ -387,6 +407,10 @@ export function RightWorkspacePanel({
         {browserOpen && (
           <WorkspaceBrowserPanel
             active={visible && activeView === 'browser'}
+            label={embeddedBrowserLabel}
+            openRequest={embeddedBrowserOpenRequest}
+            codeCommentCount={codeCommentCount}
+            onAddCodeComment={onAddCodeComment}
             onFaviconChange={setBrowserFaviconUrl}
             onTitleChange={setBrowserTitle}
           />
@@ -394,7 +418,7 @@ export function RightWorkspacePanel({
       </div>
     </section>
   )
-}
+})
 
 function RightWorkspaceTitleTab({
   tab,
@@ -507,7 +531,7 @@ function PlanWorkspacePanel({ content }: { content: string }) {
       data-testid="workspace-plan-panel"
       className="min-h-0 flex-1 overflow-y-auto bg-background px-8 py-6"
     >
-      <div className="mx-auto max-w-4xl text-[15px] leading-7 text-text-primary">
+      <div className="mx-auto max-w-4xl text-base leading-7 text-text-primary">
         {content.trim() ? (
           <AssistantMarkdown content={content} />
         ) : (
@@ -523,6 +547,7 @@ function PlanWorkspacePanel({ content }: { content: string }) {
 function RightWorkspaceLauncher({
   canOpenReview,
   browserOpen,
+  canBrowseFiles,
   onSelectReview,
   onSelectBrowser,
   onSelectFiles,
@@ -530,6 +555,7 @@ function RightWorkspaceLauncher({
 }: {
   canOpenReview: boolean
   browserOpen: boolean
+  canBrowseFiles: boolean
   onSelectReview: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
@@ -567,13 +593,15 @@ function RightWorkspaceLauncher({
           shortcut={RIGHT_WORKSPACE_SHORTCUTS.chat}
           onClick={onSelectChat}
         />
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-file-option"
-          icon={File}
-          label={t('workbench.workspace_tab_files', '文件')}
-          shortcut={RIGHT_WORKSPACE_SHORTCUTS.files}
-          onClick={onSelectFiles}
-        />
+        {canBrowseFiles && (
+          <RightWorkspaceLauncherItem
+            data-testid="right-workspace-file-option"
+            icon={File}
+            label={t('workbench.workspace_tab_files', '文件')}
+            shortcut={RIGHT_WORKSPACE_SHORTCUTS.files}
+            onClick={onSelectFiles}
+          />
+        )}
       </div>
     </div>
   )
@@ -600,11 +628,11 @@ function RightWorkspaceLauncherItem({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-[13px] font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-[11px] font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
         {shortcut}
       </span>
     </button>

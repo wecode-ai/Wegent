@@ -12,9 +12,11 @@ import {
   uploadAttachment,
   deleteAttachment,
   isSupportedExtension,
+  isVideoFileName,
   isValidFileSize,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
+import { getVideoUploader } from '@/features/knowledge/multimodal/video-upload-registry'
 import type { Attachment } from '@/types/api'
 
 /** Maximum number of files allowed in a single batch upload */
@@ -113,8 +115,27 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
           continue
         }
 
-        // Validate file size
-        if (!isValidFileSize(file.size)) {
+        // KB video uploads bypass the generic 100 MB path — they are routed to
+        // the two-phase VideoUploadProvider contract at upload time. Queueing a
+        // video requires a registered provider; without one, reject up-front
+        // (open-source default has no provider).
+        if (isVideoFileName(file.name)) {
+          const videoUploader = getVideoUploader()
+          if (!videoUploader) {
+            validationErrors.push(
+              `${file.name}: ${t('common:attachment.errors.video_upload_unavailable')}`
+            )
+            continue
+          }
+          // Provider-governed ceiling: the registered uploader declares the
+          // absolute size its backing object store accepts. Reject up-front so
+          // we never start a two-phase upload the provider cannot complete.
+          if (file.size > videoUploader.maxSizeBytes) {
+            validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
+            continue
+          }
+        } else if (!isValidFileSize(file.size)) {
+          // Non-video files keep the generic 100 MB cap.
           validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
           continue
         }
@@ -177,14 +198,39 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
       }))
 
       try {
-        const attachment = await uploadAttachment(fileItem.file, progress => {
+        // KB video files are routed to the two-phase VideoUploadProvider
+        // contract (binary → object storage, metadata → backend), bypassing
+        // the generic 100 MB uploadAttachment path. Non-video and video files
+        // without a registered uploader fall through to uploadAttachment.
+        const videoUploader = isVideoFileName(fileItem.file.name) ? getVideoUploader() : null
+
+        const onProgress = (progress: number) => {
           setState(prev => ({
             ...prev,
             files: prev.files.map(f => (f.id === fileItem.id ? { ...f, progress } : f)),
           }))
-        })
+        }
 
-        // Check if parsing succeeded
+        const attachment = videoUploader
+          ? await (async () => {
+              const result = await videoUploader.upload(fileItem.file, onProgress)
+              // Video metadata-only context: no binary parse, status is ready.
+              return {
+                id: result.attachment_id,
+                filename: fileItem.file.name,
+                file_size: fileItem.file.size,
+                mime_type: fileItem.file.type || 'application/octet-stream',
+                status: 'ready' as const,
+                text_length: null,
+                error_message: null,
+                error_code: null,
+                truncation_info: null,
+              }
+            })()
+          : await uploadAttachment(fileItem.file, onProgress)
+
+        // Check if parsing succeeded (only meaningful for the generic path;
+        // video attachments are always 'ready' here).
         if (attachment.status === 'failed') {
           const errorMessage =
             getErrorMessageFromCode(attachment.error_code, t) ||

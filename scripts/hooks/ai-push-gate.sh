@@ -322,10 +322,17 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/eslint.log")
         fi
         
-        # TypeScript type check (output to temp file to reduce memory usage)
+        # Regenerate Next.js route types before TypeScript validation. Generated
+        # files can otherwise retain imports for routes removed by a branch switch.
         echo -e "   Running TypeScript check..."
-        pnpm --filter wecode-ai-assistant exec tsc --noEmit > "$TEMP_DIR/tsc.log" 2>&1
-        TSC_EXIT=$?
+        pnpm --filter wecode-ai-assistant exec next typegen > "$TEMP_DIR/tsc.log" 2>&1
+        TYPEGEN_EXIT=$?
+        if [ $TYPEGEN_EXIT -eq 0 ]; then
+            pnpm --filter wecode-ai-assistant exec tsc --noEmit >> "$TEMP_DIR/tsc.log" 2>&1
+            TSC_EXIT=$?
+        else
+            TSC_EXIT=$TYPEGEN_EXIT
+        fi
         if [ $TSC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
         else
@@ -529,8 +536,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_CHECKS+=("Backend Syntax")
             FAILED_LOGS+=("$TEMP_DIR/syntax.log")
         fi
-        cd ..
     fi
+    cd ..
     echo ""
 fi
 

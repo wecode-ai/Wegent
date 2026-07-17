@@ -29,6 +29,9 @@ def build_context_display_fields(
             "knowledge_id": data.get("knowledge_id"),
             "document_count": data.get("document_count"),
             "document_ids": data.get("document_ids"),
+            "folder_ids": data.get("folder_ids"),
+            "folder_names": data.get("folder_names"),
+            "include_subfolders": data.get("include_subfolders"),
             "scope_restricted": data.get("scope_restricted"),
         }
 

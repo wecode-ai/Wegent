@@ -31,6 +31,10 @@ export interface LoginResponse {
   token_type: string
 }
 
+export interface WeworkAuthSessionActionResponse {
+  status: string
+}
+
 export interface UpdateUserRequest {
   user_name?: string
   email?: string
@@ -182,6 +186,14 @@ export const userApis = {
     return apiClient.get('/users/me', { redirectOnUnauthorized: false })
   },
 
+  async approveWeworkAuthSession(sessionId: string): Promise<WeworkAuthSessionActionResponse> {
+    return apiClient.post(`/auth/wework/sessions/${encodeURIComponent(sessionId)}/approve`)
+  },
+
+  async declineWeworkAuthSession(sessionId: string): Promise<WeworkAuthSessionActionResponse> {
+    return apiClient.post(`/auth/wework/sessions/${encodeURIComponent(sessionId)}/decline`)
+  },
+
   async updateUser(data: UpdateUserRequest): Promise<User> {
     return apiClient.put('/users/me', data)
   },
@@ -226,6 +238,12 @@ export const userApis = {
 
   async searchUsers(query: string): Promise<SearchUsersResponse> {
     return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`)
+  },
+
+  async getUsersByIds(userIds: number[]): Promise<SearchUsersResponse> {
+    const params = new URLSearchParams()
+    userIds.forEach(userId => params.append('ids', String(userId)))
+    return apiClient.get(`/users/by-ids?${params.toString()}`)
   },
 
   async getMcpProviderServices(providerId: string): Promise<McpProviderServiceConfig[]> {

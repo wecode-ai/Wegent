@@ -109,6 +109,26 @@ class RerankConfig(BaseModel):
     )
 
 
+class ModelCapabilities(BaseModel):
+    """Declared multimodal capabilities for LLM-style models.
+
+    Consumed by both the chat attachment pipeline (media understanding) and the
+    knowledge-base multimodal analysis selector. The knowledge multimodal
+    capability gate treats a ``supportsVideo=true`` Gemini model as also
+    covering image analysis (no separate ``supportsImage`` toggle on such
+    models).
+    """
+
+    supportsImage: Optional[bool] = Field(
+        None,
+        description="Whether the model supports image understanding in chat attachments.",
+    )
+    supportsVideo: Optional[bool] = Field(
+        None,
+        description="Whether the model supports video understanding in chat attachments.",
+    )
+
+
 # Import generation configs from separate module
 from .generation import ImageGenerationConfig, VideoGenerationConfig
 
@@ -274,6 +294,12 @@ class ModelSpec(BaseModel):
     isAdvanced: Optional[bool] = Field(
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
+    )
+    modelCapabilities: Optional[ModelCapabilities] = Field(
+        None,
+        description="Declared multimodal capabilities (supportsImage / supportsVideo). "
+        "Used by the chat attachment media-understanding path and the knowledge-base "
+        "multimodal analysis selector/capability gate.",
     )
 
 
@@ -900,9 +926,6 @@ class RetrievalConfig(BaseModel):
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
-    retrieval_mode_source: Optional[str] = Field(
-        None, description="Source of retrieval_mode: user, system_default, qa_profile"
-    )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
         0.5, ge=0.0, le=1.0, description="Minimum score threshold"
@@ -930,7 +953,7 @@ class KnowledgeBaseSpec(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     kbType: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"

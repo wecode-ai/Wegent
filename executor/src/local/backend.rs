@@ -11,15 +11,16 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tokio::time::sleep;
+use tokio::{sync::broadcast, time::sleep};
 
 use crate::{
     agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
     config::device::DeviceConfig,
     local::{
-        app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
+        app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
         session::{LocalSessionHandler, SessionType},
+        workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     },
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
     protocol::ExecutionRequest,
@@ -31,6 +32,7 @@ mod cancellation;
 mod capability;
 mod client;
 mod config;
+mod connection_controller;
 mod extension;
 mod session_events;
 mod socket_transport;
@@ -41,6 +43,7 @@ pub use cancellation::LocalCancellationSnapshot;
 pub use capability::{CapabilityReportProvider, CapabilitySyncRpcHandler, HttpPackageProvider};
 pub use client::{build_runtime_auth_file_report, LocalBackendClient, LocalBackendEventSink};
 pub use config::{is_usable_device_ip, LocalBackendConfig};
+pub use connection_controller::LocalBackendConnectionController;
 pub use extension::{DeviceExtensionHandler, DeviceExtensionRunner};
 pub use socket_transport::SocketIoTransport;
 pub use tasks::{LocalRunningTaskTracker, LocalTaskController, ManagedLocalTaskRunner};
@@ -66,6 +69,7 @@ const TERMINAL_INPUT_EVENT: &str = "terminal:input";
 const TERMINAL_RESIZE_EVENT: &str = "terminal:resize";
 const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
+const RUNTIME_EVENT_EVENT: &str = "runtime:event";
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -137,10 +141,13 @@ where
         );
         let mut backend = Self::from_client_and_runner(client, runner.clone());
         backend.task_controller = Some(Arc::new(runner));
-        backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::new(
+        let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
+        backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::with_event_sender(
             backend.client.config.device_id.clone(),
             resolve_codex_binary(),
+            runtime_event_tx,
         )));
+        backend.start_runtime_event_forwarder(runtime_event_rx);
         backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
             backend.client.config.as_ref(),
         )));
@@ -242,6 +249,36 @@ where
 
     pub fn cancellation_snapshot(&self) -> LocalCancellationSnapshot {
         self.cancellations.snapshot()
+    }
+
+    fn start_runtime_event_forwarder(&self, mut events: broadcast::Receiver<Value>) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => {
+                        if let Err(error) = client.emit_raw_event(RUNTIME_EVENT_EVENT, event).await
+                        {
+                            write_executor_error_line(&format_executor_log(
+                                "runtime event relay failed",
+                                &[("error", error)],
+                            ));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        let payload = json!({
+                            "type": "event",
+                            "event": "executor.event_lagged",
+                            "payload": {
+                                "skipped": skipped,
+                            },
+                        });
+                        let _ = client.emit_raw_event(RUNTIME_EVENT_EVENT, payload).await;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
     }
 
     pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
@@ -391,6 +428,43 @@ where
         Arc::new(move |payload| {
             let command_handler = Arc::clone(&command_handler);
             Box::pin(async move {
+                if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
+                    if is_workspace_file_command(command_key) {
+                        let path = payload
+                            .get("cwd")
+                            .or_else(|| payload.get("path"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
+                        let args = payload
+                            .get("args")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let env = payload
+                            .get("env")
+                            .and_then(Value::as_object)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(|(key, value)| {
+                                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let result =
+                            execute_workspace_file_command(command_key, path, args, env).await;
+                        return Some(serde_json::to_value(result).unwrap_or_else(
+                            |error| json!({"success": false, "error": error.to_string()}),
+                        ));
+                    }
+                }
                 let result = command_handler
                     .handle_execute_command(CommandRequest::from_value(payload))
                     .await;
@@ -689,18 +763,17 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
     )
 }
 
-pub async fn serve_local_backend_sidecar(config: DeviceConfig) -> Result<(), String> {
-    let backend_config = LocalBackendConfig::from_device_config(config);
+pub async fn serve_local_sidecar(config: DeviceConfig) -> Result<(), String> {
+    let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
-    let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
-
-    let ipc_task = tokio::spawn(async move { serve_app_ipc_sidecar(app_ipc_device_id).await });
-    let backend_task = tokio::spawn(async move { runner.run_forever().await });
-
-    tokio::select! {
-        result = ipc_task => task_result("app IPC sidecar", result),
-        result = backend_task => task_result("local backend runner", result),
-    }
+    let runtime_instance_id = backend_config.runtime_instance_id.clone();
+    let backend_connection = LocalBackendConnectionController::start(config).await;
+    let server = AppIpcServer::new()
+        .with_device_id(app_ipc_device_id)
+        .with_runtime_instance_id(runtime_instance_id)
+        .with_local_runtime_work_handler(resolve_codex_binary())
+        .with_backend_connection_handler(backend_connection);
+    server.serve_forever().await
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {
@@ -723,17 +796,6 @@ fn normalize_local_task_request(request: &mut ExecutionRequest, config: &LocalBa
     }
     if request.device_id.as_deref().unwrap_or("").trim().is_empty() {
         request.device_id = Some(config.device_id.clone());
-    }
-}
-
-fn task_result(
-    label: &str,
-    result: Result<Result<(), String>, tokio::task::JoinError>,
-) -> Result<(), String> {
-    match result {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(error),
-        Err(error) => Err(format!("{label} task failed: {error}")),
     }
 }
 
@@ -776,6 +838,7 @@ mod tests {
             backend_url: "https://backend.example.com".to_string(),
             auth_token: "token".to_string(),
             device_id: device_id.to_string(),
+            runtime_instance_id: "runtime-1".to_string(),
             device_name: "Cloud Device".to_string(),
             device_type: "remote".to_string(),
             app_device_id: String::new(),

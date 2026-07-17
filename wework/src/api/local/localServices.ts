@@ -15,8 +15,11 @@ import type {
   RuntimeArchivedConversationBulkResponse,
   RuntimeDeviceWorkspace,
   RuntimeRollbackRequest,
+  RuntimeCompactRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
+  RuntimeGuidanceRequest,
+  RuntimeGuidanceResponse,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -40,8 +43,24 @@ import type {
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeSidebarMutationResponse,
+  RuntimeTaskPinRequest,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceSearchRequest,
+  RuntimeWorkspaceSearchResponse,
+  RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeListResponse,
+  RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePrepareRequest,
+  RuntimeWorktreeSettings,
+  RuntimeWorktreeSettingsPatch,
   Team,
   UnifiedModel,
   User,
@@ -49,6 +68,7 @@ import type {
 import type { DeviceInfo } from '@/types/devices'
 import type {
   WorkspaceFileEntry,
+  WorkspaceFileChunkResponse,
   WorkspaceTextFileResponse,
   WorkspaceTreeResponse,
 } from '@/types/workspace-files'
@@ -59,11 +79,12 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
-import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
+  codexModelPickerLabel,
+  codexModelPickerSortOrder,
   codexOfficialModelIdFromModelName,
   codexOfficialModelName,
   CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
@@ -71,16 +92,23 @@ import {
   type CodexOfficialModel,
 } from '@/features/model-settings/codexOfficialModels'
 import {
+  buildLocalModelRequestUrl,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
   localModelName,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
+import {
+  CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_NAMESPACE_OPTION,
+  CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+} from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
 
@@ -114,10 +142,11 @@ function localCodexModelFamily(model: CodexOfficialModel): string {
 function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean): UnifiedModel {
   const modelFamily = localCodexModelFamily(model)
   const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
+  const modelLabel = codexModelPickerLabel(model.modelId)
   return {
     name: codexOfficialModelName(model),
     type: 'runtime',
-    displayName: model.modelId,
+    displayName: modelLabel,
     provider: 'local',
     modelId: model.modelId,
     config: {
@@ -132,9 +161,12 @@ function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean
       ui: {
         family: modelFamily,
         ...(providerFamilyLabel ? { familyLabel: providerFamilyLabel } : {}),
-        modelLabel: model.modelId,
+        modelLabel,
+        reasoningEfforts: model.supportedReasoningEfforts,
+        defaultReasoningEffort: model.defaultReasoningEffort,
         controls: ['speed'],
-        sortOrder: model.providerType === 'provider' ? 15 : 10,
+        sortOrder:
+          (model.providerType === 'provider' ? 100 : 0) + codexModelPickerSortOrder(model.modelId),
       },
     },
     runtime: {
@@ -189,6 +221,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: RESPONSES_API_FORMAT,
+      ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
@@ -232,6 +265,20 @@ interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
   request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
+  cloudModelGateway?: CloudModelGateway
+}
+
+interface CloudModelGateway {
+  baseUrl: string
+  apiKey: string
+}
+
+interface RuntimeWorkIpcOptions {
+  resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
+  normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
+  adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
+  cloudModelGateway?: CloudModelGateway
+  transportLabel?: 'Local' | 'Cloud'
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -247,6 +294,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
     device_type: 'local' as const,
+    runtime_instance_id: status.runtimeInstanceId ?? null,
     capabilities: ['runtime-work', 'device-commands'],
     slot_used: 0,
     slot_max: 5,
@@ -263,6 +311,10 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
 
 function localDeviceIdFromStatus(status: LocalExecutorStatus | null | undefined): string {
   return status?.deviceId?.trim() || LOCAL_DEVICE_ID
+}
+
+function isCloudModelType(modelType?: string | null): modelType is 'public' | 'user' | 'group' {
+  return modelType === 'public' || modelType === 'user' || modelType === 'group'
 }
 
 function localExecutorErrorStatus(error: unknown): LocalExecutorStatus {
@@ -363,6 +415,23 @@ function timestampValue(value: unknown): string | number | null {
   return stringValue(value)
 }
 
+function modelSelectionValue(value: unknown) {
+  const selection = recordValue(value)
+  const modelName = stringValue(selection.modelName) ?? stringValue(selection.model_name)
+  if (!modelName) return null
+  const modelType = stringValue(selection.modelType) ?? stringValue(selection.model_type)
+  const options = recordValue(selection.options)
+  return {
+    modelName,
+    modelType: modelType || null,
+    options: Object.fromEntries(
+      Object.entries(options)
+        .map(([key, optionValue]) => [key, stringValue(optionValue)])
+        .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    ),
+  }
+}
+
 function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unknown> {
   const address = recordValue(value.address)
   return {
@@ -438,10 +507,14 @@ function normalizeRuntimeTaskSummary(
   const updatedAt = timestampValue(taskRecord.updatedAt) ?? timestampValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
   const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
+  const modelSelection =
+    modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
+    modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
 
   const normalized = {
     ...taskRecord,
     taskId,
+    threadId: stringValue(taskRecord.threadId) ?? stringValue(taskRecord.thread_id) ?? undefined,
     ...(taskId ? { taskId } : {}),
     workspacePath,
     title: stringValue(taskRecord.title) ?? taskId ?? String(taskId),
@@ -452,6 +525,7 @@ function normalizeRuntimeTaskSummary(
     ...(updatedAt ? { updatedAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
   }
 
   return normalized as RuntimeTaskSummary
@@ -556,23 +630,31 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
 
 function localRuntimeModelConfig(
   modelName?: string,
-  modelOptions?: Record<string, string>
+  modelType?: string | null,
+  modelOptions?: Record<string, string>,
+  cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
   const localModel = findLocalModelConfigByModelName(modelName)
   if (localModel) {
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
+    const requestUrl = buildLocalModelRequestUrl(localModel.baseUrl, localModel.requestPath)
     return {
       model: 'openai',
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
+      responses_url: requestUrl,
       api_key: localModel.apiKey || 'dummy',
       model_provider: providerIdFromLocalConfig(localModel),
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
+      ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
+      web_search: localModel.webSearchMode ?? 'disabled',
+      image_generation: localModel.imageGenerationEnabled === true,
+      codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {
           use_user_config: false,
@@ -588,6 +670,41 @@ function localRuntimeModelConfig(
 
   if (modelName?.startsWith(STALE_CODEX_PROVIDER_MODEL_PREFIX)) {
     throw new Error('Codex config.toml provider is no longer configured')
+  }
+
+  if (isCloudModelType(modelType)) {
+    if (!modelName || !cloudModelGateway) {
+      throw new Error('Cloud model gateway is not configured')
+    }
+    const namespace = modelOptions?.[CLOUD_MODEL_NAMESPACE_OPTION]
+    const resourceUserId = modelOptions?.[CLOUD_MODEL_RESOURCE_USER_ID_OPTION]
+    if (!namespace || !resourceUserId || !/^\d+$/.test(resourceUserId)) {
+      throw new Error('Cloud model identity is incomplete')
+    }
+    const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
+    return {
+      model: 'openai',
+      model_id: modelName,
+      api_format: RESPONSES_API_FORMAT,
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      base_url: cloudModelGateway.baseUrl,
+      api_key: cloudModelGateway.apiKey,
+      default_headers: {
+        'X-Wegent-Model-Type': modelType,
+        'X-Wegent-Model-Namespace': namespace,
+        'X-Wegent-Model-User-Id': resourceUserId,
+      },
+      ...(Number.isFinite(contextWindow) && contextWindow > 0
+        ? { model_context_window: contextWindow }
+        : {}),
+      codex_responses_compat_proxy: true,
+      runtime_config: {
+        codex: {
+          use_user_config: false,
+          configured: true,
+        },
+      },
+    }
   }
 
   const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
@@ -608,10 +725,36 @@ function localRuntimeModelConfig(
   }
 }
 
+function applyLocalProxyConfig(modelConfig: Record<string, unknown>): Record<string, unknown> {
+  const proxyUrl = getLocalProxyUrl().trim()
+  if (!proxyUrl) return modelConfig
+
+  const runtimeConfig = {
+    ...((modelConfig.runtime_config as Record<string, unknown> | undefined) ?? {}),
+  }
+  const codexRuntimeConfig = {
+    ...((runtimeConfig.codex as Record<string, unknown> | undefined) ?? {}),
+    use_proxy: true,
+    proxy_configured: true,
+  }
+
+  return {
+    ...modelConfig,
+    proxy: {
+      url: proxyUrl,
+    },
+    runtime_config: {
+      ...runtimeConfig,
+      codex: codexRuntimeConfig,
+    },
+  }
+}
+
 function applyRuntimeModelOptions(
   modelConfig: Record<string, unknown>,
   modelOptions?: Record<string, string>
 ): Record<string, unknown> {
+  modelConfig = applyLocalProxyConfig(modelConfig)
   const reasoning = runtimeReasoning(modelOptions)
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(modelOptions)
@@ -710,7 +853,11 @@ function normalizeModifiedAt(value: unknown, errorMessage: string): string | nul
   throw new Error(errorMessage)
 }
 
-function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFileEntry {
+function normalizeWorkspaceEntry(
+  value: unknown,
+  responseRootPath: string,
+  requestedRootPath: string
+): WorkspaceFileEntry {
   const record = recordValue(value)
   if (
     typeof record.name !== 'string' ||
@@ -721,10 +868,11 @@ function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFil
     throw new Error('Invalid workspace tree response')
   }
   const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  requireWorkspacePathWithin(path, rootPath, 'Invalid workspace tree response')
+  requireWorkspacePathWithin(path, responseRootPath, 'Invalid workspace tree response')
+  const requestedPath = `${requestedRootPath}${path.slice(responseRootPath.length)}`
   return {
     name: record.name,
-    path,
+    path: requestedPath,
     isDirectory: record.is_directory,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
@@ -741,12 +889,14 @@ function normalizeWorkspaceTree(output: unknown, requestedPath: string): Workspa
     throw new Error('Invalid workspace tree response')
   }
   const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  if (path !== normalizedRequestedPath) {
+  if (path.split('/').pop() !== normalizedRequestedPath.split('/').pop()) {
     throw new Error('Invalid workspace tree response')
   }
   return {
-    path,
-    entries: record.entries.map(entry => normalizeWorkspaceEntry(entry, path)),
+    path: normalizedRequestedPath,
+    entries: record.entries.map(entry =>
+      normalizeWorkspaceEntry(entry, path, normalizedRequestedPath)
+    ),
   }
 }
 
@@ -768,17 +918,66 @@ function normalizeWorkspaceTextFile(
   ) {
     throw new Error('Invalid workspace text file response')
   }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace text file response')
-  if (path !== normalizedRequestedFilePath) {
+  const responsePath = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace text file response'
+  )
+  const requestedName = normalizedRequestedFilePath.split('/').pop()
+  if (record.name !== requestedName || responsePath.split('/').pop() !== requestedName) {
     throw new Error('Invalid workspace text file response')
   }
   return {
-    path,
+    path: normalizedRequestedFilePath,
     name: record.name,
     content: record.content,
+    editable: record.editable === true && typeof record.revision === 'string',
+    revision: typeof record.revision === 'string' ? record.revision : '',
     truncated: record.truncated,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
+  }
+}
+
+function normalizeWorkspaceFileChunk(
+  output: unknown,
+  requestedFilePath: string,
+  requestedOffset: number
+): WorkspaceFileChunkResponse {
+  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
+    requestedFilePath,
+    'Workspace file path must be absolute'
+  )
+  const record = recordValue(output)
+  if (
+    typeof record.path !== 'string' ||
+    typeof record.name !== 'string' ||
+    typeof record.content_base64 !== 'string' ||
+    typeof record.offset !== 'number' ||
+    typeof record.eof !== 'boolean' ||
+    typeof record.size !== 'number'
+  ) {
+    throw new Error('Invalid workspace file chunk response')
+  }
+  const responsePath = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace file chunk response'
+  )
+  const requestedName = normalizedRequestedFilePath.split('/').pop()
+  if (
+    record.name !== requestedName ||
+    responsePath.split('/').pop() !== requestedName ||
+    record.offset !== requestedOffset
+  ) {
+    throw new Error('Invalid workspace file chunk response')
+  }
+  return {
+    path: normalizedRequestedFilePath,
+    name: record.name,
+    contentBase64: record.content_base64,
+    offset: record.offset,
+    eof: record.eof,
+    size: record.size,
+    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace file chunk response'),
   }
 }
 
@@ -839,7 +1038,9 @@ interface BuildLocalRuntimeExecutionRequestInput {
   message: string
   turnSeed: number
   modelId?: string
+  modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
+  cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
@@ -859,7 +1060,12 @@ function buildLocalRuntimeExecutionRequest(
   )
   const taskId = input.taskId || derivedTaskId
   const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(input.modelId, input.modelOptions),
+    localRuntimeModelConfig(
+      input.modelId,
+      input.modelType,
+      input.modelOptions,
+      input.cloudModelGateway
+    ),
     input.modelOptions
   )
   const reasoning = runtimeReasoning(input.modelOptions)
@@ -988,35 +1194,19 @@ async function prepareLocalRuntimeWorkspace(
     throw new Error('Project directory is not a Git repository')
   }
 
-  const projectWorkspaceRootResponse = await executeLocalDeviceCommand(
-    requestWithLocalDevice,
-    {
-      command_key: 'project_workspace_root',
-      timeout_seconds: 15,
-    },
-    'Failed to resolve project workspace root'
-  )
   const [taskId] = createRuntimeExecutionIds(data)
-  const worktreePath = buildManagedWorktreePath({
-    projectWorkspaceRoot: commandText(projectWorkspaceRootResponse),
-    sourceWorkspacePath,
+  const response = await requestWithLocalDevice<
+    RuntimeWorktreeMutationResponse,
+    RuntimeWorktreePrepareRequest
+  >('runtime.worktrees.prepare', {
+    deviceId: data.deviceId ?? LOCAL_DEVICE_ID,
+    sourcePath: sourceWorkspacePath,
     worktreeId: taskId,
+    ...(branch ? { ref: branch } : {}),
   })
-  await executeLocalDeviceCommand(
-    requestWithLocalDevice,
-    {
-      command_key: 'git_worktree_add',
-      args: branch
-        ? [sourceWorkspacePath, worktreePath, branch]
-        : [sourceWorkspacePath, worktreePath],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
-    },
-    'Failed to create Git worktree'
-  )
 
   return {
-    workspacePath: worktreePath,
+    workspacePath: response.path ?? response.worktree.path,
     workspaceSource: 'git_worktree',
     branch,
   }
@@ -1025,7 +1215,8 @@ async function prepareLocalRuntimeWorkspace(
 async function createLocalRuntimeTaskPayload(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
-  requestWithLocalDevice: RequestWithLocalDevice
+  requestWithLocalDevice: RequestWithLocalDevice,
+  cloudModelGateway?: CloudModelGateway
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = executionWithWorkspace(data, runtimeWorkspace)
@@ -1052,7 +1243,9 @@ async function createLocalRuntimeTaskPayload(
       message: normalizedData.message,
       turnSeed,
       modelId: normalizedData.modelId,
+      modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       attachments: normalizedData.attachments,
       localDeviceId,
@@ -1067,7 +1260,8 @@ async function createLocalRuntimeTaskPayload(
 
 function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
-  localDeviceId: string
+  localDeviceId: string,
+  cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
@@ -1110,7 +1304,9 @@ function createLocalRuntimeSendPayload(
         message: normalizedData.message,
         turnSeed,
         modelId: normalizedData.modelId,
+        modelType: normalizedData.modelType,
         modelOptions: normalizedData.modelOptions,
+        cloudModelGateway,
         attachments: normalizedData.attachments,
         localDeviceId,
         workspacePath,
@@ -1137,7 +1333,9 @@ function createLocalRuntimeSendPayload(
       message: normalizedData.message,
       turnSeed,
       modelId: normalizedData.modelId,
+      modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
+      cloudModelGateway,
       attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath,
@@ -1197,6 +1395,10 @@ function normalizeRuntimeWorkDeviceId(
     ...runtimeWork,
     projects: runtimeWork.projects.map(project => ({
       ...project,
+      project: {
+        ...project.project,
+        stateDeviceId: project.project.stateDeviceId ?? localDeviceId,
+      },
       deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
     })),
     chats: runtimeWork.chats.map(normalizeWorkspace),
@@ -1254,8 +1456,25 @@ function adaptRuntimeWorkListResponse(
         }))
       : []
   const projects: RuntimeWorkListResponse['projects'] = []
+  const projectsByKey = new Map<string, RuntimeWorkListResponse['projects'][number]>()
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalTasks = 0
+  const localWorkspaceLabels = new Set<string>()
+  for (const rawWorkspace of workspaces) {
+    const workspace = recordValue(rawWorkspace)
+    const workspacePath =
+      stringValue(workspace.workspacePath) ??
+      stringValue(workspace.workspace_path) ??
+      stringValue(workspace.projectWorkspacePath) ??
+      stringValue(workspace.project_workspace_path) ??
+      stringValue(workspace.cwd) ??
+      stringValue(workspace.path)
+    if (!workspacePath) continue
+    const workspaceSource =
+      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    if (workspaceSource && workspaceSource !== 'local') continue
+    localWorkspaceLabels.add(workspaceLabel(workspacePath, workspace.label))
+  }
 
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
@@ -1285,20 +1504,28 @@ function adaptRuntimeWorkListResponse(
     const workspaceKind = workspaceKindFromWorkspace ?? (hasChatTask ? 'chat' : 'workspace')
     const worktreeId = stringValue(workspace.worktreeId) ?? stringValue(workspace.worktree_id)
     const label = workspaceLabel(workspacePath, workspace.label)
+    const workspaceSource =
+      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    const remoteHostId =
+      stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id)
+    const workspaceDeviceId =
+      workspaceSource === 'remote' && remoteHostId ? remoteHostId : localDeviceId
+    if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
+      continue
+    }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: null,
       projectId: null,
-      deviceId: localDeviceId,
-      deviceName: 'Local Executor',
-      deviceStatus: 'online',
-      available: true,
+      deviceId: workspaceDeviceId,
+      deviceName: remoteHostId ?? 'Local Executor',
+      deviceStatus: workspaceDeviceId === localDeviceId ? 'online' : 'offline',
+      available: workspaceDeviceId === localDeviceId,
       workspacePath,
       workspaceKind,
       worktreeId,
       label,
-      workspaceSource:
-        stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source),
-      remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
+      workspaceSource,
+      remoteHostId,
       mapped: true,
       tasks,
     }
@@ -1308,47 +1535,94 @@ function adaptRuntimeWorkListResponse(
       continue
     }
 
-    projects.push({
+    const projectKey =
+      stringValue(workspace.projectKey) ??
+      stringValue(workspace.project_key) ??
+      `local:${workspacePath}`
+    const existingProject = projectsByKey.get(projectKey)
+    if (existingProject) {
+      existingProject.deviceWorkspaces.push(deviceWorkspace)
+      existingProject.totalTasks = (existingProject.totalTasks ?? 0) + tasks.length
+      continue
+    }
+    const rawRoots = Array.isArray(workspace.projectRoots)
+      ? workspace.projectRoots
+      : Array.isArray(workspace.project_roots)
+        ? workspace.project_roots
+        : [workspacePath]
+    const projectKind =
+      stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
+    const projectSource =
+      stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
+    const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
+    const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
-        key: `local:${workspacePath}`,
-        id: stableLocalId(workspacePath),
+        key: projectKey,
+        ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
+        id: stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
+        kind: projectKind,
+        source: projectSource,
+        stateDeviceId: localDeviceId,
+        roots: rawRoots
+          .map(root => stringValue(root))
+          .filter((root): root is string => Boolean(root))
+          .map(path => ({ kind: 'local', path })),
+        pinned: workspace.projectPinned === true || workspace.project_pinned === true,
+        pinnedOrder:
+          typeof projectPinnedOrder === 'number' && Number.isInteger(projectPinnedOrder)
+            ? projectPinnedOrder
+            : null,
+        active: workspace.projectActive === true || workspace.project_active === true,
+        appearance: (workspace.projectAppearance ?? workspace.project_appearance ?? null) as
+          | RuntimeWorkListResponse['projects'][number]['project']['appearance']
+          | null,
       },
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,
-    })
+    }
+    projectsByKey.set(projectKey, projectWork)
+    projects.push(projectWork)
   }
 
   return { projects, chats, totalTasks }
 }
 
-function createRuntimeWorkApi(
-  request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>,
-  getLocalDeviceId: () => Promise<string>
+export function createRuntimeWorkApiFromIpc(
+  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
+  getDefaultDeviceId: () => Promise<string>,
+  options: RuntimeWorkIpcOptions = {}
 ) {
+  const transportLabel = options.transportLabel ?? 'Local'
+  const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
+  const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
+  const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
-    normalizeLocalDeviceRecord(data as Record<string, unknown>, await getLocalDeviceId()) as T &
-      Record<string, unknown>
+    normalizeDeviceRecord(
+      data as Record<string, unknown>,
+      await resolveDeviceId(data as Record<string, unknown>)
+    ) as T & Record<string, unknown>
 
   const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
     data: TRequest
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
+    const deviceId = await resolveDeviceId(normalizedData)
     const startedAt = nowMs()
     const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript request', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript request`, {
           address: runtimeAddressDebug(normalizedData),
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
-      const response = await request<TResponse>(method, normalizedData)
+      const response = await request<TResponse>(method, normalizedData, deviceId)
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript response', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           messageCount: runtimeTranscriptMessageCount(response),
@@ -1357,7 +1631,7 @@ function createRuntimeWorkApi(
       return response
     } catch (error) {
       if (method === 'runtime.tasks.transcript') {
-        console.error('[Wework] Local runtime IPC transcript failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC transcript failed`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
@@ -1369,14 +1643,14 @@ function createRuntimeWorkApi(
 
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
       try {
-        const response = await request('runtime.tasks.list', {})
-        const runtimeWork = adaptRuntimeWorkListResponse(response, localDeviceId)
+        const response = await request('runtime.tasks.list', {}, localDeviceId)
+        const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
-        console.error('[Wework] Local runtime IPC list failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
         })
@@ -1410,14 +1684,19 @@ function createRuntimeWorkApi(
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return requestWithLocalDevice('runtime.tasks.search', data)
     },
+    searchRuntimeWorkspace(
+      data: RuntimeWorkspaceSearchRequest
+    ): Promise<RuntimeWorkspaceSearchResponse> {
+      return requestWithLocalDevice('runtime.workspace.search', data)
+    },
     revertRuntimeFileChanges(
       data: RuntimeFileChangesRevertRequest
     ): Promise<RuntimeFileChangesRevertResponse> {
       return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
-      const localDeviceId = await getLocalDeviceId()
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId)
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1431,11 +1710,11 @@ function createRuntimeWorkApi(
         address: runtimeAddressDebug(payload),
         payloadKeys: Object.keys(payload).sort(),
       })
-      return request('runtime.tasks.send', payload)
+      return request('runtime.tasks.send', payload, localDeviceId)
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
-      const localDeviceId = await getLocalDeviceId()
-      const payload = createLocalRuntimeSendPayload(data, localDeviceId)
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1449,7 +1728,40 @@ function createRuntimeWorkApi(
         address: runtimeAddressDebug(payload),
         payloadKeys: Object.keys(payload).sort(),
       })
-      return request('runtime.tasks.rollback', payload)
+      return request('runtime.tasks.rollback', payload, localDeviceId)
+    },
+    async compactRuntimeTask(data: RuntimeCompactRequest): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.compact',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+        },
+        localDeviceId
+      )
+    },
+    async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.guidance',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+          message: data.message,
+          ...(data.attachmentIds ? { attachmentIds: data.attachmentIds } : {}),
+          ...(data.attachments ? { attachments: data.attachments } : {}),
+          ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
+          ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
+          ...(data.additionalContext ? { additionalContext: data.additionalContext } : {}),
+          ...(data.additional_context ? { additional_context: data.additional_context } : {}),
+        },
+        localDeviceId
+      )
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
@@ -1472,6 +1784,57 @@ function createRuntimeWorkApi(
       data: RuntimeWorkspaceRemoveRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.remove', data)
+    },
+    reorderRuntimeProjects(
+      data: RuntimeProjectReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.reorder', data)
+    },
+    setRuntimeProjectPinned(
+      data: RuntimeProjectPinRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.pin', data)
+    },
+    setRuntimeProjectAppearance(
+      data: RuntimeProjectAppearanceRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.sync_remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.activate', data)
+    },
+    reorderRuntimeProjectTasks(
+      data: RuntimeProjectTaskReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.tasks.reorder', data)
+    },
+    setRuntimeTaskPinned(data: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.tasks.pin', data)
+    },
+    getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
+      return requestWithLocalDevice('runtime.worktrees.settings.get', data)
+    },
+    updateWorktreeSettings(data: RuntimeWorktreeSettingsPatch): Promise<RuntimeWorktreeSettings> {
+      return requestWithLocalDevice('runtime.worktrees.settings.update', data)
+    },
+    listWorktrees(data: { deviceId: string }): Promise<RuntimeWorktreeListResponse> {
+      return requestWithLocalDevice('runtime.worktrees.list', data)
+    },
+    prepareWorktree(data: RuntimeWorktreePrepareRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return requestWithLocalDevice('runtime.worktrees.prepare', data)
+    },
+    deleteWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return requestWithLocalDevice('runtime.worktrees.delete', data)
+    },
+    restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return requestWithLocalDevice('runtime.worktrees.restore', data)
     },
     bindRuntimeTaskImSessions() {
       return cloudConnectionRequired('bindRuntimeTaskImSessions')
@@ -1514,7 +1877,9 @@ function createRuntimeWorkApi(
       )
     },
     archiveAllConversations(): Promise<RuntimeArchivedConversationBulkResponse> {
-      return request('runtime.archived_conversations.archive_all', {})
+      return getDefaultDeviceId().then(deviceId =>
+        request('runtime.archived_conversations.archive_all', {}, deviceId)
+      )
     },
     unarchiveConversation(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.unarchive', data)
@@ -1527,20 +1892,28 @@ function createRuntimeWorkApi(
     ): Promise<RuntimeArchivedConversationBulkResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.delete_bulk', data)
     },
+    previewArchivedConversationCleanup(data: RuntimeArchivedConversationBulkRequest) {
+      return requestWithLocalDevice('runtime.archived_conversations.cleanup_preview', data)
+    },
+    cleanupArchivedConversations(data: RuntimeArchivedConversationBulkRequest) {
+      return requestWithLocalDevice('runtime.archived_conversations.cleanup', data)
+    },
     cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,
-        requestWithLocalDevice
+        requestWithLocalDevice,
+        options.cloudModelGateway
       )
       debugLocalRuntimeCreatePayload(data, payload)
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
-        payload
+        payload,
+        localDeviceId
       )
       const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
       const executionRequest = recordValue(payload.executionRequest)
@@ -1550,6 +1923,9 @@ function createRuntimeWorkApi(
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
         createRuntimeExecutionIds(data)[0]
+      const runtimeHandle = recordValue(
+        responseRecord.runtimeHandle ?? responseRecord.runtime_handle
+      )
       return {
         ...response,
         accepted: response.accepted ?? true,
@@ -1557,6 +1933,7 @@ function createRuntimeWorkApi(
         taskId,
         workspacePath: response.workspacePath ?? workspacePath,
         runtime: response.runtime ?? data.runtime,
+        ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
@@ -1626,6 +2003,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       path?: string
       cwd?: string
       args?: string[]
+      stdin?: string
       env?: Record<string, unknown>
       timeout_seconds?: number
       max_output_bytes?: number
@@ -1722,10 +2100,44 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       assertCommandSuccess(response, 'Failed to read workspace file')
       return normalizeWorkspaceTextFile(response.stdout, filePath)
     },
+    async readWorkspaceFileChunk(deviceId: string, filePath: string, offset: number) {
+      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_read_file_chunk',
+        path: parentPath,
+        args: [fileName, String(offset)],
+        timeout_seconds: 30,
+        max_output_bytes: 1024 * 1024 * 2,
+      })
+      assertCommandSuccess(response, 'Failed to read workspace file')
+      return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
+    },
+    async writeWorkspaceTextFile(
+      deviceId: string,
+      filePath: string,
+      content: string,
+      expectedRevision: string
+    ) {
+      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_write_text_file',
+        path: parentPath,
+        args: [fileName, expectedRevision],
+        stdin: content,
+        timeout_seconds: 15,
+        max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
+      })
+      assertCommandSuccess(response, 'Failed to save workspace file')
+      return normalizeWorkspaceTextFile(response.stdout, filePath)
+    },
   }
-  const runtimeWorkApi = createRuntimeWorkApi(request, getLocalDeviceId) as unknown as NonNullable<
-    WorkbenchServices['runtimeWorkApi']
-  >
+  const runtimeWorkApi = createRuntimeWorkApiFromIpc(
+    (method, params) => request(method, params),
+    getLocalDeviceId,
+    {
+      cloudModelGateway: deps.cloudModelGateway,
+    }
+  ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 
   return {
     teamApi: {

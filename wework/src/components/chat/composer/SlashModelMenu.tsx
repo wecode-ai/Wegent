@@ -1,6 +1,7 @@
 import { Check, Search } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import { useCallback, useMemo } from 'react'
+import { isImeEnterEvent } from '@/lib/ime'
 import { getModelDisplayLabel, getModelUiMetadata, groupModelsByFamily } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
@@ -126,6 +127,7 @@ export function SlashModelMenu({
       onSelectedIndexChange(Math.max(selectedIndex - 1, 0))
       return
     }
+    if (isImeEnterEvent(event)) return
     if (event.key === 'Enter' && filteredModels[selectedIndex]) {
       event.preventDefault()
       handleSelect(filteredModels[selectedIndex])
@@ -154,7 +156,7 @@ export function SlashModelMenu({
             onSelectedIndexChange(0)
           }}
           placeholder={searchPlaceholder}
-          className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted"
+          className="min-w-0 flex-1 bg-transparent text-sm leading-[18px] text-text-primary outline-none placeholder:text-text-muted"
         />
       </label>
 
@@ -190,11 +192,11 @@ export function SlashModelMenu({
                   highlighted ? 'bg-muted' : 'hover:bg-muted',
                 ].join(' ')}
               >
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-text-primary">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-text-primary">
                   {getModelDisplayLabel(model, selectedModelOptions, resolveLabel)}
                 </span>
                 {description && (
-                  <span className="hidden min-w-0 flex-[1.35] truncate text-[13px] leading-5 text-text-muted sm:block">
+                  <span className="hidden min-w-0 flex-[1.35] truncate text-sm leading-5 text-text-muted sm:block">
                     {description}
                   </span>
                 )}
@@ -204,9 +206,7 @@ export function SlashModelMenu({
           })}
         </div>
       ) : (
-        <div className="px-2.5 py-3 text-[13px] leading-[18px] text-text-muted">
-          {noResultsLabel}
-        </div>
+        <div className="px-2.5 py-3 text-sm leading-[18px] text-text-muted">{noResultsLabel}</div>
       )}
     </div>
   )

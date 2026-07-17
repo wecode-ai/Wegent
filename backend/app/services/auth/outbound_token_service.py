@@ -22,6 +22,7 @@ from app.schemas.token_issuer import (
     SigningKeyKind,
     SigningKeyResponse,
     TokenIssuerCreateRequest,
+    TokenIssueRequest,
     TokenIssueResponse,
     TokenIssuerKind,
     TokenIssuerResponse,
@@ -340,6 +341,7 @@ class OutboundTokenService:
         issuer_id: int,
         user: User,
         expires_in: Optional[int] = None,
+        request: Optional[TokenIssueRequest] = None,
     ) -> TokenIssueResponse:
         issuer_row = self._get_kind_or_raise(
             db, TOKEN_ISSUER_KIND, issuer_id, TokenIssuerNotFoundError
@@ -348,7 +350,14 @@ class OutboundTokenService:
         if not issuer.spec.enabled or not issuer_row.is_active:
             raise OutboundTokenValidationError("Token issuer is disabled")
 
-        ttl = issuer.spec.defaultTtlSeconds if expires_in is None else expires_in
+        effective_expires_in = expires_in
+        if request is not None and request.expires_in is not None:
+            effective_expires_in = request.expires_in
+        ttl = (
+            issuer.spec.defaultTtlSeconds
+            if effective_expires_in is None
+            else effective_expires_in
+        )
         if ttl <= 0:
             raise OutboundTokenValidationError("Requested TTL must be positive")
         if ttl > issuer.spec.maxTtlSeconds:
@@ -370,6 +379,12 @@ class OutboundTokenService:
             "user_name": user.user_name,
             "issuer_id": issuer_row.id,
         }
+        extra_claims = self._collect_extra_claims(
+            db, user=user, issuer=issuer, request=request
+        )
+        for key, value in extra_claims.items():
+            if key not in claims:  # standard reserved claims are never overridden
+                claims[key] = value
         token = jwt.encode(
             claims,
             signing_key.private_key_pem,
@@ -393,6 +408,23 @@ class OutboundTokenService:
             issued_at=claims["iat"],
             expires_at=claims["exp"],
         )
+
+    def _collect_extra_claims(
+        self,
+        db: Session,
+        *,
+        user: User,
+        issuer: TokenIssuerKind,
+        request: Optional[TokenIssueRequest] = None,
+    ) -> dict:
+        """Extension point for deployment-specific extra JWT claims.
+
+        Open-source core contributes none. Deployments may patch this to
+        inject additional claims (e.g. an employee id). The caller merges the
+        returned mapping into the token but never lets it override standard
+        reserved claims.
+        """
+        return {}
 
     def _to_signing_key_response(self, row: Kind) -> SigningKeyResponse:
         resource = SigningKeyKind.model_validate(row.json)

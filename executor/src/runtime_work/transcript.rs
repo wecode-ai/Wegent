@@ -10,11 +10,46 @@ use super::util::{
     bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
     is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
     is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_id, item_type,
-    normalize_workspace_path, now_ms, raw_string_field, reasoning_content, string_field,
-    timestamp_ms_field,
+    normalize_workspace_path, now_ms, raw_string_field, raw_string_field_ref, reasoning_content,
+    string_field, timestamp_ms_field,
 };
 
+const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
+const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
+
+#[derive(Clone, Copy)]
+pub(crate) struct TranscriptBuildOptions {
+    truncate_content: bool,
+}
+
+impl TranscriptBuildOptions {
+    fn truncated() -> Self {
+        Self {
+            truncate_content: true,
+        }
+    }
+
+    fn full_content() -> Self {
+        Self {
+            truncate_content: false,
+        }
+    }
+}
+
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
+    transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::truncated())
+}
+
+pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
+    transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
+}
+
+fn transcript_messages_with_options(
+    thread: &Value,
+    device_id: &str,
+    options: TranscriptBuildOptions,
+) -> Vec<Value> {
     let mut messages = Vec::new();
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
     let root_thread_id = string_field(thread, "id");
@@ -74,6 +109,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         },
                         &mut assistant,
                         false,
+                        options,
                     );
                     let pushed_user = push_user_message_once(
                         &mut messages,
@@ -89,8 +125,12 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         ));
                     }
                 }
-                "reasoning" => push_reasoning_block(&mut assistant.blocks, &item, created_at),
-                "plan" => assistant.blocks.push(plan_block(&item, created_at)),
+                "reasoning" => {
+                    push_reasoning_block(&mut assistant.blocks, &item, created_at, options)
+                }
+                "plan" => assistant
+                    .blocks
+                    .push(plan_block(&item, created_at, options)),
                 "commandexecution" | "functioncall" | "customtoolcall" | "dynamictoolcall"
                 | "mcptoolcall" | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
                 | "imagegeneration" | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
@@ -100,6 +140,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         device_id,
                         &workspace_path,
                         created_at,
+                        options,
                     ) {
                         assistant.blocks.push(block);
                     }
@@ -107,8 +148,9 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 "functioncalloutput"
                 | "customtoolcalloutput"
                 | "toolsearchoutput"
-                | "execcommandend" => {
-                    merge_tool_output(&mut assistant.blocks, &item, created_at);
+                | "execcommandend"
+                | "mcptoolcallend" => {
+                    merge_tool_output(&mut assistant.blocks, &item, created_at, options);
                 }
                 "filechange" => {
                     if let Some(summary) = file_changes_from_file_change_item(
@@ -124,6 +166,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                                 device_id,
                                 &workspace_path,
                                 created_at,
+                                options,
                             ) {
                                 assistant.blocks.push(block);
                             }
@@ -146,6 +189,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                                 device_id,
                                 &workspace_path,
                                 created_at,
+                                options,
                             ) {
                                 assistant.blocks.push(block);
                             }
@@ -161,6 +205,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         device_id,
                         &workspace_path,
                         created_at,
+                        options,
                     ) {
                         assistant.blocks.push(block);
                     }
@@ -171,9 +216,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
-                        &mut assistant.blocks,
-                        &mut assistant.assistant_parts,
-                        &mut assistant.memory_citations,
+                        &mut assistant,
+                        options,
                     );
                     if let Some(file_changes) = file_changes(&item) {
                         assistant.file_changes =
@@ -206,6 +250,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             },
                             &mut assistant,
                             false,
+                            options,
                         );
                         let pushed_user = push_user_message_once(
                             &mut messages,
@@ -227,9 +272,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             created_at,
                             fold_commentary,
                             turn_cancelled && fold_commentary,
-                            &mut assistant.blocks,
-                            &mut assistant.assistant_parts,
-                            &mut assistant.memory_citations,
+                            &mut assistant,
+                            options,
                         );
                         if let Some(file_changes) = file_changes(&item) {
                             assistant.file_changes =
@@ -244,9 +288,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
-                        &mut assistant.blocks,
-                        &mut assistant.assistant_parts,
-                        &mut assistant.memory_citations,
+                        &mut assistant,
+                        options,
                     );
                     if let Some(file_changes) = file_changes(&item) {
                         assistant.file_changes =
@@ -255,7 +298,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 }
                 _ => {
                     if is_default_tool_output_item(&item) {
-                        merge_tool_output(&mut assistant.blocks, &item, created_at);
+                        merge_tool_output(&mut assistant.blocks, &item, created_at, options);
                     } else if is_default_tool_item(&item) {
                         if let Some(block) = workbench_block_from_codex_item(
                             &item,
@@ -263,6 +306,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             device_id,
                             &workspace_path,
                             created_at,
+                            options,
                         ) {
                             assistant.blocks.push(block);
                         }
@@ -282,6 +326,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
             },
             &mut assistant,
             true,
+            options,
         );
     }
     make_transcript_ids_unique(&mut messages);
@@ -344,8 +389,14 @@ pub(crate) fn workbench_block_from_notification(
     status: Option<&str>,
 ) -> Option<Value> {
     let item = notification_item(params);
-    let mut block =
-        workbench_block_from_codex_item(&item, turn_id, device_id, workspace_path, now_ms())?;
+    let mut block = workbench_block_from_codex_item(
+        &item,
+        turn_id,
+        device_id,
+        workspace_path,
+        now_ms(),
+        TranscriptBuildOptions::truncated(),
+    )?;
     if let Some(status) = status {
         if let Some(object) = block.as_object_mut() {
             object.insert("status".to_owned(), Value::String(status.to_owned()));
@@ -362,11 +413,25 @@ pub(crate) fn completed_workbench_block_from_notification(
 ) -> Option<Value> {
     let block =
         workbench_block_from_notification(params, turn_id, device_id, workspace_path, None)?;
-    block
+    if is_completed_workbench_block(&block) {
+        Some(block)
+    } else {
+        None
+    }
+}
+
+fn is_completed_workbench_block(block: &Value) -> bool {
+    if block
         .get("type")
         .and_then(Value::as_str)
         .is_some_and(|block_type| block_type == "file_changes")
-        .then_some(block)
+    {
+        return true;
+    }
+    block
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .is_some_and(|tool_name| tool_name == "context_compaction")
 }
 
 pub(crate) fn file_changes_block_from_patch_updated(
@@ -409,6 +474,7 @@ pub(crate) fn workbench_block_from_codex_item(
     device_id: &str,
     workspace_path: &str,
     fallback_timestamp: i64,
+    options: TranscriptBuildOptions,
 ) -> Option<Value> {
     let item_type = item_type(item);
     if item_type == "filechange" {
@@ -426,7 +492,7 @@ pub(crate) fn workbench_block_from_codex_item(
         ));
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
-        return Some(tool_block(item, fallback_timestamp));
+        return Some(tool_block(item, fallback_timestamp, options));
     }
     None
 }
@@ -439,13 +505,28 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     {
         return None;
     }
+    let status = tool_status(&item);
+    let status =
+        if matches!(item_type.as_str(), "websearch" | "websearchcall") && status == "pending" {
+            "done".to_owned()
+        } else {
+            status
+        };
     let mut updates = json!({
-        "status": tool_status(&item),
-        "tool_output": tool_output(&item),
+        "status": status,
     });
+    if let Some(object) = updates.as_object_mut() {
+        insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
+        insert_image_generation_render_payload(object, &item);
+    }
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
             object.insert("tool_input".to_owned(), input);
+        }
+    }
+    if matches!(item_type.as_str(), "websearch" | "websearchcall") {
+        if let Some(object) = updates.as_object_mut() {
+            object.insert("tool_input".to_owned(), tool_input(&item));
         }
     }
     Some((tool_call_id(&item), updates))
@@ -809,6 +890,7 @@ fn push_accumulated_assistant(
     context: AssistantEmitContext<'_>,
     assistant: &mut AssistantTurnAccumulation,
     include_file_only: bool,
+    options: TranscriptBuildOptions,
 ) {
     let should_emit = if include_file_only {
         assistant.has_output()
@@ -837,6 +919,7 @@ fn push_accumulated_assistant(
         file_changes: assistant.file_changes.clone(),
         assistant_parts: &assistant.assistant_parts,
         memory_citations: &assistant.memory_citations,
+        options,
     }));
     *segment_index += 1;
     assistant.clear_after_emit();
@@ -1030,27 +1113,40 @@ fn strip_url_query(source: &str) -> &str {
     source.split(['?', '#']).next().unwrap_or(source)
 }
 
-fn push_reasoning_block(blocks: &mut Vec<Value>, item: &Value, created_at: i64) {
+fn push_reasoning_block(
+    blocks: &mut Vec<Value>,
+    item: &Value,
+    created_at: i64,
+    options: TranscriptBuildOptions,
+) {
     if let Some(content) = reasoning_content(item) {
-        blocks.push(json!({
+        let mut block = json!({
             "id": item_id(item, "thinking"),
             "type": "thinking",
             "content": content,
             "status": "done",
             "timestamp": created_at,
-        }));
+        });
+        if options.truncate_content {
+            limit_content_field(&mut block, MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS);
+        }
+        blocks.push(block);
     }
 }
 
-fn plan_block(item: &Value, fallback_timestamp: i64) -> Value {
-    json!({
+fn plan_block(item: &Value, fallback_timestamp: i64, options: TranscriptBuildOptions) -> Value {
+    let mut block = json!({
         "id": format!("plan-{}", item_id(item, "plan")),
         "type": "plan",
         "process_kind": "plan",
         "content": extract_text(item).unwrap_or_default(),
         "status": "done",
         "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
-    })
+    });
+    if options.truncate_content {
+        limit_content_field(&mut block, MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS);
+    }
+    block
 }
 
 fn collect_assistant_message(
@@ -1058,28 +1154,37 @@ fn collect_assistant_message(
     fallback_timestamp: i64,
     fold_commentary: bool,
     interleave_visible_text: bool,
-    blocks: &mut Vec<Value>,
-    assistant_parts: &mut Vec<String>,
-    memory_citations: &mut Vec<Value>,
+    assistant: &mut AssistantTurnAccumulation,
+    options: TranscriptBuildOptions,
 ) {
     if let Some(content) = extract_text(item) {
         if interleave_visible_text {
-            blocks.push(process_text_block(item, content, fallback_timestamp));
+            assistant.blocks.push(process_text_block(
+                item,
+                content,
+                fallback_timestamp,
+                options,
+            ));
         } else {
             match assistant_message_phase(item, fold_commentary) {
                 AssistantMessagePhase::Process => {
-                    blocks.push(process_text_block(item, content, fallback_timestamp));
+                    assistant.blocks.push(process_text_block(
+                        item,
+                        content,
+                        fallback_timestamp,
+                        options,
+                    ));
                 }
                 AssistantMessagePhase::Final => {
-                    if !duplicates_completed_plan_block(&content, blocks) {
-                        assistant_parts.push(content);
+                    if !duplicates_completed_plan_block(&content, &assistant.blocks) {
+                        assistant.assistant_parts.push(content);
                     }
                 }
             }
         }
     }
     if let Some(memory_citation) = memory_citation(item) {
-        memory_citations.push(memory_citation);
+        assistant.memory_citations.push(memory_citation);
     }
 }
 
@@ -1121,14 +1226,23 @@ fn normalized_phase_or_status(value: String) -> String {
     value.replace(['_', '-'], "").to_ascii_lowercase()
 }
 
-fn process_text_block(item: &Value, content: String, fallback_timestamp: i64) -> Value {
-    json!({
+fn process_text_block(
+    item: &Value,
+    content: String,
+    fallback_timestamp: i64,
+    options: TranscriptBuildOptions,
+) -> Value {
+    let mut block = json!({
         "id": item_id(item, "text"),
         "type": "text",
         "content": content,
         "status": "done",
         "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
-    })
+    });
+    if options.truncate_content {
+        limit_content_field(&mut block, MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS);
+    }
+    block
 }
 
 fn guidance_block(item: &Value, timestamp: i64) -> Value {
@@ -1173,6 +1287,7 @@ struct AssistantMessageDraft<'a> {
     file_changes: Option<Value>,
     assistant_parts: &'a [String],
     memory_citations: &'a [Value],
+    options: TranscriptBuildOptions,
 }
 
 fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
@@ -1185,6 +1300,9 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "createdAt": draft.created_at,
         "blocks": draft.blocks,
     });
+    if draft.options.truncate_content {
+        limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
+    }
     if draft.status != "streaming" {
         if let Some(completed_at) = draft.completed_at {
             if let Some(object) = message.as_object_mut() {
@@ -1215,39 +1333,52 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
     message
 }
 
-fn command_block(item: &Value, timestamp: i64) -> Value {
-    json!({
+fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
+    let mut block = json!({
         "id": item_id(item, "tool"),
         "type": "tool",
         "tool_use_id": item_id(item, "tool"),
         "tool_name": "bash",
         "tool_input": command_input(item),
-        "tool_output": command_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
-    })
+    });
+    if let Some(object) = block.as_object_mut() {
+        insert_tool_output_fields(object, item, options);
+        insert_image_generation_render_payload(object, item);
+    }
+    block
 }
 
-fn tool_block(item: &Value, timestamp: i64) -> Value {
+fn tool_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
     if matches!(
         item_type(item).as_str(),
         "commandexecution" | "shellcall" | "localshellcall"
     ) {
-        return command_block(item, timestamp);
+        return command_block(item, timestamp, options);
     }
-    json!({
+    let mut block = json!({
         "id": tool_call_id(item),
         "type": "tool",
         "tool_use_id": tool_call_id(item),
         "tool_name": tool_name(item),
         "tool_input": tool_input(item),
-        "tool_output": tool_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
-    })
+    });
+    if let Some(object) = block.as_object_mut() {
+        insert_tool_output_fields(object, item, options);
+        insert_image_generation_render_payload(object, item);
+    }
+    block
 }
 
-fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
+fn merge_tool_output(
+    blocks: &mut Vec<Value>,
+    item: &Value,
+    timestamp: i64,
+    options: TranscriptBuildOptions,
+) {
     let call_id = tool_call_id(item);
     if let Some(block) = blocks.iter_mut().rev().find(|block| {
         block
@@ -1257,7 +1388,8 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
     }) {
         if let Some(object) = block.as_object_mut() {
             merge_tool_input(object, command_input_from_output(item));
-            object.insert("tool_output".to_owned(), tool_output(item));
+            insert_tool_output_fields(object, item, options);
+            insert_image_generation_render_payload(object, item);
             object.insert("status".to_owned(), Value::String(tool_status(item)));
         }
         return;
@@ -1267,16 +1399,61 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
         "type": "tool",
         "tool_use_id": tool_call_id(item),
         "tool_name": tool_name(item),
-        "tool_output": tool_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
     });
+    if let Some(object) = block.as_object_mut() {
+        insert_tool_output_fields(object, item, options);
+        insert_image_generation_render_payload(object, item);
+    }
     if let Some(input) = command_input_from_output(item) {
         if let Some(object) = block.as_object_mut() {
             object.insert("tool_input".to_owned(), input);
         }
     }
     blocks.push(block);
+}
+
+fn insert_tool_output_fields(
+    object: &mut Map<String, Value>,
+    item: &Value,
+    options: TranscriptBuildOptions,
+) {
+    let output = limited_tool_output(item, options);
+    object.insert("tool_output".to_owned(), output.value);
+    if output.truncated {
+        object.insert("tool_output_truncated".to_owned(), Value::Bool(true));
+        object.insert(
+            "tool_output_original_bytes".to_owned(),
+            json!(output.original_bytes),
+        );
+    } else {
+        object.remove("tool_output_truncated");
+        object.remove("tool_output_original_bytes");
+    }
+}
+
+fn insert_image_generation_render_payload(object: &mut Map<String, Value>, item: &Value) {
+    if item_type(item) != "imagegeneration" {
+        return;
+    }
+    let mut payload = Map::from_iter([(
+        "kind".to_owned(),
+        Value::String("image_generation".to_owned()),
+    )]);
+    if let Some(result) = raw_string_field(item, "result").filter(|result| !result.is_empty()) {
+        payload.insert("imageBase64".to_owned(), Value::String(result));
+    }
+    if let Some(prompt) =
+        string_field(item, "revisedPrompt").or_else(|| string_field(item, "revised_prompt"))
+    {
+        payload.insert("revisedPrompt".to_owned(), Value::String(prompt));
+    }
+    if let Some(path) = string_field(item, "savedPath").or_else(|| string_field(item, "saved_path"))
+    {
+        payload.insert("savedPath".to_owned(), Value::String(path));
+    }
+    object.insert("render_payload".to_owned(), Value::Object(payload));
 }
 
 fn command_input(item: &Value) -> Value {
@@ -1288,11 +1465,101 @@ fn command_input(item: &Value) -> Value {
     })
 }
 
-fn command_output(item: &Value) -> String {
-    raw_string_field(item, "aggregatedOutput")
-        .or_else(|| raw_string_field(item, "aggregated_output"))
-        .or_else(|| raw_string_field(item, "output"))
-        .unwrap_or_default()
+#[derive(Debug)]
+struct LimitedToolOutput {
+    value: Value,
+    truncated: bool,
+    original_bytes: usize,
+}
+
+fn limited_tool_output(item: &Value, options: TranscriptBuildOptions) -> LimitedToolOutput {
+    match raw_tool_output(item) {
+        RawToolOutput::String(text) => {
+            if options.truncate_content {
+                limited_tool_output_string(text)
+            } else {
+                LimitedToolOutput {
+                    value: Value::String(text.to_owned()),
+                    truncated: false,
+                    original_bytes: text.len(),
+                }
+            }
+        }
+        RawToolOutput::Value(value) => LimitedToolOutput {
+            value,
+            truncated: false,
+            original_bytes: 0,
+        },
+    }
+}
+
+enum RawToolOutput<'a> {
+    String(&'a str),
+    Value(Value),
+}
+
+fn limited_tool_output_string(text: &str) -> LimitedToolOutput {
+    let original_bytes = text.len();
+    if original_bytes <= MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES {
+        return LimitedToolOutput {
+            value: Value::String(text.to_owned()),
+            truncated: false,
+            original_bytes,
+        };
+    }
+    LimitedToolOutput {
+        value: Value::String(tail_utf8_bytes(text, MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES)),
+        truncated: true,
+        original_bytes,
+    }
+}
+
+fn tail_utf8_bytes(text: &str, max_bytes: usize) -> String {
+    let mut start = text.len().saturating_sub(max_bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
+}
+
+fn limit_content_field(value: &mut Value, max_chars: usize) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let Some(content) = object
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let original_chars = content.chars().count();
+    if original_chars <= max_chars {
+        object.remove("content_truncated");
+        object.remove("content_original_chars");
+        return;
+    }
+
+    object.insert(
+        "content".to_owned(),
+        Value::String(tail_chars(&content, max_chars)),
+    );
+    object.insert("content_truncated".to_owned(), Value::Bool(true));
+    object.insert("content_original_chars".to_owned(), json!(original_chars));
+}
+
+fn tail_chars(text: &str, max_chars: usize) -> String {
+    let total_chars = text.chars().count();
+    if total_chars <= max_chars {
+        return text.to_owned();
+    }
+    text.chars().skip(total_chars - max_chars).collect()
+}
+
+fn command_output_ref(item: &Value) -> Option<&str> {
+    raw_string_field_ref(item, "aggregatedOutput")
+        .or_else(|| raw_string_field_ref(item, "aggregated_output"))
+        .or_else(|| raw_string_field_ref(item, "output"))
 }
 
 fn command_input_from_output(item: &Value) -> Option<Value> {
@@ -1369,10 +1636,12 @@ fn tool_name(item: &Value) -> String {
         "dynamictoolcall" => {
             string_field(item, "tool").unwrap_or_else(|| "dynamic_tool".to_owned())
         }
-        "mcptoolcall" | "mcpcall" => {
-            let server = string_field(item, "server");
+        "mcptoolcall" | "mcpcall" | "mcptoolcallbegin" | "mcptoolcallend" => {
+            let server =
+                string_field(item, "server").or_else(|| mcp_invocation_field(item, "server"));
             let tool = string_field(item, "tool")
                 .or_else(|| string_field(item, "name"))
+                .or_else(|| mcp_invocation_field(item, "tool"))
                 .unwrap_or_else(|| "mcp_tool".to_owned());
             server
                 .map(|server| format!("{server}.{tool}"))
@@ -1401,13 +1670,16 @@ fn tool_input(item: &Value) -> Value {
         "dynamictoolcall" | "toolsearchcall" => {
             item.get("arguments").cloned().unwrap_or(Value::Null)
         }
-        "mcptoolcall" | "mcpcall" => item
+        "mcptoolcall" | "mcpcall" | "mcptoolcallbegin" | "mcptoolcallend" => item
             .get("arguments")
             .or_else(|| item.get("input"))
+            .or_else(|| {
+                item.get("invocation")
+                    .and_then(|invocation| invocation.get("arguments"))
+            })
             .cloned()
             .unwrap_or(Value::Null),
-        "websearch" => json!({"query": string_field(item, "query").unwrap_or_default()}),
-        "websearchcall" => item
+        "websearch" | "websearchcall" => item
             .get("action")
             .cloned()
             .unwrap_or_else(|| json!({"query": string_field(item, "query").unwrap_or_default()})),
@@ -1453,62 +1725,106 @@ fn parse_json_object_string(item: &Value, key: &str) -> Option<Value> {
         .filter(Value::is_object)
 }
 
-fn tool_output(item: &Value) -> Value {
+fn raw_tool_output(item: &Value) -> RawToolOutput<'_> {
     match item_type(item).as_str() {
         "commandexecution" | "shellcall" | "localshellcall" | "execcommandend" => {
-            Value::String(command_output(item))
+            RawToolOutput::String(command_output_ref(item).unwrap_or_default())
         }
         "functioncalloutput" | "customtoolcalloutput" => output_payload_text(item)
-            .map(Value::String)
-            .unwrap_or_else(|| item.get("output").cloned().unwrap_or(Value::Null)),
-        "toolsearchoutput" => item.get("results").cloned().unwrap_or_else(|| {
-            output_payload_text(item)
-                .map(Value::String)
-                .unwrap_or(Value::Null)
-        }),
+            .map(|output| RawToolOutput::Value(Value::String(output)))
+            .unwrap_or_else(|| {
+                RawToolOutput::Value(item.get("output").cloned().unwrap_or(Value::Null))
+            }),
+        "toolsearchoutput" => item
+            .get("results")
+            .cloned()
+            .unwrap_or_else(|| {
+                output_payload_text(item)
+                    .map(Value::String)
+                    .unwrap_or(Value::Null)
+            })
+            .into(),
         "dynamictoolcall" => item
             .get("contentItems")
             .or_else(|| item.get("content_items"))
             .map(output_content_items_text)
-            .map(Value::String)
-            .unwrap_or_else(|| item.get("result").cloned().unwrap_or(Value::Null)),
-        "mcptoolcall" | "mcpcall" => item
-            .get("error")
-            .and_then(|error| string_field(error, "message"))
-            .map(Value::String)
-            .or_else(|| item.get("result").cloned())
-            .unwrap_or(Value::Null),
+            .map(|output| RawToolOutput::Value(Value::String(output)))
+            .unwrap_or_else(|| {
+                RawToolOutput::Value(item.get("result").cloned().unwrap_or(Value::Null))
+            }),
+        "mcptoolcall" | "mcpcall" | "mcptoolcallend" => RawToolOutput::Value(mcp_tool_output(item)),
         "imagegeneration" => string_field(item, "savedPath")
             .or_else(|| string_field(item, "saved_path"))
             .or_else(|| raw_string_field(item, "result"))
-            .map(Value::String)
-            .unwrap_or(Value::Null),
+            .map(|output| RawToolOutput::Value(Value::String(output)))
+            .unwrap_or(RawToolOutput::Value(Value::Null)),
         _ => default_tool_output(item),
     }
 }
 
-fn default_tool_output(item: &Value) -> Value {
+impl From<Value> for RawToolOutput<'_> {
+    fn from(value: Value) -> Self {
+        RawToolOutput::Value(value)
+    }
+}
+
+fn default_tool_output(item: &Value) -> RawToolOutput<'_> {
     if let Some(output) = output_payload_text(item) {
-        return Value::String(output);
+        return RawToolOutput::Value(Value::String(output));
     }
-    let command_output = command_output(item);
-    if !command_output.is_empty() {
-        return Value::String(command_output);
+    if let Some(command_output) = command_output_ref(item) {
+        if !command_output.is_empty() {
+            return RawToolOutput::String(command_output);
+        }
     }
-    let stdout = raw_string_field(item, "stdout").unwrap_or_default();
-    let stderr = raw_string_field(item, "stderr").unwrap_or_default();
+    let stdout = raw_string_field_ref(item, "stdout").unwrap_or_default();
+    let stderr = raw_string_field_ref(item, "stderr").unwrap_or_default();
     let combined = [stdout, stderr]
         .into_iter()
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
     if !combined.is_empty() {
-        return Value::String(combined);
+        return RawToolOutput::Value(limited_tool_output_string(&combined).value);
     }
-    item.get("result")
-        .or_else(|| item.get("formatted_output"))
+    RawToolOutput::Value(
+        item.get("result")
+            .or_else(|| item.get("formatted_output"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    )
+}
+
+fn mcp_invocation_field(item: &Value, key: &str) -> Option<String> {
+    item.get("invocation")
+        .and_then(|invocation| string_field(invocation, key))
+}
+
+fn mcp_tool_output(item: &Value) -> Value {
+    if let Some(message) = item
+        .get("error")
+        .and_then(|error| string_field(error, "message"))
+    {
+        return Value::String(message);
+    }
+
+    let Some(result) = item.get("result") else {
+        return Value::Null;
+    };
+
+    if let Some(message) = result
+        .get("Err")
+        .or_else(|| result.get("err"))
+        .and_then(Value::as_str)
+    {
+        return Value::String(message.to_owned());
+    }
+
+    result
+        .get("Ok")
+        .or_else(|| result.get("ok"))
         .cloned()
-        .unwrap_or(Value::Null)
+        .unwrap_or_else(|| result.clone())
 }
 
 fn output_payload_text(item: &Value) -> Option<String> {
@@ -1539,6 +1855,9 @@ fn output_content_items_text(value: &Value) -> String {
 
 fn tool_status(item: &Value) -> String {
     let item_type = item_type(item);
+    if let Some(status) = mcp_tool_status(item, &item_type) {
+        return status;
+    }
     let status = string_field(item, "status").unwrap_or_else(|| {
         if is_codex_tool_output_item_type(&item_type)
             || is_likely_codex_tool_output_item_type(&item_type)
@@ -1560,7 +1879,7 @@ fn tool_status(item: &Value) -> String {
         || status.eq_ignore_ascii_case("failure")
         || status.eq_ignore_ascii_case("error")
         || bool_field(item, "success").is_some_and(|success| !success)
-        || item.get("error").is_some()
+        || has_error_value(item)
     {
         "error".to_owned()
     } else if status.eq_ignore_ascii_case("completed")
@@ -1573,6 +1892,47 @@ fn tool_status(item: &Value) -> String {
     } else {
         "pending".to_owned()
     }
+}
+
+fn mcp_tool_status(item: &Value, item_type: &str) -> Option<String> {
+    if !matches!(item_type, "mcptoolcall" | "mcpcall" | "mcptoolcallend") {
+        return None;
+    }
+
+    if has_error_value(item) {
+        return Some("error".to_owned());
+    }
+
+    let result = item.get("result")?;
+    if result.get("Err").or_else(|| result.get("err")).is_some() {
+        return Some("error".to_owned());
+    }
+
+    let ok_result = result
+        .get("Ok")
+        .or_else(|| result.get("ok"))
+        .unwrap_or(result);
+    if ok_result
+        .get("isError")
+        .or_else(|| ok_result.get("is_error"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Some("error".to_owned());
+    }
+
+    Some("done".to_owned())
+}
+
+fn has_error_value(item: &Value) -> bool {
+    item.get("error").is_some_and(|error| match error {
+        Value::Null => false,
+        Value::String(message) => !message.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        Value::Bool(value) => *value,
+        Value::Number(_) => true,
+    })
 }
 
 fn command_exit_code(item: &Value) -> Option<i64> {
@@ -1938,6 +2298,28 @@ fn workspace_relative_path(path: &str, workspace_path: &str) -> String {
 }
 
 fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
+    if looks_like_unified_diff(diff) {
+        return prefixed_diff_stats(diff);
+    }
+
+    let line_count = diff.lines().count() as i64;
+    match change_type {
+        "created" => (line_count, 0),
+        "deleted" => (0, line_count),
+        _ => prefixed_diff_stats(diff),
+    }
+}
+
+fn looks_like_unified_diff(diff: &str) -> bool {
+    diff.lines().any(|line| {
+        line.starts_with("@@ ")
+            || line.starts_with("diff --git ")
+            || line.starts_with("+++ ")
+            || line.starts_with("--- ")
+    })
+}
+
+fn prefixed_diff_stats(diff: &str) -> (i64, i64) {
     let additions = diff
         .lines()
         .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
@@ -1946,15 +2328,7 @@ fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
         .lines()
         .filter(|line| line.starts_with('-') && !line.starts_with("---"))
         .count() as i64;
-    if additions > 0 || deletions > 0 {
-        return (additions, deletions);
-    }
-    let line_count = diff.lines().count() as i64;
-    match change_type {
-        "created" => (line_count, 0),
-        "deleted" => (0, line_count),
-        _ => (0, 0),
-    }
+    (additions, deletions)
 }
 
 fn combined_diff_from_file_change_item(item: &Value, workspace_path: &str) -> Option<String> {
@@ -2097,6 +2471,89 @@ mod tests {
     use super::*;
 
     #[test]
+    fn web_search_updates_preserve_all_action_payloads() {
+        let actions = [
+            json!({
+                "type": "openPage",
+                "url": "https://docs.wegent.ai/guide"
+            }),
+            json!({
+                "type": "findInPage",
+                "url": "https://docs.wegent.ai/guide",
+                "pattern": "install"
+            }),
+        ];
+
+        for (index, action) in actions.into_iter().enumerate() {
+            let params = json!({
+                "item": {
+                    "id": format!("search-{index}"),
+                    "type": "webSearch",
+                    "query": "",
+                    "action": action.clone()
+                }
+            });
+
+            let (_, updates) = tool_update_from_notification(&params)
+                .expect("completed web search should produce a tool update");
+
+            assert_eq!(updates["status"], "done");
+            assert_eq!(updates["tool_input"], action);
+        }
+    }
+
+    #[test]
+    fn image_generation_blocks_preserve_renderable_image_data() {
+        let item = json!({
+            "id": "ig-1",
+            "type": "imageGeneration",
+            "status": "completed",
+            "result": "aW1hZ2U=",
+            "revisedPrompt": "A minimal blue circle",
+            "savedPath": "/tmp/ig-1.png"
+        });
+
+        let block = workbench_block_from_codex_item(
+            &item,
+            "turn-1",
+            "device-1",
+            "/tmp",
+            1,
+            TranscriptBuildOptions::truncated(),
+        )
+        .expect("image generation should produce a workbench block");
+
+        assert_eq!(block["tool_name"], "image_generation");
+        assert_eq!(block["render_payload"]["kind"], "image_generation");
+        assert_eq!(block["render_payload"]["imageBase64"], "aW1hZ2U=");
+        assert_eq!(
+            block["render_payload"]["revisedPrompt"],
+            "A minimal blue circle"
+        );
+    }
+
+    #[test]
+    fn created_plain_content_counts_lines_as_additions() {
+        let content = "# CPU System Report\n\n- CPU: Apple M1 Max\n- Thermal status: normal\n";
+
+        assert_eq!(diff_stats(content, "created"), (4, 0));
+    }
+
+    #[test]
+    fn unified_diff_counts_prefixed_lines() {
+        let diff = "@@ -1,2 +1,2 @@\n-old\n+new\n context\n";
+
+        assert_eq!(diff_stats(diff, "modified"), (1, 1));
+    }
+
+    #[test]
+    fn modified_plain_patch_counts_prefixed_lines() {
+        let diff = "-old\n+new\n context\n";
+
+        assert_eq!(diff_stats(diff, "modified"), (1, 1));
+    }
+
+    #[test]
     fn transcript_unwraps_codex_response_item_and_event_msg_items() {
         let thread = json!({
             "id": "thread-1",
@@ -2217,6 +2674,119 @@ mod tests {
         assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
         assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[1]["blocks"][2]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_marks_successful_legacy_mcp_tool_call_end_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "type": "function_call",
+                                "id": "fc-1",
+                                "name": "ask",
+                                "namespace": "askhuman",
+                                "arguments": "{\"message\":\"Confirm?\"}",
+                                "call_id": "call-ask"
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "type": "mcp_tool_call_end",
+                                "call_id": "call-ask",
+                                "invocation": {
+                                    "server": "askhuman",
+                                    "tool": "ask",
+                                    "arguments": {"message": "Confirm?"}
+                                },
+                                "result": {
+                                    "Ok": {
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "{\"answers\":[{\"question_index\":0,\"user_input\":\"done\"}]}"
+                                            }
+                                        ],
+                                        "structuredContent": {
+                                            "answers": [
+                                                {"question_index": 0, "user_input": "done"}
+                                            ]
+                                        },
+                                        "isError": false
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "ask");
+        assert_eq!(block["tool_output"]["isError"], false);
+        assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_marks_completed_mcp_tool_call_with_null_error_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "type": "mcpToolCall",
+                                "id": "call-mcp",
+                                "server": "codex",
+                                "tool": "list_mcp_resources",
+                                "arguments": {},
+                                "status": "completed",
+                                "error": null,
+                                "result": {
+                                    "_meta": null,
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "{\"resources\":[]}"
+                                        }
+                                    ],
+                                    "structuredContent": null
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "codex.list_mcp_resources");
+        assert_eq!(block["status"], "done");
     }
 
     #[test]
@@ -2570,6 +3140,102 @@ mod tests {
         assert_eq!(block["tool_input"]["cwd"], "/tmp/project");
         assert_eq!(block["tool_output"], "/tmp/project\n");
         assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_truncates_large_exec_command_output() {
+        let output = format!(
+            "{}tail",
+            "x".repeat(MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1024)
+        );
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["/bin/zsh", "-lc", "cat large.log"],
+                                "cwd": "/tmp/project",
+                                "aggregated_output": output,
+                                "status": "completed",
+                                "exit_code": 0
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+        let tool_output = block["tool_output"].as_str().unwrap();
+
+        assert_eq!(tool_output.len(), MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES);
+        assert!(tool_output.ends_with("tail"));
+        assert_eq!(block["tool_output_truncated"], true);
+        assert_eq!(
+            block["tool_output_original_bytes"],
+            MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1028
+        );
+    }
+
+    #[test]
+    fn full_transcript_messages_keep_large_content_and_tool_output() {
+        let assistant_content = format!(
+            "{}assistant-tail",
+            "a".repeat(MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS + 16)
+        );
+        let output = format!(
+            "{}tool-tail",
+            "x".repeat(MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1024)
+        );
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": assistant_content
+                        },
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["/bin/zsh", "-lc", "cat large.log"],
+                                "cwd": "/tmp/project",
+                                "aggregated_output": output,
+                                "status": "completed",
+                                "exit_code": 0
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = full_transcript_messages(&thread, "device-1");
+        let message = &messages[0];
+        let block = &message["blocks"][0];
+
+        assert_eq!(message["content"], assistant_content);
+        assert!(message.get("content_truncated").is_none());
+        assert_eq!(block["tool_output"], output);
+        assert!(block.get("tool_output_truncated").is_none());
     }
 
     #[test]

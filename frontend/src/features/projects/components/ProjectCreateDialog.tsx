@@ -31,6 +31,7 @@ import type { ProjectConfig } from '@/types/api'
 import { isVersionAtLeast } from '@/lib/utils'
 import { ProjectDirectoryPickerDialog } from './ProjectDirectoryPickerDialog'
 import { FolderOpen } from 'lucide-react'
+import type { DeviceInfo } from '@/apis/devices'
 
 const PROJECT_COLORS = [
   { id: 'red', value: '#EF4444' },
@@ -43,20 +44,24 @@ const PROJECT_COLORS = [
   { id: 'gray', value: '#6B7280' },
 ]
 
-const MIN_WORKSPACE_PROJECT_DEVICE_VERSION = 'v1.7.11'
-const LEGACY_WORKSPACE_PROJECT_DEVICE_VERSION = '1.0.0'
-
-function isLegacyWorkspaceProjectDeviceVersion(version: string): boolean {
-  return (
-    isVersionAtLeast(version, LEGACY_WORKSPACE_PROJECT_DEVICE_VERSION) &&
-    isVersionAtLeast(LEGACY_WORKSPACE_PROJECT_DEVICE_VERSION, version)
-  )
-}
+const MIN_WORKSPACE_PROJECT_DEVICE_VERSION = 'v1.7.13'
+type WorkspaceProjectDeviceType = 'local' | 'cloud' | 'remote'
+const WORKSPACE_PROJECT_DEVICE_TYPES = new Set<WorkspaceProjectDeviceType>([
+  'local',
+  'cloud',
+  'remote',
+])
 
 function getNameFromPath(path: string): string {
   const trimmed = path.replace(/\/+$/, '')
   const lastSegment = trimmed.split('/').pop() || ''
   return lastSegment
+}
+
+function isWorkspaceProjectDeviceType(
+  deviceType: DeviceInfo['device_type']
+): deviceType is WorkspaceProjectDeviceType {
+  return WORKSPACE_PROJECT_DEVICE_TYPES.has(deviceType as WorkspaceProjectDeviceType)
 }
 
 interface ProjectCreateDialogProps {
@@ -75,16 +80,14 @@ export function ProjectCreateDialog({
   const { devices } = useDevices()
   const isWorkspaceMode = mode === 'workspace'
 
-  // Online devices only, prefer cloud ClaudeCode devices first
+  // Online ClaudeCode devices that support configured directory browsing commands.
   const onlineDevices = useMemo(() => {
-    const online = devices.filter(
-      d => (d.status === 'online' || d.status === 'busy') && d.bind_shell !== 'openclaw'
+    return devices.filter(
+      (d): d is DeviceInfo & { device_type: WorkspaceProjectDeviceType } =>
+        (d.status === 'online' || d.status === 'busy') &&
+        isWorkspaceProjectDeviceType(d.device_type) &&
+        d.bind_shell !== 'openclaw'
     )
-    return online.sort((a, b) => {
-      const aIsCloudCode = a.device_type === 'cloud' && a.bind_shell === 'claudecode' ? 0 : 1
-      const bIsCloudCode = b.device_type === 'cloud' && b.bind_shell === 'claudecode' ? 0 : 1
-      return aIsCloudCode - bIsCloudCode
-    })
   }, [devices])
 
   // Group mode state
@@ -106,8 +109,7 @@ export function ProjectCreateDialog({
 
   const selectedDeviceSupportsWorkspaceProject = Boolean(
     selectedDevice?.executor_version &&
-    (isLegacyWorkspaceProjectDeviceVersion(selectedDevice.executor_version) ||
-      isVersionAtLeast(selectedDevice.executor_version, MIN_WORKSPACE_PROJECT_DEVICE_VERSION))
+    isVersionAtLeast(selectedDevice.executor_version, MIN_WORKSPACE_PROJECT_DEVICE_VERSION)
   )
 
   const showDeviceVersionUnsupported =
@@ -121,6 +123,8 @@ export function ProjectCreateDialog({
   }, [open, isWorkspaceMode, deviceId, onlineDevices])
 
   const projectName = localPath.trim() ? getNameFromPath(localPath) : ''
+  const selectedTargetType = selectedDevice?.device_type ?? 'local'
+  const directoryPickerInitialPath = selectedTargetType === 'local' ? localPath : localPath || '/'
 
   const handleCreateGroup = async () => {
     if (!name.trim()) return
@@ -140,22 +144,36 @@ export function ProjectCreateDialog({
   }
 
   const handleCreateWorkspace = async () => {
-    if (!deviceId || !localPath.trim() || !selectedDeviceSupportsWorkspaceProject) return
+    if (
+      !deviceId ||
+      !localPath.trim() ||
+      !selectedDevice ||
+      !selectedDeviceSupportsWorkspaceProject
+    ) {
+      return
+    }
 
     setIsCreating(true)
     try {
       const config: ProjectConfig = {
         mode: 'workspace',
         execution: {
-          targetType: 'local',
+          targetType: selectedTargetType,
           deviceId,
         },
       }
-      config.workspace = {
-        source: 'local_path',
-        localPath: localPath.trim(),
-      }
-      const tempName = projectName || 'project'
+      const workspacePath = localPath.trim()
+      config.workspace =
+        selectedTargetType === 'local'
+          ? {
+              source: 'local_path',
+              localPath: workspacePath,
+            }
+          : {
+              source: 'device_path',
+              devicePath: workspacePath,
+            }
+      const tempName = projectName || selectedDevice.name || 'device-workspace'
       await projectApis.createProject({
         name: tempName,
         config,
@@ -237,6 +255,11 @@ export function ProjectCreateDialog({
                               {device.device_type === 'cloud' && (
                                 <span className="text-xs text-text-muted ml-1">
                                   ({t('workspace.cloud')})
+                                </span>
+                              )}
+                              {device.device_type === 'remote' && (
+                                <span className="text-xs text-text-muted ml-1">
+                                  ({t('workspace.remote')})
                                 </span>
                               )}
                             </span>
@@ -359,7 +382,7 @@ export function ProjectCreateDialog({
       <ProjectDirectoryPickerDialog
         open={directoryPickerOpen}
         deviceId={deviceId}
-        initialPath={localPath}
+        initialPath={directoryPickerInitialPath}
         onOpenChange={setDirectoryPickerOpen}
         onConfirm={setLocalPath}
       />

@@ -6,8 +6,8 @@
  * KnowledgeDetailPanel renders the right-side detail area for the selected knowledge base.
  *
  * - When no KB is selected: shows empty state
- * - When a notebook KB is selected: shows chat interface with document panel
- * - When a classic KB is selected: shows document list with management capabilities
+ * - In Notebook view: shows chat interface with document panel
+ * - In documents view: shows document list with management capabilities
  */
 
 'use client'
@@ -33,7 +33,7 @@ import {
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
 import { getKnowledgeBase } from '@/apis/knowledge'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeView } from '@/types/knowledge'
 import type { Team } from '@/types/api'
 
 interface KnowledgeDetailPanelProps {
@@ -53,6 +53,8 @@ interface KnowledgeDetailPanelProps {
   onGroupClick?: (groupId: string, groupType?: string) => void
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Current view resolved from URL/default view */
+  currentView: KnowledgeView
 }
 
 export function KnowledgeDetailPanel({
@@ -64,6 +66,7 @@ export function KnowledgeDetailPanel({
   groupInfo,
   onGroupClick,
   initialDocPath,
+  currentView,
 }: KnowledgeDetailPanelProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -166,9 +169,6 @@ export function KnowledgeDetailPanel({
     return null
   }, [searchParams])
 
-  // Determine KB type
-  const isNotebook = selectedKb?.kb_type === 'notebook'
-
   // Use ref for taskIdFromUrl to avoid resetting panel state when taskId changes
   // (e.g., when replaceState adds ?taskId=... after sending a message)
   const taskIdFromUrlRef = useRef(taskIdFromUrl)
@@ -178,7 +178,7 @@ export function KnowledgeDetailPanel({
   const prevKbIdRef = useRef<number | null>(null)
 
   // Reset state when KB changes
-  // For notebook mode, also clear the selected task to show a fresh chat interface
+  // For Notebook view, clear the selected task unless taskId is the active source of truth.
   // - On initial mount: preserve task if taskId is in URL (user navigating from history)
   // - On KB switch: always clear task (the old taskId belongs to a different KB)
   useEffect(() => {
@@ -186,7 +186,11 @@ export function KnowledgeDetailPanel({
     setSelectedDocumentIds([])
     setIsDocumentPanelCollapsed(false)
 
-    if (selectedKb?.kb_type === 'notebook') {
+    if (currentView === 'documents') {
+      selectTask(null)
+    }
+
+    if (currentView === 'notebook') {
       const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
       if (isKbSwitch || !taskIdFromUrlRef.current) {
         selectTask(null)
@@ -196,11 +200,11 @@ export function KnowledgeDetailPanel({
     if (selectedKb?.id != null) {
       prevKbIdRef.current = selectedKb.id
     }
-  }, [selectedKb?.id, selectedKb?.kb_type, selectTask])
+  }, [selectedKb?.id, currentView, selectTask])
 
-  // When a notebook KB is selected, show chat interface with document panel
+  // In Notebook view, show chat interface with document panel.
   // Simplified layout: direct left-right split without extra header bars
-  if (selectedKb && isNotebook) {
+  if (selectedKb && currentView === 'notebook') {
     return (
       <div className="flex-1 flex bg-base overflow-hidden" data-testid="knowledge-detail-notebook">
         {/* Chat area - left side */}
@@ -229,13 +233,11 @@ export function KnowledgeDetailPanel({
               />
             }
             // Note: Knowledge base binding is handled by the backend when creating the task
-            // via the knowledge_base_id parameter in the chat request. No need to call
-            // bindKnowledgeBase API here as it would either fail (not a group chat) or
-            // be redundant (already bound).
+            // via the knowledge_base_id parameter in the chat request.
           />
         </div>
 
-        {/* Right panel - Document management */}
+        {/* Right panel - Document context selection */}
         <DocumentPanel
           knowledgeBase={selectedKb}
           canUpload={canUploadDocuments}
@@ -251,7 +253,7 @@ export function KnowledgeDetailPanel({
       </div>
     )
   }
-  // When a classic KB is selected, show document list
+  // In documents view, show document list.
   // Tabs are passed as headerActions to DocumentList so they appear in the same row as the title
   if (selectedKb) {
     // Build header actions (tabs) for permission management

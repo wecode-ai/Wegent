@@ -255,13 +255,14 @@ pnpm --dir frontend run start
 
 #### Wework 与本地 Rust 构建缓存
 
-Wework macOS 开发脚本会为 Tauri 和本地 executor 配置共享 Cargo target 目录，避免多个 Git worktree 反复完整编译相同依赖：
+Wework macOS 开发脚本会让 Git worktree 按组件共享 Cargo target，因此切换 worktree 时可以直接复用已编译的依赖产物，而不必再次完整编译。Cargo 会为同一 target 目录协调并发访问，并在 fingerprint 变化时重新编译失效产物。首次运行 `pnpm --dir wework run dev:mac` 时，如果本机缺少 `sccache`，脚本会通过 Homebrew 自动安装，以进一步复用编译器缓存。
 
-- `pnpm --dir wework run dev:mac` 和 `pnpm --dir wework run build:mac` 默认使用 `$XDG_CACHE_HOME/wegent/cargo-target/wework-src-tauri`，未设置 `XDG_CACHE_HOME` 时使用 `~/.cache/wegent/cargo-target/wework-src-tauri`。
-- 开发模式的 executor sidecar 和 `executor/local.sh build` 默认使用同一缓存根下的 `executor` 子目录。
-- 如需指定其他缓存根目录，设置 `WEGENT_CARGO_TARGET_ROOT=/path/to/cache`。
-- 如需恢复 Cargo 默认的每个 worktree 独立 `target/`，设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`。
-- 显式设置 `CARGO_TARGET_DIR` 时，脚本会尊重该值，不再自动选择共享目录。
+- `pnpm --dir wework run dev:mac`、`pnpm --dir wework run build:mac`、开发模式 executor sidecar 和 `executor/local.sh build` 都使用 `$XDG_CACHE_HOME/wegent/cargo-target/<组件>`；未设置 `XDG_CACHE_HOME` 时使用 `~/.cache/wegent/cargo-target/...`。
+- 脚本检测到 `sccache` 后会自动设置 `RUSTC_WRAPPER` 和 `SCCACHE_BASEDIRS`，归一化不同 worktree 的源码及 target 绝对路径，并关闭与共享编译缓存不兼容的 Cargo incremental。
+- 如需指定其他 target 缓存根目录，设置 `WEGENT_CARGO_TARGET_ROOT=/path/to/cache`。
+- 如需使用仓库内 Cargo 默认的 `target/`，设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`。
+- 如需跳过自动安装并禁用 `sccache`，设置 `WEGENT_DISABLE_SCCACHE=1`。
+- 显式设置 `CARGO_TARGET_DIR` 或 `RUSTC_WRAPPER` 时，脚本会尊重该值。
 
 ---
 

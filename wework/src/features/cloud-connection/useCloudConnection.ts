@@ -29,10 +29,7 @@ export function useOptionalCloudConnection(): CloudConnectionContextValue {
       error: null,
       isConnected: true,
       serviceKey: `fallback:${runtimeConfig.apiBaseUrl}`,
-      connectWithPassword: async () => {
-        throw new Error('Cloud connection provider is unavailable')
-      },
-      setupAdminPassword: async () => {
+      connectWithAuthorization: async () => {
         throw new Error('Cloud connection provider is unavailable')
       },
       refreshUser: async () => fallbackUser,

@@ -50,6 +50,31 @@ GIT_WORKSPACE_DIFF_COMMAND = (
     "done'"
 )
 
+GIT_BRANCH_DIFF_COMMAND = (
+    "bash -lc "
+    '\'base=""; '
+    "for candidate in "
+    '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
+    "origin/main main origin/master master; do "
+    '[ -n "$candidate" ] || continue; '
+    'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
+    'base="$candidate"; break; '
+    "fi; "
+    "done; "
+    'if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; '
+    'if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; '
+    "elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; "
+    "else git diff --binary --; fi; "
+    "git ls-files --others --exclude-standard -z | "
+    'while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done\''
+)
+
+GIT_PUSH_COMMAND = (
+    "sh -c 'branch=$(git branch --show-current); "
+    '[ -n "$branch" ] || { echo "Cannot push detached HEAD" >&2; exit 64; }; '
+    'exec git push -u origin "$branch"\''
+)
+
 WORKSPACE_ROOT_GUARD_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
@@ -185,6 +210,61 @@ print(
             "name": target.name,
             "content": content,
             "truncated": truncated,
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        },
+        ensure_ascii=False,
+    )
+)
+""".replace(
+    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+).strip()
+
+WORKSPACE_READ_FILE_CHUNK_SCRIPT = """
+import base64
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+MAX_BYTES = 1024 * 1024
+
+
+__WORKSPACE_ROOT_GUARD_SCRIPT__
+
+
+if len(sys.argv) != 3:
+    fail("file name and offset are required")
+
+try:
+    offset = int(sys.argv[2])
+except ValueError:
+    fail("file offset must be a non-negative integer")
+if offset < 0:
+    fail("file offset must be a non-negative integer")
+
+root = Path.cwd().resolve()
+workspace_root = require_workspace_root(root)
+target = (root / sys.argv[1]).resolve()
+if not is_relative_to(target, workspace_root):
+    fail("file path is outside workspace root")
+if not is_relative_to(target, root):
+    fail("file path is outside workspace")
+if not target.is_file():
+    fail("file does not exist")
+
+with target.open("rb") as target_file:
+    target_file.seek(offset)
+    data = target_file.read(MAX_BYTES)
+stat = target.stat()
+print(
+    json.dumps(
+        {
+            "path": str(target),
+            "name": target.name,
+            "content_base64": base64.b64encode(data).decode("ascii"),
+            "offset": offset,
+            "eof": offset + len(data) >= stat.st_size,
             "size": stat.st_size,
             "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
         },
@@ -922,6 +1002,168 @@ print(json.dumps(payload, ensure_ascii=False))
 
 CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"
 
+GIT_GENERATE_COMMIT_MESSAGE_SCRIPT = r'''
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MAX_DIFF_BYTES = 200000
+MAX_MESSAGE_CHARS = 180
+
+
+def emit(payload, code=0):
+    print(json.dumps(payload, ensure_ascii=False))
+    raise SystemExit(code)
+
+
+def decode_output(data):
+    return data.decode("utf-8", errors="replace").strip()
+
+
+def run_git(*args, max_bytes=MAX_DIFF_BYTES):
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+            check=False,
+        )
+    except Exception as exc:
+        emit({"success": False, "error": str(exc)}, 1)
+
+    if result.returncode != 0:
+        emit(
+            {
+                "success": False,
+                "error": decode_output(result.stderr) or "Git command failed",
+            },
+            1,
+        )
+
+    output = result.stdout
+    truncated = len(output) > max_bytes
+    return output[:max_bytes].decode("utf-8", errors="replace"), truncated
+
+
+def resolve_codex_binary():
+    value = os.environ.get("CODEX_BINARY_PATH") or os.environ.get("CODEX_BIN") or "codex"
+    if "/" in value or "\\" in value:
+        return value
+    if value == "codex" and sys.platform == "darwin":
+        app_binary = Path("/Applications/Codex.app/Contents/Resources/codex")
+        if app_binary.exists():
+            return str(app_binary)
+    return shutil.which(value) or value
+
+
+def clean_candidate(line):
+    value = line.strip().lstrip("-* ").strip()
+    lowered = value.lower()
+    for prefix in ("commit message:", "message:", "subject:"):
+        if lowered.startswith(prefix):
+            value = value[len(prefix):].strip()
+            break
+    return value.strip("\"'`").strip()
+
+
+def sanitize_message(raw):
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```"):
+            continue
+        candidate = clean_candidate(stripped)
+        if candidate:
+            return candidate[:MAX_MESSAGE_CHARS]
+    return ""
+
+
+status, status_truncated = run_git("status", "--short", max_bytes=20000)
+diff_stat, stat_truncated = run_git("diff", "--cached", "--stat", max_bytes=20000)
+diff, diff_truncated = run_git("diff", "--cached", "--", max_bytes=MAX_DIFF_BYTES)
+
+if not diff_stat.strip() and not diff.strip():
+    emit({"success": False, "error": "No staged changes to summarize"}, 1)
+
+prompt = f"""Generate a Git commit subject line from the staged changes.
+Return exactly one line.
+Use Conventional Commits when a clear type is available, such as feat:, fix:, refactor:, docs:, test:, chore:, or style:.
+Do not include Markdown, quotes, bullets, explanations, or a body.
+Keep the line under 72 characters when possible.
+
+Git status:
+{status}
+
+Staged diff stat:
+{diff_stat}
+
+Staged diff:
+{diff}
+"""
+
+output_path = None
+try:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as output_file:
+        output_path = output_file.name
+
+    result = subprocess.run(
+        [
+            resolve_codex_binary(),
+            "exec",
+            "--ephemeral",
+            "--ignore-rules",
+            "--sandbox",
+            "read-only",
+            "--output-last-message",
+            output_path,
+            "-",
+        ],
+        input=prompt,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if result.returncode != 0:
+        emit(
+            {
+                "success": False,
+                "error": result.stderr.strip()
+                or result.stdout.strip()
+                or "Codex failed to generate a commit message",
+            },
+            1,
+        )
+
+    raw_message = Path(output_path).read_text(encoding="utf-8", errors="replace")
+finally:
+    if output_path:
+        try:
+            Path(output_path).unlink()
+        except OSError:
+            pass
+
+message = sanitize_message(raw_message)
+if not message:
+    emit({"success": False, "error": "Codex returned an empty commit message"}, 1)
+
+emit(
+    {
+        "success": True,
+        "message": message,
+        "diff_truncated": bool(status_truncated or stat_truncated or diff_truncated),
+    }
+)
+'''
+GIT_GENERATE_COMMIT_MESSAGE_COMMAND = (
+    f"python3 -c {shlex.quote(GIT_GENERATE_COMMIT_MESSAGE_SCRIPT)}"
+)
+
 TURN_FILE_CHANGES_SCRIPT = """
 import gzip
 import hashlib
@@ -1207,6 +1449,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command=f"python3 -c {shlex.quote(WORKSPACE_READ_TEXT_FILE_SCRIPT)}",
         post_processor="json",
     ),
+    "workspace_read_file_chunk": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(WORKSPACE_READ_FILE_CHUNK_SCRIPT)}",
+        post_processor="json",
+    ),
     "project_folder_status": LocalDeviceCommandDefinition(
         command=f"python3 -c {shlex.quote(PROJECT_FOLDER_STATUS_SCRIPT)}",
         post_processor="json",
@@ -1275,6 +1521,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_checkout_new": LocalDeviceCommandDefinition(command="git checkout -b"),
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
     "git_diff": LocalDeviceCommandDefinition(command=GIT_WORKSPACE_DIFF_COMMAND),
+    "git_branch_diff": LocalDeviceCommandDefinition(command=GIT_BRANCH_DIFF_COMMAND),
     "git_diff_unstaged": LocalDeviceCommandDefinition(command="git diff --binary --"),
     "git_diff_staged": LocalDeviceCommandDefinition(
         command="git diff --binary --cached --"
@@ -1294,6 +1541,11 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
+    "git_push": LocalDeviceCommandDefinition(command=GIT_PUSH_COMMAND),
+    "git_generate_commit_message": LocalDeviceCommandDefinition(
+        command=GIT_GENERATE_COMMIT_MESSAGE_COMMAND,
+        post_processor="json",
+    ),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
         post_processor="json",

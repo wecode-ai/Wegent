@@ -64,7 +64,7 @@ const DISPLAY_LANGUAGE_ALIASES: Record<string, string> = {
 }
 
 const CODE_ACTION_BUTTON_CLASS =
-  'flex h-7 w-7 items-center justify-center rounded-md text-[#b8c0cc] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25'
+  'flex h-7 w-7 select-none items-center justify-center rounded-md text-[#b8c0cc] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/25'
 
 const CODE_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
@@ -73,8 +73,8 @@ const codeCustomStyle: CSSProperties = {
   margin: 0,
   padding: '0.75rem 1rem',
   background: 'transparent',
-  fontSize: '0.8125rem',
-  lineHeight: '1.6',
+  fontSize: 'var(--text-code)',
+  lineHeight: '1.8',
 }
 
 const markdownWrapStateByKey = new Map<string, boolean>()
@@ -126,14 +126,14 @@ export function MarkdownCodeBlock({
       data-testid="markdown-code-block"
       data-scroll-anchor
       className={[
-        'max-w-full overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
+        'max-w-full select-none overflow-hidden rounded-lg border border-[#3c424a] bg-[#2f2f2f] text-left shadow-sm',
         compact ? 'mb-1.5' : 'mb-3 mt-2',
       ].join(' ')}
     >
-      <div className="flex h-10 items-center justify-between border-b border-[#3c424a] px-3">
+      <div className="flex h-10 select-none items-center justify-between border-b border-[#3c424a] px-3">
         <span
           data-testid="markdown-code-block-language"
-          className="text-xs font-medium text-[#b8c0cc]"
+          className="select-none text-xs font-medium text-[#b8c0cc]"
         >
           {displayLanguage}
         </span>
@@ -164,6 +164,7 @@ export function MarkdownCodeBlock({
             className={CODE_ACTION_BUTTON_CLASS}
             aria-label="复制代码"
             title="复制代码"
+            data-testid="markdown-code-copy-button"
           >
             {copied ? (
               <CopyCheck className="h-3.5 w-3.5" data-testid="markdown-code-copy-success-icon" />
@@ -177,7 +178,9 @@ export function MarkdownCodeBlock({
         data-testid="markdown-code-scroll-container"
         data-wrap={effectiveWrapLines ? 'true' : 'false'}
         className={
-          effectiveWrapLines ? 'max-w-full overflow-x-hidden' : 'max-w-full overflow-x-auto'
+          effectiveWrapLines
+            ? 'max-w-full select-none overflow-x-hidden'
+            : 'max-w-full select-none overflow-x-auto'
         }
       >
         <SyntaxHighlighter
@@ -233,6 +236,7 @@ function getCodeCustomStyle(wrapLines: boolean): CSSProperties {
 
 function getCodeTagProps(wrapLines: boolean): HTMLProps<HTMLElement> {
   return {
+    className: 'select-text',
     style: {
       fontFamily: CODE_FONT_FAMILY,
       whiteSpace: wrapLines ? 'pre-wrap' : 'pre',

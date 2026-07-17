@@ -10,6 +10,8 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeGuidanceRequest,
+  RuntimeGuidanceResponse,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
@@ -23,6 +25,8 @@ import type {
   RuntimeArchiveProjectConversationsRequest,
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
+  RuntimeArchivedConversationCleanupResponse,
+  RuntimeCompactRequest,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -39,11 +43,27 @@ import type {
   RuntimeTranscriptResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceSearchRequest,
+  RuntimeWorkspaceSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeSidebarMutationResponse,
+  RuntimeTaskPinRequest,
+  RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeListResponse,
+  RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePrepareRequest,
+  RuntimeWorktreeSettings,
+  RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
 import type { HttpClient } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
@@ -85,6 +105,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)
     },
+    searchRuntimeWorkspace(
+      data: RuntimeWorkspaceSearchRequest
+    ): Promise<RuntimeWorkspaceSearchResponse> {
+      return client.post('/runtime-work/workspace/search', data)
+    },
     revertRuntimeFileChanges(
       request: RuntimeFileChangesRevertRequest
     ): Promise<RuntimeFileChangesRevertResponse> {
@@ -95,6 +120,13 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/rollback', data)
+    },
+    compactRuntimeTask(data: RuntimeCompactRequest): Promise<RuntimeSendResponse> {
+      void data
+      return Promise.reject(new Error('上下文压缩只支持本机 Wework App'))
+    },
+    guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
+      return client.post('/runtime-work/guidance', data)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return client.post('/runtime-work/goal/get', data)
@@ -117,6 +149,57 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeWorkspaceRemoveRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/remove', data)
+    },
+    reorderRuntimeProjects(
+      data: RuntimeProjectReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/reorder', data)
+    },
+    setRuntimeProjectPinned(
+      data: RuntimeProjectPinRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/pin', data)
+    },
+    setRuntimeProjectAppearance(
+      data: RuntimeProjectAppearanceRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/sync-remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/activate', data)
+    },
+    reorderRuntimeProjectTasks(
+      data: RuntimeProjectTaskReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/tasks/reorder', data)
+    },
+    setRuntimeTaskPinned(data: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/tasks/pin', data)
+    },
+    getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
+      return client.post('/runtime-work/worktrees/settings', data)
+    },
+    updateWorktreeSettings(data: RuntimeWorktreeSettingsPatch): Promise<RuntimeWorktreeSettings> {
+      return client.put('/runtime-work/worktrees/settings', data)
+    },
+    listWorktrees(data: { deviceId: string }): Promise<RuntimeWorktreeListResponse> {
+      return client.post('/runtime-work/worktrees/list', data)
+    },
+    prepareWorktree(data: RuntimeWorktreePrepareRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/prepare', data)
+    },
+    deleteWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/delete', data)
+    },
+    restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/restore', data)
     },
     bindRuntimeTaskImSessions(
       data: BindRuntimeTaskIMSessionsRequest
@@ -173,6 +256,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeArchivedConversationBulkRequest
     ): Promise<RuntimeArchivedConversationBulkResponse> {
       return client.post('/runtime-work/archived-conversations/delete-bulk', data)
+    },
+    previewArchivedConversationCleanup(
+      data: RuntimeArchivedConversationBulkRequest
+    ): Promise<RuntimeArchivedConversationCleanupResponse> {
+      return client.post('/runtime-work/archived-conversations/cleanup-preview', data)
+    },
+    cleanupArchivedConversations(
+      data: RuntimeArchivedConversationBulkRequest
+    ): Promise<RuntimeArchivedConversationCleanupResponse> {
+      return client.post('/runtime-work/archived-conversations/cleanup', data)
     },
     cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return client.post('/runtime-work/cancel', address)

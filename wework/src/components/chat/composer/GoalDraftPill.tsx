@@ -1,4 +1,5 @@
-import { CircleX } from 'lucide-react'
+import { CircleX, Target } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -14,6 +15,7 @@ interface ComposerModePillProps {
   disabled?: boolean
   className?: string
   title?: string
+  icon?: LucideIcon
 }
 
 export function ComposerModePill({
@@ -28,6 +30,7 @@ export function ComposerModePill({
   disabled = false,
   className = '',
   title,
+  icon: Icon,
 }: ComposerModePillProps) {
   const { t } = useTranslation('common')
   const interactive = Boolean(onClick)
@@ -54,7 +57,7 @@ export function ComposerModePill({
       }}
       onKeyDown={handleKeyDown}
       className={[
-        'group flex h-7 w-fit shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted px-2.5 text-[13px] font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary',
+        'group relative flex h-7 w-fit shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted px-2.5 text-sm font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary',
         interactive && !disabled ? 'cursor-pointer' : '',
         disabled ? 'cursor-not-allowed opacity-50' : '',
         className,
@@ -63,6 +66,13 @@ export function ComposerModePill({
         .join(' ')}
       title={title}
     >
+      {Icon && (
+        <Icon
+          data-testid={`${testId}-icon`}
+          className="mr-1.5 h-4 w-4 shrink-0 transition-opacity group-hover:opacity-0"
+          aria-hidden="true"
+        />
+      )}
       {onCancel && (
         <button
           type="button"
@@ -72,7 +82,7 @@ export function ComposerModePill({
             onCancel()
           }}
           disabled={disabled}
-          className="pointer-events-none flex h-5 w-0 items-center justify-center overflow-hidden rounded-full bg-text-muted/15 text-text-muted opacity-0 transition-[width,margin,opacity,background-color,color] group-hover:pointer-events-auto group-hover:mr-1.5 group-hover:w-5 group-hover:bg-text-muted/15 group-hover:opacity-100 hover:bg-text-muted/30 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-0"
+          className="pointer-events-none absolute left-2 flex h-5 w-5 items-center justify-center rounded-full bg-text-muted/15 text-text-muted opacity-0 transition-[opacity,background-color,color] group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-text-muted/30 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-0"
           aria-label={resolvedCancelLabel}
         >
           <CircleX className="h-4 w-4 shrink-0" />
@@ -94,6 +104,7 @@ export function GoalDraftPill({ onCancel, className = '' }: GoalDraftPillProps) 
   return (
     <ComposerModePill
       label={t('workbench.goal_chip', '目标')}
+      icon={Target}
       testId="goal-draft-pill"
       cancelTestId="cancel-goal-draft-button"
       cancelLabel={t('workbench.cancel_goal_draft', '取消目标')}

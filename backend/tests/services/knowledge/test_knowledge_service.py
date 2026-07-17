@@ -11,8 +11,17 @@ import pytest
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
-from app.schemas.knowledge import KnowledgeBaseCreate
+from app.models.task import TaskResource
+from app.schemas.knowledge import (
+    DocumentSourceType,
+    KnowledgeBaseCreate,
+    KnowledgeDocumentCreate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
+)
 from app.services.context import context_service
+from app.services.knowledge import TaskKnowledgeBaseService
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
@@ -54,6 +63,264 @@ class TestKnowledgeServiceCreateKnowledgeBase:
         assert isinstance(retrieval_config, dict)
         assert retrieval_config["retriever_name"] == "retriever-1"
         assert retrieval_config["embedding_config"]["model_name"] == "embedding-1"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDefaultViewSemantics:
+    def test_notebook_default_view_allows_more_than_50_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="large-notebook-kb", kb_type="notebook"),
+        )
+
+        for index in range(51):
+            KnowledgeService.create_document(
+                db=test_db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=test_user.id,
+                data=KnowledgeDocumentCreate(
+                    name=f"doc-{index}.md",
+                    file_extension="md",
+                    file_size=100,
+                    source_type=DocumentSourceType.TEXT,
+                ),
+            )
+
+        assert KnowledgeService.get_document_count(test_db, knowledge_base_id) == 51
+
+    def test_default_view_can_be_changed_to_notebook_with_more_than_50_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="large-documents-kb", kb_type="classic"),
+        )
+        for index in range(51):
+            KnowledgeService.create_document(
+                db=test_db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=test_user.id,
+                data=KnowledgeDocumentCreate(
+                    name=f"doc-{index}.md",
+                    file_extension="md",
+                    file_size=100,
+                    source_type=DocumentSourceType.TEXT,
+                ),
+            )
+
+        updated = KnowledgeService.update_knowledge_base_type(
+            db=test_db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=test_user.id,
+            new_type="notebook",
+        )
+
+        assert updated is not None
+        assert updated.json["spec"]["kbType"] == "notebook"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDocumentCountSemantics:
+    def test_chat_grouped_and_bound_counts_include_inactive_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="chat-count-kb"),
+        )
+        test_db.add_all(
+            [
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=0,
+                    attachment_id=0,
+                    name="indexed.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=0,
+                    attachment_id=0,
+                    name="pending.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=False,
+                    source_type="file",
+                ),
+            ]
+        )
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="chat-count-task",
+            namespace="default",
+            json={
+                "kind": "Task",
+                "metadata": {"name": "chat-count-task", "namespace": "default"},
+                "spec": {
+                    "knowledgeBaseRefs": [
+                        {
+                            "id": knowledge_base_id,
+                            "name": "chat-count-kb",
+                            "boundBy": test_user.user_name,
+                            "boundAt": "2026-07-09T00:00:00Z",
+                        }
+                    ]
+                },
+            },
+            is_active=TaskResource.STATE_ACTIVE,
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        all_grouped = KnowledgeService.get_all_knowledge_bases_grouped(
+            test_db, test_user.id
+        )
+        grouped_kb = next(
+            item
+            for item in all_grouped.personal.created_by_me
+            if item.id == knowledge_base_id
+        )
+        assert grouped_kb.document_count == 2
+
+        with patch(
+            "app.services.knowledge.task_knowledge_base_service.task_member_service"
+        ) as mock_member_service:
+            mock_member_service.is_member.return_value = True
+            bound = TaskKnowledgeBaseService().get_bound_knowledge_bases(
+                test_db, task.id, test_user.id
+            )
+
+        assert bound[0].document_count == 2
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDocumentFolderQueries:
+    def test_root_folder_with_subfolders_includes_all_descendants(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="root-subtree-documents"),
+        )
+        parent = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="parent", parent_id=0),
+        )
+        child = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="child", parent_id=parent.id),
+        )
+        root_doc = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            folder_id=0,
+            attachment_id=0,
+            name="root.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        child_doc = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            folder_id=child.id,
+            attachment_id=0,
+            name="child.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        test_db.add_all([root_doc, child_doc])
+        test_db.commit()
+
+        documents, total = KnowledgeService.list_documents_paginated(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            folder_id=0,
+            include_subfolders=True,
+        )
+
+        assert total == 2
+        assert {doc.name for doc in documents} == {"root.md", "child.md"}
+
+    def test_update_folder_returns_subtree_total_document_count(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="folder-update-subtree-count"),
+        )
+        parent = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="parent", parent_id=0),
+        )
+        child = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="child", parent_id=parent.id),
+        )
+        test_db.add_all(
+            [
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=parent.id,
+                    attachment_id=0,
+                    name="parent.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=child.id,
+                    attachment_id=0,
+                    name="child.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+            ]
+        )
+        test_db.commit()
+
+        updated = KnowledgeFolderService.update_folder(
+            test_db,
+            parent.id,
+            test_user.id,
+            KnowledgeFolderUpdate(name="renamed-parent"),
+            knowledge_base_id=knowledge_base_id,
+        )
+
+        assert updated.direct_document_count == 1
+        assert updated.total_document_count == 2
 
 
 @pytest.mark.unit

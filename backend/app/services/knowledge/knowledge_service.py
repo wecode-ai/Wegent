@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from sqlalchemy import and_, case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -148,6 +148,18 @@ class ActiveDocumentTextStats:
     active_document_count: int
 
 
+@dataclass(frozen=True)
+class ExternalKnowledgeBaseListFilters:
+    """Normalized filters for external knowledge base listing."""
+
+    scope: ResourceScope
+    group_name: str | None = None
+    keyword: str | None = None
+    owner_user_ids: tuple[int, ...] = ()
+    offset: int = 0
+    limit: int = 50
+
+
 class KnowledgeService:
     """Service for managing knowledge bases and documents using kinds table."""
 
@@ -275,6 +287,27 @@ class KnowledgeService:
         resource_data = kb_crd.model_dump()
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}
+
+        # Multimodal analysis config: KnowledgeBaseSpec does not declare these
+        # fields (it ignores extras), so write them into the spec dict AFTER
+        # model_dump. enabled defaults to False when unset; blank/whitespace
+        # prompts normalize to None (system default).
+        if data.multimodal_analysis_enabled is not None:
+            resource_data.setdefault("spec", {})[
+                "multimodalAnalysisEnabled"
+            ] = data.multimodal_analysis_enabled
+        if data.multimodal_analysis_model_ref:
+            resource_data.setdefault("spec", {})[
+                "multimodalAnalysisModelRef"
+            ] = data.multimodal_analysis_model_ref
+        if data.multimodal_analysis_video_prompt is not None:
+            resource_data.setdefault("spec", {})["multimodalAnalysisVideoPrompt"] = (
+                data.multimodal_analysis_video_prompt.strip() or None
+            )
+        if data.multimodal_analysis_image_prompt is not None:
+            resource_data.setdefault("spec", {})["multimodalAnalysisImagePrompt"] = (
+                data.multimodal_analysis_image_prompt.strip() or None
+            )
 
         # Create Kind record directly using the passed db session
         db_resource = Kind(
@@ -554,11 +587,53 @@ class KnowledgeService:
         return knowledge_bases[offset : offset + limit], total
 
     @staticmethod
+    def list_external_knowledge_bases(
+        db: Session,
+        *,
+        user_id: int,
+        filters: ExternalKnowledgeBaseListFilters,
+    ) -> tuple[list[Kind], int]:
+        """List externally visible knowledge bases with SQL filtering and paging."""
+        query = _KnowledgeBaseVisibilityQueryBuilder.build(
+            db,
+            user_id=user_id,
+            scope=filters.scope,
+            group_name=filters.group_name,
+        )
+
+        if query is None:
+            return [], 0
+
+        if filters.owner_user_ids:
+            query = query.filter(Kind.user_id.in_(filters.owner_user_ids))
+
+        if filters.keyword:
+            keyword_pattern = f"%{_escape_sql_like(filters.keyword.lower())}%"
+            name_text = _knowledge_base_json_text(db, "$.spec.name")
+            description_text = _knowledge_base_json_text(db, "$.spec.description")
+            query = query.filter(
+                or_(
+                    func.lower(name_text).like(keyword_pattern, escape="\\"),
+                    func.lower(description_text).like(keyword_pattern, escape="\\"),
+                )
+            )
+
+        total = query.order_by(None).count()
+        knowledge_bases = (
+            query.order_by(Kind.created_at.desc(), Kind.id.desc())
+            .offset(filters.offset)
+            .limit(filters.limit)
+            .all()
+        )
+        return knowledge_bases, total
+
+    @staticmethod
     def update_knowledge_base(
         db: Session,
         knowledge_base_id: int,
         user_id: int,
         data: KnowledgeBaseUpdate,
+        multimodal_update_fields: Optional[dict[str, Any]] = None,
     ) -> Optional[Kind]:
         """
         Update a knowledge base.
@@ -568,6 +643,9 @@ class KnowledgeService:
             knowledge_base_id: Knowledge base ID
             user_id: Requesting user ID
             data: Update data
+            multimodal_update_fields: Explicitly-set multimodal spec fields (only
+                keys the client sent are present; a ``None`` value means clear).
+                When None the multimodal spec is left untouched.
 
         Returns:
             Updated Kind if successful, None otherwise
@@ -625,7 +703,6 @@ class KnowledgeService:
                     current_retrieval_config["retrieval_mode"] = (
                         data.retrieval_config.retrieval_mode
                     )
-                    current_retrieval_config["retrieval_mode_source"] = "user"
                 if data.retrieval_config.top_k is not None:
                     current_retrieval_config["top_k"] = data.retrieval_config.top_k
                 if data.retrieval_config.score_threshold is not None:
@@ -666,6 +743,29 @@ class KnowledgeService:
                 f"exemptCallsBeforeCheck ({exempt_calls}) must be less than "
                 f"maxCallsPerConversation ({max_calls})"
             )
+
+        # Multimodal spec fields: only keys the client explicitly sent are
+        # present (None = clear). Mirrors the summary_model_ref / guided_questions
+        # explicit-set handling above.
+        if multimodal_update_fields:
+            if "multimodal_analysis_enabled" in multimodal_update_fields:
+                spec["multimodalAnalysisEnabled"] = multimodal_update_fields[
+                    "multimodal_analysis_enabled"
+                ]
+            if "multimodal_analysis_model_ref" in multimodal_update_fields:
+                spec["multimodalAnalysisModelRef"] = multimodal_update_fields[
+                    "multimodal_analysis_model_ref"
+                ]
+            if "multimodal_analysis_video_prompt" in multimodal_update_fields:
+                v = multimodal_update_fields["multimodal_analysis_video_prompt"]
+                spec["multimodalAnalysisVideoPrompt"] = (
+                    v.strip() if v else None
+                ) or None
+            if "multimodal_analysis_image_prompt" in multimodal_update_fields:
+                v = multimodal_update_fields["multimodal_analysis_image_prompt"]
+                spec["multimodalAnalysisImagePrompt"] = (
+                    v.strip() if v else None
+                ) or None
 
         kb_json["spec"] = spec
         kb.json = kb_json
@@ -752,13 +852,13 @@ class KnowledgeService:
         new_type: str,
     ) -> Optional[Kind]:
         """
-        Update the knowledge base type (notebook <-> classic conversion).
+        Update the knowledge base default opening view.
 
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
             user_id: Requesting user ID
-            new_type: New knowledge base type ('notebook' or 'classic')
+            new_type: New default view value ('notebook' or 'classic')
 
         Returns:
             Updated Kind if successful, None if not found
@@ -781,7 +881,7 @@ class KnowledgeService:
         if new_type not in ("notebook", "classic"):
             raise ValueError("kb_type must be 'notebook' or 'classic'")
 
-        # Get current type
+        # Get current default view
         kb_json = kb.json
         spec = kb_json.get("spec", {})
         current_type = spec.get("kbType", "notebook")
@@ -790,16 +890,7 @@ class KnowledgeService:
         if current_type == new_type:
             return kb
 
-        # If converting to notebook, check document count limit
-        if new_type == "notebook":
-            document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
-            if document_count > KnowledgeService.NOTEBOOK_MAX_DOCUMENTS:
-                raise ValueError(
-                    f"Cannot convert to notebook mode: document count ({document_count}) "
-                    f"exceeds the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS}"
-                )
-
-        # Update the type
+        # Update the default opening view. This does not change KB capabilities.
         spec["kbType"] = new_type
         kb_json["spec"] = spec
         kb.json = kb_json
@@ -835,6 +926,29 @@ class KnowledgeService:
             .scalar()
             or 0
         )
+
+    @staticmethod
+    def get_document_counts(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, int]:
+        """Get total document counts for multiple knowledge bases in one query."""
+        from sqlalchemy import func
+
+        if not knowledge_base_ids:
+            return {}
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {kb_id: count for kb_id, count in results}
 
     @staticmethod
     def _update_document_count_cache(
@@ -1050,9 +1164,6 @@ class KnowledgeService:
 
     # ============== Knowledge Document Operations ==============
 
-    # Maximum number of documents allowed in notebook mode knowledge base
-    NOTEBOOK_MAX_DOCUMENTS = 50
-
     @staticmethod
     def create_document(
         db: Session,
@@ -1096,17 +1207,6 @@ class KnowledgeService:
                 "You do not have permission to add documents to this knowledge base"
             )
 
-        # Check document limit for notebook mode knowledge base
-        kb_spec = kb.json.get("spec", {})
-        kb_type = kb_spec.get("kbType", "notebook")
-        if kb_type == "notebook":
-            current_count = KnowledgeService.get_document_count(db, knowledge_base_id)
-            if current_count >= KnowledgeService.NOTEBOOK_MAX_DOCUMENTS:
-                raise ValueError(
-                    f"Notebook mode knowledge base can have at most {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
-                    f"Current count: {current_count}"
-                )
-
         validated_folder_id = data.folder_id
 
         # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
@@ -1115,6 +1215,19 @@ class KnowledgeService:
                 db, knowledge_base_id, data.folder_id
             )
             validated_folder_id = target_folder.id
+
+        # Persist the optional per-document multimodal analysis prompt override
+        # into source_config under the same key the reindex path and re-analyze
+        # dialog read. Blank clears the override (inherit KB default); None
+        # leaves source_config untouched (no multimodal override requested).
+        source_config = dict(data.source_config) if data.source_config else {}
+        prompt_override = getattr(data, "multimodal_analysis_prompt", None)
+        if prompt_override is not None:
+            prompt_text = prompt_override.strip()
+            if prompt_text:
+                source_config["multimodal_analysis_prompt"] = prompt_text
+            else:
+                source_config.pop("multimodal_analysis_prompt", None)
 
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
@@ -1130,7 +1243,7 @@ class KnowledgeService:
                 else {}
             ),  # Save splitter_config with default {}
             source_type=data.source_type.value if data.source_type else "file",
-            source_config=data.source_config if data.source_config else {},
+            source_config=source_config,
         )
         db.add(document)
         db.flush()  # Flush to persist document before counting
@@ -1221,6 +1334,10 @@ class KnowledgeService:
         *,
         offset: int = 0,
         limit: int = 50,
+        include_subfolders: bool = False,
+        keyword: str | None = None,
+        sort_by: str = "createdAt",
+        sort_order: str = "desc",
     ) -> tuple[list[KnowledgeDocument], int]:
         """List documents with offset/limit pagination."""
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -1234,11 +1351,64 @@ class KnowledgeService:
         )
 
         if folder_id is not None:
-            query = query.filter(KnowledgeDocument.folder_id == folder_id)
+            if folder_id > 0:
+                folder = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.id == folder_id,
+                        KnowledgeFolder.kind_id == knowledge_base_id,
+                    )
+                    .first()
+                )
+                if folder is None:
+                    raise ValueError("Folder not found in this knowledge base")
+
+            if include_subfolders:
+                folder_rows = (
+                    db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+                    .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+                    .all()
+                )
+                children_by_parent: dict[int, list[int]] = {}
+                for child_id, parent_id in folder_rows:
+                    children_by_parent.setdefault(parent_id, []).append(child_id)
+
+                folder_ids: set[int] = set()
+                stack = [folder_id]
+                while stack:
+                    current_id = stack.pop()
+                    if current_id in folder_ids:
+                        continue
+                    folder_ids.add(current_id)
+                    stack.extend(children_by_parent.get(current_id, []))
+
+                folder_ids.add(folder_id)
+                query = query.filter(KnowledgeDocument.folder_id.in_(folder_ids))
+            else:
+                query = query.filter(KnowledgeDocument.folder_id == folder_id)
+
+        if keyword:
+            keyword = keyword.strip()
+            if keyword:
+                keyword_pattern = f"%{_escape_sql_like(keyword)}%"
+                query = query.filter(
+                    KnowledgeDocument.name.ilike(keyword_pattern, escape="\\")
+                )
+
+        sort_columns = {
+            "name": KnowledgeDocument.name,
+            "size": KnowledgeDocument.file_size,
+            "createdAt": KnowledgeDocument.created_at,
+            "updatedAt": KnowledgeDocument.updated_at,
+        }
+        sort_column = sort_columns.get(sort_by, KnowledgeDocument.created_at)
+        ordered_column = (
+            sort_column.asc() if sort_order == "asc" else sort_column.desc()
+        )
 
         total = query.count()
         items = (
-            query.order_by(KnowledgeDocument.created_at.desc())
+            query.order_by(ordered_column, KnowledgeDocument.id.desc())
             .offset(offset)
             .limit(limit)
             .all()
@@ -1937,7 +2107,7 @@ class KnowledgeService:
 
         # Batch fetch document counts for all KBs to avoid N+1 queries
         all_kb_ids = [kb.id for kb in created_kbs] + [kb.id for kb in shared_kbs]
-        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+        document_counts = KnowledgeService.get_document_counts(db, all_kb_ids)
 
         # Build response lists using batched counts
         created_by_me = []
@@ -2207,7 +2377,7 @@ class KnowledgeService:
                 + [kb.id for kb in remaining_shared_group_kbs]
             )
         )
-        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+        document_counts = KnowledgeService.get_document_counts(db, all_kb_ids)
 
         owner_user_ids: set[int] = set()
         for kb in personal_created:
@@ -3267,3 +3437,138 @@ class KnowledgeService:
             folder_ids=folder_ids,
             user_id=user_id,
         )
+
+
+class _KnowledgeBaseVisibilityQueryBuilder:
+    """Build SQL queries for knowledge bases visible to a user."""
+
+    @staticmethod
+    def build(
+        db: Session,
+        *,
+        user_id: int,
+        scope: ResourceScope,
+        group_name: str | None = None,
+    ):
+        base_query = db.query(Kind).filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+
+        if scope == ResourceScope.PERSONAL:
+            return _KnowledgeBaseVisibilityQueryBuilder._build_personal_query(
+                db,
+                base_query=base_query,
+                user_id=user_id,
+            )
+
+        if scope == ResourceScope.GROUP:
+            if not group_name:
+                raise ValueError("group_name is required when scope is GROUP")
+            role = get_effective_role_in_group(db, user_id, group_name)
+            if role is None:
+                return None
+            return base_query.filter(Kind.namespace == group_name)
+
+        if scope == ResourceScope.ORGANIZATION:
+            return base_query.join(Namespace, Kind.namespace == Namespace.name).filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+
+        return _KnowledgeBaseVisibilityQueryBuilder._build_all_query(
+            db,
+            base_query=base_query,
+            user_id=user_id,
+        )
+
+    @staticmethod
+    def _build_personal_query(db: Session, *, base_query, user_id: int):
+        shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
+            db,
+            user_id=user_id,
+            accessible_groups=get_user_groups(db, user_id),
+        )
+        bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+
+        conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
+        if shared_kb_ids:
+            conditions.append(Kind.id.in_(shared_kb_ids))
+        if bound_kb_ids:
+            conditions.append(Kind.id.in_(bound_kb_ids))
+
+        return base_query.filter(or_(*conditions))
+
+    @staticmethod
+    def _build_all_query(db: Session, *, base_query, user_id: int):
+        accessible_groups = get_user_groups(db, user_id)
+        shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
+            db,
+            user_id=user_id,
+            accessible_groups=accessible_groups,
+        )
+        org_namespace_names = [
+            namespace_name
+            for (namespace_name,) in db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .all()
+        ]
+        bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+
+        conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
+        if accessible_groups:
+            conditions.append(Kind.namespace.in_(accessible_groups))
+        if org_namespace_names:
+            conditions.append(Kind.namespace.in_(org_namespace_names))
+        if shared_kb_ids:
+            conditions.append(Kind.id.in_(shared_kb_ids))
+        if bound_kb_ids:
+            conditions.append(Kind.id.in_(bound_kb_ids))
+
+        return base_query.filter(or_(*conditions))
+
+    @staticmethod
+    def _shared_kb_ids(
+        db: Session,
+        *,
+        user_id: int,
+        accessible_groups: list[str],
+    ) -> list[int]:
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        shared_permissions = (
+            db.query(ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        shared_kb_ids = [permission.resource_id for permission in shared_permissions]
+
+        entity_result = KnowledgeService._collect_entity_authorized_kbs(
+            db,
+            user_id,
+            accessible_groups,
+        )
+        entity_kb_ids = {kb.id for kb in entity_result.entity_kbs}
+        return list(set(shared_kb_ids) | entity_kb_ids)
+
+
+def _knowledge_base_json_text(db: Session, path: str):
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "mysql":
+        value = func.json_unquote(func.json_extract(Kind.json, path))
+    else:
+        value = func.json_extract(Kind.json, path)
+    return func.coalesce(value, "")
+
+
+def _escape_sql_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

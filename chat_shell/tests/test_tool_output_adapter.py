@@ -21,7 +21,7 @@ from chat_shell.guard.types import TruncationPolicy
 def _make_tokens(n: int, counter: TokenCounter) -> str:
     """Generate text with exactly *n* tokens using cl100k encoding."""
     base = "The quick brown fox jumps over the lazy dog. " * ((n // 10) + 1)
-    ids = counter.encoding.encode(base)
+    ids = counter.encoding.encode(base, disallowed_special=())
     return counter.encoding.decode(ids[:n])
 
 
@@ -457,3 +457,49 @@ class TestRecognition:
 
         assert adapter.should_bypass_source_compaction(message) is False
         assert adapter.should_bypass_request_compaction(message) is False
+
+    def test_body_containing_tiktoken_special_token_does_not_raise(self):
+        """Tool output that contains '<|endoftext|>' or other tiktoken special
+        tokens must not raise during token counting or truncation.
+
+        Regression: _truncate_body() called encoding.encode(body) without
+        disallowed_special=(), which caused tiktoken to raise when web-search
+        results (or any user-facing content) contained GPT special tokens.
+        """
+        counter = TokenCounter("gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=200),
+        )
+        policy = TruncationPolicy(kind="tokens", limit=200)
+
+        # Content containing a tiktoken special token — must not raise
+        body_with_special = (
+            "Here is an example: tokenizer.register_special_tokens("
+            '{"<|endoftext|>": 50256})'
+        )
+        output = adapter.to_model_visible({"text": body_with_special}, policy)
+
+        assert output.startswith(HEADER_PREFIX)
+        assert "truncated=false" in output.split("\n")[0]
+        assert body_with_special in output
+
+    def test_body_containing_tiktoken_special_token_truncated_does_not_raise(self):
+        """Same as above but with truncation — ensures encode inside truncation
+        path also handles special tokens correctly."""
+        counter = TokenCounter("gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=5),
+        )
+        policy = TruncationPolicy(kind="tokens", limit=5)
+
+        # Large body with a special token embedded, exceeds the 5-token limit
+        body_with_special = (
+            "Some prefix text. " * 20 + "<|endoftext|>" + " Some suffix text. " * 20
+        )
+        # Must not raise
+        output = adapter.to_model_visible({"text": body_with_special}, policy)
+
+        assert output.startswith(HEADER_PREFIX)
+        assert "truncated=true" in output.split("\n")[0]

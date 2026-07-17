@@ -11,12 +11,14 @@ import type {
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import {
   StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
+  type StandaloneRemoteDialogIntent,
   type StandaloneWorkspaceDialogMode,
 } from '@/components/projects/StandaloneProjectDialogs'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
@@ -30,6 +32,9 @@ import {
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
+import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { TodoWorkspace } from '@/features/todo/TodoWorkspace'
+import { WorkbenchBackground } from '@/features/appearance'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -40,13 +45,16 @@ export function DesktopWorkbenchLayout() {
   const { logout: onLogout } = useAuth()
   const {
     state,
+    projectChat,
     cloudWorkStatus,
     upgradingDevices,
     selectProject: onSelectProject,
     selectStandaloneDevice,
     openStandaloneWorkspace: onOpenStandaloneWorkspace,
     startNewChat: onNewChat,
+    startStandaloneChat: onStartStandaloneChat,
     startNewProjectChat: onStartNewProjectChat,
+    createProjectRuntimeTask: onCreateProjectRuntimeTask,
     openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
@@ -57,7 +65,6 @@ export function DesktopWorkbenchLayout() {
     rememberExecutionDevice: onRememberExecutionDevice,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
-    refreshWorkLists: onRefreshWorkLists,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
@@ -67,6 +74,11 @@ export function DesktopWorkbenchLayout() {
     listGitBranches: onListGitBranches,
     updateProjectName: onUpdateProjectName,
     removeProject: onRemoveProject,
+    reorderRuntimeProjects: onReorderRuntimeProjects,
+    setRuntimeProjectPinned: onSetRuntimeProjectPinned,
+    setRuntimeProjectAppearance: onSetRuntimeProjectAppearance,
+    reorderRuntimeProjectTasks: onReorderRuntimeProjectTasks,
+    setRuntimeTaskPinned: onSetRuntimeTaskPinned,
     getDeviceHomeDirectory: onGetDeviceHomeDirectory,
     getProjectWorkspaceRoot: onGetProjectWorkspaceRoot,
     listDeviceDirectories: onListDeviceDirectories,
@@ -76,19 +88,27 @@ export function DesktopWorkbenchLayout() {
     updateGlobalImNotification: onUpdateGlobalImNotification,
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
+    runtimeTaskReminders,
+    services,
+    refreshWorkLists,
   } = useWorkbench()
-  const activeItem = 'chat'
+  const initialPath = stripAppBasePath(window.location.pathname)
+  const [currentPath, setCurrentPath] = useState(initialPath)
+  const todoOpen = currentPath === '/todo'
+  const activeItem = todoOpen ? 'todo' : 'chat'
+  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    isSettingsRoute(stripAppBasePath(window.location.pathname))
-  )
+  const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
     useState<StandaloneWorkspaceDialogMode | null>(null)
+  const [standaloneRemoteDialogIntent, setStandaloneRemoteDialogIntent] =
+    useState<StandaloneRemoteDialogIntent>('project')
+  const [standalonePreferNativeLocalPicker, setStandalonePreferNativeLocalPicker] = useState(true)
   const [projectWorkEditProject, setProjectWorkEditProject] = useState<ProjectWithTasks | null>(
     null
   )
@@ -109,7 +129,9 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+      const path = stripAppBasePath(window.location.pathname)
+      setCurrentPath(path)
+      setSettingsOpen(isSettingsRoute(path))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -117,6 +139,7 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (todoOpen) return
       if (event.key.toLowerCase() !== 'k') return
       if (!event.metaKey && !event.ctrlKey) return
       event.preventDefault()
@@ -125,7 +148,7 @@ export function DesktopWorkbenchLayout() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [todoOpen])
 
   useEffect(() => {
     const syncAutoCollapse = () => {
@@ -145,16 +168,54 @@ export function DesktopWorkbenchLayout() {
     return () => window.clearTimeout(timer)
   }, [effectiveSidebarCollapsed, sidebarPreviewOpen])
 
-  const openProjectFromWorkMenu = useCallback(
-    (mode: ProjectCreateMode) => {
-      setBlankProjectDialogOpen(mode === 'scratch')
-      setStandaloneWorkspaceDialogMode(
-        mode === 'existing' ? 'existing' : mode === 'git' ? 'remote' : null
-      )
+  const openStandaloneFolderProject = useCallback(
+    async (
+      mode: StandaloneWorkspaceDialogMode,
+      intent: StandaloneRemoteDialogIntent = 'project'
+    ) => {
+      setBlankProjectDialogOpen(false)
       setProjectWorkEditProject(null)
+      setStandaloneRemoteDialogIntent(intent)
+
+      if (mode === 'existing') {
+        // Mount the dialog before opening the native picker so the triggering menu and
+        // pointer event are fully dismissed before macOS starts its modal event loop.
+        // Desktop automation uses the equivalent in-app picker by default because native OS
+        // dialogs cannot be driven through the isolated WebView controller. An explicit E2E
+        // override keeps the controller active for real native-picker verification.
+        setStandalonePreferNativeLocalPicker(shouldUseNativeProjectDirectoryPicker())
+        setStandaloneWorkspaceDialogMode('existing')
+        void onRefreshDevices?.().catch(() => undefined)
+        return
+      }
+
+      setStandalonePreferNativeLocalPicker(true)
+      setStandaloneWorkspaceDialogMode(mode)
       void onRefreshDevices?.().catch(() => undefined)
     },
     [onRefreshDevices]
+  )
+
+  const closeStandaloneFolderProject = useCallback(() => {
+    setStandaloneWorkspaceDialogMode(null)
+    setStandaloneRemoteDialogIntent('project')
+    setStandalonePreferNativeLocalPicker(true)
+  }, [])
+
+  const openProjectFromWorkMenu = useCallback(
+    (mode: ProjectCreateMode) => {
+      if (mode === 'scratch') {
+        setBlankProjectDialogOpen(true)
+        setStandaloneWorkspaceDialogMode(null)
+        void onRefreshDevices?.().catch(() => undefined)
+      } else if (mode === 'existing') {
+        void openStandaloneFolderProject('existing')
+      } else if (mode === 'git') {
+        void openStandaloneFolderProject('remote', 'project')
+      }
+      setProjectWorkEditProject(null)
+    },
+    [onRefreshDevices, openStandaloneFolderProject]
   )
 
   const openProjectWorkspaceBinding = useCallback(
@@ -172,7 +233,7 @@ export function DesktopWorkbenchLayout() {
   const openCloudDeviceSettings = useCallback(() => {
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
-    navigateTo('/settings')
+    navigateTo('/settings/connections')
   }, [])
 
   const openSidebarPreview = useCallback(() => {
@@ -420,6 +481,7 @@ export function DesktopWorkbenchLayout() {
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
+      unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
       preferredDeviceId={
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
@@ -431,11 +493,17 @@ export function DesktopWorkbenchLayout() {
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
+      onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
+      onOpenWorkbench={() => navigateTo('/')}
+      onOpenTodo={() => navigateTo('/todo')}
+      onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
+      onStartStandaloneChat={onStartStandaloneChat}
       onOpenSearch={() => setSearchOpen(true)}
       onSelectProject={onSelectProject}
       onStartNewProjectChat={onStartNewProjectChat}
       onOpenRuntimeTask={onOpenRuntimeTask}
+      onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
       onRenameRuntimeTask={onRenameRuntimeTask}
       onArchiveRuntimeTask={onArchiveRuntimeTask}
       onArchiveProjectConversations={onArchiveProjectConversations}
@@ -449,25 +517,41 @@ export function DesktopWorkbenchLayout() {
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
       onOpenPlugins={() => navigateTo('/plugins')}
       onRefreshDevices={onRefreshDevices}
+      onOpenBlankStandaloneProject={() => {
+        setBlankProjectDialogOpen(true)
+        setStandaloneWorkspaceDialogMode(null)
+      }}
+      onOpenStandaloneFolderProject={(mode, intent = 'project') => {
+        void openStandaloneFolderProject(mode, intent)
+      }}
       onUpdateProjectName={onUpdateProjectName}
       onRemoveProject={onRemoveProject}
+      onReorderRuntimeProjects={onReorderRuntimeProjects}
+      onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
+      onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
+      onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
+      onSetRuntimeTaskPinned={onSetRuntimeTaskPinned}
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onListDeviceDirectories={onListDeviceDirectories}
       onCreateDeviceDirectory={onCreateDeviceDirectory}
       onOpenSettings={options => {
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)
-        navigateTo('/settings')
+        navigateTo(
+          options?.autoOpenAddCloudDeviceDialog || options?.settingsPage === 'connections'
+            ? '/settings/connections'
+            : '/settings'
+        )
       }}
-      onRefreshWorkLists={onRefreshWorkLists}
       onLogout={onLogout}
     />
   )
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-      {!settingsOpen && effectiveSidebarCollapsed && (
+      {!todoOpen && <WorkbenchBackground />}
+      {!settingsOpen && !todoOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+      {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
         <>
           <div
             data-testid="desktop-sidebar-hover-edge"
@@ -497,27 +581,56 @@ export function DesktopWorkbenchLayout() {
           </div>
         </>
       )}
-      {settingsOpen ? (
+      {settingsOpen && (
         <ConnectionsSettingsPage
           autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+          services={services}
+          devices={state.devices}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+          onRefreshWorkLists={refreshWorkLists}
           onBack={() => {
             setSettingsOpen(false)
             setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
         />
-      ) : (
-        <DesktopWorkbenchMain
-          sidebarCollapsed={effectiveSidebarCollapsed}
-          sidebarResizing={sidebarResizing}
-          onSidebarCollapsedChange={updateSidebarCollapsed}
-          activePane={{
-            currentRuntimeTask: state.currentRuntimeTask,
-            currentProject: state.currentProject,
-            standaloneChatKey: state.standaloneChatKey,
-          }}
-        />
       )}
+      <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
+        {todoOpen && (
+          <TodoWorkspace
+            user={state.user}
+            projects={state.projects}
+            runtimeWork={state.runtimeWork}
+            currentProjectId={state.currentProject?.id}
+            services={services}
+            modelName={projectChat.selectedModel?.displayName ?? projectChat.selectedModel?.name}
+            onRunTodo={({ project, message, goal, attachments }) =>
+              onCreateProjectRuntimeTask(message, {
+                project,
+                attachments,
+                initialGoal: goal ? { objective: goal } : null,
+              })
+            }
+            onOpenRuntimeTask={async address => {
+              navigateTo('/')
+              await onOpenRuntimeTask?.(address)
+            }}
+          />
+        )}
+        <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
+          <DesktopWorkbenchMain
+            visible={!settingsOpen && !todoOpen}
+            sidebarCollapsed={effectiveSidebarCollapsed}
+            sidebarResizing={sidebarResizing}
+            onSidebarCollapsedChange={updateSidebarCollapsed}
+            activePane={{
+              currentRuntimeTask: state.currentRuntimeTask,
+              currentProject: state.currentProject,
+              standaloneChatKey: state.standaloneChatKey,
+            }}
+          />
+        </div>
+      </div>
       <StandaloneBlankProjectDialog
         open={blankProjectDialogOpen}
         devices={state.devices}
@@ -534,15 +647,19 @@ export function DesktopWorkbenchLayout() {
         key={standaloneWorkspaceDialogMode ?? 'standalone-folder-closed'}
         open={standaloneWorkspaceDialogMode !== null}
         mode={standaloneWorkspaceDialogMode ?? 'existing'}
+        remoteIntent={standaloneRemoteDialogIntent}
+        preferNativeLocalPicker={standalonePreferNativeLocalPicker}
         devices={state.devices}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
-        onClose={() => setStandaloneWorkspaceDialogMode(null)}
+        onClose={closeStandaloneFolderProject}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
         onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
+        onRefreshDevices={onRefreshDevices}
       />
       <ProjectCreateDialog
         open={projectWorkEditProject !== null}

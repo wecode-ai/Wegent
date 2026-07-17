@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { ProjectWithTasks } from '@/types/api'
 import {
+  createLocalFileWorkspaceTarget,
   resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
   resolveWorkspaceTarget,
@@ -13,6 +14,30 @@ function createApi() {
 }
 
 describe('resolveWorkspaceTarget', () => {
+  test('creates a local file target with the real local device id', () => {
+    expect(
+      createLocalFileWorkspaceTarget('/Users/me/.agents/skills/gmail/SKILL.md', [
+        {
+          id: 1,
+          device_id: 'device-local-real',
+          name: 'Local Mac',
+          status: 'online',
+          is_default: true,
+          device_type: 'local',
+        },
+      ])
+    ).toEqual({
+      deviceId: 'device-local-real',
+      path: '/Users/me/.agents/skills/gmail',
+      source: 'runtime',
+      workspaceSource: 'local',
+    })
+  })
+
+  test('rejects relative local file paths', () => {
+    expect(createLocalFileWorkspaceTarget('skills/gmail/SKILL.md', [])).toBeNull()
+  })
+
   test('resolves relative git project paths under the executor workspace root', async () => {
     const project: ProjectWithTasks = {
       id: 12,
@@ -173,6 +198,7 @@ describe('resolveWorkspaceTarget', () => {
         deviceId: 'device-b',
         path: '/workspace/worktrees/8/project-alpha',
         source: 'runtime',
+        taskId: 'runtime-1',
       },
     })
   })

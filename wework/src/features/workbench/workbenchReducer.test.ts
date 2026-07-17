@@ -709,6 +709,49 @@ describe('workbenchReducer', () => {
     })
   })
 
+  test('updates the logical device when a websocket event uses its socket id', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [
+        {
+          id: 1,
+          device_id: 'logical-device',
+          socket_device_id: 'socket-device',
+          name: 'Remote Device',
+          status: 'offline',
+          is_default: false,
+        },
+      ],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'logical-device',
+            deviceStatus: 'offline',
+            available: false,
+            workspacePath: '/workspace/repo',
+            mapped: true,
+            tasks: [],
+          },
+        ],
+        totalTasks: 0,
+      },
+    })
+
+    const updated = workbenchReducer(state, {
+      type: 'device_status_changed',
+      deviceId: 'socket-device',
+      status: 'online',
+    })
+
+    expect(updated.devices[0].status).toBe('online')
+    expect(updated.runtimeWork?.chats[0]).toMatchObject({
+      deviceStatus: 'online',
+      available: true,
+    })
+  })
+
   test('preserves runtime task order on refresh and appends new tasks', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',
@@ -876,6 +919,79 @@ describe('workbenchReducer', () => {
       workspacePath: '/workspace/repo/.worktrees/codex-1',
       status: 'running',
     })
+    expect(refreshed.runtimeWork?.totalTasks).toBe(1)
+  })
+
+  test('preserves a fresh failed optimistic runtime task across refresh', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'codex-failed',
+                    workspacePath: '/workspace/repo',
+                    title: 'Create cloud config',
+                    runtime: 'codex',
+                    status: 'failed',
+                    optimistic: true,
+                    error: 'executor-not-found:device-1',
+                    updatedAt: new Date().toISOString(),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'codex-failed',
+        status: 'failed',
+        optimistic: true,
+        error: 'executor-not-found:device-1',
+      }),
+    ])
     expect(refreshed.runtimeWork?.totalTasks).toBe(1)
   })
 

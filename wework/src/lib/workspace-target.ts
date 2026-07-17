@@ -1,4 +1,5 @@
 import type {
+  DeviceInfo,
   RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
@@ -11,6 +12,7 @@ import {
   type ProjectWorkspaceRootApi,
 } from '@/lib/project-workspace'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface ResolveWorkspaceTargetOptions {
@@ -33,6 +35,26 @@ interface ResolveProjectRuntimeWorkspaceTargetOptions {
 export interface RuntimeWorkspaceContext {
   project: ProjectWithTasks | null
   workspaceTarget: WorkspaceTarget
+}
+
+export function createLocalFileWorkspaceTarget(
+  filePath: string,
+  devices: DeviceInfo[]
+): WorkspaceTarget | null {
+  const normalizedPath = filePath.trim().replace(/\\/g, '/')
+  if (!normalizedPath.startsWith('/')) return null
+
+  const separatorIndex = normalizedPath.lastIndexOf('/')
+  const directoryPath = separatorIndex > 0 ? normalizedPath.slice(0, separatorIndex) : '/'
+  const deviceId = resolveLocalWorkbenchDeviceId(devices, LOCAL_WORKBENCH_DEVICE_ALIAS)
+  if (!deviceId) return null
+
+  return {
+    deviceId,
+    path: directoryPath,
+    source: 'runtime',
+    workspaceSource: 'local',
+  }
 }
 
 async function projectWorkspaceTarget(
@@ -114,6 +136,7 @@ function workspaceTargetFromRuntimeTask(
     deviceId: workspace.deviceId,
     path: workspacePath,
     source: 'runtime',
+    taskId: task.taskId,
     ...(workspace.workspaceSource !== undefined
       ? { workspaceSource: workspace.workspaceSource }
       : {}),
@@ -179,12 +202,13 @@ export function resolveRuntimeWorkspaceContext({
       deviceId: currentRuntimeTask.deviceId,
       path: workspacePath,
       source: 'runtime',
+      taskId: currentRuntimeTask.taskId,
     },
   }
 }
 
 export function workspaceTargetKey(target: WorkspaceTarget | null): string {
   return target
-    ? `${target.deviceId}:${target.path}:${target.source}:${target.workspaceSource ?? ''}`
+    ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}:${target.workspaceSource ?? ''}`
     : ''
 }

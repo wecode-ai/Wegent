@@ -19,6 +19,7 @@ from app.api.endpoints import (
     knowledge,
     knowledge_open,
     knowledge_transfer,
+    knowledge_video_upload,
     local_executor,
     mcp_providers,
     oidc,
@@ -31,6 +32,7 @@ from app.api.endpoints import (
     repository,
     runtime_work,
     share,
+    sites,
     skill_identity,
     skill_market,
     subtasks,
@@ -40,6 +42,7 @@ from app.api.endpoints import (
     users,
     utils,
     web_scraper,
+    wework_auth,
     wiki,
     wizard,
     work_queue,
@@ -70,6 +73,9 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
+from app.api.endpoints.internal import (
+    api_keys_internal_router,
+)
 from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -77,6 +83,11 @@ from app.api.endpoints.internal import (
     chat_storage_router,
     conversion_callback_router,
     knowledge_router,
+)
+from app.api.endpoints.internal import (
+    model_config_router as internal_model_config_router,
+)
+from app.api.endpoints.internal import (
     object_storage_router,
     rag_content_router,
     services_router,
@@ -97,6 +108,9 @@ from app.api.router import api_router
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
+api_router.include_router(
+    wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
+)
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
@@ -160,6 +174,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
+api_router.include_router(sites.router, prefix="/v1/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
     device_chat_tasks.router, prefix="/device-chat", tags=["device-chat"]
@@ -178,6 +193,11 @@ api_router.include_router(
 )
 api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_video_upload.router,
+    prefix="/knowledge-documents/attachments/video-upload",
+    tags=["knowledge-video-upload"],
 )
 api_router.include_router(
     knowledge.qa_history_router,
@@ -309,4 +329,14 @@ api_router.include_router(
     conversion_callback_router,
     prefix="/internal",
     tags=["internal-conversion-callback"],
+)
+api_router.include_router(
+    internal_model_config_router,
+    prefix="/internal",
+    tags=["internal-model-config"],
+)
+api_router.include_router(
+    api_keys_internal_router,
+    prefix="/internal",
+    tags=["internal-api-keys"],
 )

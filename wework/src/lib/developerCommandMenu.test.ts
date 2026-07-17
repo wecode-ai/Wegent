@@ -1,13 +1,20 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 import { installDeveloperCommandMenu } from './developerCommandMenu'
+import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
 const invokeMock = vi.hoisted(() => vi.fn())
+const requestLocalExecutorMock = vi.hoisted(() => vi.fn())
 const isTauriRuntimeMock = vi.hoisted(() => vi.fn())
 const getWorkbenchDebugSnapshotMock = vi.hoisted(() => vi.fn())
 const clearWorkbenchDebugLogsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+}))
+
+vi.mock('@/tauri/localExecutor', () => ({
+  requestLocalExecutor: requestLocalExecutorMock,
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -26,6 +33,7 @@ describe('developerCommandMenu', () => {
 
   beforeEach(() => {
     invokeMock.mockResolvedValue(undefined)
+    requestLocalExecutorMock.mockResolvedValue({ enabled: false })
     isTauriRuntimeMock.mockReturnValue(true)
     getWorkbenchDebugSnapshotMock.mockReturnValue(createDebugSnapshot())
     localStorage.clear()
@@ -42,10 +50,40 @@ describe('developerCommandMenu', () => {
 
     expect(screenCommand('reload')).toBeInTheDocument()
     expect(screenCommand('open-debug-panel')).toBeInTheDocument()
+    expect(screenCommand('simulate-app-update')).toBeInTheDocument()
     expect(screenCommand('toggle-performance-diagnostics')).toBeInTheDocument()
+    expect(screenCommand('toggle-stream-logs')).toBeInTheDocument()
     expect(screenCommand('print-performance-snapshot')).toBeInTheDocument()
     expect(screenCommand('open-log-directory')).toBeInTheDocument()
     expect(screenCommand('open-web-inspector')).toBeInTheDocument()
+  })
+
+  test('toggles Codex stream logs through the local executor', async () => {
+    requestLocalExecutorMock
+      .mockResolvedValueOnce({ enabled: false })
+      .mockResolvedValueOnce({ enabled: true })
+    dispatchDeveloperShortcut()
+    await flushPromises()
+
+    screenCommand('toggle-stream-logs').click()
+    await flushPromises()
+
+    expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.get')
+    expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.set', {
+      enabled: true,
+    })
+    expect(localStorage.getItem('wework:debug-local-chat-stream')).toBe('1')
+  })
+
+  test('dispatches an event to simulate an app update', () => {
+    const listener = vi.fn()
+    window.addEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
+    dispatchDeveloperShortcut()
+
+    screenCommand('simulate-app-update').click()
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    window.removeEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
   })
 
   test('opens the app log directory through Tauri', () => {
@@ -71,8 +109,10 @@ describe('developerCommandMenu', () => {
 
     expect(document.getElementById('wework-debug-panel')).toBeInTheDocument()
     expect(document.body).toHaveTextContent('Active Task State (taskKnown=true')
+    expect(document.body).toHaveTextContent('Memory Diagnostics')
     expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
     expect(document.body).toHaveTextContent('"taskId": "task-1"')
+    expect(document.body).toHaveTextContent('"toolOutputApproxChars": 128')
     expect(document.body).toHaveTextContent('Transcript Loaded')
     expect(document.body).toHaveTextContent('Current Streaming')
     expect(document.body).toHaveTextContent('loaded transcript response')
@@ -87,13 +127,48 @@ describe('developerCommandMenu', () => {
     screenButton('Collapse').click()
 
     expect(screenCollapsedDebugPanel()).toBeInTheDocument()
-    expect(document.body).toHaveTextContent('Debug Panel collapsed')
+    expect(screenCollapsedDebugPanel()).toHaveClass('h-8', 'group')
+    expect(screenCollapsedDebugPanel()).toHaveTextContent('Debug')
+    expect(screenCollapsedDebugPanel()).toHaveAttribute(
+      'title',
+      expect.stringContaining('Debug Panel - taskKnown=true')
+    )
     expect(document.body).not.toHaveTextContent('Transcript vs Streaming Style')
 
     screenCollapsedDebugPanel().click()
 
     expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
     expect(document.body).toHaveTextContent('Collapse')
+    expect(document.getElementById('wework-debug-panel')).not.toHaveAttribute('style')
+  })
+
+  test('drags the collapsed debug button without expanding it', () => {
+    dispatchDeveloperShortcut()
+    screenCommand('open-debug-panel').click()
+    screenButton('Collapse').click()
+
+    const root = document.getElementById('wework-debug-panel')
+    const button = screenCollapsedDebugPanel()
+    vi.spyOn(root!, 'getBoundingClientRect').mockReturnValue({
+      left: 900,
+      top: 700,
+      width: 32,
+      height: 32,
+      right: 932,
+      bottom: 732,
+      x: 900,
+      y: 700,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(button, { button: 0, clientX: 916, clientY: 716 })
+    fireEvent.pointerMove(window, { clientX: 816, clientY: 616 })
+    fireEvent.pointerUp(window)
+    fireEvent.click(button)
+
+    expect(root).toHaveStyle({ left: '800px', top: '600px' })
+    expect(screenCollapsedDebugPanel()).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent('Transcript vs Streaming Style')
   })
 })
 
@@ -134,6 +209,10 @@ function screenCollapsedDebugPanel(): HTMLElement {
     throw new Error('Collapsed debug panel was not found')
   }
   return element
+}
+
+function flushPromises(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, 0))
 }
 
 function createDebugSnapshot() {
@@ -270,6 +349,46 @@ function createDebugSnapshot() {
         ],
         renderingRules: ['Streaming messages hide hover actions and suppress final artifacts.'],
       },
+      memory: {
+        messages: {
+          count: 2,
+          contentChars: 41,
+          blockCount: 2,
+          toolBlockCount: 1,
+          toolOutputApproxChars: 128,
+          renderPayloadApproxChars: 0,
+          attachmentCount: 0,
+          attachmentPathChars: 0,
+          referenceCount: 1,
+          memoryCitationCount: 0,
+          topToolOutputs: [
+            {
+              messageId: 'loaded-1',
+              blockId: 'tool-1',
+              toolName: 'bash',
+              status: 'done',
+              approxChars: 128,
+              outputType: 'string',
+            },
+          ],
+        },
+        currentRuntimeTask: {
+          hasRuntimeHandle: true,
+          runtimeHandleKeys: ['messages'],
+          runtimeHandleApproxChars: 256,
+          runtimeHandleEstimateTruncated: false,
+        },
+        transcript: {
+          loadedRangeCount: 1,
+          loadedRanges: [{ start: 0, end: 50 }],
+          loadedMessageSlots: 50,
+        },
+        dom: {
+          messageNodes: 2,
+          processingBlockNodes: 1,
+          codeBlocks: 1,
+        },
+      },
       queuedMessages: [],
       guidanceMessages: [],
       codeCommentContextCount: 0,
@@ -279,6 +398,7 @@ function createDebugSnapshot() {
         hasMoreBefore: false,
         loadingMoreBefore: false,
         turnNavigationCount: 0,
+        loadedRanges: [{ start: 0, end: 50 }],
       },
       subagentStatuses: [],
       goal: null,

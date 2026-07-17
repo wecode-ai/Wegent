@@ -1228,6 +1228,59 @@ async def test_runtime_transcript_dispatches_pagination_payload(
 
 
 @pytest.mark.asyncio
+async def test_runtime_transcript_dispatches_full_content_payload(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "taskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+            "messages": [],
+            "fullContent": True,
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.get_runtime_transcript(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTranscriptRequest(
+            deviceId="device-1",
+            localTaskId="codex-1",
+            workspacePath="/repo/Wegent",
+            afterCursor="offset:10",
+            includeFullContent=True,
+        ),
+    )
+
+    assert response.full_content is True
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.transcript",
+        payload={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+            "afterCursor": "offset:10",
+            "includeFullContent": True,
+        },
+        timeout_seconds=30,
+    )
+
+
+@pytest.mark.asyncio
 async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows(
     test_db,
     test_user,
@@ -1654,6 +1707,12 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
                 localTaskId="codex-1",
             ),
             message="continue",
+            additionalContext={
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
         ),
     )
 
@@ -1668,9 +1727,135 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
             "deviceId": "device-1",
             "taskId": "codex-1",
             "message": "continue",
+            "additionalContext": {
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
         },
         timeout_seconds=600,
     )
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeGuidanceRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "taskId": "codex-1",
+            "guidanceId": "guide-1",
+            "turnId": "turn-1",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_guidance(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeGuidanceRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="use this context",
+            clientGuidanceId="guide-1",
+            additionalContext={
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.local_task_id == "codex-1"
+    assert response.guidance_id == "guide-1"
+    assert response.turn_id == "turn-1"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.guidance",
+        payload={
+            "deviceId": "device-1",
+            "taskId": "codex-1",
+            "message": "use this context",
+            "clientGuidanceId": "guide-1",
+            "additionalContext": {
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
+        },
+        timeout_seconds=600,
+    )
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_send_runtime_guidance_normalizes_runtime_rpc_failure_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeGuidanceRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": False,
+            "accepted": False,
+            "taskId": "codex-1",
+            "error": "no active turn to guide",
+            "code": "no_active_turn",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_guidance(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeGuidanceRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="use this context",
+        ),
+    )
+
+    assert response.accepted is False
+    assert response.success is False
+    assert response.local_task_id == "codex-1"
+    assert response.error == "no active turn to guide"
+    assert response.code == "no_active_turn"
     assert test_db.query(TaskResource).count() == 0
 
 
@@ -1937,6 +2122,61 @@ async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_ro
         timeout_seconds=60,
     )
     assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_search_runtime_workspace_dispatches_to_owned_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkspaceSearchRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "files": [
+                {
+                    "root": "/repo/Wegent",
+                    "path": "frontend/src/auth.ts",
+                    "fileName": "auth.ts",
+                    "matchType": "file",
+                    "score": 91,
+                    "indices": [0, 1, 2, 3],
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.search_runtime_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkspaceSearchRequest(
+            deviceId="device-1",
+            root="/repo/Wegent/",
+            query="auth",
+            cancellationToken="composer-1",
+        ),
+    )
+
+    assert response.files[0].file_name == "auth.ts"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.workspace.search",
+        payload={
+            "root": "/repo/Wegent",
+            "query": "auth",
+            "cancellationToken": "composer-1",
+        },
+        timeout_seconds=30,
+    )
 
 
 @pytest.mark.asyncio
@@ -3424,3 +3664,238 @@ async def test_runtime_transfer_direct_hosts_filters_loopback_for_cross_device(
         )
         == []
     )
+
+
+def _codex_provider_model(
+    test_db,
+    user_id: int,
+    *,
+    name: str,
+    api_model_id: str,
+) -> Kind:
+    """Create a user Model CRD whose CRD name differs from its API model_id."""
+    model_crd = {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Model",
+        "metadata": {"name": name, "namespace": "default"},
+        "spec": {
+            "protocol": "openai-responses",
+            "apiFormat": "responses",
+            "modelConfig": {
+                "env": {
+                    "model": "openai",
+                    "model_id": api_model_id,
+                    "base_url": "https://api.example.com/v1",
+                    "api_key": "sk-test",
+                }
+            },
+        },
+        "status": {"state": "Available"},
+    }
+    kind = Kind(
+        user_id=user_id,
+        kind="Model",
+        name=name,
+        namespace="default",
+        json=model_crd,
+        is_active=True,
+    )
+    test_db.add(kind)
+    test_db.commit()
+    test_db.refresh(kind)
+    return kind
+
+
+def test_runtime_model_override_resolves_crd_name_to_env_model_id(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    _codex_provider_model(
+        test_db,
+        test_user.id,
+        name="doubaofortest",
+        api_model_id="deepseek-chat",
+    )
+    request = RuntimeTaskCreateRequest(
+        teamId=1,
+        runtime="codex",
+        message="hello",
+        modelId="doubaofortest",
+        modelType=runtime_work_service.RUNTIME_MODEL_TYPE,
+    )
+
+    config, override_model_name, force_override = (
+        runtime_work_service._runtime_model_override(
+            db=test_db,
+            user_id=test_user.id,
+            request=request,
+        )
+    )
+
+    assert config is not None
+    assert config["model_id"] == "deepseek-chat"
+    assert config.get("base_url") == "https://api.example.com/v1"
+    assert config.get("api_key") == "sk-test"
+    assert override_model_name is None
+    assert force_override is False
+
+
+def test_runtime_model_override_falls_back_to_request_model_id_for_unknown_model(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    request = RuntimeTaskCreateRequest(
+        teamId=1,
+        runtime="codex",
+        message="hello",
+        modelId="unknown-model",
+        modelType=runtime_work_service.RUNTIME_MODEL_TYPE,
+    )
+
+    config, override_model_name, force_override = (
+        runtime_work_service._runtime_model_override(
+            db=test_db,
+            user_id=test_user.id,
+            request=request,
+        )
+    )
+
+    assert config is not None
+    assert config["model_id"] == "unknown-model"
+    assert override_model_name is None
+    assert force_override is False
+
+
+def _runtime_team_with_bot(test_db, user_id: int) -> Kind:
+    """Create a minimal Team + Bot + Shell + Ghost for runtime request building."""
+    shell = Kind(
+        user_id=user_id,
+        kind="Shell",
+        name="ClaudeCode",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {"name": "ClaudeCode", "namespace": "default"},
+            "spec": {"shellType": "ClaudeCode", "baseImage": "wegent/claude-code"},
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(shell)
+
+    ghost = Kind(
+        user_id=user_id,
+        kind="Ghost",
+        name="ghost",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": "ghost", "namespace": "default"},
+            "spec": {"systemPrompt": "You are a helpful assistant."},
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(ghost)
+
+    bot = Kind(
+        user_id=user_id,
+        kind="Bot",
+        name="codex-bot",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "codex-bot", "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "ghost", "namespace": "default"},
+                "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(bot)
+
+    team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name="codex-team",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": "codex-team", "namespace": "default"},
+            "spec": {
+                "members": [{"botRef": {"name": "codex-bot", "namespace": "default"}}],
+                "collaborationModel": "solo",
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(team)
+    test_db.commit()
+    test_db.refresh(team)
+    return team
+
+
+def test_build_runtime_execution_request_resolves_crd_model_id(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    """Full runtime request path must send spec.modelConfig.env.model_id to executor."""
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    _codex_provider_model(
+        test_db,
+        test_user.id,
+        name="not-model-id",
+        api_model_id="doubao-seed-2.0-lite",
+    )
+    team = _runtime_team_with_bot(test_db, test_user.id)
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    request = RuntimeTaskCreateRequest(
+        teamId=team.id,
+        runtime="codex",
+        message="hello",
+        modelId="not-model-id",
+        modelType=runtime_work_service.RUNTIME_MODEL_TYPE,
+        deviceId="device-1",
+        workspacePath="/repo/Wegent",
+    )
+
+    execution_request = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request,
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+            project=None,
+            workspace_source="local_path",
+        ),
+    )
+
+    model_config = execution_request.model_config
+    assert model_config["model_id"] == "doubao-seed-2.0-lite"
+    assert model_config["base_url"] == "https://api.example.com/v1"
+    assert model_config["api_key"] == "sk-test"
+    assert model_config.get("api_format") == "responses"
+    assert model_config.get("protocol") == "openai-responses"

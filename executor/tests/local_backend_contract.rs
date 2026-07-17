@@ -48,6 +48,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "device:register");
     assert_eq!(calls[0].payload["device_id"], "device-1");
+    assert_eq!(calls[0].payload["runtime_instance_id"], "runtime-1");
     assert_eq!(calls[0].payload["name"], "Device One");
     assert_eq!(calls[0].payload["device_type"], "local");
     assert_eq!(calls[0].payload["bind_shell"], "claudecode");
@@ -73,9 +74,12 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
 
 #[tokio::test]
 async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_files() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("auth-report");
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let mut config = local_backend_config();
@@ -100,7 +104,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
     assert_eq!(
         calls[0].payload["runtime_auth_files"]["codex"],
-        json!({"target_path": "~/.codex/auth.json", "exists": true})
+        json!({"target_path": expected_auth_path, "exists": true})
     );
 }
 
@@ -141,8 +145,9 @@ async fn local_backend_task_execute_handler_runs_agent_and_emits_events() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
-"#,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -183,10 +188,11 @@ async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-streaming-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
-sleep 0.1
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
-"#,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
+	sleep 0.1
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -231,10 +237,11 @@ async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text()
     let fake_claude = write_fake_executable(
         "fake-local-backend-thinking-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
-sleep 0.1
-printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
-"#,
+	printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
+	sleep 0.1
+	printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -277,12 +284,13 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     let fake_claude = write_fake_executable(
         "fake-local-backend-assistant-thinking-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
-"#,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "3");
-    let _chunk_delay = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS", "0");
+    let _reasoning_chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_REASONING_CHUNK_CHARS", "3");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -323,11 +331,12 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-tool-claude",
         r##"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
-sleep 0.1
-printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"read done"}]}}'
-"##,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
+	sleep 0.1
+	printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"read done"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"##,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -376,7 +385,7 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
 #[cfg(unix)]
 #[tokio::test]
-async fn local_backend_task_execute_splits_large_claude_assistant_message_into_deltas() {
+async fn local_backend_task_execute_streams_large_claude_assistant_message() {
     let _lock = ENV_LOCK.lock().await;
     let long_text = "abcdefghijklmnopqrstuvwxyz".repeat(7);
     let claude_event = json!({
@@ -390,12 +399,14 @@ async fn local_backend_task_execute_splits_large_claude_assistant_message_into_d
         "fake-local-backend-large-assistant-claude",
         &format!(
             r#"#!/bin/sh
-printf '%s\n' '{}'
-"#,
+	printf '%s\n' '{}'
+	printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}}'
+	"#,
             claude_event
         ),
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "20");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -416,15 +427,12 @@ printf '%s\n' '{}'
     .await;
     assert_eq!(ack, None);
 
-    let expected_chunks = long_text.chars().count().div_ceil(20);
-    let emits = transport.wait_for_emits(expected_chunks + 2).await;
+    let emits = transport.wait_for_emit_event("response.completed").await;
     assert_eq!(emits[0].event, "response.created");
-    for emit in &emits[1..=expected_chunks] {
-        assert_eq!(emit.event, "response.output_text.delta");
-    }
-    assert_eq!(emits[expected_chunks + 1].event, "response.completed");
-    let streamed = emits[1..=expected_chunks]
+    assert_eq!(emits.last().unwrap().event, "response.completed");
+    let streamed = emits
         .iter()
+        .filter(|event| event.event == "response.output_text.delta")
         .map(|event| event.payload["data"]["delta"].as_str().unwrap())
         .collect::<String>();
     assert_eq!(streamed, long_text);
@@ -494,18 +502,22 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.backend_url, "http://localhost:8000");
     assert_eq!(config.auth_token, "wg-token");
     assert_eq!(config.device_id, "device-1");
+    assert_eq!(config.runtime_instance_id, "runtime-local");
     assert_eq!(config.device_name, "Device One");
     assert_eq!(config.device_type, "local");
     assert_eq!(config.bind_shell, "claudecode");
     assert_eq!(config.configured_capabilities, vec!["claude"]);
 }
 
-#[test]
-fn local_backend_auth_file_report_and_ip_filter_match_python_contract() {
+#[tokio::test]
+async fn local_backend_auth_file_report_and_ip_filter_follow_runtime_paths() {
+    let _lock = ENV_LOCK.lock().await;
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let home = temp_home("missing-auth-report");
+    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
     assert_eq!(
         build_runtime_auth_file_report(&home),
-        json!({"codex": {"target_path": "~/.codex/auth.json", "exists": false}})
+        json!({"codex": {"target_path": expected_auth_path, "exists": false}})
     );
 
     assert!(is_usable_device_ip("192.0.2.10"));
@@ -564,6 +576,20 @@ impl RecordingTransport {
             loop {
                 let emits = self.emits();
                 if emits.len() >= count {
+                    return emits;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(3), async {
+            loop {
+                let emits = self.emits();
+                if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
                 self.notify.notified().await;
@@ -637,6 +663,7 @@ fn local_backend_config() -> LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
         device_id: "device-1".to_owned(),
+        runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
         app_device_id: String::new(),
@@ -695,7 +722,6 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
-    #[cfg(unix)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);

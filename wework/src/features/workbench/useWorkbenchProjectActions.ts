@@ -2,12 +2,15 @@ import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
+  commitAndPushProjectChanges,
   commitProjectChanges,
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
+  pushProjectChanges,
   type EnvironmentDiffMode,
+  type EnvironmentInfoLoadOptions,
 } from '@/api/environment'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type {
@@ -17,6 +20,11 @@ import type {
   DeviceWorkspacePrepareRequest,
   GitRepoInfo,
   ProjectWithTasks,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeTaskPinRequest,
   User,
 } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -25,6 +33,11 @@ import type { ProjectMutationOptions } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
 
 interface UseWorkbenchProjectActionsOptions {
   user: User
@@ -123,8 +136,12 @@ export function useWorkbenchProjectActions({
         null
       )
       if (runtimeWorkspace) {
+        const runtimeProject = state.runtimeWork?.projects.find(
+          item => runtimeProjectUiId(item.project) === projectId
+        )?.project
         const response = await executorClient.runtime.renameRuntimeWorkspace({
           deviceId: runtimeWorkspace.deviceId,
+          projectKey: runtimeProject?.key,
           workspacePath: runtimeWorkspace.workspacePath,
           runtime: 'codex',
           name,
@@ -133,6 +150,19 @@ export function useWorkbenchProjectActions({
           const message = response.error || 'Failed to rename runtime workspace'
           dispatch({ type: 'error_set', error: message })
           throw new Error(message)
+        }
+        if (
+          runtimeProject?.sidebarStateKey &&
+          runtimeProject.stateDeviceId &&
+          runtimeProject.stateDeviceId !== runtimeWorkspace.deviceId
+        ) {
+          await executorClient.runtime.renameRuntimeWorkspace({
+            deviceId: runtimeProject.stateDeviceId,
+            projectKey: runtimeProject.sidebarStateKey,
+            workspacePath: runtimeWorkspace.workspacePath,
+            runtime: 'codex',
+            name,
+          })
         }
         await refreshWorkLists()
         return
@@ -143,31 +173,183 @@ export function useWorkbenchProjectActions({
     [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
   )
 
-  const removeProject = useCallback(
+  const removeListedRuntimeProject = useCallback(
     async (projectId: number) => {
       const runtimeWorkspace = findProjectMetadataDeviceWorkspace(
         state.runtimeWork,
         projectId,
         null
       )
-      if (runtimeWorkspace) {
-        const response = await executorClient.runtime.removeRuntimeWorkspace({
-          deviceId: runtimeWorkspace.deviceId,
+      if (!runtimeWorkspace) return false
+
+      const runtimeProject = state.runtimeWork?.projects.find(
+        item => runtimeProjectUiId(item.project) === projectId
+      )?.project
+      const response = await executorClient.runtime.removeRuntimeWorkspace({
+        deviceId: runtimeWorkspace.deviceId,
+        projectKey: runtimeProject?.key,
+        workspacePath: runtimeWorkspace.workspacePath,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to remove runtime workspace'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      if (
+        runtimeProject?.sidebarStateKey &&
+        runtimeProject.stateDeviceId &&
+        runtimeProject.stateDeviceId !== runtimeWorkspace.deviceId
+      ) {
+        await executorClient.runtime.removeRuntimeWorkspace({
+          deviceId: runtimeProject.stateDeviceId,
+          projectKey: runtimeProject.sidebarStateKey,
           workspacePath: runtimeWorkspace.workspacePath,
           runtime: 'codex',
         })
-        if (!response.accepted) {
-          const message = response.error || 'Failed to remove runtime workspace'
-          dispatch({ type: 'error_set', error: message })
-          throw new Error(message)
-        }
-        await refreshWorkLists()
-        return
       }
-      await services.projectApi.deleteProject(projectId)
+
+      const standaloneDeviceId = state.standaloneDeviceId?.trim()
+      const standaloneWorkspacePath = state.standaloneWorkspacePath
+        ? normalizeRuntimeWorkspacePath(state.standaloneWorkspacePath)
+        : ''
+      const clearsStandaloneWorkspace =
+        standaloneDeviceId === runtimeWorkspace.deviceId.trim() &&
+        standaloneWorkspacePath === normalizeRuntimeWorkspacePath(runtimeWorkspace.workspacePath)
+      await refreshWorkLists()
+      if (clearsStandaloneWorkspace) {
+        dispatch({
+          type: 'project_cleared',
+          standaloneDeviceId: runtimeWorkspace.deviceId,
+          standaloneWorkspacePath: null,
+          startFreshChat: true,
+        })
+      }
+      return true
+    },
+    [
+      dispatch,
+      executorClient,
+      refreshWorkLists,
+      state.runtimeWork,
+      state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
+    ]
+  )
+
+  const removeStandaloneRuntimeProject = useCallback(
+    async (projectId: number) => {
+      const standaloneDeviceId = state.standaloneDeviceId?.trim()
+      const standaloneWorkspacePath = state.standaloneWorkspacePath
+        ? normalizeRuntimeWorkspacePath(state.standaloneWorkspacePath)
+        : ''
+      const standaloneProjectId =
+        standaloneDeviceId && standaloneWorkspacePath
+          ? runtimeProjectUiId({
+              key: standaloneRuntimeProjectKey(standaloneWorkspacePath),
+              stateDeviceId: standaloneDeviceId,
+              name: standaloneWorkspacePath,
+            })
+          : null
+      if (standaloneProjectId !== projectId || !standaloneDeviceId || !standaloneWorkspacePath) {
+        return false
+      }
+
+      const response = await executorClient.runtime.removeRuntimeWorkspace({
+        deviceId: standaloneDeviceId,
+        projectKey: standaloneRuntimeProjectKey(standaloneWorkspacePath),
+        workspacePath: standaloneWorkspacePath,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to remove runtime workspace'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      await refreshWorkLists()
+      dispatch({
+        type: 'project_cleared',
+        standaloneDeviceId,
+        standaloneWorkspacePath: null,
+        startFreshChat: true,
+      })
+      return true
+    },
+    [
+      dispatch,
+      executorClient,
+      refreshWorkLists,
+      state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
+    ]
+  )
+
+  const removeCloudProject = useCallback(
+    async (projectId: number) => {
+      if (!state.projects.some(project => project.id === projectId)) {
+        const message = 'Project is no longer available'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      try {
+        await services.projectApi.deleteProject(projectId)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to remove project'
+        dispatch({ type: 'error_set', error: message })
+        throw error
+      }
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
+    [dispatch, refreshWorkLists, services.projectApi, state.projects]
+  )
+
+  const removeProject = useCallback(
+    async (projectId: number) => {
+      if (await removeListedRuntimeProject(projectId)) return
+      if (await removeStandaloneRuntimeProject(projectId)) return
+      await removeCloudProject(projectId)
+    },
+    [removeCloudProject, removeListedRuntimeProject, removeStandaloneRuntimeProject]
+  )
+
+  const reorderRuntimeProjects = useCallback(
+    async (data: RuntimeProjectReorderRequest) => {
+      await executorClient.runtime.reorderRuntimeProjects(data)
+      await refreshWorkLists()
+    },
+    [executorClient, refreshWorkLists]
+  )
+
+  const setRuntimeProjectPinned = useCallback(
+    async (data: RuntimeProjectPinRequest) => {
+      await executorClient.runtime.setRuntimeProjectPinned(data)
+      await refreshWorkLists()
+    },
+    [executorClient, refreshWorkLists]
+  )
+
+  const setRuntimeProjectAppearance = useCallback(
+    async (data: RuntimeProjectAppearanceRequest) => {
+      await executorClient.runtime.setRuntimeProjectAppearance(data)
+      await refreshWorkLists()
+    },
+    [executorClient, refreshWorkLists]
+  )
+
+  const reorderRuntimeProjectTasks = useCallback(
+    async (data: RuntimeProjectTaskReorderRequest) => {
+      await executorClient.runtime.reorderRuntimeProjectTasks(data)
+      await refreshWorkLists()
+    },
+    [executorClient, refreshWorkLists]
+  )
+
+  const setRuntimeTaskPinned = useCallback(
+    async (data: RuntimeTaskPinRequest) => {
+      await executorClient.runtime.setRuntimeTaskPinned(data)
+      await refreshWorkLists()
+    },
+    [executorClient, refreshWorkLists]
   )
 
   const getDeviceHomeDirectory = useCallback(
@@ -191,8 +373,11 @@ export function useWorkbenchProjectActions({
   )
 
   const loadEnvironmentInfo = useCallback(
-    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
-      loadProjectEnvironment(executorClient.commands, project, workspaceTarget),
+    (
+      project: ProjectWithTasks | null,
+      workspaceTarget?: WorkspaceTarget | null,
+      options?: EnvironmentInfoLoadOptions
+    ) => loadProjectEnvironment(executorClient.commands, project, workspaceTarget, options),
     [executorClient]
   )
 
@@ -208,6 +393,18 @@ export function useWorkbenchProjectActions({
   const commitEnvironmentChanges = useCallback(
     (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
       commitProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    [executorClient]
+  )
+
+  const commitAndPushEnvironmentChanges = useCallback(
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitAndPushProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    [executorClient]
+  )
+
+  const pushEnvironmentChanges = useCallback(
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
+      pushProjectChanges(executorClient.commands, project, workspaceTarget),
     [executorClient]
   )
 
@@ -245,6 +442,11 @@ export function useWorkbenchProjectActions({
     listGitBranches,
     updateProjectName,
     removeProject,
+    reorderRuntimeProjects,
+    setRuntimeProjectPinned,
+    setRuntimeProjectAppearance,
+    reorderRuntimeProjectTasks,
+    setRuntimeTaskPinned,
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
@@ -252,6 +454,8 @@ export function useWorkbenchProjectActions({
     loadEnvironmentInfo,
     loadEnvironmentDiff,
     commitEnvironmentChanges,
+    commitAndPushEnvironmentChanges,
+    pushEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
     createEnvironmentBranch,

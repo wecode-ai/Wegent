@@ -8,62 +8,76 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
-    time::Instant,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 
 use chrono::Local;
+use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::sleep;
 
 use crate::{
     agents::{
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        combined_codex_developer_instructions, strip_wework_browser_instructions,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
-    logging::log_executor_event,
+    logging::{log_executor_event, wework_debug_log},
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };
 
 use super::{
     codex_global_state::{
-        open_codex_global_project, register_codex_global_thread_workspace_root,
-        remove_codex_global_project, rename_codex_global_project, CodexGlobalProjectIndex,
+        activate_codex_global_project, open_codex_global_project,
+        register_codex_global_thread_workspace_root, remove_codex_global_project,
+        rename_codex_global_project, reorder_codex_global_project_thread,
+        reorder_codex_global_projects, set_codex_global_project_appearance,
+        set_codex_global_project_pinned, set_codex_global_thread_pinned,
+        sync_codex_global_remote_projects, CodexGlobalProjectIndex, CodexGlobalRemoteProject,
     },
     codex_notifications::codex_notification,
-    codex_rollout::{
-        append_rollout_turns_from_offset, rollout_turns, thread_with_rollout_running_status,
-        thread_with_rollout_turns, thread_with_turns,
-    },
+    codex_rollout::rollout_context_usage,
     events::{emit_response_event, CodexNotificationEventMapper},
+    notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
-        archived_conversations_response, search_result_item, workspace_response, RuntimeTaskLink,
-        RuntimeWorkspaceLink, SearchResultMatch,
+        archived_conversations_response, codex_thread_is_active, search_result_item,
+        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, cached_messages, merge_cached_messages,
-        retain_runtime_handle_user_messages, set_runtime_handle_messages,
-        CodexNotificationCacheMapper,
+        append_runtime_handle_message, cached_messages, retain_runtime_handle_user_messages,
+        set_runtime_handle_messages,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::transcript_messages,
-    transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
+    transcript::{full_transcript_messages, transcript_messages},
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request, id_field,
-        infer_workspace_kind, integer_field, normalize_device_id, now_ms, prompt_text,
-        runtime_task_id, string_field, workspace_group_path, workspace_path,
+        infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
+        prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
+    worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
 
 const CODEX_THREAD_LIST_PAGE_SIZE: usize = 100;
 const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
-const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
+const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
+const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
+const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
+const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
+const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
+const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -131,9 +145,7 @@ fn workspace_segment(value: &str) -> String {
 }
 
 fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir)
+    dirs::home_dir().unwrap_or_else(env::temp_dir)
 }
 
 #[derive(Clone)]
@@ -229,12 +241,15 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
+    active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     store: RuntimeWorkStore,
-    transcript_cache: TranscriptCache,
-    thread_list_cache: CodexThreadListCache,
+    worktrees: WorktreeManager,
+    worktree_cleanup_generation: Arc<AtomicU64>,
+    opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 struct ActiveTurnCancellation {
@@ -242,11 +257,16 @@ struct ActiveTurnCancellation {
     stopped: oneshot::Receiver<()>,
 }
 
+#[derive(Clone)]
+struct ActiveCodexTurn {
+    thread_id: String,
+    turn_id: String,
+}
+
 struct RuntimeThreadEventRoute {
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: CodexNotificationEventMapper,
-    cache_mapper: CodexNotificationCacheMapper,
     active: bool,
 }
 
@@ -261,7 +281,6 @@ impl RuntimeThreadEventRoute {
             local_task_id,
             request,
             event_mapper: CodexNotificationEventMapper::default(),
-            cache_mapper: CodexNotificationCacheMapper::default(),
             active,
         }
     }
@@ -270,19 +289,25 @@ impl RuntimeThreadEventRoute {
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
         let codex_binary = codex_binary.into();
-        Self {
+        let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+        let handler = Self {
             device_id: normalize_device_id(device_id.into()),
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
+            active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
+            archived_delete_tx,
             store: RuntimeWorkStore::from_env(),
-            transcript_cache: TranscriptCache::default(),
-            thread_list_cache: CodexThreadListCache::default(),
-        }
+            worktrees: WorktreeManager::from_env(),
+            worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
+            opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
+        };
+        handler.spawn_archived_delete_worker(archived_delete_rx);
+        handler
     }
 
     pub fn with_event_sender(
@@ -304,6 +329,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
+            "runtime.tasks.guidance" => self.send_guidance(payload).await,
+            "runtime.tasks.compact" => self.compact_task(payload).await,
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,
@@ -315,6 +342,14 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.instructions.read" => self.read_codex_instructions().await,
+            "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
+            "runtime.codex.personality.read" => self.read_codex_personality().await,
+            "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
+            "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
+            "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
+            "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }
@@ -323,18 +358,309 @@ impl RuntimeWorkRpcHandler {
             "runtime.archived_conversations.delete_bulk" => {
                 self.delete_archived_tasks_bulk(payload).await
             }
+            "runtime.archived_conversations.cleanup_preview" => {
+                self.preview_archived_conversation_cleanup(payload).await
+            }
+            "runtime.archived_conversations.cleanup" => {
+                self.cleanup_archived_conversations(payload).await
+            }
             "runtime.archived_conversations.archive_project" => {
                 self.archive_project_conversations(payload).await
             }
             "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
+            "runtime.worktrees.settings.get" => self.get_worktree_settings().await,
+            "runtime.worktrees.settings.update" => self.update_worktree_settings(payload).await,
+            "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
+            "runtime.worktrees.list" => self.list_worktrees().await,
+            "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.restore" => self.restore_worktree(payload).await,
+            "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.workspace.search" => self.search_workspace(payload).await,
+            "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
+            "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
+            "runtime.sidebar.projects.appearance" => {
+                self.set_sidebar_project_appearance(payload).await
+            }
+            "runtime.sidebar.projects.sync_remote" => {
+                self.sync_sidebar_remote_projects(payload).await
+            }
+            "runtime.sidebar.projects.activate" => self.activate_sidebar_project(payload).await,
+            "runtime.sidebar.tasks.reorder" => self.reorder_sidebar_project_task(payload).await,
+            "runtime.sidebar.tasks.pin" => self.pin_sidebar_task(payload).await,
             unsupported => Err(AppIpcError::new(
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         }
+    }
+
+    async fn search_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let root = string_field(&payload, "root")
+            .ok_or_else(|| AppIpcError::new("bad_request", "root is required"))?;
+        let query = string_field(&payload, "query").unwrap_or_default();
+        if query.trim().is_empty() {
+            return Ok(json!({ "files": [] }));
+        }
+
+        let root = fs::canonicalize(&root)
+            .map_err(|error| AppIpcError::new("invalid_workspace_root", error.to_string()))?;
+        if !root.is_dir() {
+            return Err(AppIpcError::new(
+                "invalid_workspace_root",
+                "Workspace search root is not a directory",
+            ));
+        }
+        if !self.workspace_search_root_is_allowed(&root) {
+            return Err(AppIpcError::new(
+                "invalid_workspace_root",
+                "Workspace search root has not been opened",
+            ));
+        }
+
+        let cancellation_token = string_field(&payload, "cancellationToken")
+            .or_else(|| string_field(&payload, "cancellation_token"));
+        let response = self
+            .codex_app_server
+            .request(
+                "fuzzyFileSearch",
+                json!({
+                    "query": query,
+                    "roots": [root.to_string_lossy()],
+                    "cancellationToken": cancellation_token,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("workspace_search_failed", error))?;
+        let files = response
+            .get("files")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        json!({
+                            "root": item.get("root").cloned().unwrap_or(Value::Null),
+                            "path": item.get("path").cloned().unwrap_or(Value::Null),
+                            "fileName": item.get("file_name").cloned().unwrap_or(Value::Null),
+                            "matchType": item.get("match_type").cloned().unwrap_or(Value::Null),
+                            "score": item.get("score").cloned().unwrap_or(Value::Null),
+                            "indices": item.get("indices").cloned().unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Ok(json!({ "files": files }))
+    }
+
+    fn workspace_search_root_is_allowed(&self, root: &Path) -> bool {
+        if self
+            .opened_workspace_roots
+            .lock()
+            .map(|roots| {
+                roots
+                    .iter()
+                    .any(|allowed| root == allowed || root.starts_with(allowed))
+            })
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        let project_index = CodexGlobalProjectIndex::load();
+        let project_paths = project_index
+            .projects()
+            .iter()
+            .map(|project| project.workspace_path.as_str());
+        let task_paths = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .map(|task| task.workspace_path)
+            .collect::<Vec<_>>();
+
+        project_paths
+            .chain(task_paths.iter().map(String::as_str))
+            .filter_map(|path| fs::canonicalize(path).ok())
+            .any(|allowed| root == allowed || root.starts_with(&allowed))
+    }
+
+    async fn get_worktree_settings(&self) -> Result<Value, AppIpcError> {
+        let settings = self.worktrees.settings();
+        let mut value = serde_json::to_value(settings)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
+    async fn update_worktree_settings(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let patch = serde_json::from_value::<WorktreeSettingsPatch>(payload)
+            .map_err(|error| AppIpcError::new("invalid_worktree_settings", error.to_string()))?;
+        let settings = self
+            .worktrees
+            .update_settings(patch)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error))?;
+        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        let mut value = serde_json::to_value(settings)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
+    async fn prepare_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let source_path = string_field(&payload, "sourcePath")
+            .or_else(|| string_field(&payload, "source_path"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "sourcePath is required"))?;
+        let worktree_id = string_field(&payload, "worktreeId")
+            .or_else(|| string_field(&payload, "worktree_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "worktreeId is required"))?;
+        let git_ref = string_field(&payload, "ref");
+        let record = self
+            .worktrees
+            .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
+            .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        self.schedule_worktree_prune();
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "worktree": record,
+            "path": record.path,
+        }))
+    }
+
+    fn schedule_worktree_prune(&self) {
+        let generation = self
+            .worktree_cleanup_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let cleanup_generation = self.worktree_cleanup_generation.clone();
+        let worktrees = self.worktrees.clone();
+        let store = self.store.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
+                if cleanup_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+
+                let tasks = store.list_task_summaries(true);
+                if tasks.iter().any(|task| task.running) {
+                    continue;
+                }
+
+                let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
+                match result {
+                    Ok(Err(error)) => {
+                        wework_debug_log(&format!("background worktree cleanup failed: {error}"));
+                    }
+                    Err(error) => {
+                        wework_debug_log(&format!(
+                            "background worktree cleanup task failed: {error}"
+                        ));
+                    }
+                    Ok(Ok(_)) => {}
+                }
+                return;
+            }
+        });
+    }
+
+    async fn list_worktrees(&self) -> Result<Value, AppIpcError> {
+        let entries = self
+            .worktrees
+            .list(&self.store.list_task_summaries(true))
+            .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
+        let items = entries
+            .into_iter()
+            .map(|(record, tasks)| {
+                json!({
+                    "deviceId": self.device_id,
+                    "worktreeId": record.worktree_id,
+                    "path": record.path,
+                    "repositoryName": record.repository_name,
+                    "sourcePath": record.source_path,
+                    "createdAt": record.created_at,
+                    "updatedAt": record.updated_at,
+                    "state": record.state,
+                    "snapshotAt": record.snapshot_at,
+                    "lastError": record.last_error,
+                    "conversations": tasks.into_iter().map(|task| json!({
+                        "deviceId": self.device_id,
+                        "taskId": task.local_task_id,
+                        "threadId": task.thread_id,
+                        "workspacePath": task.workspace_path,
+                        "title": task.title,
+                        "status": task.status,
+                        "running": task.running,
+                        "updatedAt": task.updated_at,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"success": true, "deviceId": self.device_id, "items": items}))
+    }
+
+    async fn delete_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let preserve_snapshot = bool_field(&payload, "preserveSnapshot")
+            .or_else(|| bool_field(&payload, "preserve_snapshot"))
+            .unwrap_or(true);
+        let linked = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .filter(|task| {
+                normalize_workspace_path(&task.workspace_path) == normalize_workspace_path(&path)
+            })
+            .collect::<Vec<_>>();
+        for task in linked.iter().filter(|task| task.status != "archived") {
+            let result = self
+                .archive_task(
+                    json!({"taskId": task.local_task_id, "workspacePath": task.workspace_path}),
+                )
+                .await?;
+            if result["accepted"] != true {
+                return Err(AppIpcError::new(
+                    "worktree_archive_failed",
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Failed to archive linked task"),
+                ));
+            }
+        }
+        let record = self
+            .worktrees
+            .delete(Path::new(&path), preserve_snapshot)
+            .map_err(|error| AppIpcError::new("worktree_delete_failed", error))?;
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "worktree": record,
+            "archivedTaskCount": linked.iter().filter(|task| task.status != "archived").count(),
+        }))
+    }
+
+    async fn restore_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .or_else(|| workspace_path(&payload))
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let record = self
+            .worktrees
+            .restore(Path::new(&path))
+            .map_err(|error| AppIpcError::new("worktree_restore_failed", error))?;
+        Ok(json!({"success": true, "deviceId": self.device_id, "worktree": record}))
+    }
+
+    async fn prune_worktrees(&self) -> Result<Value, AppIpcError> {
+        let removed = self
+            .worktrees
+            .prune(&self.store.list_task_summaries(true))
+            .map_err(|error| AppIpcError::new("worktree_prune_failed", error))?;
+        Ok(json!({"success": true, "deviceId": self.device_id, "removed": removed}))
     }
 
     async fn get_keybindings(&self) -> Result<Value, AppIpcError> {
@@ -355,6 +681,26 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(json!({ "keybindings": keybindings }))
+    }
+
+    async fn get_codex_stream_debug(&self) -> Result<Value, AppIpcError> {
+        Ok(json!({ "enabled": codex_stream_debug_enabled() }))
+    }
+
+    async fn restart_codex_app_server(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server.restart().await;
+        Ok(json!({ "restarted": true }))
+    }
+
+    async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(enabled) = bool_field(&payload, "enabled") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "enabled must be a boolean",
+            ));
+        };
+        set_codex_stream_debug_enabled(enabled);
+        Ok(json!({ "enabled": codex_stream_debug_enabled() }))
     }
 
     async fn update_keybindings(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -446,17 +792,202 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    async fn read_codex_instructions(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_read_failed", error))?;
+        let config = response.get("config").unwrap_or(&Value::Null);
+        let developer_instructions = config
+            .get("developer_instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let user_developer_instructions = strip_wework_browser_instructions(developer_instructions);
+        let legacy_instructions = config
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let instructions =
+            if user_developer_instructions.is_empty() && !legacy_instructions.trim().is_empty() {
+                self.write_codex_developer_instructions(legacy_instructions)
+                    .await?;
+                legacy_instructions
+            } else {
+                user_developer_instructions
+            };
+        Ok(json!({ "instructions": instructions }))
+    }
+
+    async fn write_codex_instructions(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(instructions) = payload.get("instructions") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let Some(instructions) = instructions.as_str() else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let response = self
+            .write_codex_developer_instructions(instructions)
+            .await?;
+        Ok(json!({
+            "instructions": instructions.trim(),
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn write_codex_developer_instructions(
+        &self,
+        instructions: &str,
+    ) -> Result<Value, AppIpcError> {
+        let value = Value::String(combined_codex_developer_instructions(instructions));
+        self.codex_app_server
+            .request(
+                "config/batchWrite",
+                json!({
+                    "edits": [
+                        {
+                            "keyPath": "developer_instructions",
+                            "value": value,
+                            "mergeStrategy": "replace",
+                        },
+                        {
+                            "keyPath": "instructions",
+                            "value": Value::Null,
+                            "mergeStrategy": "replace",
+                        }
+                    ],
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                    "reloadUserConfig": true,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_write_failed", error))
+    }
+
+    async fn read_codex_personality(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_personality_read_failed", error))?;
+        let personality = response
+            .get("config")
+            .and_then(|config| config.get("personality"))
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "friendly" | "pragmatic"))
+            .unwrap_or("pragmatic");
+        Ok(json!({ "personality": personality }))
+    }
+
+    async fn write_codex_personality(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let personality = payload
+            .get("personality")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "friendly" | "pragmatic"))
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "invalid_request",
+                    "personality must be friendly or pragmatic",
+                )
+            })?;
+        let response = self
+            .codex_app_server
+            .request(
+                "config/batchWrite",
+                json!({
+                    "edits": [{
+                        "keyPath": "personality",
+                        "value": personality,
+                        "mergeStrategy": "replace",
+                    }],
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                    "reloadUserConfig": true,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_personality_write_failed", error))?;
+        Ok(json!({
+            "personality": personality,
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn read_codex_rate_limits(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server
+            .request("account/rateLimits/read", Value::Null)
+            .await
+            .map_err(|error| AppIpcError::new("codex_rate_limits_unavailable", error))
+    }
+
     async fn list_tasks(&self) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
+        log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
+        let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
-        let links =
-            self.visible_links_for_projects(self.collect_links(false).await, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_index_loaded",
+            started_at,
+            stage_started_at,
+            &[
+                ("projects", project_index.projects().len().to_string()),
+                (
+                    "project_state_loaded",
+                    project_index.has_project_state().to_string(),
+                ),
+            ],
+        );
+        let stage_started_at = Instant::now();
+        let collected_links = self.collect_links(false).await;
+        log_runtime_work_list_diagnostic(
+            "links_collected",
+            started_at,
+            stage_started_at,
+            &[("links", collected_links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
+        let links = self.visible_links_for_projects(collected_links, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_filter_applied",
+            started_at,
+            stage_started_at,
+            &[("visible_links", links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
         let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
         let task_count = workspaces
             .iter()
             .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
             .map(Vec::len)
             .sum::<usize>();
+        log_runtime_work_list_diagnostic(
+            "response_built",
+            started_at,
+            stage_started_at,
+            &[
+                ("workspaces", workspaces.len().to_string()),
+                ("tasks", task_count.to_string()),
+            ],
+        );
         log_executor_event(
             "runtime work list finished",
             &[
@@ -568,6 +1099,9 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        let include_full_content = bool_field(&payload, "includeFullContent")
+            .or_else(|| bool_field(&payload, "include_full_content"))
+            .unwrap_or(false);
         let refresh = bool_field(&payload, "refresh")
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
@@ -577,6 +1111,7 @@ impl RuntimeWorkRpcHandler {
             .and_then(runtime_session_id_from_link)
             .or_else(|| runtime_session_id_from_payload(&payload));
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
+        let local_execution_running = self.is_active_local_task(&local_task_id);
         if let Some(link) = local_link.as_ref().filter(|link| {
             !runtime_has_provider_transcript_reader(&link.runtime) || session_id.is_none()
         }) {
@@ -597,6 +1132,8 @@ impl RuntimeWorkRpcHandler {
             return Ok(cached_transcript_response(
                 link,
                 messages,
+                None,
+                local_execution_running,
                 limit,
                 before_cursor.as_deref(),
                 after_cursor.as_deref(),
@@ -619,146 +1156,57 @@ impl RuntimeWorkRpcHandler {
                 message_count: 0,
                 running: false,
             });
-            return Ok(transcript_response(
-                &local_task_id,
+            return Ok(transcript_response(TranscriptResponseInput {
+                local_task_id,
                 workspace_path,
                 runtime,
-                Vec::new(),
+                messages: Vec::new(),
+                context_usage: None,
+                running: false,
                 limit,
-                before_cursor.as_deref(),
-                after_cursor.as_deref(),
-            ));
+                before_cursor,
+                after_cursor,
+                full_content: include_full_content,
+            }));
         };
 
-        if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
-            let messages = local_link
-                .as_ref()
-                .map(|link| {
-                    merge_cached_messages(
-                        cached.messages.clone(),
-                        cached_runtime_transcript_messages_for_provider(link, &cached.messages),
-                    )
-                })
-                .unwrap_or_else(|| cached.messages.clone());
-            let running = transcript_running(
-                local_link.as_ref(),
-                running_hint || cached.running,
-                &messages,
-            );
-            log_runtime_transcript_finished(RuntimeTranscriptLog {
-                started_at,
-                local_task_id: &local_task_id,
-                thread_id: &thread_id,
-                source: "transcript_cache",
-                refresh,
-                running_hint,
-                limit,
-                before_cursor: before_cursor.as_deref(),
-                after_cursor: after_cursor.as_deref(),
-                message_count: messages.len(),
-                running,
-            });
-            return Ok(transcript_response(
-                &local_task_id,
-                cached.workspace_path,
-                cached.runtime,
-                messages,
-                limit,
-                before_cursor.as_deref(),
-                after_cursor.as_deref(),
-            ));
-        }
-
-        let mut source = "thread_read";
-        let thread = match self.cached_codex_thread_for_transcript(&thread_id) {
-            Some(thread) => {
-                source = "thread_list_rollout";
-                thread
-            }
-            None => {
-                let response = self
-                    .codex_app_server
-                    .request(
-                        "thread/read",
-                        json!({"threadId": thread_id.clone(), "includeTurns": false}),
-                    )
-                    .await
-                    .map_err(|error| AppIpcError::new("codex_error", error))?;
-                response.get("thread").unwrap_or(&response).clone()
-            }
-        };
+        let response = self
+            .codex_app_server
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id.clone(), "includeTurns": true}),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let thread = response.get("thread").unwrap_or(&response).clone();
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
             .or_else(|| string_field(&payload, "workspace_path"))
             .unwrap_or_default();
 
-        if refresh {
-            if let Some(cached) = self.transcript_cache.peek(&thread_id) {
-                if let Some(updated) = self.incremental_cached_transcript(
-                    cached,
-                    &thread,
-                    local_link.as_ref(),
-                    running_hint,
-                    &workspace_path,
-                ) {
-                    let messages = updated.messages.clone();
-                    let running = updated.running;
-                    self.transcript_cache.insert(thread_id.clone(), updated);
-                    log_runtime_transcript_finished(RuntimeTranscriptLog {
-                        started_at,
-                        local_task_id: &local_task_id,
-                        thread_id: &thread_id,
-                        source: "incremental_rollout",
-                        refresh,
-                        running_hint,
-                        limit,
-                        before_cursor: before_cursor.as_deref(),
-                        after_cursor: after_cursor.as_deref(),
-                        message_count: messages.len(),
-                        running,
-                    });
-                    return Ok(transcript_response(
-                        &local_task_id,
-                        workspace_path,
-                        "codex".to_owned(),
-                        messages,
-                        limit,
-                        before_cursor.as_deref(),
-                        after_cursor.as_deref(),
-                    ));
-                }
-            }
-        }
-
-        let transcript_thread = codex_thread_state(&thread);
-        let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
-        let messages = local_link
+        let context_usage = transcript_context_usage(&thread);
+        let transcript_messages = if include_full_content {
+            full_transcript_messages(&thread, &self.device_id)
+        } else {
+            transcript_messages(&thread, &self.device_id)
+        };
+        let mut messages = transcript_messages;
+        if local_link
             .as_ref()
-            .map(|link| {
-                merge_cached_messages(
-                    transcript_messages.clone(),
-                    cached_runtime_transcript_messages_for_provider(link, &transcript_messages),
-                )
-            })
-            .unwrap_or(transcript_messages);
-        let running = transcript_running(local_link.as_ref(), running_hint, &messages);
+            .is_some_and(|link| link.running || link.status.eq_ignore_ascii_case("failed"))
+        {
+            append_missing_cached_user_messages(
+                &mut messages,
+                local_link.as_ref().map(cached_messages).unwrap_or_default(),
+            );
+        }
+        let running = codex_thread_has_active_turn(&thread);
         let message_count = messages.len();
-        self.transcript_cache.insert(
-            thread_id.clone(),
-            CachedTranscript::new(
-                workspace_path.clone(),
-                "codex".to_owned(),
-                messages.clone(),
-                running,
-                transcript_source_signature(&thread),
-            )
-            .with_rollout_turns(rollout_turns(&transcript_thread)),
-        );
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
             local_task_id: &local_task_id,
             thread_id: &thread_id,
-            source,
+            source: "thread_read",
             refresh,
             running_hint,
             limit,
@@ -768,33 +1216,142 @@ impl RuntimeWorkRpcHandler {
             running,
         });
 
-        Ok(transcript_response(
-            &local_task_id,
+        Ok(transcript_response(TranscriptResponseInput {
+            local_task_id,
             workspace_path,
-            "codex".to_owned(),
+            runtime: "codex".to_owned(),
             messages,
-            limit,
-            before_cursor.as_deref(),
-            after_cursor.as_deref(),
-        ))
+            context_usage,
+            running,
+            limit: if include_full_content { None } else { limit },
+            before_cursor: if include_full_content {
+                None
+            } else {
+                before_cursor
+            },
+            after_cursor: if include_full_content {
+                None
+            } else {
+                after_cursor
+            },
+            full_content: include_full_content,
+        }))
     }
 
     async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        log_executor_event(
+            "runtime task archive requested",
+            &[
+                (
+                    "payload_task_id",
+                    runtime_task_id(&payload).unwrap_or_else(|| "none".to_owned()),
+                ),
+                (
+                    "payload_workspace_path",
+                    workspace_path(&payload).unwrap_or_else(|| "none".to_owned()),
+                ),
+                (
+                    "payload_address_task_id",
+                    payload
+                        .get("address")
+                        .and_then(runtime_task_id)
+                        .unwrap_or_else(|| "none".to_owned()),
+                ),
+            ],
+        );
         let mut link = self.task_link_from_payload(&payload, false).await?;
-        if let Some(thread_id) = link.thread_id.as_deref() {
+        let archive_thread_id = runtime_session_id_from_link(&link);
+        log_runtime_archive_link("runtime task archive resolved link", &link, false);
+        if let Some(thread_id) = archive_thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method("thread/archive", json!({"threadId": thread_id}))
                 .await
             {
+                log_executor_event(
+                    "runtime task archive codex failed",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        ("thread_id", thread_id.to_owned()),
+                        ("error", error.clone()),
+                    ],
+                );
+                if codex_error_is_missing_rollout(&error, thread_id) {
+                    return Ok(self
+                        .cleanup_missing_rollout_task(&link, thread_id, error)
+                        .await);
+                }
                 return Ok(task_action_failure(&link, error));
             }
+            log_executor_event(
+                "runtime task archive codex accepted",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                ],
+            );
+            self.codex_app_server.unsubscribe_thread(thread_id).await;
+            self.remove_thread_event_route(thread_id);
+        } else {
+            log_executor_event(
+                "runtime task archive skipped codex",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("reason", "missing_thread_id".to_owned()),
+                ],
+            );
         }
 
         link.status = "archived".to_owned();
         link.running = false;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        log_runtime_archive_link("runtime task archive stored link", &link, true);
         Ok(task_action_success(&link))
+    }
+
+    async fn cleanup_missing_rollout_task(
+        &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+        archive_error: String,
+    ) -> Value {
+        let started_at = Instant::now();
+        let delete_result = self
+            .call_codex_thread_method_without_list_invalidation(
+                "thread/delete",
+                json!({"threadId": thread_id}),
+            )
+            .await;
+        match &delete_result {
+            Ok(_) => log_executor_event(
+                "runtime task archive missing rollout deleted codex thread",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                ],
+            ),
+            Err(error) => log_executor_event(
+                "runtime task archive missing rollout codex delete failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                    ("error", error.clone()),
+                ],
+            ),
+        }
+
+        self.mark_archived_link_deleted(link);
+        self.store.delete_task(&link.local_task_id);
+        let mut response = task_action_success(link);
+        response["cleaned"] = json!(true);
+        response["cleanupReason"] = json!("missing_rollout");
+        response["archiveError"] = json!(archive_error);
+        if let Err(error) = delete_result {
+            response["deleteError"] = json!(error);
+        }
+        response
     }
 
     async fn archive_project_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -852,6 +1409,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn unarchive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut link = self.task_link_from_payload(&payload, true).await?;
+        if let Err(error) = self
+            .worktrees
+            .restore_if_known(Path::new(&link.workspace_path))
+        {
+            return Ok(task_action_failure(&link, error));
+        }
         if let Some(thread_id) = link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method("thread/unarchive", json!({"threadId": thread_id}))
@@ -895,7 +1458,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn get_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -904,6 +1467,12 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(
+                    &link.local_task_id,
+                    result
+                        .get("goal")
+                        .and_then(|goal| string_field(goal, "status")),
+                );
                 let mut response = task_action_success(&link);
                 response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
                 Ok(response)
@@ -914,7 +1483,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -939,6 +1508,12 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(
+                    &link.local_task_id,
+                    result
+                        .get("goal")
+                        .and_then(|goal| string_field(goal, "status")),
+                );
                 let mut response = task_action_success(&link);
                 response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
                 Ok(response)
@@ -949,7 +1524,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -958,6 +1533,7 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(&link.local_task_id, None);
                 let mut response = task_action_success(&link);
                 response["cleared"] = result.get("cleared").cloned().unwrap_or(Value::Bool(false));
                 Ok(response)
@@ -968,36 +1544,145 @@ impl RuntimeWorkRpcHandler {
 
     async fn delete_archived_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, true).await?;
+        Ok(self.delete_archived_link(link).await)
+    }
+
+    async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
+        self.mark_archived_link_deleted(&link);
+        if let Err(error) = self.archived_delete_tx.send(link.clone()) {
+            log_executor_event(
+                "runtime archived conversation background enqueue failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("error", error.to_string()),
+                ],
+            );
+        }
+
+        let mut response = task_action_success(&link);
+        response["deleted"] = json!(true);
+        response["cleanup"] = json!({
+            "background": true,
+            "taskId": link.local_task_id,
+            "workspacePath": link.workspace_path,
+        });
+        response
+    }
+
+    fn spawn_archived_delete_worker(&self, mut rx: mpsc::UnboundedReceiver<RuntimeTaskLink>) {
+        let handler = self.clone();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        handle.spawn(async move {
+            while let Some(link) = rx.recv().await {
+                handler.delete_archived_link_background(link).await;
+                sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
+            }
+        });
+    }
+
+    async fn delete_archived_link_background(&self, link: RuntimeTaskLink) {
         if let Some(thread_id) = link.thread_id.as_deref() {
-            if let Err(error) = self
-                .call_codex_thread_method("thread/delete", json!({"threadId": thread_id}))
+            let started_at = Instant::now();
+            match self
+                .call_codex_thread_method_without_list_invalidation(
+                    "thread/delete",
+                    json!({"threadId": thread_id}),
+                )
                 .await
             {
-                return Ok(task_action_failure(&link, error));
+                Ok(_) => {
+                    let elapsed = started_at.elapsed();
+                    if elapsed >= ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD {
+                        log_executor_event(
+                            "runtime archived conversation background thread delete slow",
+                            &[
+                                ("local_task_id", link.local_task_id.clone()),
+                                ("thread_id", thread_id.to_owned()),
+                                ("elapsed_ms", elapsed.as_millis().to_string()),
+                            ],
+                        );
+                    }
+                }
+                Err(error) => {
+                    log_executor_event(
+                        "runtime archived conversation background thread delete failed",
+                        &[
+                            ("local_task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                            ("error", error),
+                        ],
+                    );
+                }
             }
         }
 
         self.store.delete_task(&link.local_task_id);
-        let mut response = task_action_success(&link);
-        response["deleted"] = json!(true);
-        Ok(response)
+        let cleanup_link = link.clone();
+        let cleanup = tokio::task::spawn_blocking(move || {
+            cleanup_task_files_response(&cleanup_link, true, false)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            json!({
+                "taskId": link.local_task_id,
+                "workspacePath": link.workspace_path,
+                "targetCount": 0,
+                "cleanableCount": 0,
+                "skippedCount": 0,
+                "errorCount": 1,
+                "bytes": 0,
+                "items": [],
+                "error": error.to_string(),
+            })
+        });
+        log_executor_event(
+            "runtime archived conversation background cleanup finished",
+            &[
+                ("local_task_id", link.local_task_id.clone()),
+                (
+                    "error_count",
+                    cleanup
+                        .get("errorCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        .to_string(),
+                ),
+            ],
+        );
+        let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
+            normalize_workspace_path(&task.workspace_path)
+                == normalize_workspace_path(&link.workspace_path)
+        });
+        if !has_other_link {
+            if let Err(error) = self
+                .worktrees
+                .forget_if_known(Path::new(&link.workspace_path))
+            {
+                log_executor_event(
+                    "runtime archived conversation worktree snapshot cleanup failed",
+                    &[("local_task_id", link.local_task_id), ("error", error)],
+                );
+            }
+        }
     }
 
     async fn delete_archived_tasks_bulk(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let items = payload
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut results = Vec::new();
-        let mut deleted_count = 0;
-        for item in items {
-            let result = self.delete_archived_task(item).await?;
-            if result["deleted"] == true {
-                deleted_count += 1;
-            }
-            results.push(result);
-        }
+        let links = self.archived_cleanup_links(&payload).await?;
+        let results = stream::iter(links)
+            .map(|link| {
+                let handler = self.clone();
+                async move { handler.delete_archived_link(link).await }
+            })
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await;
+        let deleted_count = results
+            .iter()
+            .filter(|result| result["deleted"] == true)
+            .count();
 
         Ok(json!({
             "success": true,
@@ -1007,6 +1692,27 @@ impl RuntimeWorkRpcHandler {
             "deletedCount": deleted_count,
             "results": results,
         }))
+    }
+
+    async fn preview_archived_conversation_cleanup(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let links = self.archived_cleanup_links(&payload).await?;
+        let previews = links
+            .iter()
+            .map(cleanup_task_files_preview)
+            .collect::<Vec<_>>();
+        Ok(cleanup_summary_response(previews, false))
+    }
+
+    async fn cleanup_archived_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let links = self.archived_cleanup_links(&payload).await?;
+        let results = links
+            .iter()
+            .map(|link| cleanup_task_files_response(link, true, false))
+            .collect::<Vec<_>>();
+        Ok(cleanup_summary_response(results, true))
     }
 
     async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1020,6 +1726,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        Self::log_execution_request_summary("runtime.tasks.create", &request);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
@@ -1034,10 +1741,13 @@ impl RuntimeWorkRpcHandler {
             title.clone(),
         );
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
+        let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
+        self.schedule_worktree_prune();
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
         if let Some(source) = &mut side_source {
@@ -1063,7 +1773,41 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "workspacePath": workspace_path,
             "runtime": "codex",
+            "runtimeHandle": runtime_handle,
         }))
+    }
+
+    fn log_execution_request_summary(method: &str, request: &ExecutionRequest) {
+        let model_config = &request.model_config;
+        let base_url = model_config
+            .get("base_url")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let api_key_present = model_config
+            .get("api_key")
+            .and_then(Value::as_str)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false);
+        let use_user_config = model_config
+            .get("runtime_config")
+            .and_then(Value::as_object)
+            .and_then(|config| config.get("codex"))
+            .and_then(Value::as_object)
+            .and_then(|codex| codex.get("use_user_config"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let model_id = model_config
+            .get("model_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let keys: Vec<String> = model_config
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        wework_debug_log(&format!(
+            "{method} task_id={} model_id={} base_url={} api_key_present={} use_user_config={} model_config_keys={:?}",
+            request.task_id, model_id, base_url, api_key_present, use_user_config, keys
+        ));
     }
 
     async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1094,18 +1838,39 @@ impl RuntimeWorkRpcHandler {
                     .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
+        if let Err(error) = self.worktrees.restore_if_known(Path::new(&workspace_path)) {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": error,
+                "code": "worktree_restore_required",
+                "taskId": local_task_id,
+                "workspacePath": workspace_path,
+            }));
+        }
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
+        Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
-        let Some(thread_id) = runtime_session_id_from_payload(&payload).or_else(|| {
-            existing_link
-                .as_ref()
-                .and_then(runtime_session_id_from_link)
-        }) else {
+        let recovered_link = self
+            .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+            .await;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| {
+                existing_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+            .or_else(|| {
+                recovered_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+        else {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1139,8 +1904,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        let ephemeral =
-            request.ephemeral || existing_link.as_ref().is_some_and(|link| link.ephemeral);
+        self.schedule_worktree_prune();
+        let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
+        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
 
@@ -1220,8 +1986,6 @@ impl RuntimeWorkRpcHandler {
         }
 
         self.trim_runtime_handle_after_rollback(&local_task_id);
-        self.transcript_cache.invalidate(&local_task_id);
-        self.transcript_cache.invalidate(&thread_id);
         self.mark_task_running_for_send(
             &local_task_id,
             &thread_id,
@@ -1247,6 +2011,140 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "runtime": "codex",
         }))
+    }
+
+    async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let message = string_field(&payload, "message")
+            .or_else(|| string_field(&payload, "guidance"))
+            .map(|value| value.trim().to_owned())
+            .unwrap_or_default();
+        let steer_input = guidance_input_items(&message, payload.get("attachments"));
+        if steer_input.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "message or image attachment is required",
+            ));
+        }
+        let Some(active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": "no active turn to guide",
+                "code": "no_active_turn",
+                "taskId": local_task_id,
+                "runtime": "codex",
+            }));
+        };
+
+        let guidance_id = string_field(&payload, "client_guidance_id")
+            .or_else(|| string_field(&payload, "clientGuidanceId"))
+            .unwrap_or_else(|| format!("guidance-{}", now_ms()));
+        let additional_context = payload
+            .get("additionalContext")
+            .or_else(|| payload.get("additional_context"))
+            .filter(|value| value.is_object())
+            .cloned();
+        match self
+            .codex_app_server
+            .steer_turn(
+                &active_turn.thread_id,
+                &active_turn.turn_id,
+                Value::Array(steer_input),
+                additional_context,
+            )
+            .await
+        {
+            Ok(turn_id) => Ok(json!({
+                "success": true,
+                "accepted": true,
+                "guidance_id": guidance_id,
+                "guidanceId": guidance_id,
+                "taskId": local_task_id,
+                "turnId": turn_id,
+                "runtime": "codex",
+            })),
+            Err(error) => {
+                let code = codex_guidance_failure_code(&error);
+                Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "error": error,
+                    "code": code,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }))
+            }
+        }
+    }
+
+    async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let link = self.task_link_from_payload(&payload, false).await?;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| runtime_session_id_from_link(&link))
+        else {
+            return Ok(task_action_failure(
+                &link,
+                "runtime task session is not ready".to_owned(),
+            ));
+        };
+
+        let thread_id = match self.resume_codex_thread_for_action(&link, &thread_id).await {
+            Ok(resumed_thread_id) => resumed_thread_id,
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
+        self.register_thread_event_route(
+            &thread_id,
+            link.local_task_id.clone(),
+            runtime_event_request_from_link(&link),
+            true,
+        );
+        match self
+            .call_codex_thread_method("thread/compact/start", json!({"threadId": thread_id}))
+            .await
+        {
+            Ok(_) => {
+                self.store.update_task(&local_task_id, |stored| {
+                    stored.updated_at = now_ms();
+                });
+                Ok(task_action_success(&link))
+            }
+            Err(error) => Ok(task_action_failure(&link, error)),
+        }
+    }
+
+    async fn resume_codex_thread_for_action(
+        &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+    ) -> Result<String, String> {
+        let mut params = Map::new();
+        params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+        params.insert(
+            "approvalPolicy".to_owned(),
+            Value::String("never".to_owned()),
+        );
+        params.insert("excludeTurns".to_owned(), Value::Bool(true));
+        if !link.workspace_path.trim().is_empty() {
+            params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));
+        }
+        if let Some(thread_path) = runtime_thread_path_from_link(link) {
+            params.insert("path".to_owned(), Value::String(thread_path));
+        }
+
+        let response = self
+            .call_codex_thread_method_without_list_invalidation(
+                "thread/resume",
+                Value::Object(params),
+            )
+            .await?;
+        Ok(response
+            .get("thread")
+            .and_then(|thread| string_field(thread, "id"))
+            .unwrap_or_else(|| thread_id.to_owned()))
     }
 
     async fn send_request_user_input_response(
@@ -1392,8 +2290,23 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
         let label = string_field(&payload, "label").or_else(|| string_field(&payload, "name"));
-        let project = open_codex_global_project(&workspace_path, label.as_deref())
-            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let canonical = fs::canonicalize(&workspace_path).ok();
+        if let Some(canonical) = canonical.as_ref() {
+            if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                roots.insert(canonical.clone());
+            }
+        }
+        let project = match open_codex_global_project(&workspace_path, label.as_deref()) {
+            Ok(project) => project,
+            Err(error) => {
+                if let Some(canonical) = canonical.as_ref() {
+                    if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                        roots.remove(canonical);
+                    }
+                }
+                return Err(AppIpcError::new("codex_global_state_error", error));
+            }
+        };
 
         Ok(json!({
             "success": true,
@@ -1416,7 +2329,9 @@ impl RuntimeWorkRpcHandler {
         let label = string_field(&payload, "label")
             .or_else(|| string_field(&payload, "name"))
             .ok_or_else(|| AppIpcError::new("bad_request", "label is required"))?;
-        let project = rename_codex_global_project(&workspace_path, &label)
+        let project_key =
+            string_field(&payload, "projectKey").or_else(|| string_field(&payload, "project_key"));
+        let project = rename_codex_global_project(project_key.as_deref(), &workspace_path, &label)
             .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
 
         Ok(json!({
@@ -1437,8 +2352,16 @@ impl RuntimeWorkRpcHandler {
         }
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
-        let workspace_path = remove_codex_global_project(&workspace_path)
-            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let project_key =
+            string_field(&payload, "projectKey").or_else(|| string_field(&payload, "project_key"));
+        let workspace_path =
+            remove_codex_global_project(project_key.as_deref(), &workspace_path)
+                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        if let Ok(canonical) = fs::canonicalize(&workspace_path) {
+            if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                roots.remove(&canonical);
+            }
+        }
 
         Ok(json!({
             "success": true,
@@ -1446,6 +2369,122 @@ impl RuntimeWorkRpcHandler {
             "workspacePath": workspace_path,
             "runtime": "codex",
         }))
+    }
+
+    async fn reorder_sidebar_projects(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let before_project_key = string_field(&payload, "beforeProjectKey")
+            .or_else(|| string_field(&payload, "before_project_key"));
+        let insert_at_end = bool_field(&payload, "insertAtEnd")
+            .or_else(|| bool_field(&payload, "insert_at_end"))
+            .unwrap_or(false);
+        reorder_codex_global_projects(&project_key, before_project_key.as_deref(), insert_at_end)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn pin_sidebar_project(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let pinned = bool_field(&payload, "pinned")
+            .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
+        let before_project_key = string_field(&payload, "beforeProjectKey")
+            .or_else(|| string_field(&payload, "before_project_key"));
+        set_codex_global_project_pinned(&project_key, pinned, before_project_key.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn set_sidebar_project_appearance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let appearance = payload.get("appearance").cloned().filter(Value::is_object);
+        set_codex_global_project_appearance(&project_key, appearance)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn sync_sidebar_remote_projects(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let items = payload
+            .get("projects")
+            .and_then(Value::as_array)
+            .ok_or_else(|| AppIpcError::new("bad_request", "projects is required"))?;
+        let projects = items
+            .iter()
+            .map(|item| {
+                Ok(CodexGlobalRemoteProject {
+                    id: string_field(item, "id").ok_or_else(|| {
+                        AppIpcError::new("bad_request", "remote project id is required")
+                    })?,
+                    host_id: string_field(item, "hostId")
+                        .or_else(|| string_field(item, "host_id"))
+                        .ok_or_else(|| {
+                            AppIpcError::new("bad_request", "remote project hostId is required")
+                        })?,
+                    remote_path: string_field(item, "remotePath")
+                        .or_else(|| string_field(item, "remote_path"))
+                        .ok_or_else(|| {
+                            AppIpcError::new("bad_request", "remote project remotePath is required")
+                        })?,
+                    label: string_field(item, "label"),
+                })
+            })
+            .collect::<Result<Vec<_>, AppIpcError>>()?;
+        sync_codex_global_remote_projects(&projects)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn activate_sidebar_project(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let workspace_path = workspace_path(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+        let remote_host_id = string_field(&payload, "remoteHostId")
+            .or_else(|| string_field(&payload, "remote_host_id"));
+        activate_codex_global_project(&project_key, &workspace_path, remote_host_id.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn reorder_sidebar_project_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let thread_id = string_field(&payload, "threadId")
+            .or_else(|| string_field(&payload, "thread_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let before_thread_id = string_field(&payload, "beforeThreadId")
+            .or_else(|| string_field(&payload, "before_thread_id"));
+        let insert_at_end = bool_field(&payload, "insertAtEnd")
+            .or_else(|| bool_field(&payload, "insert_at_end"))
+            .unwrap_or(false);
+        reorder_codex_global_project_thread(
+            &project_key,
+            &thread_id,
+            before_thread_id.as_deref(),
+            insert_at_end,
+        )
+        .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn pin_sidebar_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let thread_id = string_field(&payload, "threadId")
+            .or_else(|| string_field(&payload, "thread_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let pinned = bool_field(&payload, "pinned")
+            .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
+        let before_thread_id = string_field(&payload, "beforeThreadId")
+            .or_else(|| string_field(&payload, "before_thread_id"));
+        set_codex_global_thread_pinned(&thread_id, pinned, before_thread_id.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
     }
 
     async fn prepare_fork_transfer(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1596,14 +2635,9 @@ impl RuntimeWorkRpcHandler {
             let mapper_request = request.clone();
             let mapper_handle = tokio::spawn(async move {
                 let mut event_mapper = CodexNotificationEventMapper::default();
-                let mut cache_mapper = CodexNotificationCacheMapper::default();
                 while let Some(message) = notification_rx.recv().await {
-                    cache_mapper.map(
-                        &mapper_handler.store,
-                        &mapper_local_task_id,
-                        &mapper_request,
-                        &message,
-                    );
+                    mapper_handler
+                        .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
                     event_mapper.map(
                         &mapper_handler.event_tx,
                         &mapper_handler.device_id,
@@ -1617,6 +2651,21 @@ impl RuntimeWorkRpcHandler {
             let route_local_task_id = turn_local_task_id.clone();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
                 route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
+            });
+            let active_turn_handler = handler.clone();
+            let active_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_started: CodexActiveTurnCallback =
+                Box::new(move |thread_id, turn_id| {
+                    active_turn_handler.record_active_codex_turn(
+                        &active_turn_local_task_id,
+                        thread_id,
+                        turn_id,
+                    );
+                });
+            let finished_turn_handler = handler.clone();
+            let finished_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                finished_turn_handler.clear_active_codex_turn(&finished_turn_local_task_id);
             });
             let result = handler
                 .codex_app_server
@@ -1633,13 +2682,27 @@ impl RuntimeWorkRpcHandler {
                         cancellation: Some(cancel_rx),
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
+                        active_turn_started: Some(active_turn_started),
+                        active_turn_finished: Some(active_turn_finished),
                     },
                 )
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                emit_response_event(
+                    &handler.event_tx,
+                    &handler.device_id,
+                    "response.incomplete",
+                    &turn_local_task_id,
+                    &request,
+                    json!({
+                        "type": "cancelled",
+                        "error": {"message": "cancelled"},
+                    }),
+                );
                 let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
+                handler.clear_active_codex_turn(&turn_local_task_id);
                 handler.unmark_active_local_task(&turn_local_task_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
@@ -1651,6 +2714,7 @@ impl RuntimeWorkRpcHandler {
 
             let _ = mapper_handle.await;
             handler.handle_turn_result(&turn_local_task_id, &request, result);
+            handler.clear_active_codex_turn(&turn_local_task_id);
             if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
                 requests.remove(&turn_local_task_id);
             }
@@ -1869,13 +2933,9 @@ impl RuntimeWorkRpcHandler {
         if self.is_active_local_task(&route.local_task_id) {
             return;
         }
-
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
         }
-        route
-            .cache_mapper
-            .map(&self.store, &route.local_task_id, &route.request, &message);
         route.event_mapper.map(
             &self.event_tx,
             &self.device_id,
@@ -1899,7 +2959,6 @@ impl RuntimeWorkRpcHandler {
             link.thread_id = Some(thread_id.to_owned());
             link.updated_at = now_ms();
         });
-        self.thread_list_cache.invalidate();
         let pending_id = pending_thread_event_route_id(&local_task_id);
         let mut routes = self
             .thread_event_routes
@@ -1913,7 +2972,6 @@ impl RuntimeWorkRpcHandler {
         });
         if active {
             route.event_mapper = CodexNotificationEventMapper::default();
-            route.cache_mapper = CodexNotificationCacheMapper::default();
         }
         route.local_task_id = local_task_id;
         route.request = request;
@@ -1951,7 +3009,6 @@ impl RuntimeWorkRpcHandler {
             link.thread_id = Some(thread_id.to_owned());
             link.updated_at = now_ms();
         });
-        self.thread_list_cache.invalidate();
     }
 
     fn register_thread_event_route_for_link(&self, link: &RuntimeTaskLink, active: bool) {
@@ -2012,7 +3069,6 @@ impl RuntimeWorkRpcHandler {
             link.thread_id = Some(thread_id.to_owned());
             link.updated_at = now_ms();
         });
-        self.thread_list_cache.invalidate();
         true
     }
 
@@ -2052,6 +3108,13 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
+    fn remove_thread_event_route(&self, thread_id: &str) {
+        self.thread_event_routes
+            .lock()
+            .expect("thread event route lock should not be poisoned")
+            .remove(thread_id);
+    }
+
     fn mark_thread_event_routes_idle_for_local_task(&self, local_task_id: &str) {
         for route in self
             .thread_event_routes
@@ -2066,14 +3129,41 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
+        let started_at = Instant::now();
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
         let mut discovered_codex_task_signatures = HashSet::new();
 
-        for thread in self.codex_threads(archived).await {
+        let threads = self.codex_threads(archived).await;
+        let stage_started_at = Instant::now();
+        for thread in threads {
+            let thread_started_at = Instant::now();
+            let thread_id = string_field(&thread, "id").unwrap_or_else(|| "none".to_owned());
             if let Some(mut link) = self.link_from_thread(&thread) {
+                log_slow_runtime_collect_thread(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                    &link,
+                );
                 if link.ephemeral {
+                    continue;
+                }
+                if self.archived_link_is_deleted(&link) {
+                    log_executor_event(
+                        "runtime work codex link hidden by deleted marker",
+                        &[
+                            ("archived_query", archived.to_string()),
+                            ("local_task_id", link.local_task_id.clone()),
+                            (
+                                "thread_id",
+                                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+                            ),
+                            ("workspace_path", link.workspace_path.clone()),
+                        ],
+                    );
                     continue;
                 }
                 if archived {
@@ -2091,10 +3181,31 @@ impl RuntimeWorkRpcHandler {
                     discovered_codex_task_signatures.insert(signature);
                 }
                 links.push(link);
+            } else {
+                log_slow_runtime_collect_thread_missing(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                );
             }
         }
+        log_runtime_collect_diagnostic(
+            "threads_linked",
+            archived,
+            started_at,
+            stage_started_at,
+            &[
+                ("links", links.len().to_string()),
+                ("threads", discovered_thread_ids.len().to_string()),
+            ],
+        );
 
+        let stage_started_at = Instant::now();
         for mut link in self.local_task_links(true) {
+            if self.archived_link_is_deleted(&link) {
+                continue;
+            }
             if link.ephemeral {
                 continue;
             }
@@ -2102,7 +3213,7 @@ impl RuntimeWorkRpcHandler {
             if link_archived != archived {
                 continue;
             }
-            if is_cached_codex_link_hidden(&link) {
+            if is_cached_codex_link_hidden(&link, &discovered_thread_ids) {
                 continue;
             }
             if discovered_local_task_ids.contains(&link.local_task_id) {
@@ -2118,34 +3229,30 @@ impl RuntimeWorkRpcHandler {
             if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
-            if !self.is_active_local_task(&link.local_task_id) {
-                normalize_unmapped_pending_codex_task(&mut link);
+            if !self.is_active_local_task(&link.local_task_id)
+                && normalize_inactive_running_codex_task(&mut link)
+            {
+                self.store.upsert_task(link.clone());
             }
             link.list_order = Some(links.len());
             links.push(link);
         }
+        log_runtime_collect_diagnostic(
+            "local_links_merged",
+            archived,
+            started_at,
+            stage_started_at,
+            &[("links", links.len().to_string())],
+        );
 
         links
     }
 
     async fn codex_threads(&self, archived: bool) -> Vec<Value> {
         let started_at = Instant::now();
-        if let Some(threads) = self.thread_list_cache.get(archived) {
-            log_executor_event(
-                "runtime work thread list cache hit",
-                &[
-                    ("elapsed_ms", elapsed_ms(started_at)),
-                    ("archived", archived.to_string()),
-                    ("threads", threads.len().to_string()),
-                ],
-            );
-            return threads;
-        }
-
         let mut threads = Vec::new();
         let mut cursor = None;
         let mut pages = 0_usize;
-        let mut failed = false;
         self.ensure_notification_router().await;
         loop {
             let params = codex_thread_list_params(archived, cursor.as_deref());
@@ -2162,7 +3269,6 @@ impl RuntimeWorkRpcHandler {
                             ("error", error),
                         ],
                     );
-                    failed = true;
                     break;
                 }
             };
@@ -2177,7 +3283,6 @@ impl RuntimeWorkRpcHandler {
                         ("error", "missing data array".to_owned()),
                     ],
                 );
-                failed = true;
                 break;
             };
             pages += 1;
@@ -2190,9 +3295,6 @@ impl RuntimeWorkRpcHandler {
 
         if threads.len() > CODEX_THREAD_LIST_MAX_ITEMS {
             threads.truncate(CODEX_THREAD_LIST_MAX_ITEMS);
-        }
-        if !failed {
-            self.thread_list_cache.set(archived, threads.clone());
         }
         log_executor_event(
             "runtime work thread list fetched",
@@ -2224,6 +3326,27 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
+        let links = links
+            .into_iter()
+            .map(|mut link| {
+                if !is_codex_runtime(&link.runtime) {
+                    return link;
+                }
+
+                if let Some(thread_id) = link.thread_id.as_deref() {
+                    link.pinned = project_index.is_pinned_thread(thread_id);
+                    link.pinned_order = project_index.pinned_thread_order(thread_id);
+                    if infer_workspace_kind(&link.workspace_path) == "chat" {
+                        link.list_order = Some(project_index.thread_sort_order(
+                            "chats",
+                            thread_id,
+                            link.list_order.unwrap_or(usize::MAX / 2),
+                        ));
+                    }
+                }
+                link
+            })
+            .collect::<Vec<_>>();
         let input_count = links.len();
         let project_count = project_index.projects().len();
         let project_roots = project_index
@@ -2366,8 +3489,17 @@ impl RuntimeWorkRpcHandler {
                 "group_path"
             };
             let project_workspace_path = project.workspace_path.clone();
+            let project_key = project.key.clone();
             let project_name = project.name.clone();
             link.group_workspace_path = Some(project_workspace_path.clone());
+            link.group_project_key = Some(project_key.clone());
+            if let Some(thread_id) = link.thread_id.as_deref() {
+                link.list_order = Some(project_index.thread_sort_order(
+                    &project_key,
+                    thread_id,
+                    link.list_order.unwrap_or(usize::MAX / 2),
+                ));
+            }
             kept_project += 1;
             log_runtime_project_filter_item(
                 &link,
@@ -2420,73 +3552,95 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         if let Some(link) = self.local_task_link(&local_task_id) {
-            return Ok(link);
+            if (link.status == "archived") == archived {
+                log_runtime_archive_link(
+                    "runtime task payload matched local link",
+                    &link,
+                    archived,
+                );
+                return Ok(link);
+            }
+            log_runtime_archive_link(
+                "runtime task payload skipped local link status mismatch",
+                &link,
+                archived,
+            );
         }
 
         for link in self.collect_links(archived).await {
             if link.local_task_id == local_task_id
                 || link.thread_id.as_deref() == Some(local_task_id.as_str())
             {
+                log_runtime_archive_link(
+                    "runtime task payload matched collected link",
+                    &link,
+                    archived,
+                );
                 return Ok(link);
             }
         }
 
         let workspace_path = workspace_path(payload)
             .ok_or_else(|| AppIpcError::new("not_found", "runtime task was not found"))?;
+        // A local task ID identifies Wework's persisted task record; it is not a
+        // Codex thread ID. Keep this unresolved until a provider thread is known.
         let mut link =
             RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, local_task_id);
-        link.thread_id = Some(link.local_task_id.clone());
         link.status = if archived { "archived" } else { "active" }.to_owned();
         link.running = false;
+        log_runtime_archive_link("runtime task payload created pending link", &link, archived);
         Ok(link)
     }
 
+    async fn recover_send_task_link(
+        &self,
+        payload: &Value,
+        local_task_id: &str,
+        existing_link: Option<&RuntimeTaskLink>,
+    ) -> Option<RuntimeTaskLink> {
+        if existing_link
+            .and_then(runtime_session_id_from_link)
+            .is_some()
+        {
+            return existing_link.cloned();
+        }
+
+        let workspace_path = workspace_path(payload).unwrap_or_default();
+        let mut workspace_matches = Vec::new();
+        for link in self.collect_links(false).await {
+            if link.local_task_id == local_task_id
+                || link.thread_id.as_deref() == Some(local_task_id)
+            {
+                return Some(link);
+            }
+
+            if !workspace_path.is_empty()
+                && link.workspace_path == workspace_path
+                && runtime_session_id_from_link(&link).is_some()
+            {
+                workspace_matches.push(link);
+            }
+        }
+
+        if workspace_matches.len() == 1 {
+            workspace_matches.pop()
+        } else {
+            None
+        }
+    }
+
     async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
-        if let Some(cached) = self.transcript_cache.get(thread_id, false, false) {
-            return cached.messages;
-        }
-        if let Some(thread) = self.cached_codex_thread_for_transcript(thread_id) {
-            let transcript_thread = codex_thread_state(&thread);
-            let messages = transcript_messages(&transcript_thread, &self.device_id);
-            let workspace_path = string_field(&thread, "cwd").unwrap_or_default();
-            self.transcript_cache.insert(
-                thread_id.to_owned(),
-                CachedTranscript::new(
-                    workspace_path,
-                    "codex".to_owned(),
-                    messages.clone(),
-                    messages.iter().any(runtime_message_running),
-                    transcript_source_signature(&thread),
-                )
-                .with_rollout_turns(rollout_turns(&transcript_thread)),
-            );
-            return messages;
-        }
         match self
             .codex_app_server
             .request(
                 "thread/read",
-                json!({"threadId": thread_id, "includeTurns": false}),
+                json!({"threadId": thread_id, "includeTurns": true}),
             )
             .await
         {
             Ok(response) => {
                 let thread = response.get("thread").unwrap_or(&response);
-                let transcript_thread = codex_thread_state(thread);
-                let messages = transcript_messages(&transcript_thread, &self.device_id);
-                let workspace_path = string_field(thread, "cwd").unwrap_or_default();
-                self.transcript_cache.insert(
-                    thread_id.to_owned(),
-                    CachedTranscript::new(
-                        workspace_path,
-                        "codex".to_owned(),
-                        messages.clone(),
-                        messages.iter().any(runtime_message_running),
-                        transcript_source_signature(thread),
-                    )
-                    .with_rollout_turns(rollout_turns(&transcript_thread)),
-                );
-                messages
+                transcript_messages(thread, &self.device_id)
             }
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");
@@ -2495,78 +3649,23 @@ impl RuntimeWorkRpcHandler {
         }
     }
 
-    fn cached_codex_thread_for_transcript(&self, thread_id: &str) -> Option<Value> {
-        self.thread_list_cache
-            .find_thread(thread_id)
-            .filter(thread_has_readable_rollout_path)
-    }
-
-    fn incremental_cached_transcript(
-        &self,
-        cached: CachedTranscript,
-        thread: &Value,
-        local_link: Option<&RuntimeTaskLink>,
-        running_hint: bool,
-        workspace_path: &str,
-    ) -> Option<CachedTranscript> {
-        let previous_signature = cached.source_signature.as_ref()?;
-        if string_field(thread, "path").as_deref() != Some(previous_signature.path()) {
-            return None;
-        }
-        let current_signature = TranscriptSourceSignature::from_path(previous_signature.path())?;
-        if current_signature.len() < previous_signature.len()
-            || (current_signature.len() == previous_signature.len()
-                && current_signature != *previous_signature)
-        {
-            return None;
-        }
-        let turns = cached.rollout_turns?;
-        let append = append_rollout_turns_from_offset(thread, turns, previous_signature.len())?;
-        let messages = local_link
-            .map(|link| {
-                merge_cached_messages(
-                    append_changed_transcript_messages(
-                        cached.messages.clone(),
-                        thread,
-                        &append.turns,
-                        append.changed_start,
-                        &self.device_id,
-                    ),
-                    cached_runtime_transcript_messages(link),
-                )
-            })
-            .unwrap_or_else(|| {
-                append_changed_transcript_messages(
-                    cached.messages,
-                    thread,
-                    &append.turns,
-                    append.changed_start,
-                    &self.device_id,
-                )
-            });
-        let running = transcript_running(local_link, running_hint, &messages);
-        Some(
-            CachedTranscript::new(
-                workspace_path.to_owned(),
-                "codex".to_owned(),
-                messages,
-                running,
-                Some(current_signature),
-            )
-            .with_rollout_turns(Some(append.turns)),
-        )
-    }
-
     async fn call_codex_thread_method(&self, method: &str, params: Value) -> Result<Value, String> {
+        let result = self
+            .call_codex_thread_method_without_list_invalidation(method, params)
+            .await;
+        result
+    }
+
+    async fn call_codex_thread_method_without_list_invalidation(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
         if let Some(thread_id) = codex_stream_thread_id(&params) {
             self.register_thread_event_route_from_store(&thread_id);
         }
         self.ensure_notification_router().await;
-        let result = self.codex_app_server.request(method, params).await;
-        if result.is_ok() {
-            self.thread_list_cache.invalidate();
-        }
-        result
+        self.codex_app_server.request(method, params).await
     }
 
     fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {
@@ -2576,16 +3675,15 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
         if let Some(link) = &mut local_link {
-            if link.running && !local_active {
-                link.running = false;
+            if !local_active && normalize_inactive_running_codex_task(link) {
+                self.store.upsert_task(link.clone());
             }
         }
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
-        let codex_thread = thread_with_rollout_running_status(thread);
-        let mut link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
-        if let Some(path) = string_field(&codex_thread, "path") {
+        let mut link = RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path);
+        if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
                 .as_object()
@@ -2602,20 +3700,62 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn local_task_links(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
-        self.store.list_tasks(include_archived)
+        self.store.list_task_summaries(include_archived)
     }
 
     fn local_task_link(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
         self.store.get_task(local_task_id)
     }
 
+    fn archived_link_is_deleted(&self, link: &RuntimeTaskLink) -> bool {
+        self.store.is_deleted_archived_task_id(&link.local_task_id)
+            || link
+                .thread_id
+                .as_deref()
+                .is_some_and(|thread_id| self.store.is_deleted_archived_task_id(thread_id))
+    }
+
+    fn mark_archived_link_deleted(&self, link: &RuntimeTaskLink) {
+        let mut ids = vec![link.local_task_id.clone()];
+        if let Some(thread_id) = &link.thread_id {
+            ids.push(thread_id.clone());
+        }
+        self.store.mark_deleted_archived_task_ids(ids);
+    }
+
+    async fn archived_cleanup_links(
+        &self,
+        payload: &Value,
+    ) -> Result<Vec<RuntimeTaskLink>, AppIpcError> {
+        let items = payload
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if items.is_empty() {
+            return Ok(self.collect_links(true).await);
+        }
+
+        let mut links = Vec::new();
+        let mut seen = HashSet::new();
+        for item in items {
+            let local_task_id = runtime_task_id(&item)
+                .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+            let payload_thread_id = runtime_session_id_from_payload(&item);
+            let link = archived_link_from_payload_item(&item, local_task_id, payload_thread_id);
+            if seen.insert(link.local_task_id.clone()) {
+                links.push(link);
+            }
+        }
+        Ok(links)
+    }
+
     fn local_task_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
-        self.store.find_by_thread_id(thread_id)
+        self.store.find_summary_by_thread_id(thread_id)
     }
 
     fn upsert_local_task(&self, link: RuntimeTaskLink) {
         self.store.upsert_task(link);
-        self.thread_list_cache.invalidate();
     }
 
     fn mark_active_local_task(&self, local_task_id: &str) {
@@ -2650,6 +3790,46 @@ impl RuntimeWorkRpcHandler {
             .remove(local_task_id);
     }
 
+    fn record_active_codex_turn(&self, local_task_id: &str, thread_id: String, turn_id: String) {
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
+            .insert(
+                local_task_id.to_owned(),
+                ActiveCodexTurn { thread_id, turn_id },
+            );
+    }
+
+    fn active_codex_turn(&self, local_task_id: &str) -> Option<ActiveCodexTurn> {
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
+            .get(local_task_id)
+            .cloned()
+    }
+
+    async fn wait_for_active_codex_turn(&self, local_task_id: &str) -> Option<ActiveCodexTurn> {
+        for attempt in 0..=ACTIVE_CODEX_TURN_WAIT_ATTEMPTS {
+            if let Some(turn) = self.active_codex_turn(local_task_id) {
+                return Some(turn);
+            }
+            if !self.is_active_local_task(local_task_id)
+                || attempt == ACTIVE_CODEX_TURN_WAIT_ATTEMPTS
+            {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(ACTIVE_CODEX_TURN_WAIT_MS)).await;
+        }
+        None
+    }
+
+    fn clear_active_codex_turn(&self, local_task_id: &str) {
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
     async fn abort_active_turn(&self, local_task_id: &str) -> bool {
         let control = {
             self.active_turn_cancellations
@@ -2665,6 +3845,7 @@ impl RuntimeWorkRpcHandler {
                 return false;
             }
         }
+        self.clear_active_codex_turn(local_task_id);
         self.unmark_active_local_task(local_task_id);
         true
     }
@@ -2678,7 +3859,6 @@ impl RuntimeWorkRpcHandler {
 
     fn finish_local_task(&self, local_task_id: &str, thread_id: Option<String>, status: &str) {
         self.clear_active_turn_cancellation(local_task_id);
-        let invalidate_thread_id = thread_id.clone();
         self.store.update_task(local_task_id, |link| {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
@@ -2690,14 +3870,29 @@ impl RuntimeWorkRpcHandler {
                 retain_runtime_handle_user_messages(&mut link.runtime_handle);
             }
         });
-        self.transcript_cache.invalidate(local_task_id);
-        if let Some(thread_id) = invalidate_thread_id {
-            self.transcript_cache.invalidate(&thread_id);
-        }
         if status != "running" {
             self.unmark_active_local_task(local_task_id);
         }
-        self.thread_list_cache.invalidate();
+    }
+
+    fn sync_runtime_task_goal_from_notification(&self, local_task_id: &str, message: &Value) {
+        let notification = codex_notification(message);
+        let goal_status = match notification.method.as_str() {
+            "thread/goal/updated" => notification
+                .params
+                .get("goal")
+                .and_then(|goal| string_field(goal, "status")),
+            "thread/goal/cleared" => None,
+            _ => return,
+        };
+        self.sync_runtime_task_goal_status(local_task_id, goal_status);
+    }
+
+    fn sync_runtime_task_goal_status(&self, local_task_id: &str, goal_status: Option<String>) {
+        self.store.update_task(local_task_id, |link| {
+            link.goal_status = goal_status.clone();
+            link.updated_at = now_ms();
+        });
     }
 }
 
@@ -2711,19 +3906,32 @@ fn is_unmapped_pending_codex_shadow(
             .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
 }
 
-fn normalize_unmapped_pending_codex_task(link: &mut RuntimeTaskLink) {
-    if !is_unmapped_pending_codex_task(link) {
-        return;
+fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
+    if !is_inactive_running_codex_task(link) {
+        return false;
     }
     link.status = "active".to_owned();
     link.running = false;
+    link.updated_at = now_ms();
+    true
+}
+
+fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
+    if !link.running || !is_codex_runtime(&link.runtime) {
+        return false;
+    }
+    let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "running" | "inprogress" | "busy" | "pending"
+    )
 }
 
 fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
+    if !is_inactive_running_codex_task(link) {
+        return false;
+    }
     link.thread_id.is_none()
-        && link.running
-        && link.status == "running"
-        && is_codex_runtime(&link.runtime)
 }
 
 fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
@@ -2815,6 +4023,28 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
     );
 }
 
+fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
+    log_executor_event(
+        event,
+        &[
+            ("archived_query", archived_query.to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            (
+                "thread_id",
+                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+            ),
+            ("workspace_path", link.workspace_path.clone()),
+            ("runtime", link.runtime.clone()),
+            ("status", link.status.clone()),
+            ("running", link.running.to_string()),
+            (
+                "session_id",
+                runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
+            ),
+        ],
+    );
+}
+
 fn log_runtime_transcript_finished(details: RuntimeTranscriptLog<'_>) {
     log_executor_event(
         "runtime work transcript finished",
@@ -2855,14 +4085,29 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
     project_index
         .projects()
         .iter()
-        .map(|project| RuntimeWorkspaceLink {
-            workspace_path: project.workspace_path.clone(),
-            title: project.name.clone(),
-            runtime: "codex".to_owned(),
-            created_at: now,
-            updated_at: now,
-            workspace_source: project.source.clone(),
-            remote_host_id: project.remote_host_id.clone(),
+        .flat_map(|project| {
+            let roots = if project.roots.is_empty() {
+                vec![project.workspace_path.clone()]
+            } else {
+                project.roots.clone()
+            };
+            roots.into_iter().map(|root| RuntimeWorkspaceLink {
+                workspace_path: root,
+                title: project.name.clone(),
+                runtime: "codex".to_owned(),
+                created_at: now,
+                updated_at: now,
+                workspace_source: project.kind.clone(),
+                remote_host_id: project.remote_host_id.clone(),
+                project_key: project.key.clone(),
+                project_kind: project.kind.clone(),
+                project_source: project.source.clone(),
+                project_roots: project.roots.clone(),
+                project_pinned: project.pinned,
+                project_pinned_order: project.pinned_order,
+                project_active: project.active,
+                project_appearance: project.appearance.clone(),
+            })
         })
         .collect()
 }
@@ -2917,23 +4162,23 @@ fn codex_stream_thread_id(value: &Value) -> Option<String> {
 
 fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
     let notification = codex_notification(message);
+    let raw = serde_json::to_string(message)
+        .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
     log_executor_event(
         "runtime work codex notification unrouted",
         &[
             ("reason", reason.to_owned()),
             ("method", notification.method),
-            (
-                "raw_len",
-                serde_json::to_string(message)
-                    .map(|raw| raw.len().to_string())
-                    .unwrap_or_else(|_| "0".to_owned()),
-            ),
+            ("raw_len", raw.len().to_string()),
+            ("raw", raw),
         ],
     );
 }
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     ExecutionRequest {
+        task_id: link.local_task_id.clone(),
+        subtask_id: format!("{}-context-compact", link.local_task_id),
         project_workspace_path: Some(link.workspace_path.clone()),
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
@@ -2962,75 +4207,10 @@ fn runtime_project_workspace_path(
         })
 }
 
-#[derive(Clone, Default)]
-struct CodexThreadListCache {
-    state: Arc<Mutex<CodexThreadListCacheState>>,
-}
-
-#[derive(Default)]
-struct CodexThreadListCacheState {
-    active: Option<CachedCodexThreadList>,
-    archived: Option<CachedCodexThreadList>,
-}
-
-#[derive(Clone)]
-struct CachedCodexThreadList {
-    loaded_at: i64,
-    threads: Vec<Value>,
-}
-
-impl CodexThreadListCache {
-    fn get(&self, archived: bool) -> Option<Vec<Value>> {
-        let state = self.state.lock().ok()?;
-        let cached = if archived {
-            state.archived.as_ref()
-        } else {
-            state.active.as_ref()
-        }?;
-        if now_ms().saturating_sub(cached.loaded_at) > CODEX_THREAD_LIST_CACHE_TTL_MS {
-            return None;
-        }
-        Some(cached.threads.clone())
-    }
-
-    fn set(&self, archived: bool, threads: Vec<Value>) {
-        if let Ok(mut state) = self.state.lock() {
-            let cached = Some(CachedCodexThreadList {
-                loaded_at: now_ms(),
-                threads,
-            });
-            if archived {
-                state.archived = cached;
-            } else {
-                state.active = cached;
-            }
-        }
-    }
-
-    fn find_thread(&self, thread_id: &str) -> Option<Value> {
-        let state = self.state.lock().ok()?;
-        state
-            .active
-            .as_ref()
-            .into_iter()
-            .chain(state.archived.as_ref())
-            .flat_map(|cached| cached.threads.iter())
-            .find(|thread| string_field(thread, "id").as_deref() == Some(thread_id))
-            .cloned()
-    }
-
-    fn invalidate(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.active = None;
-            state.archived = None;
-        }
-    }
-}
-
 fn codex_thread_list_params(archived: bool, cursor: Option<&str>) -> Value {
     let mut params = json!({
         "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-        "sortKey": "recency_at",
+        "sortKey": "updated_at",
         "sortDirection": "desc",
         "sourceKinds": CODEX_THREAD_SOURCE_KINDS,
         "archived": archived,
@@ -3042,22 +4222,22 @@ fn codex_thread_list_params(archived: bool, cursor: Option<&str>) -> Value {
     params
 }
 
-fn thread_has_readable_rollout_path(thread: &Value) -> bool {
-    string_field(thread, "path")
-        .map(|path| Path::new(&path).is_file())
-        .unwrap_or(false)
-}
-
 fn payload_runtime_is_codex(payload: &Value) -> bool {
     string_field(payload, "runtime")
         .map(|runtime| is_codex_runtime(&runtime))
         .unwrap_or(true)
 }
 
-fn is_cached_codex_link_hidden(link: &RuntimeTaskLink) -> bool {
+fn is_cached_codex_link_hidden(
+    link: &RuntimeTaskLink,
+    discovered_thread_ids: &HashSet<String>,
+) -> bool {
     is_codex_runtime(&link.runtime)
         && !link.running
-        && link.thread_id.is_some()
+        && link
+            .thread_id
+            .as_ref()
+            .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
         && link.status != "archived"
 }
 
@@ -3102,13 +4282,14 @@ fn first_message_search_result(
         let Some((match_start, match_end)) = text_match(&content, query) else {
             continue;
         };
+        let snippet = bounded_search_snippet(&content, match_start, match_end);
         return Some(search_result_item(
             link,
             device_id,
             SearchResultMatch {
-                snippet: content,
-                match_start,
-                match_end,
+                snippet: snippet.text,
+                match_start: snippet.match_start,
+                match_end: snippet.match_end,
                 message_id: string_field(&message, "id").unwrap_or_default(),
                 message_role: string_field(&message, "role")
                     .unwrap_or_else(|| "message".to_owned()),
@@ -3119,41 +4300,121 @@ fn first_message_search_result(
     None
 }
 
+struct SearchSnippet {
+    text: String,
+    match_start: usize,
+    match_end: usize,
+}
+
+fn bounded_search_snippet(text: &str, match_start: usize, match_end: usize) -> SearchSnippet {
+    let total_chars = text.chars().count();
+    if total_chars <= SEARCH_SNIPPET_MAX_CHARS {
+        return SearchSnippet {
+            text: text.to_owned(),
+            match_start,
+            match_end,
+        };
+    }
+
+    let match_start_char = text[..match_start].chars().count();
+    let match_end_char = text[..match_end].chars().count();
+    let match_chars = match_end_char.saturating_sub(match_start_char);
+    let context_budget = SEARCH_SNIPPET_MAX_CHARS.saturating_sub(match_chars);
+    let before_budget = context_budget.min(SEARCH_SNIPPET_CONTEXT_CHARS);
+    let after_budget = context_budget.saturating_sub(before_budget);
+    let before_chars = before_budget.min(match_start_char);
+    let mut after_chars = after_budget.min(total_chars.saturating_sub(match_end_char));
+
+    let unused_before_budget = before_budget.saturating_sub(before_chars);
+    if unused_before_budget > 0 {
+        after_chars =
+            (after_chars + unused_before_budget).min(total_chars.saturating_sub(match_end_char));
+    }
+
+    let snippet_start_char = match_start_char.saturating_sub(before_chars);
+    let snippet_end_char = (match_end_char + after_chars).min(total_chars);
+    let snippet_start_byte = byte_index_for_char(text, snippet_start_char);
+    let snippet_end_byte = byte_index_for_char(text, snippet_end_char);
+
+    SearchSnippet {
+        text: text[snippet_start_byte..snippet_end_byte].to_owned(),
+        match_start: match_start.saturating_sub(snippet_start_byte),
+        match_end: match_end.saturating_sub(snippet_start_byte),
+    }
+}
+
+fn byte_index_for_char(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte_index, _)| byte_index)
+        .unwrap_or(text.len())
+}
+
 fn cached_transcript_response(
     link: &RuntimeTaskLink,
     messages: Vec<Value>,
+    context_usage: Option<Value>,
+    running: bool,
     limit: Option<usize>,
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
-    transcript_response(
-        &link.local_task_id,
-        link.workspace_path.clone(),
-        link.runtime.clone(),
+    transcript_response(TranscriptResponseInput {
+        local_task_id: link.local_task_id.clone(),
+        workspace_path: link.workspace_path.clone(),
+        runtime: link.runtime.clone(),
         messages,
+        context_usage,
+        running,
         limit,
-        before_cursor,
-        after_cursor,
-    )
+        before_cursor: before_cursor.map(ToOwned::to_owned),
+        after_cursor: after_cursor.map(ToOwned::to_owned),
+        full_content: false,
+    })
 }
 
-fn transcript_response(
-    local_task_id: &str,
+struct TranscriptResponseInput {
+    local_task_id: String,
     workspace_path: String,
     runtime: String,
     messages: Vec<Value>,
+    context_usage: Option<Value>,
+    running: bool,
     limit: Option<usize>,
-    before_cursor: Option<&str>,
-    after_cursor: Option<&str>,
-) -> Value {
+    before_cursor: Option<String>,
+    after_cursor: Option<String>,
+    full_content: bool,
+}
+
+fn transcript_response(input: TranscriptResponseInput) -> Value {
+    let TranscriptResponseInput {
+        local_task_id,
+        workspace_path,
+        runtime,
+        messages,
+        context_usage,
+        running,
+        limit,
+        before_cursor,
+        after_cursor,
+        full_content,
+    } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
-    let page = transcript_page(messages, limit, before_cursor, after_cursor);
+    let page = transcript_page(
+        messages,
+        limit,
+        before_cursor.as_deref(),
+        after_cursor.as_deref(),
+    );
     json!({
         "success": true,
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
+        "running": running,
         "messages": page.messages,
+        "fullContent": full_content,
+        "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
         "rangeStart": page.range_start,
         "rangeEnd": page.range_end,
@@ -3168,6 +4429,10 @@ fn transcript_response(
             .map(Value::String)
             .unwrap_or(Value::Null),
     })
+}
+
+fn transcript_context_usage(thread: &Value) -> Option<Value> {
+    rollout_context_usage(thread)
 }
 
 fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
@@ -3228,71 +4493,8 @@ fn transcript_limit(payload: &Value) -> Option<usize> {
         .filter(|value| *value > 0)
 }
 
-fn append_changed_transcript_messages(
-    cached_messages: Vec<Value>,
-    thread: &Value,
-    turns: &[Value],
-    changed_start: Option<usize>,
-    device_id: &str,
-) -> Vec<Value> {
-    let Some(changed_start) = changed_start else {
-        return cached_messages;
-    };
-    let Some(changed_turn_id) = turns
-        .get(changed_start)
-        .and_then(|turn| string_field(turn, "id"))
-    else {
-        return transcript_messages(&thread_with_turns(thread, turns.to_vec()), device_id);
-    };
-
-    let mut messages = cached_messages
-        .into_iter()
-        .take_while(|message| string_field(message, "turnId").as_deref() != Some(&changed_turn_id))
-        .collect::<Vec<_>>();
-    let changed_thread = thread_with_turns(thread, turns[changed_start..].to_vec());
-    messages.extend(transcript_messages(&changed_thread, device_id));
-    messages
-}
-
-fn runtime_message_running(message: &Value) -> bool {
-    string_field(message, "status")
-        .map(|status| {
-            matches!(
-                status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-                "streaming" | "running" | "inprogress" | "active" | "busy" | "pending"
-            )
-        })
-        .unwrap_or(false)
-}
-
-fn transcript_running(
-    local_link: Option<&RuntimeTaskLink>,
-    running_hint: bool,
-    messages: &[Value],
-) -> bool {
-    if local_link.is_some_and(local_task_finished) {
-        return false;
-    }
-    running_hint || messages.iter().any(runtime_message_running)
-}
-
-fn local_task_finished(link: &RuntimeTaskLink) -> bool {
-    !link.running
-        && matches!(
-            link.status
-                .replace(['_', '-'], "")
-                .to_ascii_lowercase()
-                .as_str(),
-            "done" | "complete" | "completed" | "failed" | "error" | "cancelled" | "canceled"
-        )
-}
-
-fn transcript_source_signature(thread: &Value) -> Option<TranscriptSourceSignature> {
-    string_field(thread, "path").and_then(|path| TranscriptSourceSignature::from_path(&path))
-}
-
-fn codex_thread_state(thread: &Value) -> Value {
-    thread_with_rollout_turns(thread).unwrap_or_else(|| thread.clone())
+fn codex_thread_has_active_turn(thread: &Value) -> bool {
+    codex_thread_is_active(thread)
 }
 
 fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
@@ -3309,14 +4511,31 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
         .collect()
 }
 
-fn cached_runtime_transcript_messages_for_provider(
-    link: &RuntimeTaskLink,
-    provider_messages: &[Value],
-) -> Vec<Value> {
-    if provider_messages.is_empty() {
-        return cached_messages(link);
+fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_messages: Vec<Value>) {
+    let mut provider_user_message_counts = HashMap::<String, usize>::new();
+    for message in messages.iter() {
+        if let Some(signature) = cached_user_message_signature(message) {
+            *provider_user_message_counts.entry(signature).or_default() += 1;
+        }
     }
-    cached_runtime_transcript_messages(link)
+
+    for message in cached_messages {
+        let Some(signature) = cached_user_message_signature(&message) else {
+            continue;
+        };
+        let remaining = provider_user_message_counts.entry(signature).or_default();
+        if *remaining > 0 {
+            *remaining -= 1;
+        } else {
+            messages.push(message);
+        }
+    }
+}
+
+fn cached_user_message_signature(message: &Value) -> Option<String> {
+    string_field(message, "role")
+        .filter(|role| role.eq_ignore_ascii_case("user"))
+        .and_then(|_| string_field(message, "content"))
 }
 
 fn cached_user_message(
@@ -3408,6 +4627,44 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
+fn guidance_image_inputs(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attachment| {
+            let mime_type = string_field(attachment, "mime_type")
+                .or_else(|| string_field(attachment, "mimeType"))?;
+            if !mime_type.starts_with("image/") {
+                return None;
+            }
+            let path = string_field(attachment, "local_path")
+                .or_else(|| string_field(attachment, "localPath"))?;
+            Some(json!({ "type": "localImage", "path": path }))
+        })
+        .collect()
+}
+
+fn guidance_input_items(message: &str, attachments: Option<&Value>) -> Vec<Value> {
+    let mut inputs = Vec::new();
+    if !message.trim().is_empty() {
+        inputs.push(json!({ "type": "text", "text": message }));
+    }
+    inputs.extend(guidance_image_inputs(attachments));
+    inputs
+}
+
+fn codex_guidance_failure_code(error: &str) -> &'static str {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("no active turn to steer")
+        || (normalized.contains("expected active turn id") && normalized.contains("but found"))
+    {
+        "no_active_turn"
+    } else {
+        "guidance_failed"
+    }
+}
+
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
@@ -3444,18 +4701,109 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
     Value::Object(object)
 }
 
+fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
+    if let Some(selection) = payload
+        .get("modelSelection")
+        .or_else(|| payload.get("model_selection"))
+        .filter(|value| value.is_object())
+    {
+        let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+        object.insert("modelSelection".to_owned(), selection.clone());
+        *runtime_handle = Value::Object(object);
+        return;
+    }
+
+    let Some(model_name) =
+        string_field(payload, "modelId").or_else(|| string_field(payload, "model_id"))
+    else {
+        return;
+    };
+    let mut selection = Map::new();
+    selection.insert("modelName".to_owned(), Value::String(model_name));
+    selection.insert(
+        "modelType".to_owned(),
+        string_field(payload, "modelType")
+            .or_else(|| string_field(payload, "model_type"))
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    selection.insert(
+        "options".to_owned(),
+        payload
+            .get("modelOptions")
+            .or_else(|| payload.get("model_options"))
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    );
+
+    let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+    object.insert("modelSelection".to_owned(), Value::Object(selection));
+    *runtime_handle = Value::Object(object);
+}
+
 fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
     link.thread_id
         .clone()
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
 }
 
+fn codex_thread_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    runtime_session_id_from_link(link).filter(|thread_id| is_codex_thread_id(thread_id))
+}
+
+fn is_codex_thread_id(thread_id: &str) -> bool {
+    let thread_id = thread_id.strip_prefix("urn:uuid:").unwrap_or(thread_id);
+    thread_id.len() == 36
+        && thread_id
+            .chars()
+            .enumerate()
+            .all(|(index, character)| match index {
+                8 | 13 | 18 | 23 => character == '-',
+                _ => character.is_ascii_hexdigit(),
+            })
+}
+
+fn runtime_thread_path_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    string_field(&link.runtime_handle, "threadPath")
+        .or_else(|| string_field(&link.runtime_handle, "thread_path"))
+        .or_else(|| string_field(&link.runtime_handle, "path"))
+        .filter(|path| !path.trim().is_empty())
+}
+
+fn archived_link_from_payload_item(
+    item: &Value,
+    local_task_id: String,
+    thread_id: Option<String>,
+) -> RuntimeTaskLink {
+    let workspace_path = workspace_path(item).unwrap_or_default();
+    let title = string_field(item, "title").unwrap_or_else(|| local_task_id.clone());
+    let mut link = RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, title);
+    link.thread_id = thread_id;
+    if let Some(runtime_handle) = item
+        .get("runtimeHandle")
+        .or_else(|| item.get("runtime_handle"))
+        .cloned()
+    {
+        link.runtime_handle = runtime_handle;
+    }
+    link.status = "archived".to_owned();
+    link.running = false;
+    link
+}
+
 fn runtime_session_id_from_payload(payload: &Value) -> Option<String> {
     let address = payload.get("address");
-    payload
-        .get("runtimeHandle")
-        .or_else(|| payload.get("runtime_handle"))
-        .and_then(runtime_session_id_from_handle)
+    string_field(payload, "threadId")
+        .or_else(|| string_field(payload, "thread_id"))
+        .or_else(|| address.and_then(|address| string_field(address, "threadId")))
+        .or_else(|| address.and_then(|address| string_field(address, "thread_id")))
+        .or_else(|| {
+            payload
+                .get("runtimeHandle")
+                .or_else(|| payload.get("runtime_handle"))
+                .and_then(runtime_session_id_from_handle)
+        })
         .or_else(|| {
             address.and_then(|address| {
                 address
@@ -3551,6 +4899,332 @@ fn fork_error_response(code: &str, error: String) -> Value {
     })
 }
 
+fn cleanup_task_files_preview(link: &RuntimeTaskLink) -> Value {
+    cleanup_task_files_response(link, false, true)
+}
+
+fn cleanup_task_files_response(link: &RuntimeTaskLink, delete: bool, measure_bytes: bool) -> Value {
+    let targets = cleanup_targets_for_task(link);
+    let mut cleaned_count = 0_u64;
+    let mut skipped_count = 0_u64;
+    let mut error_count = 0_u64;
+    let mut total_bytes = 0_u64;
+    let mut items = Vec::new();
+
+    for target in targets {
+        let exists = target.path.exists();
+        let bytes = if measure_bytes {
+            path_size(&target.path).unwrap_or(0)
+        } else {
+            0
+        };
+        total_bytes = total_bytes.saturating_add(bytes);
+        let mut item = json!({
+            "kind": target.kind,
+            "path": target.path.to_string_lossy(),
+            "exists": exists,
+            "bytes": bytes,
+        });
+
+        if !exists {
+            skipped_count += 1;
+            item["status"] = json!("missing");
+            items.push(item);
+            continue;
+        }
+
+        if delete {
+            match remove_cleanup_target(&target) {
+                Ok(()) => {
+                    cleaned_count += 1;
+                    item["status"] = json!("cleaned");
+                }
+                Err(error) => {
+                    error_count += 1;
+                    item["status"] = json!("failed");
+                    item["error"] = json!(error);
+                }
+            }
+        } else {
+            cleaned_count += 1;
+            item["status"] = json!("preview");
+        }
+        items.push(item);
+    }
+
+    json!({
+        "taskId": link.local_task_id,
+        "workspacePath": link.workspace_path,
+        "targetCount": items.len(),
+        "cleanableCount": cleaned_count,
+        "skippedCount": skipped_count,
+        "errorCount": error_count,
+        "bytes": total_bytes,
+        "items": items,
+    })
+}
+
+fn cleanup_summary_response(results: Vec<Value>, deleted: bool) -> Value {
+    let target_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("targetCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let cleanable_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("cleanableCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let skipped_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("skippedCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let error_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("errorCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let total_bytes = results
+        .iter()
+        .map(|result| result.get("bytes").and_then(Value::as_u64).unwrap_or(0))
+        .sum::<u64>();
+
+    json!({
+        "success": error_count == 0,
+        "deleted": deleted,
+        "taskCount": results.len(),
+        "targetCount": target_count,
+        "cleanableCount": cleanable_count,
+        "skippedCount": skipped_count,
+        "errorCount": error_count,
+        "bytes": total_bytes,
+        "results": results,
+    })
+}
+
+struct CleanupTarget {
+    kind: &'static str,
+    path: PathBuf,
+}
+
+fn cleanup_targets_for_task(link: &RuntimeTaskLink) -> Vec<CleanupTarget> {
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        worktree_cleanup_target(&link.workspace_path),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        standalone_chat_cleanup_target(&link.local_task_id, &link.workspace_path),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        workspace_attachment_cleanup_target(link, ".wegent/attachments"),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        workspace_attachment_cleanup_target(
+            link,
+            &format!("{}:executor:attachments", link.local_task_id),
+        ),
+    );
+
+    for path in local_attachment_paths(&link.runtime_handle) {
+        push_cleanup_target(
+            &mut targets,
+            &mut seen,
+            local_attachment_cleanup_target(&path),
+        );
+    }
+    if let Some(parent) = &link.parent {
+        for path in local_attachment_paths(parent) {
+            push_cleanup_target(
+                &mut targets,
+                &mut seen,
+                local_attachment_cleanup_target(&path),
+            );
+        }
+    }
+
+    targets
+}
+
+fn push_cleanup_target(
+    targets: &mut Vec<CleanupTarget>,
+    seen: &mut HashSet<String>,
+    target: Option<CleanupTarget>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    let key = normalize_workspace_path(&target.path.to_string_lossy());
+    if seen.insert(key) {
+        targets.push(target);
+    }
+}
+
+fn worktree_cleanup_target(path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !is_managed_worktree_path(&normalized) {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "worktree",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn standalone_chat_cleanup_target(local_task_id: &str, path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !normalized.contains("/Documents/Codex/") {
+        return None;
+    }
+    let segment = workspace_segment(local_task_id);
+    if Path::new(&normalized)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(segment.as_str())
+    {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "standalone_workspace",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn workspace_attachment_cleanup_target(
+    link: &RuntimeTaskLink,
+    relative: &str,
+) -> Option<CleanupTarget> {
+    let workspace = PathBuf::from(normalize_workspace_path(&link.workspace_path));
+    if workspace.as_os_str().is_empty() {
+        return None;
+    }
+    let path = if relative == ".wegent/attachments" {
+        workspace.join(relative).join(&link.local_task_id)
+    } else {
+        workspace.join(relative)
+    };
+    Some(CleanupTarget {
+        kind: "workspace_attachment",
+        path,
+    })
+}
+
+fn local_attachment_cleanup_target(path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !is_local_attachment_draft_path(&normalized) {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "local_attachment",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn local_attachment_paths(value: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_local_attachment_paths(value, &mut paths);
+    paths
+}
+
+fn collect_local_attachment_paths(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_local_attachment_paths(item, paths);
+            }
+        }
+        Value::Object(map) => {
+            for (key, value) in map {
+                if matches!(
+                    key.as_str(),
+                    "local_path" | "localPath" | "local_preview_url" | "localPreviewUrl"
+                ) {
+                    if let Some(path) = value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                    {
+                        paths.push(path.to_owned());
+                    }
+                }
+                collect_local_attachment_paths(value, paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn remove_cleanup_target(target: &CleanupTarget) -> Result<(), String> {
+    if target.kind == "worktree" {
+        remove_git_worktree_best_effort(&target.path);
+    }
+    if target.path.is_dir() {
+        fs::remove_dir_all(&target.path)
+            .map_err(|error| format!("failed to remove directory: {error}"))?;
+    } else if target.path.is_file() {
+        fs::remove_file(&target.path).map_err(|error| format!("failed to remove file: {error}"))?;
+    }
+    Ok(())
+}
+
+fn remove_git_worktree_best_effort(path: &Path) {
+    let path = path.to_string_lossy().to_string();
+    let _ = std::process::Command::new("git")
+        .args(["-C", &path, "worktree", "remove", "--force", &path])
+        .output();
+}
+
+fn path_size(path: &Path) -> Option<u64> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.is_file() {
+        return Some(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Some(0);
+    }
+    let mut size = 0_u64;
+    for entry in fs::read_dir(path).ok()? {
+        let entry = entry.ok()?;
+        size = size.saturating_add(path_size(&entry.path()).unwrap_or(0));
+    }
+    Some(size)
+}
+
+fn is_managed_worktree_path(path: &str) -> bool {
+    path.contains("/.wecode/wegent-executor/workspace/worktrees/")
+        || path.contains("/.wegent-executor/workspace/worktrees/")
+}
+
+fn is_local_attachment_draft_path(path: &str) -> bool {
+    path.contains("/.wegent-executor/workspace/attachments/draft/")
+        || path.contains("/.wecode/wegent-executor/workspace/attachments/draft/")
+}
+
 fn task_action_success(link: &RuntimeTaskLink) -> Value {
     json!({
         "success": true,
@@ -3558,6 +5232,14 @@ fn task_action_success(link: &RuntimeTaskLink) -> Value {
         "taskId": link.local_task_id,
         "workspacePath": link.workspace_path,
         "runtime": link.runtime,
+    })
+}
+
+fn sidebar_mutation_response(device_id: &str) -> Value {
+    json!({
+        "success": true,
+        "accepted": true,
+        "deviceId": device_id,
     })
 }
 
@@ -3570,6 +5252,12 @@ fn task_action_failure(link: &RuntimeTaskLink, error: String) -> Value {
         "runtime": link.runtime,
         "error": error,
     })
+}
+
+fn codex_error_is_missing_rollout(error: &str, thread_id: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("no rollout found for thread id")
+        && error.contains(&thread_id.to_ascii_lowercase())
 }
 
 fn task_goal_missing_session(link: &RuntimeTaskLink) -> Value {
@@ -3600,11 +5288,258 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
             self.dispatch(&method, payload).await
         })
     }
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let method = string_field(&data, "method")
+                .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
+            if !is_allowed_plugin_app_server_method(&method) {
+                return Err(AppIpcError::new(
+                    "unsupported_codex_app_server_method",
+                    format!("Unsupported Codex app-server method: {method}"),
+                ));
+            }
+            let params = data
+                .get("params")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            self.codex_app_server
+                .request(&method, params)
+                .await
+                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))
+        })
+    }
+}
+
+fn is_allowed_plugin_app_server_method(method: &str) -> bool {
+    matches!(
+        method,
+        "marketplace/add"
+            | "marketplace/remove"
+            | "marketplace/upgrade"
+            | "plugin/list"
+            | "plugin/installed"
+            | "plugin/read"
+            | "plugin/skill/read"
+            | "plugin/install"
+            | "plugin/uninstall"
+            | "skills/list"
+            | "skills/config/write"
+            | "app/list"
+    )
+}
+
+#[cfg(debug_assertions)]
+const SLOW_RUNTIME_COLLECT_THREAD_MS: u128 = 100;
+
+#[cfg(debug_assertions)]
+fn log_runtime_collect_diagnostic(
+    stage: &str,
+    archived: bool,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("archived", archived.to_string()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work collect diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_collect_diagnostic(
+    _stage: &str,
+    _archived: bool,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+    link: &RuntimeTaskLink,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            ("workspace_path", link.workspace_path.clone()),
+            ("status", link.status.clone()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+    _link: &RuntimeTaskLink,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread_missing(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow skipped thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread_missing(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn debug_json_len(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
+}
+
+#[cfg(debug_assertions)]
+fn log_runtime_work_list_diagnostic(
+    stage: &str,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work list diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_work_list_diagnostic(
+    _stage: &str,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn current_process_max_rss_kb() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let max_rss = unsafe { usage.assume_init().ru_maxrss };
+    #[cfg(target_os = "macos")]
+    {
+        Some((max_rss as u64).saturating_div(1024))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(max_rss as u64)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finishing_an_active_goal_keeps_the_task_idle() {
+        let index_path = temp_runtime_work_index_path("finish-active-goal");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.goal_status = Some("active".to_owned());
+        handler.upsert_local_task(link);
+
+        handler.finish_local_task("task-1", Some("thread-1".to_owned()), "done");
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "done");
+        assert!(!task.running);
+        assert_eq!(task.goal_status.as_deref(), Some("active"));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn syncing_an_active_goal_does_not_start_an_idle_task() {
+        let index_path = temp_runtime_work_index_path("sync-active-goal");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        handler.upsert_local_task(link);
+
+        handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "done");
+        assert!(!task.running);
+        assert_eq!(task.goal_status.as_deref(), Some("active"));
+
+        let _ = fs::remove_file(index_path);
+    }
 
     #[test]
     fn current_codex_model_provider_reads_configured_provider_name() {
@@ -3636,6 +5571,54 @@ mod tests {
         assert_eq!(provider.display_name, "CodeX");
         assert_eq!(provider.kind, "official");
         assert!(provider.current);
+    }
+
+    #[test]
+    fn runtime_session_ids_only_accept_codex_uuid_thread_ids() {
+        assert!(is_codex_thread_id("019f4c0d-b036-78f3-b879-7e5ed203ad61"));
+        assert!(is_codex_thread_id(
+            "urn:uuid:019f4c0d-b036-78f3-b879-7e5ed203ad61"
+        ));
+        assert!(!is_codex_thread_id("runtime-481327491"));
+        assert!(!is_codex_thread_id("thread-1"));
+
+        let mut link = RuntimeTaskLink::new_pending(
+            "runtime-481327491".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some(link.local_task_id.clone());
+        assert_eq!(
+            runtime_session_id_from_link(&link).as_deref(),
+            Some("runtime-481327491")
+        );
+        assert_eq!(codex_thread_id_from_link(&link), None);
+    }
+
+    #[test]
+    fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
+        for method in [
+            "marketplace/add",
+            "marketplace/remove",
+            "marketplace/upgrade",
+            "plugin/list",
+            "plugin/installed",
+            "plugin/read",
+            "plugin/skill/read",
+            "plugin/install",
+            "plugin/uninstall",
+            "skills/list",
+            "skills/config/write",
+            "app/list",
+        ] {
+            assert!(
+                is_allowed_plugin_app_server_method(method),
+                "{method} should be allowed"
+            );
+        }
+
+        assert!(!is_allowed_plugin_app_server_method("thread/new"));
+        assert!(!is_allowed_plugin_app_server_method("plugin/share/save"));
     }
 
     #[test]
@@ -3682,151 +5665,119 @@ mod tests {
     }
 
     #[test]
-    fn cached_message_merge_preserves_codex_rebuilt_blocks() {
-        let codex_messages = vec![json!({
-            "id": "assistant-turn-1",
-            "role": "assistant",
-            "content": "done",
-            "status": "cancelled",
-            "blocks": [
-                {
-                    "id": "tool-1",
-                    "type": "tool",
-                    "tool_name": "exec_command",
-                    "status": "done"
-                }
-            ],
-            "stoppedNotice": true
-        })];
-        let cached_messages = vec![json!({
-            "id": "cached-assistant",
-            "role": "assistant",
-            "content": "done",
-            "status": "done",
-            "source": {"source": "im"},
-            "blocks": [
-                {
-                    "id": "thinking-1",
-                    "type": "thinking",
-                    "content": "inspect",
-                    "status": "done"
-                },
-                {
-                    "id": "tool-1",
-                    "type": "tool",
-                    "tool_name": "stale_tool",
-                    "status": "pending"
-                }
-            ]
-        })];
+    fn transcript_appends_cached_user_message_missing_from_failed_provider_turn() {
+        let mut provider_messages = vec![
+            json!({"id": "user-1", "role": "user", "content": "first"}),
+            json!({"id": "assistant-1", "role": "assistant", "content": "done"}),
+        ];
+        let cached_messages = vec![
+            json!({"id": "cached-user-1", "role": "user", "content": "first"}),
+            json!({"id": "cached-user-2", "role": "user", "content": "retry this"}),
+        ];
 
-        let merged = merge_cached_messages(codex_messages, cached_messages);
+        append_missing_cached_user_messages(&mut provider_messages, cached_messages);
 
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0]["status"], "cancelled");
-        assert_eq!(merged[0]["stoppedNotice"], true);
-        assert_eq!(merged[0]["blocks"][0]["type"], "thinking");
-        assert_eq!(merged[0]["blocks"][1]["tool_name"], "exec_command");
-        assert_eq!(merged[0]["blocks"][1]["status"], "done");
-        assert_eq!(merged[0]["source"]["source"], "im");
+        assert_eq!(provider_messages.len(), 3);
+        assert_eq!(provider_messages[2]["id"], "cached-user-2");
+        assert_eq!(provider_messages[2]["content"], "retry this");
     }
 
     #[test]
-    fn cached_message_merge_matches_assistant_by_subtask_id() {
-        let codex_messages = vec![json!({
-            "id": "assistant-server",
-            "role": "assistant",
-            "content": "server snapshot",
-            "subtaskId": 42,
-        })];
-        let cached_messages = vec![json!({
-            "id": "assistant-live",
-            "role": "assistant",
-            "content": "live delta",
-            "subtaskId": 42,
-            "source": {"source": "im"},
-        })];
+    fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
+        let mut provider_messages = vec![
+            json!({"id": "user-1", "role": "user", "content": "same"}),
+            json!({"id": "user-2", "role": "user", "content": "same"}),
+        ];
+        let cached_messages = vec![
+            json!({"id": "cached-user-1", "role": "user", "content": "same"}),
+            json!({"id": "cached-user-2", "role": "user", "content": "same"}),
+        ];
 
-        let merged = merge_cached_messages(codex_messages, cached_messages);
+        append_missing_cached_user_messages(&mut provider_messages, cached_messages);
 
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0]["id"], "assistant-server");
-        assert_eq!(merged[0]["content"], "server snapshot");
-        assert_eq!(merged[0]["source"]["source"], "im");
-    }
-
-    #[test]
-    fn cached_message_merge_preserves_live_block_fields() {
-        let codex_messages = vec![json!({
-            "id": "assistant-turn-1",
-            "role": "assistant",
-            "content": "",
-            "subtaskId": 42,
-            "blocks": [
-                {
-                    "id": "tool-1",
-                    "type": "tool",
-                    "tool_name": "exec_command",
-                    "status": "pending"
-                }
-            ],
-        })];
-        let cached_messages = vec![json!({
-            "id": "assistant-live",
-            "role": "assistant",
-            "content": "",
-            "subtaskId": 42,
-            "blocks": [
-                {
-                    "id": "tool-1",
-                    "type": "tool",
-                    "tool_name": "exec_command",
-                    "status": "done",
-                    "tool_output": "ok"
-                }
-            ],
-        })];
-
-        let merged = merge_cached_messages(codex_messages, cached_messages);
-
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0]["blocks"][0]["status"], "done");
-        assert_eq!(merged[0]["blocks"][0]["tool_output"], "ok");
+        assert_eq!(provider_messages.len(), 2);
     }
 
     #[tokio::test]
-    async fn cached_transcript_response_uses_requested_local_task_id() {
+    async fn codex_stream_debug_rpc_toggles_runtime_flag() {
+        set_codex_stream_debug_enabled(false);
         let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-        let mut link = RuntimeTaskLink::new_pending(
-            "local-task-1".to_owned(),
-            "/tmp/project".to_owned(),
-            "Mapped task".to_owned(),
-        );
-        link.thread_id = Some("thread-1".to_owned());
-        link.running = false;
-        link.status = "active".to_owned();
-        handler.upsert_local_task(link);
-        handler.transcript_cache.insert(
-            "thread-1",
-            CachedTranscript::new(
-                "/tmp/project".to_owned(),
-                "codex".to_owned(),
-                vec![json!({"id":"assistant-1","role":"assistant","content":"cached"})],
-                false,
-                None,
-            ),
-        );
+
+        let initial = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.stream_debug.get",
+                "payload": {}
+            }))
+            .await
+            .expect("debug state should return");
+        assert_eq!(initial["enabled"], false);
+
+        let updated = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.stream_debug.set",
+                "payload": {"enabled": true}
+            }))
+            .await
+            .expect("debug state should update");
+        assert_eq!(updated["enabled"], true);
+        assert!(codex_stream_debug_enabled());
+
+        set_codex_stream_debug_enabled(false);
+    }
+
+    #[tokio::test]
+    async fn codex_app_server_restart_rpc_returns_success() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
         let result = handler
             .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.transcript",
-                "payload": {"taskId": "local-task-1"}
+                "method": "runtime.codex.app_server.restart",
+                "payload": {}
             }))
             .await
-            .expect("cached transcript should return");
+            .expect("restart should return success");
 
-        assert_eq!(result["taskId"], "local-task-1");
-        assert_eq!(result["messages"][0]["content"], "cached");
+        assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
+    async fn codex_instructions_write_rejects_non_string_payload() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.instructions.write",
+                "payload": {"instructions": 1}
+            }))
+            .await;
+
+        let error = result.expect_err("non-string instructions should be rejected");
+        assert_eq!(error.code, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn codex_personality_write_rejects_unsupported_value() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.personality.write",
+                "payload": {"personality": "default"}
+            }))
+            .await;
+
+        let error = result.expect_err("unsupported personality should be rejected");
+        assert_eq!(error.code, "invalid_request");
+    }
+
+    #[test]
+    fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
+        let combined = combined_codex_developer_instructions("用中文回复");
+
+        assert!(combined.contains("用中文回复"));
+        assert!(combined.contains("browser_navigate"));
+        assert!(combined.contains("Wework built-in browser"));
+        assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
     }
 
     #[tokio::test]
@@ -3848,6 +5799,36 @@ mod tests {
         assert_eq!(result["taskId"], "optimistic-local-task");
         assert_eq!(result["workspacePath"], "/tmp/project");
         assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn first_message_search_result_returns_bounded_snippet() {
+        let link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Long message task".to_owned(),
+        );
+        let content = format!("{}needle{}", "a".repeat(300), "b".repeat(300));
+
+        let result = first_message_search_result(
+            &link,
+            "device-1",
+            vec![json!({
+                "id": "message-1",
+                "role": "user",
+                "content": content,
+                "createdAt": 1780000000,
+            })],
+            "needle",
+        )
+        .expect("long matching message should produce a result");
+        let snippet = result["snippet"].as_str().unwrap();
+        let match_start = result["matchStart"].as_u64().unwrap() as usize;
+        let match_end = result["matchEnd"].as_u64().unwrap() as usize;
+
+        assert!(snippet.len() < 300);
+        assert!(snippet.contains("needle"));
+        assert_eq!(&snippet[match_start..match_end], "needle");
     }
 
     #[test]
@@ -3878,6 +5859,107 @@ mod tests {
         assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
 
         let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/Users/test/Documents/Codex/2026-07-07/hi".to_owned(),
+            "hi".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        link.running = false;
+        link.status = "active".to_owned();
+
+        assert!(!is_cached_codex_link_hidden(&link, &HashSet::new()));
+
+        let discovered_thread_ids = HashSet::from(["thread-1".to_owned()]);
+        assert!(is_cached_codex_link_hidden(&link, &discovered_thread_ids));
+    }
+
+    #[tokio::test]
+    async fn create_task_stores_model_selection_in_runtime_handle() {
+        let index_path = temp_runtime_work_index_path("create-task-model-selection");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+
+        let response = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.create",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "workspacePath": "/tmp/project",
+                    "title": "Use mimo",
+                    "modelId": "local-model:mimo",
+                    "modelType": "runtime",
+                    "modelOptions": {
+                        "collaborationMode": "plan"
+                    },
+                    "modelSelection": {
+                        "modelName": "cloud:user:local-model:mimo",
+                        "modelType": "user",
+                        "options": {
+                            "collaborationMode": "plan",
+                            "reasoningEffort": "high"
+                        }
+                    },
+                    "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+                }
+            }))
+            .await
+            .expect("runtime task should be created");
+        assert_eq!(
+            response["runtimeHandle"]["modelSelection"],
+            json!({
+                "modelName": "cloud:user:local-model:mimo",
+                "modelType": "user",
+                "options": {
+                    "collaborationMode": "plan",
+                    "reasoningEffort": "high"
+                }
+            })
+        );
+
+        let link = handler
+            .local_task_link("local-task-1")
+            .expect("created task should be stored");
+        assert_eq!(
+            link.runtime_handle["modelSelection"],
+            json!({
+                "modelName": "cloud:user:local-model:mimo",
+                "modelType": "user",
+                "options": {
+                    "collaborationMode": "plan",
+                    "reasoningEffort": "high"
+                }
+            })
+        );
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
+        let mut runtime_handle = json!({});
+
+        set_runtime_handle_model_selection(
+            &mut runtime_handle,
+            &json!({
+                "modelId": "legacy-model",
+                "modelType": "runtime",
+                "modelOptions": {"reasoningEffort": "medium"}
+            }),
+        );
+
+        assert_eq!(
+            runtime_handle["modelSelection"],
+            json!({
+                "modelName": "legacy-model",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "medium"}
+            })
+        );
     }
 
     #[test]
@@ -3937,149 +6019,104 @@ mod tests {
         let _ = fs::remove_file(index_path);
     }
 
-    #[tokio::test]
-    async fn transcript_uses_explicit_runtime_handle_session_without_rewriting_local_task_id() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-        handler.transcript_cache.insert(
-            "provider-session-1",
-            CachedTranscript::new(
-                "/tmp/project".to_owned(),
-                "codex".to_owned(),
-                vec![json!({"id":"assistant-1","role":"assistant","content":"cached"})],
-                false,
-                None,
-            ),
-        );
-
-        let result = handler
-            .handle_runtime_rpc(json!({
-                "method": "runtime.tasks.transcript",
-                "payload": {
-                    "taskId": "local-visible-task",
-                    "workspacePath": "/tmp/project",
-                    "runtimeHandle": {
-                        "threadId": "provider-session-1"
-                    }
-                }
-            }))
-            .await
-            .expect("explicit runtime handle should read cached provider session");
-
-        assert_eq!(result["taskId"], "local-visible-task");
-        assert_eq!(result["messages"][0]["content"], "cached");
-    }
-
     #[test]
-    fn changed_transcript_messages_replace_tail_from_changed_turn() {
-        let cached_messages = vec![
-            json!({
-                "id": "user-1",
-                "role": "user",
-                "content": "old",
-                "turnId": "turn-1",
-            }),
-            json!({
-                "id": "assistant-turn-2",
-                "role": "assistant",
-                "content": "stale",
-                "turnId": "turn-2",
-            }),
-        ];
-        let thread = json!({
-            "id": "thread-1",
-            "cwd": "/tmp/workspace",
-        });
-        let turns = vec![
-            json!({
-                "id": "turn-1",
-                "createdAt": 1,
-                "status": "completed",
-                "items": [],
-            }),
-            json!({
-                "id": "turn-2",
-                "createdAt": 2,
-                "status": "completed",
-                "items": [
-                    {"id":"item-2","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fresh"}]}}
-                ],
-            }),
-        ];
-
-        let messages =
-            append_changed_transcript_messages(cached_messages, &thread, &turns, Some(1), "device");
-
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0]["id"], "user-1");
-        assert_eq!(messages[1]["id"], "assistant-turn-2");
-        assert_eq!(messages[1]["content"], "fresh");
-        assert_eq!(messages[1]["subtaskId"], "turn-2");
-    }
-
-    #[test]
-    fn terminal_local_task_prevents_transcript_running_state() {
+    fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
         let mut link = RuntimeTaskLink::new_pending(
-            "local-1".to_owned(),
-            "/tmp/project".to_owned(),
+            "task-1".to_owned(),
+            "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
             "Task".to_owned(),
         );
-        link.status = "done".to_owned();
-        link.running = false;
-        let messages = vec![json!({
-            "id": "assistant-1",
-            "role": "assistant",
-            "status": "streaming",
-            "blocks": [
+        link.runtime_handle = json!({
+            "messages": [
                 {
-                    "id": "tool-1",
-                    "type": "tool",
-                    "status": "pending"
+                    "attachments": [
+                        {
+                            "local_path": "/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png"
+                        }
+                    ]
                 }
             ]
-        })];
+        });
 
-        assert!(!transcript_running(Some(&link), true, &messages));
+        let targets = cleanup_targets_for_task(&link);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(target_paths
+            .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+        assert!(target_paths.contains(
+            &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
+        ));
     }
 
     #[test]
-    fn incremental_transcript_rejects_changed_rollout_path() {
-        let old_path = std::env::temp_dir().join(format!(
-            "wegent-old-rollout-{}-{}.jsonl",
-            std::process::id(),
-            now_ms()
-        ));
-        let new_path = std::env::temp_dir().join(format!(
-            "wegent-new-rollout-{}-{}.jsonl",
-            std::process::id(),
-            now_ms()
-        ));
-        std::fs::write(&old_path, "{}\n").unwrap();
-        std::fs::write(&new_path, "{}\n").unwrap();
-        let cached = CachedTranscript::new(
-            "/tmp/project".to_owned(),
-            "codex".to_owned(),
-            Vec::new(),
-            false,
-            TranscriptSourceSignature::from_path(&old_path.display().to_string()),
-        )
-        .with_rollout_turns(Some(vec![json!({
-            "id": "turn-1",
-            "status": "completed",
-            "items": [],
-        })]));
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
-        let thread = json!({
-            "id": "thread-1",
-            "path": new_path.display().to_string(),
-            "cwd": "/tmp/project",
-        });
+    fn guidance_inputs_include_only_local_images() {
+        let attachments = json!([
+            {
+                "mime_type": "image/png",
+                "local_path": "/tmp/screenshot.png"
+            },
+            {
+                "mime_type": "text/plain",
+                "local_path": "/tmp/notes.txt"
+            },
+            {
+                "mime_type": "image/jpeg"
+            }
+        ]);
 
-        let result =
-            handler.incremental_cached_transcript(cached, &thread, None, false, "/tmp/project");
+        assert_eq!(
+            guidance_image_inputs(Some(&attachments)),
+            vec![json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png"
+            })]
+        );
+        assert_eq!(
+            guidance_input_items("", Some(&attachments)),
+            vec![json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png"
+            })]
+        );
+        assert!(guidance_input_items("", None).is_empty());
+    }
 
-        assert!(result.is_none());
-        let _ = std::fs::remove_file(old_path);
-        let _ = std::fs::remove_file(new_path);
+    #[test]
+    fn codex_guidance_turn_races_are_reported_as_no_active_turn() {
+        assert_eq!(
+            codex_guidance_failure_code("no active turn to steer"),
+            "no_active_turn"
+        );
+        assert_eq!(
+            codex_guidance_failure_code("expected active turn id `turn-1` but found `turn-2`"),
+            "no_active_turn"
+        );
+        assert_eq!(
+            codex_guidance_failure_code("turn/steer response missing turnId"),
+            "guidance_failed"
+        );
+    }
+
+    #[test]
+    fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+        let link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/Users/me/project".to_owned(),
+            "Task".to_owned(),
+        );
+
+        let targets = cleanup_targets_for_task(&link);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+        assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
+        assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
     }
 
     fn temp_runtime_work_index_path(label: &str) -> PathBuf {

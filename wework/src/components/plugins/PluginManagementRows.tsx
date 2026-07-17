@@ -19,7 +19,7 @@ export interface InstalledMcpItem {
 }
 
 export interface InstalledPluginItem {
-  id: number
+  id: string | number
   name: string
   description: string
   enabled: boolean
@@ -45,12 +45,8 @@ export function InstalledSkillRow({
         <Sparkles className="h-7 w-7" />
       </div>
       <div className="min-w-0">
-        <h2 className="truncate text-[17px] font-semibold leading-6">
-          {skill.name}
-        </h2>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
-          {skill.description}
-        </p>
+        <h2 className="truncate text-lg font-semibold leading-6">{skill.name}</h2>
+        <p className="mt-1 truncate text-base leading-6 text-text-secondary">{skill.description}</p>
       </div>
       <div className="flex items-center justify-end gap-3">
         <button
@@ -104,16 +100,12 @@ export function InstalledMcpRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[17px] font-semibold leading-6">
-            {mcp.name}
-          </h2>
+          <h2 className="truncate text-lg font-semibold leading-6">{mcp.name}</h2>
           <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
             {mcp.serverType}
           </span>
         </div>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
-          {mcp.description}
-        </p>
+        <p className="mt-1 truncate text-base leading-6 text-text-secondary">{mcp.description}</p>
       </div>
       <div className="flex items-center justify-end gap-3">
         <button
@@ -172,7 +164,7 @@ export function InstalledPluginRow({
       data-testid={`installed-plugin-row-${plugin.id}`}
       className="grid cursor-pointer grid-cols-[64px_minmax(0,1fr)_112px] items-center gap-4 rounded-xl transition-colors hover:bg-surface/70"
       onClick={onOpen}
-      onKeyDown={(event) => {
+      onKeyDown={event => {
         if (!onOpen) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
@@ -185,21 +177,19 @@ export function InstalledPluginRow({
       </div>
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[17px] font-semibold leading-6">
-            {plugin.name}
-          </h2>
+          <h2 className="truncate text-lg font-semibold leading-6">{plugin.name}</h2>
           {plugin.version && (
             <span className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted">
               {plugin.version}
             </span>
           )}
         </div>
-        <p className="mt-1 truncate text-[15px] leading-6 text-text-secondary">
+        <p className="mt-1 truncate text-base leading-6 text-text-secondary">
           {plugin.description || componentLabels.join(' · ')}
         </p>
         {componentLabels.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {componentLabels.map((label) => (
+            {componentLabels.map(label => (
               <span
                 key={label}
                 className="rounded-md bg-surface px-2 py-0.5 text-xs font-semibold text-text-muted"
@@ -216,7 +206,7 @@ export function InstalledPluginRow({
           aria-label={t('workbench.plugins_uninstall', '卸载')}
           data-testid={`installed-plugin-uninstall-${plugin.id}`}
           className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface hover:text-red-500"
-          onClick={(event) => {
+          onClick={event => {
             event.stopPropagation()
             onUninstall()
           }}
@@ -233,7 +223,7 @@ export function InstalledPluginRow({
             'relative h-7 w-12 rounded-full transition-colors',
             plugin.enabled ? 'bg-blue-500' : 'bg-border',
           ].join(' ')}
-          onClick={(event) => {
+          onClick={event => {
             event.stopPropagation()
             onToggle()
           }}

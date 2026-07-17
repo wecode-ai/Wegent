@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
+import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
-import { createQuotaApi } from '@/api/quota'
 import { AuthContext } from '@/features/auth/useAuth'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type {
@@ -26,11 +27,13 @@ import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
+  TITLEBAR_CENTER_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
+import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
@@ -70,13 +73,29 @@ function createPaneStatus({
     isAssistantStreaming,
     isResponseActive,
     isBusy,
-    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant || taskRunning,
     canSendQueuedMessage: !isBusy,
   }
 }
 
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
+}))
+
+const nativeDirectoryPickerMocks = vi.hoisted(() => ({
+  openNativeProjectDirectoryPicker: vi.fn(),
+}))
+
+const automationMocks = vi.hoisted(() => ({
+  useNativeDirectoryPicker: true,
+}))
+
+vi.mock('@/e2e/automation', () => ({
+  shouldUseNativeProjectDirectoryPicker: () => automationMocks.useNativeDirectoryPicker,
+}))
+
+vi.mock('@/lib/native-directory-picker', () => ({
+  openNativeProjectDirectoryPicker: nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker,
 }))
 
 const tauriMenuMocks = vi.hoisted(() => ({
@@ -143,6 +162,16 @@ function getWorkspaceCodeViewText() {
     .join('\n')
 }
 
+function getWorkspaceCodeViewSelectedLineNumbers() {
+  return Array.from(
+    document.querySelectorAll('[data-testid="workspace-file-preview-code-view"] diffs-container')
+  ).flatMap(container =>
+    Array.from(container.shadowRoot?.querySelectorAll('[data-line][data-selected-line]') ?? []).map(
+      line => line.getAttribute('data-line')
+    )
+  )
+}
+
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
   stripAppBasePath: (path: string) => path,
@@ -160,8 +189,16 @@ vi.mock('@/api/projects', () => ({
   createProjectApi: vi.fn(),
 }))
 
-vi.mock('@/api/quota', () => ({
-  createQuotaApi: vi.fn(),
+vi.mock('@/api/local/codexUsage', () => ({
+  emptyCodexUsageDisplay: () => ({
+    status: 'none',
+    fiveHour: { label: '5h', title: '5小时额度', value: '无', percent: null, resetsAt: null },
+    sevenDay: { label: '7d', title: '7天额度', value: '无', percent: null, resetsAt: null },
+    trayTitle: '5h --\n7d --',
+    tooltip: '5小时额度 无\n7天额度 无',
+  }),
+  getLocalCodexUsageDisplay: vi.fn(),
+  formatCodexUsageResetTime: vi.fn(() => null),
 }))
 
 vi.mock('@/features/auth/useAuth', async importOriginal => ({
@@ -347,14 +384,13 @@ vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
-const createQuotaApiMock = vi.mocked(createQuotaApi)
+const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
-const fetchQuotaMock = vi.fn()
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
 
@@ -409,6 +445,10 @@ describe('DesktopWorkbenchLayout', () => {
           device_type: 'cloud',
           bind_shell: 'claudecode',
           executor_version: '1.712',
+          client_ip: '10.201.3.200',
+          cloud_config: {
+            deviceName: 'yunpeng7-executor-372706c30fcd',
+          },
           cpu_usage: 42,
           memory_usage: 68,
           disk_usage: 57,
@@ -452,20 +492,10 @@ describe('DesktopWorkbenchLayout', () => {
     tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
     tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
+    document.getElementById(TITLEBAR_CENTER_PORTAL_ID)?.remove()
     document.getElementById(TITLEBAR_RIGHT_PANEL_PORTAL_ID)?.remove()
+    screen.queryByTestId('titlebar-center')?.remove()
     screen.queryByTestId('titlebar-right-workspace-zone')?.remove()
-    const titlebarRightWorkspaceZone = document.createElement('div')
-    titlebarRightWorkspaceZone.dataset.testid = 'titlebar-right-workspace-zone'
-    titlebarRightWorkspaceZone.className =
-      'pointer-events-none absolute right-0 top-[3px] z-chrome flex h-[calc(100%-3px)] items-center'
-    const titlebarActions = document.createElement('div')
-    titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
-    titlebarActions.dataset.testid = 'titlebar-actions'
-    const titlebarRightPanel = document.createElement('div')
-    titlebarRightPanel.id = TITLEBAR_RIGHT_PANEL_PORTAL_ID
-    titlebarRightPanel.dataset.testid = 'titlebar-right-panel'
-    titlebarRightWorkspaceZone.append(titlebarRightPanel, titlebarActions)
-    document.body.appendChild(titlebarRightWorkspaceZone)
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
     window.history.pushState({}, '', '/')
@@ -476,22 +506,22 @@ describe('DesktopWorkbenchLayout', () => {
       },
     })
     Element.prototype.scrollIntoView = vi.fn()
+    Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
+    automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
-    fetchQuotaMock.mockResolvedValue({
-      quota: 748,
-      usage: 747.74,
-      remaining: 0.26,
-      usage_rate: 0.9997,
-      user: 'yunpeng7',
-    })
-    createQuotaApiMock.mockReturnValue({
-      fetchQuota: fetchQuotaMock,
+    getLocalCodexUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      fiveHour: { label: '5h', title: '5小时额度', value: '87%', percent: 87, resetsAt: null },
+      sevenDay: { label: '7d', title: '7天额度', value: '42%', percent: 42, resetsAt: null },
+      trayTitle: '5h 87%\n7d 42%',
+      tooltip: '5小时额度 87%\n7天额度 42%',
     })
     createDeviceApiMock.mockReturnValue(createMockDeviceApi() as never)
     startCodeServerSessionMock.mockResolvedValue({
@@ -613,7 +643,39 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout: vi.fn(),
   }
 
-  function createPendingRequestUserInputMessage(): WorkbenchMessage {
+  const activeProjectState = {
+    ...baseProps.state,
+    currentProject: {
+      id: 1,
+      name: 'github_wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-1',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/github_wegent',
+        },
+      },
+    },
+  }
+
+  const activeProjectRuntimeTask = {
+    deviceId: 'device-1',
+    workspacePath: '/workspace/github_wegent',
+    taskId: 'runtime-project-1',
+  }
+  const activeProjectRuntimeTarget = {
+    deviceId: 'device-1',
+    path: '/workspace/github_wegent',
+    source: 'runtime' as const,
+    taskId: 'runtime-project-1',
+  }
+
+  function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
     return {
       id: 'assistant-request',
       role: 'assistant',
@@ -635,6 +697,15 @@ describe('DesktopWorkbenchLayout', () => {
                 question: '执行此计划?',
                 options: [{ label: '是的，执行此计划' }],
               },
+              ...(includeAdjustment
+                ? [
+                    {
+                      id: 'adjustment',
+                      question: '否，请告知 WeWork 如何调整',
+                      is_other: true,
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -670,7 +741,6 @@ describe('DesktopWorkbenchLayout', () => {
     onSubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
     onUnsubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
     onRefreshDevices?: () => Promise<void>
-    onRefreshWorkLists?: () => Promise<void>
     onUpgradeDevice?: (...args: unknown[]) => Promise<void>
     onCreateProject?: (...args: unknown[]) => Promise<unknown>
     onCreateGitWorkspaceProject?: (...args: unknown[]) => Promise<unknown>
@@ -687,6 +757,8 @@ describe('DesktopWorkbenchLayout', () => {
     onLoadEnvironmentInfo?: (...args: unknown[]) => Promise<unknown>
     onLoadEnvironmentDiff?: (...args: unknown[]) => Promise<string>
     onCommitEnvironmentChanges?: (...args: unknown[]) => Promise<void>
+    onCommitAndPushEnvironmentChanges?: (...args: unknown[]) => Promise<void>
+    onPushEnvironmentChanges?: (...args: unknown[]) => Promise<void>
     onListEnvironmentBranches?: (...args: unknown[]) => Promise<string[]>
     onCheckoutEnvironmentBranch?: (...args: unknown[]) => Promise<void>
     onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
@@ -871,7 +943,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onUnsubscribeRuntimeTaskNotifications ??
         vi.fn().mockResolvedValue({ subscribed: false }),
       rememberExecutionDevice: vi.fn(),
-      refreshWorkLists: props.onRefreshWorkLists ?? vi.fn().mockResolvedValue(undefined),
+      refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
       getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
       upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
@@ -898,6 +970,10 @@ describe('DesktopWorkbenchLayout', () => {
       loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? baseProps.onLoadEnvironmentDiff,
       commitEnvironmentChanges:
         props.onCommitEnvironmentChanges ?? baseProps.onCommitEnvironmentChanges,
+      commitAndPushEnvironmentChanges:
+        props.onCommitAndPushEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
+      pushEnvironmentChanges:
+        props.onPushEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
       listEnvironmentBranches:
         props.onListEnvironmentBranches ?? baseProps.onListEnvironmentBranches,
       checkoutEnvironmentBranch:
@@ -907,7 +983,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
       cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
-      retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
       loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
       revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -950,6 +1026,7 @@ describe('DesktopWorkbenchLayout', () => {
       loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
       loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
       send: props.onSend ?? baseProps.onSend,
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
       ignoreRequestUserInput: vi.fn(),
@@ -1008,6 +1085,19 @@ describe('DesktopWorkbenchLayout', () => {
       currentProject: workspaceProject,
       projects: [workspaceProject],
       devices: [workspaceDevice],
+    }
+  }
+
+  function createLocalSkillDevice() {
+    return {
+      id: 13,
+      device_id: 'device-local-real',
+      name: 'Local Mac',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
     }
   }
 
@@ -1156,6 +1246,41 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('keeps plan mode when submitting implementation plan adjustments', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage(true)]}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+
+    await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
+    await user.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      {
+        requestId: 42,
+        itemId: undefined,
+        answers: {
+          adjustment: { answers: ['先缩小范围'] },
+        },
+      },
+      { appendUserMessage: true, forceDefaultCollaborationMode: false }
+    )
+  })
+
   test('ignores the implementation plan confirmation through the pane session', async () => {
     render(
       <DesktopWorkbenchLayout
@@ -1257,7 +1382,110 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('运行相关前端测试')
   })
 
-  test('renders project-specific empty prompt after selecting a project', () => {
+  test('keeps the right workspace plan panel synced with the opened streaming plan block', async () => {
+    const initialMessages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-plan-block',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        createdAt: '2026-06-30T00:00:01.000Z',
+        blocks: [
+          {
+            id: 'plan-1',
+            subtaskId: '1',
+            type: 'plan',
+            content: '# Wegent 体验计划\n\n## Summary\n- 正在生成第一步。',
+            status: 'streaming',
+            createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+          },
+        ],
+      },
+    ]
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...baseProps} messages={initialMessages} />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('正在生成第一步')
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            ...initialMessages[0],
+            blocks: [
+              {
+                ...initialMessages[0].blocks![0],
+                content:
+                  '# Wegent 体验计划\n\n## Summary\n- 正在生成第一步。\n- 已流式补充第二步。',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已流式补充第二步')
+  })
+
+  test('does not replace the opened right workspace plan when a newer plan block appears', async () => {
+    const openedPlanMessage: WorkbenchMessage = {
+      id: 'assistant-plan-block',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      createdAt: '2026-06-30T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'plan-1',
+          subtaskId: '1',
+          type: 'plan',
+          content: '# 已打开的计划\n\n- 保持当前内容。',
+          status: 'done',
+          createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+        },
+      ],
+    }
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...baseProps} messages={[openedPlanMessage]} />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          openedPlanMessage,
+          {
+            id: 'assistant-newer-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-30T00:01:01.000Z',
+            blocks: [
+              {
+                id: 'plan-2',
+                subtaskId: '2',
+                type: 'plan',
+                content: '# 新生成的计划\n\n- 不应抢占右侧面板。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-30T00:01:01.000Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已打开的计划')
+    expect(screen.getByTestId('workspace-plan-panel')).not.toHaveTextContent('新生成的计划')
+  })
+
+  test('renders a project-specific empty prompt that opens the project chooser', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1269,22 +1497,32 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '我们应该在 gitlab-wegent 中构建什么？'
+      '我们应该在 gitlab-wegent 中做些什么？'
     )
+    expect(screen.getByTestId('empty-project-title-button')).toHaveAttribute('title', '更改项目')
+
+    await userEvent.click(screen.getByTestId('empty-project-title-button'))
+
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
   })
 
   test('keeps the empty composer at the intended desktop proportion', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
+      'flex',
+      'min-h-0',
+      'flex-1',
+      'flex-col'
+    )
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
       'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
-      '-translate-y-12'
+      'shrink-0'
     )
   })
 
-  test('renders the conversation composer as a floating overlay', () => {
+  test('renders the conversation composer as a sticky scroll footer', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1301,53 +1539,59 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('pt-11')
-    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe(
-      '136px'
-    )
+    expect(desktopContent).toHaveClass('overflow-y-auto', 'pt-11')
+    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
-      'overflow-y-auto',
-      'scrollbar-soft',
+      'overflow-visible',
+      'scrollbar-none',
+      'flex',
+      'flex-col'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'overflow-x-hidden',
       'overflow-x-clip'
     )
+    expect(screen.getByTestId('desktop-chat-scroll-content')).toHaveClass('flex-1', 'shrink-0')
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(46rem,calc(100%_-_6rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
+      'max-w-[calc(100%_-_6rem)]',
       'px-0'
     )
-    expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
-      'pointer-events-none',
-      'absolute',
-      'left-0',
-      'right-8',
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass(
+      'sticky',
       'bottom-0',
       'z-10',
       'from-background'
     )
-    expect(screen.getByTestId('desktop-floating-composer-backdrop')).not.toHaveClass('inset-x-0')
-    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+    expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
-      'bottom-2',
-      'left-1/2',
-      'z-chrome',
-      '-translate-x-1/2'
+      'inset-x-0',
+      'bottom-0',
+      'from-background'
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'relative',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'min-w-0',
+      'max-w-[calc(100%_-_2rem)]'
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
   test('renders subagent status below the top bar without shifting messages', () => {
+    mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        state={{ ...baseProps.state, currentRuntimeTask: activeProjectRuntimeTask }}
         messages={[
           {
             id: 'message-1',
@@ -1373,7 +1617,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     const statusRow = screen.getByTestId('workbench-subagent-status-row')
     expect(statusRow).toContainElement(screen.getByTestId('subagent-status-toggle-button'))
-    expect(statusRow).toHaveClass('right-3', 'top-14')
+    expect(statusRow).toHaveClass('ml-2', 'mt-3', 'w-[300px]')
     expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('pt-11')
   })
 
@@ -1420,7 +1664,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
-    expect(paneTitle).toHaveClass('truncate', 'text-[13px]', 'text-text-primary')
+    expect(paneTitle).toHaveClass('truncate', 'text-sm', 'text-text-primary')
     expect(screen.getByTestId('workbench-topbar')).toHaveClass(
       'h-11',
       'border-b',
@@ -1544,8 +1788,12 @@ describe('DesktopWorkbenchLayout', () => {
         />
       )
 
+      const titlebarMainActions = screen.getByTestId('titlebar-main-actions')
       const titlebarActions = screen.getByTestId('titlebar-actions')
-      expect(titlebarActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarMainActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarMainActions).toContainElement(screen.getByTestId('fork-runtime-task-button'))
+      expect(titlebarActions).not.toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarActions).not.toContainElement(screen.getByTestId('fork-runtime-task-button'))
       expect(titlebarActions).toContainElement(
         screen.getByTestId('toggle-right-workspace-panel-button')
       )
@@ -1738,7 +1986,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
-  test('positions the scroll-to-bottom button above the floating composer', () => {
+  test('positions the scroll-to-bottom button above the sticky composer footer', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1754,7 +2002,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    const scroller = screen.getByTestId('desktop-chat-scroll')
+    const scrollContainer = screen.getByTestId('desktop-chat-scroll')
+    const scroller = screen.getByTestId('desktop-workbench-content')
     Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,
@@ -1769,15 +2018,12 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
 
-    fireEvent.scroll(scroller)
+    fireEvent.scroll(scrollContainer)
 
-    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
-      'bottom-[var(--desktop-floating-composer-clearance)]',
-      'z-popover'
-    )
+    expect(await screen.findByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-10')
   })
 
-  test('reserves extra bottom space when queued messages are shown above the composer', () => {
+  test('keeps queued messages inside the sticky composer footer flow', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1802,7 +2048,11 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass(
+      'sticky',
+      'bottom-0'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'
     )
   })
@@ -1921,9 +2171,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('desktop-window-controls')
     )
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
-      screen.getByTestId('environment-info-button')
-    )
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
@@ -1937,7 +2185,11 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
-    expect(sidebar).toHaveClass('transition-[width]', 'duration-[300ms]', 'will-change-[width]')
+    expect(sidebar).toHaveClass(
+      'transition-[width,background-color]',
+      'duration-[300ms]',
+      'will-change-[width]'
+    )
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -1946,20 +2198,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('will-change-[margin]')
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
     )
     expect(document.querySelector('aside')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
 
-    expect(screen.getByText('新对话')).toBeInTheDocument()
+    expect(screen.getByText('新建任务')).toBeInTheDocument()
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
     )
   })
 
@@ -1977,6 +2227,8 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerEnter(screen.getByTestId('desktop-sidebar-hover-edge'))
 
     expect(preview).toHaveClass('pointer-events-auto', 'translate-x-0', 'opacity-100')
+    expect(preview).toHaveClass('h-full')
+    expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveClass('h-full')
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
     expect(main).not.toHaveClass('ml-1.5')
 
@@ -1999,10 +2251,31 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-sidebar')).toContainElement(
+      screen.getByTestId('collapse-sidebar-button')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('collapse-sidebar-button')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toHaveClass('left-[92px]')
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-wework')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-todo')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-apps')
+    )
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
+    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('h-8', 'w-8', 'text-text-secondary')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
-      screen.getByTestId('environment-info-button')
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
+    )
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
     )
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
@@ -2054,20 +2327,37 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
+    expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-topbar-left-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-main-header')).toContainElement(
+      screen.getByTestId('workbench-pane-task-title')
+    )
+    expect(screen.getByTestId('workbench-main-header')).toHaveClass('h-[38px]', 'border-b')
+    expect(screen.getByTestId('workbench-main-header-left-controls')).toHaveClass('pl-[92px]')
+    expect(screen.getByTestId('workbench-main-header-left-controls')).toContainElement(
+      screen.getByTestId('expand-sidebar-button')
+    )
+    const collapsedHeaderControls = within(
+      screen.getByTestId('workbench-main-header-left-controls')
+    )
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-todo')).toBeInTheDocument()
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
-      'absolute',
-      'left-0',
-      'top-0',
-      'h-11',
-      'pl-[14rem]',
+      'relative',
+      'h-full',
+      'flex-1',
+      'pl-4',
       'truncate'
     )
+    expect(screen.getByTestId('titlebar-main-actions')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
       'wework的聊天链路现在代码逻辑比较混乱'
     )
     expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -2113,7 +2403,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(1))
     expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
-    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+    expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
@@ -2155,7 +2445,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+    expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
   })
@@ -2275,16 +2565,14 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-auto',
       'z-popover'
     )
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
-      screen.getByTestId('environment-info-button')
-    )
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
-    expect(screen.getByTestId('titlebar-actions')).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
   })
 
   test('opens the settings menu from the sidebar', async () => {
@@ -2293,7 +2581,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-button'))
 
     expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
-    expect(screen.getByText('个人账户')).toBeInTheDocument()
+    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
@@ -2306,7 +2594,27 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '我们该做什么？' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '我们该做什么？', hidden: true })).not.toBeVisible()
+  })
+
+  test('preserves the composer while visiting settings', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    const composerHeading = screen.getByRole('heading', { name: '我们该做什么？' })
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(composerHeading).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(screen.getByRole('heading', { name: '我们该做什么？' })).toBe(composerHeading)
+    expect(composerHeading).toBeVisible()
+  })
+
+  test('does not show a page scrollbar for the empty task launcher', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('overflow-y-auto')
   })
 
   test('closes the settings menu when clicking outside it', async () => {
@@ -2326,17 +2634,19 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-button'))
     await userEvent.click(screen.getByTestId('usage-menu-button'))
 
-    await waitFor(() => expect(fetchQuotaMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(getLocalCodexUsageDisplayMock).toHaveBeenCalled())
 
     const usagePanel = await screen.findByTestId('usage-detail-panel')
     expect(within(usagePanel).queryByText('模型额度')).not.toBeInTheDocument()
-    expect(usagePanel).toHaveTextContent('747.74 / 748 元')
-    expect(usagePanel).toHaveTextContent('剩余 0.26 元')
+    expect(usagePanel).toHaveTextContent('5小时额度')
+    expect(usagePanel).toHaveTextContent('87%')
+    expect(usagePanel).toHaveTextContent('7天额度')
+    expect(usagePanel).toHaveTextContent('42%')
     expect(usagePanel).not.toHaveTextContent('使用率')
     expect(usagePanel).not.toHaveTextContent('总额度')
     expect(usagePanel).not.toHaveTextContent('额度与计费说明')
     expect(usagePanel).not.toHaveClass('pl-12')
-    expect(within(usagePanel).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+    expect(within(usagePanel).queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
   test('opens the project create menu from the sidebar project create button', async () => {
@@ -2583,6 +2893,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'remote',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              client_ip: '127.0.0.1',
             },
           ],
         }}
@@ -2593,8 +2904,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
-    expect(select).toHaveTextContent('10.201.3.200 · Cloud Device')
-    expect(select).toHaveTextContent('Remote Device')
+    expect(select).toHaveTextContent('10.201.3.200')
+    expect(select).toHaveTextContent('127.0.0.1')
+    expect(select).not.toHaveTextContent('Cloud Device')
+    expect(select).not.toHaveTextContent('Remote Device')
     expect(select).not.toHaveTextContent('Local Device')
   })
 
@@ -2632,6 +2945,56 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
     expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(onUpgradeDevice).not.toHaveBeenCalled()
+  })
+
+  test('remote project dialog excludes remote routes that belong to the local runtime', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'remote-device',
+              name: 'Remote Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'remote',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+              runtime_instance_id: 'runtime-local',
+              runtime_routes: [
+                {
+                  kind: 'app-ipc',
+                  device_id: 'app-device',
+                  runtime_device_id: 'app-device',
+                  device_type: 'app',
+                  name: 'Local Executor',
+                  status: 'online',
+                },
+                {
+                  kind: 'remote-relay',
+                  device_id: 'remote-device',
+                  runtime_device_id: 'remote-device',
+                  device_type: 'remote',
+                  name: 'Remote Device',
+                  status: 'online',
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+    expect(screen.queryByText('Remote Device')).not.toBeInTheDocument()
   })
 
   test('closes the project create menu on outside pointer down', async () => {
@@ -2697,7 +3060,7 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const dialog = screen.getByTestId('standalone-folder-project-dialog')
     const overlay = dialog.parentElement
@@ -2706,6 +3069,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.body).toContainElement(overlay)
     expect(document.querySelector('aside')).not.toContainElement(overlay)
     expect(overlay).toHaveClass('fixed', 'inset-0')
+    expect(dialog).toHaveClass('max-w-[520px]', 'rounded-[24px]', 'p-5')
+  })
+
+  test('closes the standalone remote project dialog on backdrop click', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('standalone-folder-project-dialog-overlay'))
+
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
   })
 
   test('opens blank project dialog from the project work menu add option', async () => {
@@ -2774,10 +3148,301 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '添加远程项目' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
   })
 
-  test('opens a standalone Codex workspace from an existing folder selected in the directory tree', async () => {
+  test('opens a standalone Codex workspace from an existing local folder selected in Finder', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
+    const onOpenStandaloneWorkspace = vi.fn()
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
+      async initialDirectory => {
+        expect(initialDirectory).toBeUndefined()
+        expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+        return '/Users/alice/repo'
+      }
+    )
+
+    render(
+      <StrictMode>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{
+            ...baseProps.state,
+            devices: [
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'sifang-executor',
+                status: 'online',
+                is_default: true,
+                bind_shell: 'claudecode',
+                device_type: 'local',
+                executor_version: '1.8.5',
+              },
+            ],
+          }}
+        />
+      </StrictMode>
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('opens Finder without waiting for the local executor home directory', async () => {
+    const onGetDeviceHomeDirectory = vi.fn(() => new Promise<string>(() => undefined))
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+  })
+
+  test('opens the native folder picker under React StrictMode', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
+      '/Users/alice/repo'
+    )
+
+    render(
+      <StrictMode>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{
+            ...baseProps.state,
+            devices: [
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'sifang-executor',
+                status: 'online',
+                is_default: true,
+                bind_shell: 'claudecode',
+                device_type: 'local',
+                executor_version: '1.8.5',
+              },
+            ],
+          }}
+        />
+      </StrictMode>
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
+  })
+
+  test('keeps the native folder picker active while callback identities change', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    let resolvePicker: (path: string) => void = () => undefined
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolvePicker = resolve
+        })
+    )
+    const props = {
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        devices: [
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'sifang-executor',
+            status: 'online' as const,
+            is_default: true,
+            bind_shell: 'claudecode' as const,
+            device_type: 'local' as const,
+            executor_version: '1.8.5',
+          },
+        ],
+      },
+    }
+    const view = render(
+      <DesktopWorkbenchLayout
+        {...props}
+        onOpenStandaloneWorkspace={(deviceId, workspacePath) =>
+          onOpenStandaloneWorkspace(deviceId, workspacePath)
+        }
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+
+    view.rerender(
+      <DesktopWorkbenchLayout
+        {...props}
+        onOpenStandaloneWorkspace={(deviceId, workspacePath) =>
+          onOpenStandaloneWorkspace(deviceId, workspacePath)
+        }
+      />
+    )
+    resolvePicker('/Users/alice/repo')
+
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
+  })
+
+  test('does not open the in-app folder dialog when the native folder picker is cancelled', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('uses the controllable folder dialog during desktop E2E verification', async () => {
+    automationMocks.useNativeDirectoryPicker = false
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    expect(await screen.findByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
+    expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
+  })
+
+  test('falls back to the remote-style folder dialog when existing folder targets a remote device', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: '10.201.3.200',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'remote',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('device-1')
+    expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
+  })
+
+  test('opens a standalone Codex workspace from an existing remote folder selected in the directory tree', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
     const onPrepareDeviceWorkspace = vi.fn().mockResolvedValue({
       preparedAction: 'selected',
@@ -2817,6 +3482,7 @@ describe('DesktopWorkbenchLayout', () => {
               status: 'online',
               is_default: true,
               bind_shell: 'claudecode',
+              device_type: 'remote',
               executor_version: '1.8.5',
             },
           ],
@@ -2825,7 +3491,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
-    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     await waitFor(() =>
@@ -2838,9 +3504,6 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(repoEntry)
     expect(onListDeviceDirectories).not.toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
 
-    await userEvent.click(screen.getByTestId('device-folder-hidden-toggle'))
-    expect(screen.getByText('.cache')).toBeInTheDocument()
-
     await userEvent.dblClick(repoEntry)
     await waitFor(() =>
       expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
@@ -2850,6 +3513,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
     expect(onCreateProject).not.toHaveBeenCalled()
     expect(onPrepareDeviceWorkspace).not.toHaveBeenCalled()
+    expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
 
   test('shows project device network status for non-local devices when multiple devices exist', () => {
@@ -2904,6 +3568,57 @@ describe('DesktopWorkbenchLayout', () => {
       '192.0.2.10'
     )
     expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
+  })
+
+  test('shows a loopback IP instead of the device ID for a remote project', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: '9d317900-0c00-4000-8000-000000000000',
+              name: 'Remote Device',
+              status: 'online' as const,
+              is_default: false,
+              device_type: 'remote' as const,
+              bind_shell: 'claudecode',
+              client_ip: '127.0.0.1',
+            },
+            {
+              id: 2,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online' as const,
+              is_default: true,
+              device_type: 'local' as const,
+              bind_shell: 'claudecode',
+            },
+          ],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'remote',
+                  deviceId: '9d317900-0c00-4000-8000-000000000000',
+                },
+              },
+              tasks: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    const status = within(screen.getByTestId('project-row-7')).getByTestId(
+      'project-device-status-7'
+    )
+    expect(status).toHaveTextContent('127.0.0.1')
+    expect(status).not.toHaveTextContent('9d317900')
   })
 
   test('hides project device network status when only one device exists', () => {
@@ -3003,6 +3718,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      client_ip: '10.201.3.200',
     }
     const project = {
       id: 7,
@@ -3046,7 +3762,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Device 已离线，恢复在线后可继续对话'
+      '10.201.3.200 已离线，恢复在线后可继续对话'
     )
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
@@ -3220,12 +3936,12 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-14', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
 
-  test('selects a project while toggling its empty task list', async () => {
+  test('toggles an empty project without changing the center selection', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
@@ -3234,7 +3950,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute(
       'aria-hidden',
       'false'
@@ -3245,10 +3961,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute('aria-hidden', 'true')
-    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
-  test('opens the independent connection settings page from the settings menu', async () => {
+  test('opens the general settings page from the settings menu', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('settings-button'))
@@ -3257,27 +3973,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('settings-back-button')).toHaveTextContent('返回')
     expect(screen.queryByText('返回应用')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
-    expect(screen.getByText('已连接云端')).toBeInTheDocument()
-    expect(screen.getByText('当前域名:')).toBeInTheDocument()
-    expect(screen.getByText('云端模型')).toBeInTheDocument()
-    expect(screen.getByText('云端设备')).toBeInTheDocument()
+    expect(screen.getByTestId('general-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '通用' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-general')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
+    expect(screen.queryByRole('heading', { name: '云端连接' })).not.toBeInTheDocument()
     expect(screen.queryByText('连接这台设备')).not.toBeInTheDocument()
     expect(screen.queryByText('链接这台设备')).not.toBeInTheDocument()
     expect(screen.queryByText('控制其他设备')).not.toBeInTheDocument()
     expect(screen.queryByText('SSH')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-nav-connections')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-nav-projects')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('settings-nav-general')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-general')).toBeInTheDocument()
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
-    expect(await screen.findByText('云设备')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('connection-device-24a59054-4638-4744-983d-372706c30fcd')
-    ).toBeInTheDocument()
-    expect(screen.getByText('yunpeng7-executor-372706c30fcd')).toBeInTheDocument()
-    expect(screen.getByText('v1.712')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('settings-nav-connections'))
+
+    expect(await screen.findByRole('heading', { name: '云端连接' })).toBeInTheDocument()
+    expect(screen.getByText('已连接云端')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()
     expect(screen.queryByText('Online')).not.toBeInTheDocument()
     expect(
@@ -3295,16 +4010,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
     expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
     expect(screen.queryByText('桌面 VNC')).not.toBeInTheDocument()
-    expect(screen.getByText('CPU')).toBeInTheDocument()
-    expect(screen.getByText('MEM')).toBeInTheDocument()
-    expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(await screen.findByText('42%')).toBeInTheDocument()
-    expect(screen.getByText('68%')).toBeInTheDocument()
-    expect(screen.getByText('57%')).toBeInTheDocument()
-    expect(screen.getByTestId('connection-scale-wiki')).toBeInTheDocument()
-    expect(screen.getByText('说明')).toBeInTheDocument()
+    expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
+    expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
+    expect(screen.queryByText('CPU')).not.toBeInTheDocument()
+    expect(screen.queryByText('MEM')).not.toBeInTheDocument()
+    expect(screen.queryByText('磁盘')).not.toBeInTheDocument()
+    expect(screen.queryByText('42%')).not.toBeInTheDocument()
+    expect(screen.queryByText('68%')).not.toBeInTheDocument()
+    expect(screen.queryByText('57%')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
+    expect(screen.queryByText('说明')).not.toBeInTheDocument()
     expect(screen.queryByText('扩容 Wiki')).not.toBeInTheDocument()
-    expect(screen.getByText(/持续超过 80%/)).toBeInTheDocument()
+    expect(screen.queryByText(/持续超过 80%/)).not.toBeInTheDocument()
     expect(screen.queryByText('a8791aa3-4e8a-4076-b9a6-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('Nevis')).not.toBeInTheDocument()
     expect(screen.queryByText('Cloud computing powered by Nevis')).not.toBeInTheDocument()
@@ -3337,7 +4054,7 @@ describe('DesktopWorkbenchLayout', () => {
       '-translate-x-1/2',
       'cursor-col-resize'
     )
-    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '422px' })
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '420px' })
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
@@ -3390,6 +4107,20 @@ describe('DesktopWorkbenchLayout', () => {
       'https://weibo.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
+  })
+
+  test('deactivates the right workspace browser while settings are open', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('hidden')
   })
 
   test('preserves the browser tab after closing and reopening the right workspace area', async () => {
@@ -3666,9 +4397,9 @@ describe('DesktopWorkbenchLayout', () => {
       'max-w-[calc(100%_-_2rem)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(46rem,calc(100%_-_6rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
+      'max-w-[calc(100%_-_6rem)]',
       'px-0'
     )
   })
@@ -3768,11 +4499,20 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
         'absolute',
         'right-0',
-        'top-[3px]',
-        'h-[calc(100%-3px)]'
+        'top-0',
+        'h-full'
       )
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('border-l')
-      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass('after:bg-border')
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
+      expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
+      expect(screen.getByTestId('titlebar-actions')).toContainElement(
+        screen.getByTestId('toggle-right-workspace-panel-button')
+      )
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
+        width: 'calc(100% - 420px)',
+      })
+      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
+        'after:bg-transparent'
+      )
       const tabbar = screen.getByTestId('right-workspace-tabbar')
       expect(titlebarRightPanel).toContainElement(tabbar)
       expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
@@ -3790,15 +4530,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('right-workspace-new-tab-button')).not.toContainElement(
         rightTitlebarDragRegion
       )
-      expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
-        'h-[38px]',
-        'bg-background'
-      )
-      expect(screen.getByTestId('right-workspace-titlebar-spacer')).not.toHaveClass('border-b')
-      expect(
-        document.documentElement.style.getPropertyValue('--right-workspace-titlebar-width')
-      ).toBe('580px')
-
+      expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
       await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
       expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
     } finally {
@@ -3868,10 +4600,14 @@ describe('DesktopWorkbenchLayout', () => {
       await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
       const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      const sharedMainHeader = screen.getByTestId('workbench-main-header')
       expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
 
       rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
+      expect(screen.getAllByTestId('workbench-main-header')).toHaveLength(1)
+      expect(screen.getByTestId('workbench-main-header')).toBe(sharedMainHeader)
+      expect(sharedMainHeader).toHaveClass('h-[38px]', 'shrink-0')
       expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
     } finally {
       if (previousTauriInternals === undefined) {
@@ -4222,9 +4958,131 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
+      'pointer-events-none',
+      'w-0',
+      'opacity-0'
+    )
+    expect(screen.getByTestId('workspace-file-toggle-tree-button')).toHaveAccessibleName(
+      '显示目录树'
+    )
+
+    await user.click(screen.getByTestId('workspace-file-toggle-tree-button'))
+
+    expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
+      'w-[240px]',
+      'opacity-100'
+    )
+    expect(screen.getByTestId('workspace-file-toggle-tree-button')).toHaveAccessibleName(
+      '隐藏目录树'
+    )
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
       '/workspace/project/README.md'
+    )
+  })
+
+  test('opens a skill from the empty composer on the real local device', async () => {
+    const user = userEvent.setup()
+    const localDevice = createLocalSkillDevice()
+    const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/.agents/skills/gmail',
+      entries: [],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: skillPath,
+      name: 'SKILL.md',
+      content: '# Gmail',
+      truncated: false,
+      size: 7,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        state={{
+          ...baseProps.state,
+          devices: [localDevice],
+          input: `[$gmail](${skillPath}) `,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [localDevice],
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('local-skill-chip-gmail'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '/Users/me/.agents/skills/gmail'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(localDevice.device_id, skillPath)
+  })
+
+  test('opens a sent skill on the local device while the project workspace is remote', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const localDevice = createLocalSkillDevice()
+    const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/.agents/skills/gmail',
+      entries: [],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: skillPath,
+      name: 'SKILL.md',
+      content: '# Gmail',
+      truncated: false,
+      size: 7,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          devices: [...workspacePanelState.devices, localDevice],
+        }}
+        messages={[
+          {
+            id: 'user-skill-link',
+            role: 'user',
+            content: `[$gmail](${skillPath})`,
+            status: 'completed',
+            createdAt: '2026-07-11T00:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: [...workspacePanelState.devices, localDevice],
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('sent-local-skill-token-gmail'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '/Users/me/.agents/skills/gmail'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(localDevice.device_id, skillPath)
+    expect(readWorkspaceTextFile).not.toHaveBeenCalledWith(
+      workspacePanelState.devices[0].device_id,
+      skillPath
     )
   })
 
@@ -4675,6 +5533,144 @@ describe('DesktopWorkbenchLayout', () => {
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
   })
 
+  test('workspace file preview stays mounted when equivalent dependencies get new references', async () => {
+    const user = userEvent.setup()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 12,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'stable preview content',
+      truncated: false,
+      size: 22,
+      modifiedAt: null,
+    })
+    const target = {
+      deviceId: 'workspace-cloud-device',
+      path: '/workspace/project',
+      source: 'project' as const,
+      workspaceSource: 'remote',
+    }
+    const { rerender } = render(
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('README.md'))
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('stable preview content'))
+
+    rerender(
+      <FileWorkspacePanel
+        target={{ ...target }}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
+    expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
+  })
+
+  test('workspace file panel edits and saves an editable text file', async () => {
+    const user = userEvent.setup()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 5,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello',
+      editable: true,
+      revision: 'sha256:old',
+      truncated: false,
+      size: 5,
+      modifiedAt: null,
+    })
+    const writeWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello world',
+      editable: true,
+      revision: 'sha256:new',
+      truncated: false,
+      size: 11,
+      modifiedAt: null,
+    })
+
+    render(
+      <FileWorkspacePanel
+        target={{
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/project',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          writeWorkspaceTextFile,
+        }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('README.md'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
+    )
+
+    await user.click(screen.getByTestId('workspace-file-edit-button'))
+    const editor = screen.getByTestId('workspace-file-editor')
+    const codeMirrorContent = editor.querySelector('.cm-content')
+    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
+
+    await user.click(codeMirrorContent as HTMLElement)
+    await user.keyboard('{Control>}a{/Control}hello world')
+    await user.click(screen.getByTestId('workspace-file-save-button'))
+
+    await waitFor(() =>
+      expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/project/README.md',
+        'hello world',
+        'sha256:old'
+      )
+    )
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    })
+  })
+
   test('workspace file preview renders file contents with Pierre file viewer', async () => {
     render(
       <WorkspaceFilePreview
@@ -4697,6 +5693,28 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workspace-file-preview-code-view').querySelector('div')
     ).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('repeat'))
+  })
+
+  test('workspace file preview selects the requested target line', async () => {
+    render(
+      <WorkspaceFilePreview
+        file={{
+          path: '/workspace/project/repeat.txt',
+          name: 'repeat.txt',
+          content: 'first\nsecond\nthird',
+          truncated: false,
+          size: 18,
+          modifiedAt: null,
+        }}
+        loading={false}
+        targetLineStart={2}
+        onRetry={vi.fn()}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(getWorkspaceCodeViewSelectedLineNumbers()).toContain('2'))
+    expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
   test('workspace file preview swaps Pierre viewer when file changes', async () => {
@@ -4740,12 +5758,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
-  test('opens the environment info popover and closes it from outside click', async () => {
+  test('keeps the environment info panel open until its icon is clicked', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
+          currentProject: activeProjectState.currentProject,
           devices: [
             {
               id: 1,
@@ -4771,19 +5792,31 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    const environmentInfoPanel = screen.getByTestId('environment-info-panel-container')
+    const environmentInfoPopover = screen.getByTestId('environment-info-popover')
+    expect(environmentInfoPanel).toContainElement(environmentInfoPopover)
+    expect(environmentInfoPopover).toHaveAttribute('data-environment-info-popover')
+    expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(true)
+    expect(screen.getByTestId('desktop-workbench-content')).toContainElement(environmentInfoPanel)
+    expect(environmentInfoPanel).toHaveClass(
+      'overflow-hidden',
+      'has-[[data-environment-info-popover]]:overflow-visible'
+    )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
-      'w-[340px]',
+      'w-[300px]',
       'bg-background',
       'text-text-primary',
       'border-border',
       'backdrop-blur-3xl',
       'backdrop-saturate-150'
     )
-    expect(screen.getByText('环境信息')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-info-popover')).not.toHaveClass(
+      'shadow-[0_18px_44px_rgba(0,0,0,0.24)]'
+    )
+    expect(screen.getByText('环境')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('+173')).toBeInTheDocument())
     const deviceSection = screen.getByTestId('environment-device-section')
     const gitSection = screen.getByTestId('environment-git-section')
     expect(deviceSection).not.toContainElement(gitSection)
@@ -4813,8 +5846,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(gitSection).toHaveTextContent('human/narwhal-20260528-073440')
     expect(gitSection).toHaveTextContent('提交')
     expect(gitSection).toHaveTextContent('创建拉取请求')
-    expect(gitSection).toHaveTextContent('来源')
-    expect(gitSection).toHaveTextContent('暂无来源')
+    expect(gitSection).not.toHaveTextContent('来源')
 
     await userEvent.click(deviceButton)
 
@@ -4828,10 +5860,89 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(document.body)
 
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
+    expect(environmentInfoPanel).toHaveClass('overflow-hidden')
+  })
+
+  test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const secondTask = {
+      ...activeProjectRuntimeTask,
+      taskId: 'runtime-project-2',
+    }
+    const renderTask = (task: typeof activeProjectRuntimeTask) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: task,
+        }}
+      />
+    )
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const view = render(renderTask(activeProjectRuntimeTask))
+
+    expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    await userEvent.click(activePane().getByTestId('environment-info-button'))
+    expect(activePane().queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    view.rerender(renderTask(secondTask))
+
+    await waitFor(() =>
+      expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+    )
+    expect(activePane().queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    view.unmount()
+    render(renderTask(secondTask))
+
+    expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
+  test('keeps the overlay summary state separate from the pinned summary state', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
+
+    expect(screen.getByTestId('environment-info-popover')).not.toHaveClass('fixed')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass('fixed')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('environment-info-popover')).not.toHaveClass('fixed')
+    )
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('opens environment changes review in the right workspace panel', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onLoadEnvironmentDiff = vi
       .fn()
       .mockResolvedValue(
@@ -4844,6 +5955,7 @@ describe('DesktopWorkbenchLayout', () => {
         onLoadEnvironmentDiff={onLoadEnvironmentDiff}
         state={{
           ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -4864,19 +5976,10 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-changes-button'))
 
     await waitFor(() =>
-      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, name: 'github_wegent' }),
-        {
-          deviceId: 'device-1',
-          path: '/workspace/github_wegent',
-          source: 'project',
-        },
-        'branch'
-      )
+      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(null, activeProjectRuntimeTarget, 'branch')
     )
     expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
@@ -4889,6 +5992,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('submits environment commits from the popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     render(
       <DesktopWorkbenchLayout
@@ -4896,6 +6000,7 @@ describe('DesktopWorkbenchLayout', () => {
         onCommitEnvironmentChanges={onCommitEnvironmentChanges}
         state={{
           ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -4916,26 +6021,224 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-commit-button'))
     await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'feat: ship')
     await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
 
     await waitFor(() =>
       expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        null,
         'feat: ship',
-        {
-          deviceId: 'device-1',
-          path: '/workspace/github_wegent',
-          source: 'project',
-        }
+        activeProjectRuntimeTarget
       )
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
   })
 
+  test('submits an empty environment commit message so AI can generate it', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+
+    const confirmButton = screen.getByTestId('environment-confirm-commit-button')
+    expect(confirmButton).toBeEnabled()
+    await userEvent.click(confirmButton)
+
+    await waitFor(() =>
+      expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(null, '', activeProjectRuntimeTarget)
+    )
+  })
+
+  test('renders the environment commit menu as the compact commit or push panel', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    const onPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitAndPushEnvironmentChanges={onCommitAndPushEnvironmentChanges}
+        onPushEnvironmentChanges={onPushEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    const popover = await screen.findByTestId('environment-info-popover')
+    const commitMenuButton = await screen.findByTestId('environment-commit-button')
+    expect(commitMenuButton).toHaveTextContent('提交或推送')
+
+    await userEvent.click(commitMenuButton)
+
+    const commitPanel = screen.getByTestId('environment-commit-form')
+    expect(commitPanel).toHaveClass('fixed', 'left-1/2', 'w-[430px]', 'rounded-xl')
+    expect(popover).not.toContainElement(commitPanel)
+    expect(commitPanel).toHaveTextContent('包含未暂存的更改')
+
+    const scopedPanel = within(commitPanel)
+    expect(scopedPanel.getByTestId('environment-confirm-commit-button')).toHaveTextContent('提交')
+    expect(scopedPanel.getByTestId('environment-commit-and-push-button')).toHaveTextContent(
+      '提交并推送'
+    )
+    expect(scopedPanel.getByTestId('environment-push-button')).toHaveTextContent('推送')
+
+    await userEvent.click(scopedPanel.getByTestId('environment-commit-and-push-button'))
+    await waitFor(() =>
+      expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
+        null,
+        '',
+        activeProjectRuntimeTarget
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-push-button'))
+    await waitFor(() =>
+      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(null, activeProjectRuntimeTarget)
+    )
+  })
+
+  test('shows the environment commit progress row while generating a message', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onCommitEnvironmentChanges = vi.fn(
+      () =>
+        new Promise<void>(() => {
+          // Keep the action pending so the in-popover progress row remains visible.
+        })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
+
+    await waitFor(() => expect(onCommitEnvironmentChanges).toHaveBeenCalled())
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-commit-progress-row')).toHaveTextContent(
+      '正在生成消息...'
+    )
+    expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
+  })
+
+  test('shows the environment push progress row while pushing', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onPushEnvironmentChanges = vi.fn(
+      () =>
+        new Promise<void>(() => {
+          // Keep the action pending so the in-popover progress row remains visible.
+        })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onPushEnvironmentChanges={onPushEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-push-button'))
+
+    await waitFor(() => expect(onPushEnvironmentChanges).toHaveBeenCalled())
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-commit-progress-row')).toHaveTextContent('正在推送...')
+    expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
+  })
+
   test('switches and creates branches from the environment popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onListEnvironmentBranches = vi
       .fn()
       .mockResolvedValue(['main', 'human/chipmunk-20260603-053420', 'human/alpaca-20260603-050330'])
@@ -4950,6 +6253,7 @@ describe('DesktopWorkbenchLayout', () => {
         onCreateEnvironmentBranch={onCreateEnvironmentBranch}
         state={{
           ...baseProps.state,
+          currentRuntimeTask: activeProjectRuntimeTask,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -4970,7 +6274,6 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
@@ -4985,13 +6288,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByText('human/alpaca-20260603-050330'))
     await waitFor(() =>
       expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
-        expect.anything(),
+        null,
         'human/alpaca-20260603-050330',
-        {
-          deviceId: 'device-1',
-          path: '/workspace/github_wegent',
-          source: 'project',
-        }
+        activeProjectRuntimeTarget
       )
     )
 
@@ -5002,26 +6301,27 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() =>
       expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(
-        expect.anything(),
+        null,
         'human/new-branch',
-        {
-          deviceId: 'device-1',
-          path: '/workspace/github_wegent',
-          source: 'project',
-        }
+        activeProjectRuntimeTarget
       )
     )
   })
 
   test('does not reopen the branch menu when the environment popover is reopened', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(screen.getByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
 
-    await userEvent.click(document.body)
+    await userEvent.click(screen.getByTestId('environment-info-button'))
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
@@ -5030,13 +6330,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
-  test('keeps environment info visible without a git branch and hides git actions', async () => {
+  test('keeps environment diff stats and branch row visible without a current branch', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
         onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
-          additions: '+0',
-          deletions: '-0',
+          additions: '+55',
+          deletions: '-8',
           executionTarget: 'local',
           deviceId: 'device-1',
           workspacePath: '/workspace/plain-folder',
@@ -5047,20 +6349,28 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
     await waitFor(() => expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument())
     expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent(
       '/workspace/plain-folder'
     )
-    expect(screen.queryByTestId('environment-git-section')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument()
+    const gitSection = screen.getByTestId('environment-git-section')
+    expect(gitSection).toHaveTextContent('变更')
+    expect(gitSection).toHaveTextContent('+55')
+    expect(gitSection).toHaveTextContent('-8')
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
+    expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
   })
 
   test('closes the branch menu when Escape is pressed', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(screen.getByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
@@ -5073,7 +6383,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
   })
 
-  test('loads environment info from the first workspace project when the popover opens', async () => {
+  test('does not show environment info without an active project or runtime task', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+8',
       deletions: '-3',
@@ -5112,20 +6422,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
-    await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 2, name: 'workspace' }),
-        {
-          deviceId: 'device-from-fallback',
-          path: '/repo',
-          source: 'project',
-        }
-      )
-    )
   })
 
   test('loads environment info automatically from the current runtime task workspace', async () => {
@@ -5217,9 +6515,104 @@ describe('DesktopWorkbenchLayout', () => {
         deviceId: 'runtime-device',
         path: '/workspace/worktrees/8/project-alpha',
         source: 'runtime',
+        taskId: 'runtime-1',
       })
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
+  })
+
+  test('refreshes environment info after a runtime task finishes', async () => {
+    const onLoadEnvironmentInfo = vi
+      .fn()
+      .mockResolvedValueOnce({
+        additions: '+1',
+        deletions: '-0',
+        executionTarget: 'local' as const,
+        deviceId: 'runtime-device',
+        branchName: 'runtime/worktree',
+      })
+      .mockResolvedValueOnce({
+        additions: '+8',
+        deletions: '-2',
+        executionTarget: 'local' as const,
+        deviceId: 'runtime-device',
+        branchName: 'runtime/worktree',
+      })
+    const runtimeProject = {
+      id: 12,
+      name: 'runtime-project',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: { targetType: 'local' as const, deviceId: 'runtime-device' },
+      },
+    }
+    const runtimeTask = {
+      deviceId: 'runtime-device',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-1',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: runtimeProject.id, name: runtimeProject.name },
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'runtime-device',
+              workspacePath: '/workspace/project-alpha',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'runtime-1',
+                  workspacePath: '/workspace/worktrees/8/project-alpha',
+                  title: 'Runtime task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const state = {
+      ...baseProps.state,
+      currentProject: null,
+      currentRuntimeTask: runtimeTask,
+      projects: [runtimeProject],
+      runtimeWork,
+    }
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={state}
+        currentRuntimeTaskRunning
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1))
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={state}
+        currentRuntimeTaskRunning={false}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2)
+      expect(onLoadEnvironmentInfo).toHaveBeenLastCalledWith(
+        runtimeProject,
+        expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
+        { force: true }
+      )
+    })
   })
 
   test('loads environment info automatically for the current project workspace', async () => {
@@ -5416,10 +6809,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
+    expect(panel).toHaveClass('transition-none')
+    expect(panel).not.toHaveClass('transition-[height,opacity,transform]')
     fireEvent.pointerMove(document, { clientY: 620 })
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+    expect(panel).toHaveClass('transition-[height,opacity,transform]', 'duration-300')
   })
 
   test('opens the terminal by default when the bottom workspace panel opens', async () => {
@@ -5675,6 +7071,11 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(startLocalTerminalMock).toHaveBeenCalledWith({
         cwd: '/Users/me/Wegent/.worktrees/a',
+        env: {
+          WEWORK_PARENT_TITLE: 'Task A',
+          WEWORK_PARENT_PROJECT: 'Wegent',
+          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/a',
+        },
       })
     )
     await waitFor(() => {
@@ -5693,6 +7094,11 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(startLocalTerminalMock).toHaveBeenCalledWith({
         cwd: '/Users/me/Wegent/.worktrees/b',
+        env: {
+          WEWORK_PARENT_TITLE: 'Task B',
+          WEWORK_PARENT_PROJECT: 'Wegent',
+          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/b',
+        },
       })
     )
     await waitFor(() => {
@@ -5777,7 +7183,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
     })
-  })
+  }, 10000)
 
   test('opens the bottom workspace add menu without replacing the terminal', async () => {
     renderWorkspacePanelLayout()

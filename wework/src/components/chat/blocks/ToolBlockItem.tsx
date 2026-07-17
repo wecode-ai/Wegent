@@ -1,12 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { ChevronDown, Copy, CopyCheck, FileDiff, Search } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Streamdown } from 'streamdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
-import { AssistantPlanCard } from '../AssistantPlanCard'
+import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { isWebSearchToolName } from './toolBlockActivity'
@@ -31,7 +30,9 @@ interface ToolBlockItemProps {
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
 }
 
 export function ToolBlockItem({
@@ -39,6 +40,8 @@ export function ToolBlockItem({
   forceExpanded = false,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
 }: ToolBlockItemProps) {
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
@@ -64,12 +67,12 @@ export function ToolBlockItem({
     <>
       {icon}
       <span className="min-w-0 truncate">{label}</span>
-      {isRunning && <span className="animate-pulse text-xs">...</span>}
+      {isRunning && <span className="animate-pulse text-xs will-change-opacity">...</span>}
     </>
   )
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
+    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
       <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
@@ -111,7 +114,9 @@ export function ToolBlockItem({
         ) : null}
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-hidden">{renderBlockDetail(block)}</div>
+        <div className="mt-2 min-w-0 overflow-x-hidden">
+          {renderBlockDetail(block, { onLoadFullTranscript, loadingFullTranscript })}
+        </div>
       ) : null}
     </div>
   )
@@ -122,11 +127,24 @@ function PlanBlockItem({
   onOpenAssistantPlan,
 }: {
   block: Extract<ProcessingBlock, { type: 'plan' }>
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
 }) {
   if (!block.content.trim()) return null
 
-  return <AssistantPlanCard content={block.content} onOpenPlan={onOpenAssistantPlan} />
+  const isStreaming = block.status !== 'done' && block.status !== 'error'
+  const openPlan = () => {
+    onOpenAssistantPlan?.({
+      blockId: block.id,
+      subtaskId: String(block.subtaskId),
+      content: block.content,
+    })
+  }
+
+  return (
+    <div data-processing-block-id={block.id}>
+      <AssistantPlanCard content={block.content} isStreaming={isStreaming} onOpenPlan={openPlan} />
+    </div>
+  )
 }
 
 function ProcessFileChangesBlockItem({
@@ -143,7 +161,11 @@ function ProcessFileChangesBlockItem({
   if (!summary.files.length) return null
 
   return (
-    <div className="min-w-0 overflow-visible text-[13px]" data-testid="process-file-changes-block">
+    <div
+      className="min-w-0 overflow-visible text-sm"
+      data-processing-block-id={block.id}
+      data-testid="process-file-changes-block"
+    >
       <button
         type="button"
         aria-expanded={expanded}
@@ -439,7 +461,7 @@ function InlineDiffPreview({
   return (
     <div
       ref={previewRef}
-      className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-[12px] leading-[18px]"
+      className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-xs leading-[18px]"
       data-testid="process-file-change-diff"
       data-message-content-visibility-lock="true"
       onClick={event => event.stopPropagation()}
@@ -695,7 +717,7 @@ function ThinkingBlockItem({
     const preview = buildBlockPreview(block.content)
 
     return (
-      <div className="min-w-0 overflow-x-hidden text-[13px]">
+      <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
         <div
           className="flex max-w-full items-center gap-1.5 text-text-secondary"
           role="status"
@@ -716,7 +738,7 @@ function ThinkingBlockItem({
   const detailId = `${block.id}-thinking-detail`
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
+    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
       <button
         type="button"
         data-testid="thinking-toggle-button"
@@ -759,7 +781,8 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-[13px] text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-sm text-text-secondary"
+      data-processing-block-id={block.id}
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}
@@ -775,8 +798,11 @@ function ProcessTextBlockItem({
 function ProcessMarkdown({ content }: { content: string }) {
   return (
     <div className="thinking-markdown min-w-0 break-words leading-6 text-text-secondary">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+      <Streamdown
+        mode="streaming"
+        controls={false}
+        lineNumbers={false}
+        urlTransform={url => url}
         components={{
           p: ({ children }) => <p className="mb-1.5 min-w-0 break-words leading-6">{children}</p>,
           ul: ({ children }) => <ul className="mb-1.5 list-disc space-y-0.5 pl-5">{children}</ul>,
@@ -785,14 +811,19 @@ function ProcessMarkdown({ content }: { content: string }) {
           ),
           li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
           strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children }) => {
+          code: ({ className, children, node, ...props }) => {
             const match = /language-(\w*)/.exec(className || '')
-            const isBlock = Boolean(match) || String(children).includes('\n')
+            const text = reactNodeToText(children)
+            const isBlock =
+              ('data-block' in props && Boolean(props['data-block'])) ||
+              node?.properties?.dataBlock === 'true' ||
+              Boolean(match) ||
+              text.includes('\n')
             if (isBlock) {
               const lang = match ? match[1] || '' : ''
               return (
                 <MarkdownCodeBlock lang={lang} compact>
-                  {children}
+                  {text || children}
                 </MarkdownCodeBlock>
               )
             }
@@ -802,7 +833,11 @@ function ProcessMarkdown({ content }: { content: string }) {
               </code>
             )
           },
-          pre: ({ children }) => <>{children}</>,
+          inlineCode: ({ children }) => (
+            <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
+              {children}
+            </code>
+          ),
           blockquote: ({ children }) => (
             <blockquote className="mb-1.5 border-l-3 border-border pl-3 opacity-80">
               {children}
@@ -821,9 +856,15 @@ function ProcessMarkdown({ content }: { content: string }) {
         }}
       >
         {content}
-      </ReactMarkdown>
+      </Streamdown>
     </div>
   )
+}
+
+function reactNodeToText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(reactNodeToText).join('')
+  return ''
 }
 
 function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string } {
@@ -977,11 +1018,17 @@ function ToolIcon() {
   )
 }
 
-function renderBlockDetail(block: ToolBlock) {
+function renderBlockDetail(
+  block: ToolBlock,
+  options: {
+    onLoadFullTranscript?: () => Promise<void> | void
+    loadingFullTranscript?: boolean
+  }
+) {
   const name = block.toolName.toLowerCase()
 
   if (isCommandToolName(name)) {
-    return <BashBlockDetail block={block} />
+    return <BashBlockDetail block={block} {...options} />
   }
   if (isFileCreateToolName(name)) {
     return <FileWriteDetail block={block} />
@@ -1029,7 +1076,15 @@ function getWorkspaceFilePath(block: ToolBlock): string | undefined {
   return getFileInputPath(block)
 }
 
-function BashBlockDetail({ block }: { block: ToolBlock }) {
+function BashBlockDetail({
+  block,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
+}: {
+  block: ToolBlock
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
+}) {
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
@@ -1093,9 +1148,35 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         </div>
       )}
       {outputText && (
-        <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
-          {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
-        </pre>
+        <>
+          {block.toolOutputTruncated ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-muted">
+              <span>
+                早期输出已从当前视图卸载
+                {typeof block.toolOutputOriginalChars === 'number'
+                  ? `，原始约 ${block.toolOutputOriginalChars.toLocaleString()} 字`
+                  : typeof block.toolOutputOriginalBytes === 'number'
+                    ? `，原始约 ${block.toolOutputOriginalBytes.toLocaleString()} 字节`
+                    : ''}
+                。
+              </span>
+              {onLoadFullTranscript ? (
+                <button
+                  type="button"
+                  data-testid="load-full-runtime-transcript-button"
+                  onClick={() => void onLoadFullTranscript()}
+                  disabled={loadingFullTranscript}
+                  className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
+            {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
+          </pre>
+        </>
       )}
       {(isDone || isError) && (
         <div className="mt-2 flex justify-end">

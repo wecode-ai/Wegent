@@ -32,9 +32,10 @@ function renderCard(
   overrides: Partial<{
     summary: TurnFileChangesSummary
     deviceOnline: boolean
-    onLoadDiff: (subtaskId: number) => Promise<string>
-    onRevert: (subtaskId: number) => Promise<TurnFileChangesSummary>
+    onLoadDiff: (subtaskId: string) => Promise<string>
+    onRevert: (subtaskId: string) => Promise<TurnFileChangesSummary>
     onOpenReview: (request: OpenReviewRequest) => void
+    diffPreviewDisabled: boolean
   }> = {}
 ) {
   const onLoadDiff =
@@ -50,12 +51,13 @@ function renderCard(
 
   render(
     <FileChangesCard
-      subtaskId={21}
+      subtaskId="21"
       summary={overrides.summary ?? summary}
       deviceOnline={overrides.deviceOnline ?? true}
       onLoadDiff={onLoadDiff}
       onRevert={onRevert}
       onOpenReview={onOpenReview}
+      diffPreviewDisabled={overrides.diffPreviewDisabled}
     />
   )
   return { onLoadDiff, onRevert, onOpenReview }
@@ -386,6 +388,64 @@ describe('FileChangesCard', () => {
     }
   })
 
+  test('does not open the delayed diff preview when the review panel already shows the diff', async () => {
+    vi.useFakeTimers()
+    try {
+      const { onOpenReview } = renderCard({
+        diffPreviewDisabled: true,
+        summary: {
+          ...summary,
+          file_count: 2,
+          additions: 6,
+          deletions: 4,
+          files: [
+            {
+              path: 'wework/src/components/chat/FileChangesCard.test.tsx',
+              change_type: 'modified',
+              additions: 2,
+              deletions: 2,
+              binary: false,
+            },
+            {
+              path: 'wework/src/components/chat/FileChangesCard.tsx',
+              change_type: 'modified',
+              additions: 4,
+              deletions: 2,
+              binary: false,
+            },
+          ],
+          diff: [
+            'diff --git a/wework/src/components/chat/FileChangesCard.test.tsx b/wework/src/components/chat/FileChangesCard.test.tsx',
+            '--- a/wework/src/components/chat/FileChangesCard.test.tsx',
+            '+++ b/wework/src/components/chat/FileChangesCard.test.tsx',
+            '@@ -1 +1 @@',
+            '-old test',
+            '+new test',
+            'diff --git a/wework/src/components/chat/FileChangesCard.tsx b/wework/src/components/chat/FileChangesCard.tsx',
+            '--- a/wework/src/components/chat/FileChangesCard.tsx',
+            '+++ b/wework/src/components/chat/FileChangesCard.tsx',
+            '@@ -1 +1 @@',
+            '-old component',
+            '+new component',
+          ].join('\n'),
+        },
+      })
+
+      fireEvent.pointerEnter(screen.getAllByTestId('file-change-trigger')[1])
+      act(() => vi.advanceTimersByTime(500))
+
+      expect(screen.queryByTestId('file-change-diff-preview')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /FileChangesCard\.tsx/ }))
+      expect(onOpenReview).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(onOpenReview).mock.calls[0][0].focusFilePath).toBe(
+        'wework/src/components/chat/FileChangesCard.tsx'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('requests the right review panel without loading diff immediately', async () => {
     const { onLoadDiff, onOpenReview } = renderCard()
 
@@ -394,7 +454,7 @@ describe('FileChangesCard', () => {
 
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
-    expect(request.subtaskId).toBe(21)
+    expect(request.subtaskId).toBe('21')
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(request.focusFilePath).toBeUndefined()
@@ -402,7 +462,7 @@ describe('FileChangesCard', () => {
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()
-    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith('21', summary))
   })
 
   test('opens the shared review panel when a file row is clicked', async () => {
@@ -431,14 +491,14 @@ describe('FileChangesCard', () => {
 
     expect(onOpenReview).toHaveBeenCalledTimes(1)
     const request = vi.mocked(onOpenReview).mock.calls[0][0]
-    expect(request.subtaskId).toBe(21)
+    expect(request.subtaskId).toBe('21')
     expect(request.reviewTitle).toMatch(/Previous turn|上轮对话/)
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(request.focusFilePath).toBe('src/file-2.ts')
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()
-    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith('21', summary))
   })
 
   test('disables review and revert while the owning device is offline', () => {

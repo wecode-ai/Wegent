@@ -61,6 +61,22 @@ function fileChangesBlock(
 }
 
 describe('toolBlockActivity', () => {
+  test('groups consecutive completed tools by activity type', () => {
+    const rows = buildProcessingDisplayRows([
+      tool('read-1', "sed -n '1,5p' first.ts"),
+      tool('read-2', 'cat second.ts'),
+      tool('search-1', 'rg session_meta .'),
+      tool('cmd-1', 'node inspect.js'),
+    ])
+
+    expect(rows).toHaveLength(3)
+    expect(rows.map(row => (row.type === 'activity_group' ? row.label : ''))).toEqual([
+      '已读取 2 个文件',
+      '已搜索代码',
+      '已运行 1 条命令',
+    ])
+  })
+
   test('summarizes completed file, search, command, and failed command blocks', () => {
     expect(
       summarizeToolBlocks([
@@ -113,6 +129,12 @@ describe('toolBlockActivity', () => {
         )
       )
     ).toEqual(['wework/src/components/chat/blocks/toolBlockKinds.ts'])
+
+    expect(
+      getToolActivityFilePaths(
+        tool('sed-multiline', "sed -n '1222,1245p' Cargo.toml\nsed -n '1940,1955p' Cargo.toml")
+      )
+    ).toEqual(['Cargo.toml'])
   })
 
   test('extracts code search summaries from shell search commands', () => {

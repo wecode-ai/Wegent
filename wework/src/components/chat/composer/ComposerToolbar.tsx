@@ -1,9 +1,12 @@
-import { ArrowUp, Square } from 'lucide-react'
+import { ArrowUp, ClipboardList, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, UnifiedModel } from '@/types/api'
+import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -13,7 +16,9 @@ interface ComposerToolbarProps {
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
   isModelSelectionReady: boolean
+  contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
@@ -21,10 +26,12 @@ interface ComposerToolbarProps {
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
   onSetGoal?: () => void
+  onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  onQuickPhraseSelect: (phrase: QuickPhrase) => void
 }
 
 export function ComposerToolbar({
@@ -35,7 +42,9 @@ export function ComposerToolbar({
   selectedModelOptions,
   modelSelectorOpenSignal,
   isModelSelectionReady,
+  contextUsage,
   onSelectModel,
+  onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
   onFileSelect,
@@ -43,10 +52,12 @@ export function ComposerToolbar({
   onSetPlanMode,
   onClearPlanMode,
   onSetGoal,
+  onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
   isStreaming = false,
   onPause,
+  onQuickPhraseSelect,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
@@ -59,11 +70,13 @@ export function ComposerToolbar({
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
+        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
           <ComposerModePill
             label={t('workbench.plan_mode', '计划模式')}
+            icon={ClipboardList}
             testId="plan-mode-pill"
             cancelTestId="cancel-plan-mode-button"
             cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
@@ -74,6 +87,11 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        <ContextUsageIndicator
+          usage={contextUsage}
+          disabled={disabled}
+          onCompactContext={onCompactContext}
+        />
         {isModelSelectionReady ? (
           <ModelSelector
             models={models}
@@ -82,6 +100,7 @@ export function ComposerToolbar({
             openSignal={modelSelectorOpenSignal}
             disabled={disabled}
             onSelectModel={onSelectModel}
+            onSelectModelAndOptions={onSelectModelAndOptions}
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
             buttonClassName="opacity-90 hover:opacity-100"
@@ -89,7 +108,7 @@ export function ComposerToolbar({
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
-        {isStreaming ? (
+        {isStreaming && !canSend ? (
           <button
             type="button"
             data-testid="pause-response-button"

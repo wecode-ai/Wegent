@@ -5,10 +5,7 @@
 pub mod cli;
 
 use crate::config::device::{load_device_config, DeviceConfig};
-use crate::local::{
-    app_ipc::{normalize_device_id, serve_app_ipc_sidecar},
-    backend::serve_local_backend_sidecar,
-};
+use crate::local::{app_ipc::normalize_device_id, backend::serve_local_sidecar};
 use crate::logging::init_executor_logging;
 use crate::server::{self, ServerConfig};
 use crate::services::updater::UpdaterService;
@@ -149,13 +146,9 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
 
 async fn serve_socket_sidecar(
     config: crate::config::device::DeviceConfig,
-    plan: SocketSidecarPlan,
+    _plan: SocketSidecarPlan,
 ) -> Result<(), String> {
-    if plan.backend_enabled {
-        serve_local_backend_sidecar(config).await
-    } else {
-        serve_app_ipc_sidecar(plan.device_id).await
-    }
+    serve_local_sidecar(config).await
 }
 
 async fn run_upgrade(
@@ -205,7 +198,10 @@ fn startup_plan_for_config(
     }
 
     Ok(StartupPlan {
-        http_server: None,
+        http_server: Some(HttpServerPlan {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+        }),
         socket_sidecar: Some(SocketSidecarPlan {
             backend_enabled: !config.connection.backend_url.trim().is_empty(),
             device_id: normalize_device_id(config.device_id.clone()),

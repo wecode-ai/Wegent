@@ -53,7 +53,7 @@ This only updates the project repository's `.git/config`; it does not change glo
 
 In the new-conversation input area for a local workspace project, you can choose which workspace directory the task should use. The project can come from “Clone from Git” or “Using existing folder”; as long as the directory is currently a Git repository, it can use a new worktree.
 
-- “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user.
+- “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user. When the directory is a Git repository, the composer shows the current branch dropdown; selecting another branch runs `git checkout <branch>` in the project directory. If Git rejects the checkout because of uncommitted changes, untracked-file overwrite risk, or another conflict, the current branch and local changes stay unchanged, and the menu shows the error.
 - “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task. After you select “New worktree”, the composer shows a “Source branch” dropdown. It defaults to the current branch, and you can choose another branch from the same repository as the source used to create the worktree.
 
 New worktrees are created under the execution device workspace root:
@@ -66,11 +66,53 @@ The worktree ID is the task ID. The task stores `git_worktree` as the execution 
 
 “New worktree” is available only for new conversations in projects bound to a local execution device, local directory, and a directory that is currently a Git repository. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, the composer still shows “Local mode”, but it does not show “New worktree” or the source branch selector. After the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
 
+## Reference Files, Folders, and Capabilities in the Composer
+
+Type `@` in the Wework composer to open the add menu. The menu can set a goal, enable plan mode, or reference skills and apps available to the selected model. Continue typing after `@` to search files and folders in the current task workspace. Selecting a result turns it into a blue tag that preserves the original casing of its file name and path.
+
+Select **Files and folders** to open the native system picker. The macOS desktop app supports selecting multiple files and folders at once, and each selected path becomes its own blue tag. When the message is sent, Wework restores each tag to its real path for Codex, so the reference both identifies the intended context and lets Codex read the full content when needed. Removing a tag does not delete the file from disk.
+
+Workspace search is restricted to the execution directory bound to the current task or project. The native picker can reference local paths outside that workspace, but those paths are useful only to a local execution device that can access them; remote and cloud tasks cannot rely on paths from the user's computer. Previously sent path references remain visible in message history.
+
+## Use Quick Phrases
+
+Select **Quick phrases** in the lower-left area of the Wework composer to open the phrases stored on this device. Choose a phrase with the pointer, or type in the search field and use the arrow keys to move, `Enter` to confirm, and `Esc` to close. Wework appends the selected phrase to the current draft on a new line; it does not send the message immediately.
+
+Open **Settings > Quick phrases** to create, edit, delete, and reorder phrases. Each phrase can use Normal, Plan mode, or Goal; selecting it also switches the composer to that mode. Quick phrases are stored on the current device, remain available offline, and are not synchronized to other devices.
+
+## Commit and Push Changes
+
+In desktop Wework, open **Environment info** in the upper-right corner, then select **Commit or push** to run one of these actions in the current task or project's actual workspace directory:
+
+**Environment info** shows the cumulative changed-file and line counts for the current branch relative to its primary branch. Select the change count to review the full diff between those branches, so committed changes that have not yet been merged are included as well. Untracked files remain included in the counts and review result.
+
+While a task is running, Wework refreshes the change counts periodically in the background and refreshes them immediately when the task finishes. Manually reopening or refreshing **Environment info** reads the latest Git state from the workspace instead of continuing to show a briefly cached count.
+
+- **Commit** stages all tracked and untracked changes and creates a local commit.
+- **Commit and push** creates a local commit, then pushes the current branch.
+- **Push** pushes the current branch without creating another commit.
+
+You can enter the commit message manually. When the field is empty, Wework first verifies that the staged diff contains changes, then asks Codex on the execution device to generate a one-line commit message from that diff. When there are no changes to commit, Wework reports the error without invoking AI. AI generation requires an authenticated, working Codex installation on the execution device.
+
+Push always publishes the current local branch to a branch with the same name on `origin` and configures it as the upstream, equivalent to:
+
+```bash
+git push -u origin <current-branch>
+```
+
+This prevents an incorrectly configured old upstream such as `master` from receiving commits from a differently named local branch. Push is rejected with an error in detached HEAD state because there is no current branch name. While Wework generates a message, commits, or pushes, **Environment info** shows the current progress; Git or Codex errors remain visible in the panel for troubleshooting.
+
 ## Browse Workspace Files and Add Code Comments
 
 In desktop Wework, open the right workspace panel to browse files from the current task or project in read-only mode. The file tree reads the workspace directory from the currently bound execution device; existing tasks prefer the task workspace, and new conversations prefer the current project workspace.
 
+For a project bound to the local macOS device, the project row menu includes **Show in Finder**. Use it to open the project directory in Finder without changing the current Wework task.
+
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
+
+When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
+
+File link destinations can use Markdown angle-bracket syntax, such as `[file](</absolute/path/file.ts:18>)`. Wework removes the surrounding angle brackets before resolving the absolute path and line number, so the brackets do not become part of the filesystem path.
 
 ## Use the Right-Side Browser
 
@@ -85,6 +127,10 @@ Bottom terminals opened by the user inside a task stay available after switching
 Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.
 
 ## Using an Existing Folder
+
+In the macOS desktop app, choosing “Using existing folder” for a local device opens the native Finder directory picker. If the target is a remote or cloud device, Wework keeps the in-app remote directory picker so the selected path belongs to that execution device.
+
+The project appears in the sidebar immediately after it is added and can also be removed from its project menu immediately, without waiting for the local Executor to finish subsequent synchronization. Removing a local-folder project only removes its Wework project entry; it does not delete the directory from disk.
 
 When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
 

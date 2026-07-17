@@ -10,6 +10,10 @@ import { appsPageSectionExtensions } from '@extensions/apps'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { DeviceInfo } from '@/types/devices'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { cn } from '@/lib/utils'
+import { useAppearance } from '@/features/appearance'
+import { resolveUiTypographyVariables } from '@/features/appearance/typography'
 
 interface AppsPageState {
   devices: DeviceInfo[]
@@ -172,9 +176,7 @@ function SidebarNav({
         </div>
       </div>
 
-      <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.12em] text-text-muted">
-        管理
-      </div>
+      <div className="mt-1 text-xs font-bold uppercase tracking-[0.12em] text-text-muted">管理</div>
       <div className="mt-2 space-y-1">
         {navItems.map(item => (
           <button
@@ -269,7 +271,7 @@ function HeroSection() {
   return (
     <article className="relative overflow-hidden rounded-3xl border border-border bg-background p-6">
       <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-primary/10 blur-2xl" />
-      <div className="relative max-w-2xl text-2xl font-bold leading-tight tracking-[-0.04em] text-text-primary">
+      <div className="relative max-w-2xl text-heading-lg font-medium leading-tight tracking-[-0.04em] text-text-primary">
         让 WeWork 成为所有 AI 工具的统一入口
       </div>
       <p className="relative mt-3 max-w-3xl text-sm leading-7 text-text-secondary">
@@ -298,10 +300,16 @@ function HeroSection() {
 }
 
 function AppsPageHeader({ collapseProgress }: { collapseProgress: number }) {
+  const { appearance } = useAppearance()
+  const typography = resolveUiTypographyVariables(appearance.uiFontSize)
   const detailOpacity = 1 - collapseProgress
   const headerPadding = interpolate(20, 8, collapseProgress)
-  const titleFontSize = interpolate(24, 20, collapseProgress)
-  const titleLineHeight = interpolate(32, 28, collapseProgress)
+  const titleFontSize = interpolate(
+    Number.parseFloat(typography['--text-heading-lg']),
+    Number.parseFloat(typography['--text-heading-md']),
+    collapseProgress
+  )
+  const titleLineHeight = titleFontSize * 1.33
   const eyebrowHeight = interpolate(18, 0, collapseProgress)
   const descriptionHeight = interpolate(24, 0, collapseProgress)
   const titleMarginTop = interpolate(4, 0, collapseProgress)
@@ -396,7 +404,9 @@ function AppCard({ app }: { app: AppCardData }) {
 function SummaryCard({ value, label }: { value: string; label: string }) {
   return (
     <article className="rounded-2xl border border-border bg-background p-4">
-      <div className="text-2xl font-bold tracking-[-0.04em] text-text-primary">{value}</div>
+      <div className="text-heading-lg font-medium tracking-[-0.04em] text-text-primary">
+        {value}
+      </div>
       <div className="mt-1 text-xs text-text-muted">{label}</div>
     </article>
   )
@@ -457,6 +467,7 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
 
 export function AppsPage() {
   const { t } = useTranslation('common')
+  const { sidebarCollapsed } = useDesktopSidebarCollapsed()
   const [state, setState] = useState<AppsPageState>(initialState)
   const [activeSection, setActiveSection] = useState<AppsSection>(() =>
     getAppsSectionFromLocation()
@@ -531,9 +542,15 @@ export function AppsPage() {
   return (
     <div
       data-testid="apps-page"
-      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 md:grid-cols-[220px_minmax(0,1fr)]"
+      data-sidebar-collapsed={sidebarCollapsed}
+      className={cn(
+        'grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5',
+        sidebarCollapsed ? 'md:grid-cols-1' : 'md:grid-cols-[220px_minmax(0,1fr)]'
+      )}
     >
-      <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
+      {!sidebarCollapsed && (
+        <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
+      )}
 
       <section
         data-testid="apps-scroll-container"
@@ -654,7 +671,7 @@ function PlaceholderSection({ title, detail }: { title: string; detail: string }
   return (
     <section className="rounded-2xl border border-border bg-background p-8">
       <div className="max-w-xl">
-        <h2 className="text-xl font-bold text-text-primary">{title}</h2>
+        <h2 className="heading-base text-text-primary">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-text-secondary">{detail}</p>
       </div>
     </section>

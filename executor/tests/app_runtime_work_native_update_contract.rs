@@ -46,7 +46,7 @@ impl Drop for EnvGuard {
 }
 
 #[tokio::test]
-async fn runtime_task_list_maps_native_running_thread_statuses() {
+async fn runtime_task_list_trusts_native_thread_status_without_rollout_probe() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -127,11 +127,11 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
         .unwrap();
 
     assert_eq!(running_by_rollout["status"], "active");
-    assert_eq!(running_by_rollout["running"], true);
+    assert_eq!(running_by_rollout["running"], false);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
-    assert_eq!(active_completed["status"], "active");
-    assert_eq!(active_completed["running"], false);
+    assert_eq!(active_completed["status"], "running");
+    assert_eq!(active_completed["running"], true);
 }
 
 #[tokio::test]
@@ -206,10 +206,82 @@ async fn runtime_task_list_uses_native_idle_state_when_local_running_is_stale() 
     assert_eq!(locally_running["title"], "Locally running idle");
     assert_eq!(locally_running["status"], "active");
     assert_eq!(locally_running["running"], false);
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
+    assert_eq!(persisted["tasks"]["local-running-idle"]["status"], "active");
+    assert_eq!(persisted["tasks"]["local-running-idle"]["running"], false);
 }
 
 #[tokio::test]
-async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_still_looks_running() {
+async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-local-missing-home", "dir");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-local-missing-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let index_path = executor_home.join("runtime-work").join("index.json");
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(
+        &index_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "tasks": {
+                "local-running-missing": {
+                    "local_task_id": "local-running-missing",
+                    "thread_id": "missing-thread",
+                    "workspace_path": "/tmp/project",
+                    "title": "Missing thread",
+                    "runtime": "codex",
+                    "status": "running",
+                    "running": true,
+                    "created_at": 1780000000000_i64,
+                    "updated_at": 1780000070000_i64,
+                    "runtime_handle": {"threadId": "missing-thread"},
+                    "parent": null
+                }
+            },
+            "workspaces": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let fake_codex = write_fake_codex(&temp_path("runtime-local-missing-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("task list should succeed");
+
+    let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
+    let missing = tasks
+        .iter()
+        .find(|task| task["taskId"] == "local-running-missing")
+        .unwrap();
+
+    assert_eq!(missing["status"], "active");
+    assert_eq!(missing["running"], false);
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["tasks"]["local-running-missing"]["status"],
+        "active"
+    );
+    assert_eq!(
+        persisted["tasks"]["local-running-missing"]["running"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn runtime_task_list_ignores_local_failed_state_when_codex_thread_is_idle() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-failed-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -262,7 +334,7 @@ async fn runtime_task_list_preserves_local_failed_state_when_native_rollout_stil
         .find(|task| task["taskId"] == "local-failed-running-rollout")
         .unwrap();
 
-    assert_eq!(locally_failed["status"], "failed");
+    assert_eq!(locally_failed["status"], "active");
     assert_eq!(locally_failed["running"], false);
 }
 

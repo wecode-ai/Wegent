@@ -1,4 +1,4 @@
-import type { ChatStreamHandlers } from '@/stream/chatStream'
+import type { ChatStreamHandlers, RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
   Attachment,
   ChatBlock,
@@ -8,7 +8,11 @@ import type {
   ChatStartPayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
+  RuntimeContextUsage,
   RuntimeGoalEventPayload,
+  RuntimeGoalContinuationPayload,
+  RuntimePlanEventPayload,
+  RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
   RuntimeTaskAddress,
@@ -26,9 +30,14 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantStart?: () => void
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
+  onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
+  onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
+  onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
 }
 
 export function createRuntimeTaskStreamHandlers(
@@ -36,6 +45,10 @@ export function createRuntimeTaskStreamHandlers(
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   return {
+    scope: {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+    },
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
@@ -55,9 +68,14 @@ export function createRuntimeTaskStreamHandlers(
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
+      const contextUsage = payload.result?.contextUsage
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       const reasoningChunk = getReasoningChunk(payload.result)
       if (!identity) {
+        if (contextUsage && !payload.content && !reasoningChunk) {
+          handlers.onContextUsageUpdated?.(contextUsage)
+          return
+        }
         warnAndDropRuntimeStreamEvent('chat:chunk', address, payload, {
           hasContent: Boolean(payload.content),
           hasReasoningChunk: Boolean(reasoningChunk),
@@ -66,11 +84,18 @@ export function createRuntimeTaskStreamHandlers(
       }
       const blocks = getResultBlocks(identity.subtaskId, payload.result)
       if (!payload.content && !reasoningChunk && (!blocks || blocks.length === 0)) {
+        if (contextUsage) {
+          handlers.onContextUsageUpdated?.(contextUsage)
+          return
+        }
         warnAndDropEmptyRuntimeChunk(address, payload, {
           reason: 'empty_chunk',
           resultKeys: isRecord(payload.result) ? Object.keys(payload.result) : [],
         })
         return
+      }
+      if (contextUsage) {
+        handlers.onContextUsageUpdated?.(contextUsage)
       }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
@@ -98,6 +123,9 @@ export function createRuntimeTaskStreamHandlers(
         blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
+      if (payload.result.contextUsage) {
+        handlers.onContextUsageUpdated?.(payload.result.contextUsage)
+      }
       handlers.onMessageAction({
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
@@ -156,6 +184,15 @@ export function createRuntimeTaskStreamHandlers(
         subtaskId: identity.subtaskId,
         block,
       })
+      if (isStandaloneCompletedContextCompaction(identity.subtaskId, block)) {
+        handlers.onMessageAction({
+          type: 'assistant_done',
+          subtaskId: identity.subtaskId,
+          content: '',
+        })
+        handlers.onAssistantSettled?.()
+        handlers.onRefreshWorkLists?.()
+      }
     },
     onBlockUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -173,6 +210,9 @@ export function createRuntimeTaskStreamHandlers(
         hasContent: payload.content !== undefined,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
+        hasToolOutputDelta: payload.toolOutputDelta !== undefined,
+        hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
+        hasRenderPayload: payload.renderPayload !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
@@ -183,6 +223,15 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.content !== undefined && { content: payload.content }),
           ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
+          ...(payload.toolOutputDelta !== undefined && {
+            toolOutputDelta: payload.toolOutputDelta,
+          }),
+          ...(payload.toolOutputTruncated !== undefined && {
+            toolOutputTruncated: payload.toolOutputTruncated,
+          }),
+          ...(payload.renderPayload !== undefined && {
+            renderPayload: payload.renderPayload,
+          }),
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),
@@ -207,7 +256,56 @@ export function createRuntimeTaskStreamHandlers(
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onRuntimeGoalCleared?.(payload)
     },
+    onRuntimeGoalContinuation: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeGoalContinuation?.(payload)
+    },
+    onRuntimePlanUpdated: payload => {
+      const matched = isRuntimeTaskStreamPayload(address, payload)
+      debugRuntimeStreamEvent('plan:updated', address, payload, matched, {
+        threadId: payload.threadId ?? null,
+        turnId: payload.turnId ?? null,
+        stepCount: payload.plan.length,
+      })
+      if (import.meta.env.DEV) {
+        console.info('[Wework] Runtime task plan scoped', {
+          matched,
+          currentTaskId: address.taskId,
+          eventTaskId: payload.taskId ?? null,
+          stepCount: payload.plan.length,
+        })
+      }
+      if (!matched) return
+      handlers.onRuntimePlanUpdated?.(payload)
+    },
+    onGuidanceApplied: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onGuidanceApplied?.(payload)
+    },
+    onRuntimeTransportReplaced: payload => {
+      handlers.onRuntimeTransportReplaced?.(payload)
+    },
   }
+}
+
+function isStandaloneCompletedContextCompaction(
+  subtaskId: string,
+  block: ProcessingBlock
+): boolean {
+  return isStandaloneContextCompactionSubtask(subtaskId) && isCompletedContextCompactionBlock(block)
+}
+
+function isStandaloneContextCompactionSubtask(subtaskId: string): boolean {
+  return subtaskId.endsWith('-context-compact')
+}
+
+function isCompletedContextCompactionBlock(block: ProcessingBlock): boolean {
+  if (block.type !== 'tool' || block.status !== 'done') return false
+  return normalizeToolName(block.toolName) === 'contextcompaction'
+}
+
+function normalizeToolName(toolName: string): string {
+  return toolName.replace(/[\s_-]+/g, '').toLowerCase()
 }
 
 export function runtimeMessagesToWorkbenchMessages(
@@ -326,11 +424,14 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     typeof subtaskId === 'string'
       ? normalizeProcessingBlocks(subtaskId, message.blocks, messageCreatedAtMs)
       : []
+  const contentTruncated = hasTruncatedRuntimeContent(message)
   return {
     id: message.id,
     role,
     subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
+    contentTruncated: contentTruncated || undefined,
+    contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,
     runtimeMessageIndex,
     status,
     runtimeStatus,
@@ -345,6 +446,32 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     completedAt,
     stoppedNotice,
   }
+}
+
+function hasTruncatedRuntimeContent(message: NormalizedRuntimeMessage): boolean {
+  if (message.contentTruncated !== true && message.content_truncated !== true) return false
+
+  const originalChars = runtimeMessageOriginalChars(message)
+  return (
+    originalChars !== undefined && originalChars > runtimeContentCharacterCount(message.content)
+  )
+}
+
+function runtimeMessageOriginalChars(message: NormalizedRuntimeMessage): number | undefined {
+  const originalChars =
+    typeof message.contentOriginalChars === 'number'
+      ? message.contentOriginalChars
+      : typeof message.content_original_chars === 'number'
+        ? message.content_original_chars
+        : undefined
+
+  return originalChars !== undefined && Number.isFinite(originalChars) && originalChars >= 0
+    ? originalChars
+    : undefined
+}
+
+function runtimeContentCharacterCount(content: string): number {
+  return Array.from(content).length
 }
 
 function warnAndDropRuntimeStreamEvent(
@@ -527,7 +654,38 @@ function normalizeProcessingBlock(
           ? block.tool_input
           : undefined,
       toolOutput: block.toolOutput ?? block.tool_output,
+      toolOutputTruncated:
+        typeof block.toolOutputTruncated === 'boolean'
+          ? block.toolOutputTruncated
+          : typeof block.tool_output_truncated === 'boolean'
+            ? block.tool_output_truncated
+            : undefined,
+      toolOutputOriginalBytes:
+        typeof block.toolOutputOriginalBytes === 'number'
+          ? block.toolOutputOriginalBytes
+          : typeof block.tool_output_original_bytes === 'number'
+            ? block.tool_output_original_bytes
+            : undefined,
       renderPayload: normalizeToolRenderPayload(block),
+      status,
+      createdAt: timestamp,
+    }
+  }
+
+  if (block.type === 'image_generation_call') {
+    const id = typeof block.id === 'string' ? block.id : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
+    return {
+      id,
+      subtaskId,
+      type: 'tool',
+      toolName: 'image_generation',
+      renderPayload: {
+        kind: 'image_generation',
+        ...(typeof block.result === 'string' && { imageBase64: block.result }),
+        ...(typeof block.revised_prompt === 'string' && { revisedPrompt: block.revised_prompt }),
+        ...(typeof block.saved_path === 'string' && { savedPath: block.saved_path }),
+      },
       status,
       createdAt: timestamp,
     }
@@ -541,6 +699,18 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'thinking',
       content: typeof block.content === 'string' ? block.content : '',
+      contentTruncated:
+        typeof block.contentTruncated === 'boolean'
+          ? block.contentTruncated
+          : typeof block.content_truncated === 'boolean'
+            ? block.content_truncated
+            : undefined,
+      contentOriginalChars:
+        typeof block.contentOriginalChars === 'number'
+          ? block.contentOriginalChars
+          : typeof block.content_original_chars === 'number'
+            ? block.content_original_chars
+            : undefined,
       status,
       createdAt: timestamp,
     }
@@ -560,6 +730,18 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'text',
       content,
+      contentTruncated:
+        typeof block.contentTruncated === 'boolean'
+          ? block.contentTruncated
+          : typeof block.content_truncated === 'boolean'
+            ? block.content_truncated
+            : undefined,
+      contentOriginalChars:
+        typeof block.contentOriginalChars === 'number'
+          ? block.contentOriginalChars
+          : typeof block.content_original_chars === 'number'
+            ? block.content_original_chars
+            : undefined,
       status,
       createdAt: timestamp,
     }
@@ -579,6 +761,18 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'plan',
       content,
+      contentTruncated:
+        typeof block.contentTruncated === 'boolean'
+          ? block.contentTruncated
+          : typeof block.content_truncated === 'boolean'
+            ? block.content_truncated
+            : undefined,
+      contentOriginalChars:
+        typeof block.contentOriginalChars === 'number'
+          ? block.contentOriginalChars
+          : typeof block.content_original_chars === 'number'
+            ? block.content_original_chars
+            : undefined,
       status,
       createdAt: timestamp,
     }

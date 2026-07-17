@@ -103,6 +103,40 @@ class ConverterSettings(BaseSettings):
     PROMETHEUS_PORT: int = 9090  # Port for Prometheus metrics endpoint
     PROMETHEUS_PATH: str = "/metrics"  # URL path for Prometheus metrics endpoint
 
+    # ---- Multimodal Analysis (video/image → Gemini → Markdown) ----
+    # One pipeline, one model: media_type (video|image) distinguishes inside the
+    # task. Video always stages via a MediaStagingProvider; image uses inline
+    # base64 when ≤ MULTIMODAL_INLINE_MAX_BYTES, else stages (shared with video).
+    # No platform fallback api_key (single source = KB's
+    # multimodalAnalysisModelRef resolved at execution time).
+    MULTIMODAL_ENABLED: bool = False  # Master switch (default off in open-source)
+    MULTIMODAL_QUEUE: str = "knowledge_multimodal_conversion"
+    MULTIMODAL_GEMINI_TEMPERATURE: float = 0.2
+    MULTIMODAL_RETRY_MAX: int = 1
+    MULTIMODAL_RETRY_COUNTDOWN_SECONDS: int = 60
+    MULTIMODAL_DOWNLOAD_CHUNK_BYTES: int = 1024 * 1024  # 1 MiB
+    # Image size threshold: ≤ this → inline base64; > this → staging.
+    MULTIMODAL_INLINE_MAX_BYTES: int = 20 * 1024 * 1024  # 20 MB
+    # Image hard cap (PermanentError above this).
+    MULTIMODAL_IMAGE_MAX_BYTES: int = 100 * 1024 * 1024  # 100 MB
+    # Video simple-vs-resumable threshold and hard cap.
+    MULTIMODAL_VIDEO_SIMPLE_UPLOAD_MAX_BYTES: int = 100 * 1024 * 1024  # 100 MB
+    MULTIMODAL_VIDEO_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GB
+    # Gemini output token budget: video scenes are longer than single images.
+    MULTIMODAL_VIDEO_GEMINI_MAX_OUTPUT_TOKENS: int = 8192
+    MULTIMODAL_IMAGE_GEMINI_MAX_OUTPUT_TOKENS: int = 4096
+    # Task timeouts (declared on the single task decorator — Celery limits are
+    # per-task, not per-message). The decorator uses the larger VIDEO values;
+    # image enforces a shorter soft deadline internally via time.monotonic().
+    MULTIMODAL_TASK_SOFT_TIME_LIMIT: int = 1800  # video soft timeout (s)
+    MULTIMODAL_TASK_TIME_LIMIT: int = 2000  # hard limit (s)
+    MULTIMODAL_IMAGE_SOFT_TIME_LIMIT: int = 300  # image in-task soft deadline (s)
+    # Download timeouts: video (large CDN) vs image (attachment endpoint).
+    MULTIMODAL_DOWNLOAD_TIMEOUT_SECONDS: int = 300
+    MULTIMODAL_IMAGE_DOWNLOAD_TIMEOUT_SECONDS: int = 120
+    # Staging simple upload ceiling — re-exported for coordinator size routing.
+    MULTIMODAL_GCS_SIMPLE_MAX_BYTES: int = 100 * 1024 * 1024  # 100 MB
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     def __init__(self, **kwargs):

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { HTMLAttributes, ReactNode } from 'react'
+import type { Element as HastElement } from 'hast'
 import { FileText, Link2 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Streamdown } from 'streamdown'
+import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
   getAuthenticatedImageFetchUrl,
@@ -11,104 +12,207 @@ import {
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
+import { openExternalUrl } from '@/lib/external-links'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
-  'text-[13px] font-medium leading-5 text-blue-600 no-underline',
+  'text-sm font-medium leading-5 text-blue-600 no-underline',
   'transition-colors hover:text-blue-700',
   'dark:text-blue-300 dark:hover:text-blue-200',
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
+const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
+const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
+const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 
 interface AssistantMarkdownProps {
   content: string
-  onOpenFile?: (path: string) => void
+  isStreaming?: boolean
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }
 
-export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProps) {
-  const displayContent = normalizeAssistantMarkdownContent(content)
+export const AssistantMarkdown = memo(function AssistantMarkdown({
+  content,
+  isStreaming = false,
+  onOpenFile,
+}: AssistantMarkdownProps) {
+  const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const displayContent = prepareAssistantMarkdownContent(bufferedContent)
+  const openFileRef = useRef(onOpenFile)
+
+  useEffect(() => {
+    openFileRef.current = onOpenFile
+  }, [onOpenFile])
+
+  const openFile = useCallback((path: string, options?: WorkspaceFileOpenOptions) => {
+    if (options) {
+      openFileRef.current?.(path, options)
+      return
+    }
+    openFileRef.current?.(path)
+  }, [])
+  const components = useMemo(
+    () => ({
+      h1: ({ children }: { children?: ReactNode }) => (
+        <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold text-text-primary">
+          {children}
+        </h1>
+      ),
+      h2: ({ children }: { children?: ReactNode }) => (
+        <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold text-text-primary">
+          {children}
+        </h2>
+      ),
+      h3: ({ children }: { children?: ReactNode }) => (
+        <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-primary">
+          {children}
+        </h3>
+      ),
+      p: ({ children }: { children?: ReactNode }) => (
+        <p data-scroll-anchor className="mb-3 min-w-0 break-words leading-6">
+          {children}
+        </p>
+      ),
+      ul: ({ children }: { children?: ReactNode }) => (
+        <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>
+      ),
+      ol: ({ children }: { children?: ReactNode }) => (
+        <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>
+      ),
+      li: ({ children }: { children?: ReactNode }) => (
+        <li data-scroll-anchor className="min-w-0 break-words pl-1 leading-6">
+          {children}
+        </li>
+      ),
+      strong: ({ children }: { children?: ReactNode }) => (
+        <strong className="font-semibold">{children}</strong>
+      ),
+      code: MarkdownCode,
+      inlineCode: MarkdownInlineCode,
+      blockquote: ({ children }: { children?: ReactNode }) => (
+        <blockquote
+          data-scroll-anchor
+          className="mb-3 border-l-3 border-border pl-4 text-text-secondary"
+        >
+          {children}
+        </blockquote>
+      ),
+      table: ({ children }: { children?: ReactNode }) => (
+        <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
+          <table className="w-full min-w-max border-collapse text-chat">{children}</table>
+        </div>
+      ),
+      th: ({ children }: { children?: ReactNode }) => (
+        <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
+      ),
+      td: ({ children }: { children?: ReactNode }) => (
+        <td className="border-b border-border px-3 py-2">{children}</td>
+      ),
+      a: ({ href, children }: { href?: string; children?: ReactNode }) => (
+        <AssistantMarkdownLink href={href} onOpenFile={openFile}>
+          {children}
+        </AssistantMarkdownLink>
+      ),
+      img: ({ src, alt }: { src?: string; alt?: string }) => (
+        <AssistantMarkdownImage src={src} alt={alt} />
+      ),
+    }),
+    [openFile]
+  )
 
   return (
     <div className="assistant-markdown min-w-0 max-w-full break-words">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          h1: ({ children }) => (
-            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold">
-              {children}
-            </h3>
-          ),
-          p: ({ children }) => (
-            <p data-scroll-anchor className="mb-3 min-w-0 break-words leading-6">
-              {children}
-            </p>
-          ),
-          ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>,
-          li: ({ children }) => (
-            <li data-scroll-anchor className="min-w-0 break-words pl-1 leading-6">
-              {children}
-            </li>
-          ),
-          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children }) => {
-            const match = /language-(\w*)/.exec(className || '')
-            const isBlock = Boolean(match) || String(children).includes('\n')
-            if (isBlock) {
-              const lang = match ? match[1] || '' : ''
-              return <MarkdownCodeBlock lang={lang}>{children}</MarkdownCodeBlock>
-            }
-            return (
-              <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-                {children}
-              </code>
-            )
-          },
-          pre: ({ children }) => <>{children}</>,
-          blockquote: ({ children }) => (
-            <blockquote
-              data-scroll-anchor
-              className="mb-3 border-l-3 border-border pl-4 text-text-secondary"
-            >
-              {children}
-            </blockquote>
-          ),
-          table: ({ children }) => (
-            <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
-              <table className="w-full min-w-max border-collapse text-[13px]">{children}</table>
-            </div>
-          ),
-          th: ({ children }) => (
-            <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
-          ),
-          td: ({ children }) => <td className="border-b border-border px-3 py-2">{children}</td>,
-          a: ({ href, children }) => (
-            <AssistantMarkdownLink href={href} onOpenFile={onOpenFile}>
-              {children}
-            </AssistantMarkdownLink>
-          ),
-          img: ({ src, alt }) => <AssistantMarkdownImage src={src} alt={alt} />,
-        }}
+      <Streamdown
+        mode={isStreaming ? 'streaming' : 'static'}
+        isAnimating={isStreaming}
+        controls={false}
+        linkSafety={{ enabled: false }}
+        lineNumbers={false}
+        urlTransform={url => url}
+        components={components}
       >
         {displayContent}
-      </ReactMarkdown>
+      </Streamdown>
     </div>
+  )
+}, areAssistantMarkdownPropsEqual)
+
+function MarkdownCode({
+  className,
+  children,
+  node,
+  ...props
+}: {
+  node?: HastElement
+} & HTMLAttributes<HTMLElement>) {
+  const match = /language-(\w*)/.exec(className || '')
+  const text = reactNodeToText(children)
+  const isBlock =
+    ('data-block' in props && Boolean(props['data-block'])) ||
+    node?.properties?.dataBlock === 'true' ||
+    Boolean(match) ||
+    text.includes('\n')
+  if (isBlock) {
+    const lang = match ? match[1] || '' : ''
+    return <MarkdownCodeBlock lang={lang}>{text || children}</MarkdownCodeBlock>
+  }
+  return <MarkdownInlineCode>{children}</MarkdownInlineCode>
+}
+
+function MarkdownInlineCode({ children }: { children?: ReactNode }) {
+  return (
+    <code className="break-words rounded bg-muted px-1.5 py-0.5 text-code font-medium text-text-primary">
+      {children}
+    </code>
   )
 }
 
-function normalizeAssistantMarkdownContent(content: string): string {
-  return content.replace(CODEX_PLAN_TAG_PATTERN, '')
+function areAssistantMarkdownPropsEqual(
+  previous: AssistantMarkdownProps,
+  next: AssistantMarkdownProps
+): boolean {
+  return previous.content === next.content && previous.isStreaming === next.isStreaming
+}
+
+function prepareAssistantMarkdownContent(content: string): string {
+  return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+}
+
+function encodeLocalMarkdownLinks(content: string): string {
+  return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
+    if (imageMarker) return match
+    const href = String(rawHref).trim()
+    const target = classifyMarkdownLink(href)
+    if (target.kind !== 'file') return match
+    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(href)})`
+  })
+}
+
+function decodeLocalMarkdownHref(href?: string): string | undefined {
+  if (!href) return href
+  try {
+    const url = new URL(href)
+    if (
+      url.protocol === 'https:' &&
+      url.hostname === WEWORK_MARKDOWN_FILE_LINK_HOST &&
+      url.pathname === WEWORK_MARKDOWN_FILE_LINK_PATH
+    ) {
+      return url.searchParams.get('path') ?? href
+    }
+  } catch {
+    return href
+  }
+  return href
+}
+
+function reactNodeToText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(reactNodeToText).join('')
+  return ''
 }
 
 function formatMarkdownLineLabel(target: Extract<MarkdownLinkTarget, { kind: 'file' }>): string {
@@ -124,12 +228,22 @@ function formatMarkdownFileTooltip(target: Extract<MarkdownLinkTarget, { kind: '
   return lineLabel ? `${target.path} (${lineLabel})` : target.path
 }
 
+function getMarkdownFileOpenOptions(
+  target: Extract<MarkdownLinkTarget, { kind: 'file' }>
+): WorkspaceFileOpenOptions | undefined {
+  if (typeof target.lineStart !== 'number') return undefined
+  return {
+    lineStart: target.lineStart,
+    lineEnd: target.lineEnd,
+  }
+}
+
 function getMarkdownFileIcon(path: string): ReactNode {
   if (/\.(?:json|jsonc)(?:[?#].*)?$/i.test(path)) {
     return (
       <span
         aria-hidden="true"
-        className="shrink-0 font-mono text-[13px] font-semibold leading-5"
+        className="shrink-0 font-mono text-code font-medium"
         data-testid="assistant-markdown-link-icon"
       >
         {'{}'}
@@ -141,7 +255,7 @@ function getMarkdownFileIcon(path: string): ReactNode {
     return (
       <span
         aria-hidden="true"
-        className="shrink-0 font-mono text-[13px] font-semibold leading-5"
+        className="shrink-0 font-mono text-code font-medium"
         data-testid="assistant-markdown-link-icon"
       >
         $
@@ -164,10 +278,10 @@ function AssistantMarkdownLink({
   children,
 }: {
   href?: string
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   children?: ReactNode
 }) {
-  const target = classifyMarkdownLink(href)
+  const target = classifyMarkdownLink(decodeLocalMarkdownHref(href))
   const icon =
     target.kind === 'file' ? (
       getMarkdownFileIcon(target.path)
@@ -183,12 +297,19 @@ function AssistantMarkdownLink({
     const filePath = target.path
     const lineLabel = formatMarkdownLineLabel(target)
     const tooltip = formatMarkdownFileTooltip(target)
+    const openOptions = getMarkdownFileOpenOptions(target)
     return (
       <button
         type="button"
         className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
         data-testid="assistant-markdown-link"
-        onClick={() => onOpenFile?.(filePath)}
+        onClick={() => {
+          if (openOptions) {
+            onOpenFile?.(filePath, openOptions)
+            return
+          }
+          onOpenFile?.(filePath)
+        }}
         aria-label={tooltip}
       >
         {icon}
@@ -200,7 +321,7 @@ function AssistantMarkdownLink({
         ) : null}
         <span
           data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-left text-[13px] font-normal leading-5 text-white shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
+          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-left text-sm font-normal leading-5 text-white shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
         >
           {tooltip}
         </span>
@@ -212,9 +333,15 @@ function AssistantMarkdownLink({
     <a
       href={href}
       className={ASSISTANT_MARKDOWN_LINK_CLASS}
-      target="_blank"
-      rel="noopener noreferrer"
       data-testid="assistant-markdown-link"
+      onClick={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!href) return
+        void openExternalUrl(href).catch(error => {
+          console.error('[Wework] Failed to open assistant link', error)
+        })
+      }}
     >
       {icon}
       {children}

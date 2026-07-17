@@ -4,14 +4,19 @@ import {
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
   TOGGLE_SIDE_PANEL_COMMAND,
+  TOGGLE_MODEL_SELECTOR_COMMAND,
   isEditableShortcutTarget,
   dispatchOpenSettingsShortcut,
   dispatchOpenTerminalShortcut,
+  dispatchToggleModelSelectorShortcut,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
   normalizeKeybinding,
   TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID,
   WEWORK_OPEN_TERMINAL_EVENT,
+  MODEL_SELECTOR_BUTTON_TEST_ID,
+  INCREASE_FONT_SIZE_COMMAND,
+  DECREASE_FONT_SIZE_COMMAND,
 } from './keybindings'
 
 describe('keybindings', () => {
@@ -25,6 +30,9 @@ describe('keybindings', () => {
     expect(mergeKeybindings([])[OPEN_SETTINGS_COMMAND]).toBe('Command+,')
     expect(mergeKeybindings([])[TOGGLE_SIDEBAR_COMMAND]).toBe('Command+B')
     expect(mergeKeybindings([])[TOGGLE_SIDE_PANEL_COMMAND]).toBe('Alt+Command+B')
+    expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
+    expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
+    expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
     expect(
       mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: 'Control+J' }])[
         OPEN_TERMINAL_COMMAND
@@ -51,6 +59,19 @@ describe('keybindings', () => {
         new KeyboardEvent('keydown', { key: 'b', metaKey: true, altKey: true })
       )
     ).toBe('Alt+Command+B')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true })
+      )
+    ).toBe('Control+Shift+M')
+    expect(
+      keybindingFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: '+', metaKey: true, shiftKey: true })
+      )
+    ).toBe('Command+Plus')
+    expect(
+      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))
+    ).toBe('Command+Minus')
   })
 
   it('detects editable shortcut targets', () => {
@@ -94,5 +115,30 @@ describe('keybindings', () => {
     expect(popStateCount).toBe(1)
     window.history.pushState({}, '', originalPath)
     window.removeEventListener('popstate', handlePopState)
+  })
+
+  it('toggles the model selector in the active workbench pane', () => {
+    const inactivePane = document.createElement('div')
+    inactivePane.dataset.activeWorkbenchPane = 'false'
+    const inactiveButton = document.createElement('button')
+    inactiveButton.dataset.testid = MODEL_SELECTOR_BUTTON_TEST_ID
+    inactivePane.appendChild(inactiveButton)
+
+    const activePane = document.createElement('div')
+    activePane.dataset.activeWorkbenchPane = 'true'
+    const activeButton = document.createElement('button')
+    activeButton.dataset.testid = MODEL_SELECTOR_BUTTON_TEST_ID
+    let clickCount = 0
+    activeButton.addEventListener('click', () => {
+      clickCount += 1
+    })
+    activePane.appendChild(activeButton)
+    document.body.append(inactivePane, activePane)
+
+    dispatchToggleModelSelectorShortcut()
+
+    expect(clickCount).toBe(1)
+    inactivePane.remove()
+    activePane.remove()
   })
 })

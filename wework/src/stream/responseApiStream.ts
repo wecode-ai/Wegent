@@ -1,4 +1,11 @@
-import type { ChatBlock, RuntimeGoal } from '@/types/api'
+import type {
+  ChatBlock,
+  RuntimeContextUsage,
+  RuntimeGoal,
+  RuntimeGoalContinuationPayload,
+  RuntimePlanEventPayload,
+  RuntimeTokenUsageBreakdown,
+} from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
 
 export const RESPONSE_API_STREAM_EVENTS = [
@@ -38,14 +45,37 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.block.created',
   'response.block.updated',
   'response.subagent.activity',
+  'response.guidance.applied',
   'runtime.goal.updated',
   'runtime.goal.cleared',
+  'runtime.goal.continuation',
+  'runtime.plan.updated',
+  'thread/tokenUsage/updated',
+  'thread.tokenUsage.updated',
   'response.status.updated',
   'error',
 ] as const
 
 export interface ResponseApiStreamState {
   toolContexts: Map<string, { name?: string; input?: Record<string, unknown> }>
+}
+
+const IMAGE_GENERATION_TOOL_NAME = 'image_generation'
+
+const runtimeTaskPlans = new Map<string, RuntimePlanEventPayload>()
+
+function runtimeTaskPlanKey(
+  payload: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
+): string | null {
+  if (!payload.deviceId || !payload.taskId) return null
+  return `${payload.deviceId}:${payload.taskId}`
+}
+
+export function getCachedRuntimeTaskPlan(
+  address: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
+): RuntimePlanEventPayload | null {
+  const key = runtimeTaskPlanKey(address)
+  return key ? (runtimeTaskPlans.get(key) ?? null) : null
 }
 
 export function createResponseApiStreamState(): ResponseApiStreamState {
@@ -73,6 +103,17 @@ function idField(record: Record<string, unknown>, key: string): string | undefin
 function optionalNumberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key]
   return typeof value === 'number' ? value : undefined
+}
+
+function optionalFiniteNumberField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return undefined
 }
 
 function commandExitCode(record: Record<string, unknown>): number | undefined {
@@ -162,8 +203,86 @@ function completedResult(data: Record<string, unknown>): Record<string, unknown>
   if (Array.isArray(blocks)) {
     result.blocks = blocks
   }
+  const contextUsage = contextUsageFromResponseData(data)
+  if (contextUsage) {
+    result.contextUsage = contextUsage
+  }
 
   return result
+}
+
+function normalizeTokenUsageBreakdown(
+  value: Record<string, unknown> | undefined
+): RuntimeTokenUsageBreakdown | undefined {
+  if (!value) return undefined
+
+  const inputTokens = optionalFiniteNumberField(value, 'inputTokens', 'input_tokens') ?? 0
+  const cachedInputTokens =
+    optionalFiniteNumberField(value, 'cachedInputTokens', 'cached_input_tokens') ?? 0
+  const outputTokens = optionalFiniteNumberField(value, 'outputTokens', 'output_tokens') ?? 0
+  const reasoningOutputTokens =
+    optionalFiniteNumberField(value, 'reasoningOutputTokens', 'reasoning_output_tokens') ?? 0
+  const totalTokens =
+    optionalFiniteNumberField(value, 'totalTokens', 'total_tokens') ??
+    inputTokens + outputTokens + reasoningOutputTokens
+
+  return {
+    totalTokens,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+  }
+}
+
+function normalizeContextUsage(
+  value: Record<string, unknown> | undefined
+): RuntimeContextUsage | undefined {
+  if (!value) return undefined
+
+  const modelContextWindow = optionalFiniteNumberField(
+    value,
+    'modelContextWindow',
+    'model_context_window',
+    'contextWindow',
+    'context_window'
+  )
+  if (!modelContextWindow || modelContextWindow <= 0) return undefined
+
+  const total =
+    normalizeTokenUsageBreakdown(recordField(value, 'total')) ??
+    normalizeTokenUsageBreakdown(recordField(value, 'total_token_usage')) ??
+    normalizeTokenUsageBreakdown(value)
+  const last =
+    normalizeTokenUsageBreakdown(recordField(value, 'last')) ??
+    normalizeTokenUsageBreakdown(recordField(value, 'last_token_usage')) ??
+    total
+  if (!total || !last) return undefined
+
+  return {
+    total,
+    last,
+    modelContextWindow,
+  }
+}
+
+function contextUsageFromResponseData(
+  data: Record<string, unknown>
+): RuntimeContextUsage | undefined {
+  const direct =
+    normalizeContextUsage(recordField(data, 'contextUsage')) ??
+    normalizeContextUsage(recordField(data, 'context_usage')) ??
+    normalizeContextUsage(recordField(data, 'tokenUsage')) ??
+    normalizeContextUsage(recordField(data, 'token_usage'))
+  if (direct) return direct
+
+  const response = recordField(data, 'response')
+  return (
+    normalizeContextUsage(recordField(response, 'contextUsage')) ??
+    normalizeContextUsage(recordField(response, 'context_usage')) ??
+    normalizeContextUsage(recordField(response, 'tokenUsage')) ??
+    normalizeContextUsage(recordField(response, 'token_usage'))
+  )
 }
 
 function reasoningContent(eventName: string, data: Record<string, unknown>): string {
@@ -246,7 +365,9 @@ function responseToolItem(data: Record<string, unknown>): Record<string, unknown
 }
 
 function isToolItem(item: Record<string, unknown>): boolean {
-  return ['function_call', 'mcp_call', 'shell_call'].includes(stringField(item, 'type') ?? '')
+  return ['function_call', 'mcp_call', 'shell_call', 'image_generation_call'].includes(
+    stringField(item, 'type') ?? ''
+  )
 }
 
 function isCommandToolItem(item: Record<string, unknown>): boolean {
@@ -281,7 +402,8 @@ function emitBlockCreated(
   }
 
   const toolInput = toolInputFrom(data, item)
-  const toolName = normalizeToolName(item)
+  const isImageGeneration = item.type === 'image_generation_call'
+  const toolName = isImageGeneration ? IMAGE_GENERATION_TOOL_NAME : normalizeToolName(item)
   state.toolContexts.set(callId, { name: toolName, input: toolInput })
 
   handlers.onBlockCreated?.({
@@ -292,6 +414,9 @@ function emitBlockCreated(
       tool_use_id: callId,
       tool_name: toolName,
       tool_input: toolInput,
+      ...(isImageGeneration && {
+        renderPayload: imageGenerationRenderPayload(item),
+      }),
       status: data.argument_status === 'streaming' ? 'generating_arguments' : 'pending',
       timestamp: Date.now(),
     },
@@ -307,8 +432,12 @@ function emitBlockUpdated(
     status?: ChatBlock['status'] | 'running'
     toolInput?: Record<string, unknown>
     toolOutput?: unknown
+    toolOutputDelta?: string
+    toolOutputTruncated?: boolean
+    toolOutputOriginalBytes?: number
     content?: string
     fileChanges?: ChatBlock['fileChanges']
+    renderPayload?: unknown
   }
 ): void {
   if (!blockId) {
@@ -363,9 +492,44 @@ function emitToolDone(
     status,
     ...(nextInput && { toolInput: nextInput }),
     ...(toolOutput !== undefined && { toolOutput }),
+    ...(item.type === 'image_generation_call' && {
+      renderPayload: imageGenerationRenderPayload(item),
+    }),
   })
 
   state.toolContexts.delete(callId)
+}
+
+function imageGenerationRenderPayload(item: Record<string, unknown>): Record<string, unknown> {
+  const result = stringField(item, 'result')
+  const partialImage = stringField(item, 'partial_image_b64')
+  const imageBase64 = result ?? partialImage
+  const revisedPrompt = stringField(item, 'revised_prompt') ?? stringField(item, 'revisedPrompt')
+  const savedPath = stringField(item, 'saved_path') ?? stringField(item, 'savedPath')
+
+  return {
+    kind: 'image_generation',
+    ...(imageBase64 && { imageBase64 }),
+    ...(revisedPrompt && { revisedPrompt }),
+    ...(savedPath && { savedPath }),
+  }
+}
+
+function emitImageGenerationPartial(
+  handlers: ChatStreamHandlers,
+  base: ReturnType<typeof eventBase>,
+  data: Record<string, unknown>
+): void {
+  const blockId = callIdFromData(data) ?? stringField(data, 'id')
+  const partialImage = stringField(data, 'partial_image_b64')
+  if (!blockId || !partialImage) {
+    warnDroppedResponseBlock('image_generation.partial_image', 'missing_image_data', base, data)
+    return
+  }
+  emitBlockUpdated(handlers, 'image_generation.partial_image', base, blockId, {
+    status: 'streaming',
+    renderPayload: imageGenerationRenderPayload(data),
+  })
 }
 
 function emitResponseBlockCreated(
@@ -391,7 +555,12 @@ function emitResponseBlockUpdated(
 ): void {
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
+  const renderPayload = updates.renderPayload ?? updates.render_payload
   const fileChanges = parseRecord(updates.fileChanges ?? updates.file_changes)
+  const toolOutputDelta = updates.toolOutputDelta ?? updates.tool_output_delta
+  const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
+  const toolOutputOriginalBytes =
+    updates.toolOutputOriginalBytes ?? updates.tool_output_original_bytes
   emitBlockUpdated(
     handlers,
     'response.block.updated',
@@ -402,7 +571,17 @@ function emitResponseBlockUpdated(
       ...(typeof (updates.toolOutput ?? updates.tool_output) !== 'undefined' && {
         toolOutput: updates.toolOutput ?? updates.tool_output,
       }),
+      ...(typeof toolOutputDelta === 'string' && {
+        toolOutputDelta,
+      }),
+      ...(typeof toolOutputTruncated === 'boolean' && {
+        toolOutputTruncated,
+      }),
+      ...(typeof toolOutputOriginalBytes === 'number' && {
+        toolOutputOriginalBytes,
+      }),
       ...(toolInput && { toolInput }),
+      ...(renderPayload !== undefined && { renderPayload }),
       ...(fileChanges && { fileChanges: fileChanges as unknown as ChatBlock['fileChanges'] }),
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
@@ -544,10 +723,24 @@ export function emitResponseApiEvent(
     return
   }
 
+  if (eventName === 'response.guidance.applied') {
+    handlers.onGuidanceApplied?.({
+      ...base,
+      guidanceId: stringField(data, 'guidanceId') ?? stringField(data, 'guidance_id') ?? 'guidance',
+      message: stringField(data, 'message') ?? '',
+      appliedAtMs:
+        optionalNumberField(data, 'appliedAtMs') ??
+        optionalNumberField(data, 'applied_at_ms') ??
+        Date.now(),
+    })
+    return
+  }
+
   if (eventName === 'runtime.goal.updated') {
     handlers.onRuntimeGoalUpdated?.({
       ...base,
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      turnId: stringField(data, 'turn_id') ?? stringField(data, 'turnId'),
       goal: (data.goal ?? null) as RuntimeGoal | null,
     })
     return
@@ -562,8 +755,71 @@ export function emitResponseApiEvent(
     return
   }
 
+  if (eventName === 'runtime.goal.continuation') {
+    const status = stringField(data, 'status')
+    if (status !== 'started' && status !== 'settled') return
+    handlers.onRuntimeGoalContinuation?.({
+      ...base,
+      threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      turnId: stringField(data, 'turn_id') ?? stringField(data, 'turnId'),
+      status,
+    } as RuntimeGoalContinuationPayload)
+    return
+  }
+
+  if (eventName === 'runtime.plan.updated') {
+    const plan = data.plan
+    if (!Array.isArray(plan)) return
+    const normalizedPlan = plan.flatMap(item => {
+      const step = asRecord(item)
+      const text = stringField(step, 'step')
+      const status = stringField(step, 'status')
+      if (!text || !['pending', 'inProgress', 'completed'].includes(status ?? '')) return []
+      return [{ step: text, status: status as 'pending' | 'inProgress' | 'completed' }]
+    })
+    const payload = {
+      ...base,
+      threadId: stringField(data, 'threadId') ?? stringField(data, 'thread_id'),
+      turnId: stringField(data, 'turnId') ?? stringField(data, 'turn_id'),
+      explanation: stringField(data, 'explanation'),
+      plan: normalizedPlan,
+    }
+    if (import.meta.env.DEV) {
+      console.warn('[Wework] Runtime task plan parsed', {
+        taskId: payload.taskId ?? null,
+        deviceId: payload.deviceId ?? null,
+        threadId: payload.threadId ?? null,
+        stepCount: payload.plan.length,
+      })
+    }
+    const planKey = runtimeTaskPlanKey(payload)
+    if (planKey) runtimeTaskPlans.set(planKey, payload)
+    handlers.onRuntimePlanUpdated?.(payload)
+    return
+  }
+
+  if (eventName === 'thread/tokenUsage/updated' || eventName === 'thread.tokenUsage.updated') {
+    const contextUsage =
+      normalizeContextUsage(recordField(data, 'tokenUsage')) ??
+      normalizeContextUsage(recordField(data, 'token_usage')) ??
+      contextUsageFromResponseData(data)
+    if (!contextUsage) return
+
+    handlers.onChatChunk?.({
+      ...base,
+      content: '',
+      result: { contextUsage },
+    })
+    return
+  }
+
   if (eventName === 'response.output_item.added') {
     emitBlockCreated(handlers, base, data, state)
+    return
+  }
+
+  if (eventName === 'image_generation.partial_image') {
+    emitImageGenerationPartial(handlers, base, data)
     return
   }
 

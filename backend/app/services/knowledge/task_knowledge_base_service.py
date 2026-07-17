@@ -576,7 +576,7 @@ class TaskKnowledgeBaseService:
             kb_spec = kb.json.get("spec", {})
             display_name = kb_spec.get("name", kb_name)
             description = kb_spec.get("description")
-            document_count = KnowledgeService.get_active_document_count(db, kb.id)
+            document_count = KnowledgeService.get_document_count(db, kb.id)
 
             result.append(
                 BoundKnowledgeBaseDetail(
@@ -749,7 +749,7 @@ class TaskKnowledgeBaseService:
             namespace=kb_namespace,
             display_name=kb_spec.get("name", kb_name),
             description=kb_spec.get("description"),
-            document_count=KnowledgeService.get_active_document_count(db, kb.id),
+            document_count=KnowledgeService.get_document_count(db, kb.id),
             bound_by=user_name,
             bound_at=new_ref.boundAt,
         )
@@ -980,12 +980,15 @@ class TaskKnowledgeBaseService:
         document_ids: list[int],
         user_id: int,
         user_name: str,
+        folder_ids: list[int] | None = None,
+        include_subfolders: bool = True,
     ) -> bool:
-        """Sync a document-scoped KB selection to task-level scope refs."""
+        """Sync a scoped KB selection to task-level scope refs."""
         normalized_document_ids = self._normalize_document_ids(document_ids)
-        if not normalized_document_ids:
+        normalized_folder_ids = self._normalize_folder_ids(folder_ids or [])
+        if not normalized_document_ids and not normalized_folder_ids:
             logger.info(
-                "[sync_subtask_kb_scope_to_task] Skip empty document scope: "
+                "[sync_subtask_kb_scope_to_task] Skip empty scope: "
                 "task_id=%s, knowledge_id=%s, user_id=%s",
                 task.id,
                 knowledge_id,
@@ -1079,16 +1082,27 @@ class TaskKnowledgeBaseService:
                 existing_ids = self._normalize_document_ids(
                     ref.get("explicitDocumentIds") or []
                 )
+                existing_folder_ids = self._normalize_folder_ids(
+                    ref.get("folderIds") or []
+                )
                 merged_ids = self._normalize_document_ids(
                     existing_ids + normalized_document_ids
+                )
+                merged_folder_ids = self._normalize_folder_ids(
+                    existing_folder_ids + normalized_folder_ids
+                )
+                next_include_subfolders = (
+                    include_subfolders
+                    if normalized_folder_ids
+                    else ref.get("includeSubfolders", include_subfolders)
                 )
                 next_scope_refs.append(
                     {
                         **ref,
                         "scopeRestricted": True,
                         "explicitDocumentIds": merged_ids,
-                        "folderIds": None,
-                        "includeSubfolders": True,
+                        "folderIds": merged_folder_ids or None,
+                        "includeSubfolders": next_include_subfolders,
                         "boundBy": ref.get("boundBy") or user_name,
                         "boundAt": ref.get("boundAt")
                         or datetime.utcnow().isoformat() + "Z",
@@ -1103,9 +1117,9 @@ class TaskKnowledgeBaseService:
                         "namespace": kb_namespace,
                         "name": kb_name,
                         "scopeRestricted": True,
-                        "folderIds": None,
+                        "folderIds": normalized_folder_ids or None,
                         "explicitDocumentIds": normalized_document_ids,
-                        "includeSubfolders": True,
+                        "includeSubfolders": include_subfolders,
                         "boundBy": user_name,
                         "boundAt": datetime.utcnow().isoformat() + "Z",
                     }
@@ -1121,11 +1135,12 @@ class TaskKnowledgeBaseService:
             db.refresh(task)
             logger.info(
                 "[sync_subtask_kb_scope_to_task] Synced scoped KB %s/%s to task %s "
-                "(documents=%s, selected_by=%s)",
+                "(documents=%s, folders=%s, selected_by=%s)",
                 kb_name,
                 kb_namespace,
                 task.id,
                 normalized_document_ids,
+                normalized_folder_ids,
                 user_id,
             )
             return True
@@ -1150,6 +1165,21 @@ class TaskKnowledgeBaseService:
             except (TypeError, ValueError):
                 continue
             if normalized_id <= 0 or normalized_id in seen_ids:
+                continue
+            normalized_ids.append(normalized_id)
+            seen_ids.add(normalized_id)
+        return normalized_ids
+
+    @staticmethod
+    def _normalize_folder_ids(folder_ids: list[int]) -> list[int]:
+        normalized_ids: list[int] = []
+        seen_ids: set[int] = set()
+        for folder_id in folder_ids or []:
+            try:
+                normalized_id = int(folder_id)
+            except (TypeError, ValueError):
+                continue
+            if normalized_id < 0 or normalized_id in seen_ids:
                 continue
             normalized_ids.append(normalized_id)
             seen_ids.add(normalized_id)

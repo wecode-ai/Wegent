@@ -15,6 +15,7 @@ import type { RuntimeTaskRoute } from '@/lib/navigation'
 
 export const STANDALONE_PROJECT_ID = 0
 export const EMPTY_MESSAGE_TASK_TITLE = '新对话'
+export const MAX_RUNTIME_TASK_TITLE_LENGTH = 60
 
 const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
 const MAX_CONVERSATION_WORKSPACE_NAME_LENGTH = 20
@@ -181,11 +182,26 @@ function getLastProjectStorageKey(userId: number) {
   return `wework.lastProjectId.${userId}`
 }
 
-export function writeLastProjectId(userId: number, projectId: number) {
+export function writeLastProjectId(userId: number, projectId: number | null) {
   try {
-    window.localStorage.setItem(getLastProjectStorageKey(userId), String(projectId))
+    window.localStorage.setItem(
+      getLastProjectStorageKey(userId),
+      projectId === null ? 'none' : String(projectId)
+    )
   } catch {
     // Ignore storage failures; project selection still works for the current session.
+  }
+}
+
+export function readLastProjectId(userId: number): number | null | undefined {
+  try {
+    const storedValue = window.localStorage.getItem(getLastProjectStorageKey(userId))
+    if (storedValue === null) return undefined
+    if (storedValue === 'none') return null
+    const value = Number(storedValue)
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -282,9 +298,35 @@ export function findProjectMetadataDeviceWorkspace(
   return workspaces.length === 1 ? workspaces[0] : null
 }
 
+const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g
+const LEADING_TOOL_MENTION_PATTERN =
+  /^(?:\[(?:\$|@)[^\]]+]\((?:(?:skill|app|plugin):\/\/[^)\n]+|\/[^)\n]*SKILL\.md)\)\s*)+/
+
+function runtimeTitleText(value: string): string {
+  const normalizedValue = value.trim()
+  const withoutLeadingToolMentions = normalizedValue
+    .replace(LEADING_TOOL_MENTION_PATTERN, '')
+    .trim()
+
+  return (withoutLeadingToolMentions || normalizedValue)
+    .replace(MARKDOWN_MENTION_PATTERN, (_match, label: string) => label)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function truncateRuntimeTaskTitle(title: string | null | undefined): string | null {
+  const normalizedTitle = title?.trim()
+  if (!normalizedTitle) return null
+
+  const characters = Array.from(normalizedTitle)
+  if (characters.length <= MAX_RUNTIME_TASK_TITLE_LENGTH) return normalizedTitle
+
+  return `${characters.slice(0, MAX_RUNTIME_TASK_TITLE_LENGTH - 1).join('')}…`
+}
+
 export function buildRuntimeTaskTitle(message: string, fallback?: string): string {
-  const title = (fallback || message).trim()
-  return title ? title.slice(0, 100) : EMPTY_MESSAGE_TASK_TITLE
+  const title = runtimeTitleText(fallback || message)
+  return truncateRuntimeTaskTitle(title) ?? EMPTY_MESSAGE_TASK_TITLE
 }
 
 function stableRuntimeTaskId(value: string): number {

@@ -1,10 +1,34 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}', './wecode/**/*.{ts,tsx}'],
+  darkMode: 'class',
+  content: [
+    './index.html',
+    './src/**/*.{ts,tsx}',
+    './wecode/**/*.{ts,tsx}',
+    './node_modules/streamdown/dist/*.js',
+  ],
   theme: {
+    fontSize: {
+      xs: ['var(--text-xs)', { lineHeight: '1.333333' }],
+      sm: ['var(--text-sm)', { lineHeight: '1.428571' }],
+      base: ['var(--text-base)', { lineHeight: '1.5' }],
+      lg: ['var(--text-lg)', { lineHeight: '1.555556' }],
+      xl: ['var(--text-xl)', { lineHeight: '1.4' }],
+      '2xl': ['var(--text-2xl)', { lineHeight: '1.333333' }],
+      '3xl': ['var(--text-3xl)', { lineHeight: '1.2' }],
+      '4xl': ['var(--text-4xl)', { lineHeight: '1.111111' }],
+      'heading-sm': ['var(--text-heading-sm)', { lineHeight: '1.33' }],
+      'heading-md': ['var(--text-heading-md)', { lineHeight: '1.33' }],
+      'heading-lg': ['var(--text-heading-lg)', { lineHeight: '1.2' }],
+      chat: ['var(--text-chat)', { lineHeight: 'calc(1em + 8px)' }],
+      code: ['var(--text-code)', { lineHeight: '1.8' }],
+      'code-sm': ['var(--text-code-sm)', { lineHeight: '1.8' }],
+    },
     extend: {
-      colors: {
+      backgroundColor: {
         base: 'rgb(var(--color-bg-base) / <alpha-value>)',
+      },
+      colors: {
         primary: 'rgb(var(--color-primary) / <alpha-value>)',
         'primary-contrast': 'rgb(var(--color-primary-contrast) / <alpha-value>)',
         'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
@@ -24,6 +48,11 @@ export default {
         'mobile-drawer': 'rgb(var(--color-mobile-drawer))',
         popover: 'rgb(var(--color-popover) / <alpha-value>)',
         'code-bg': 'rgb(var(--color-code-bg) / <alpha-value>)',
+        'reasoning-standard': 'rgb(var(--color-reasoning-standard) / <alpha-value>)',
+        'reasoning-ultra-start': 'rgb(var(--color-reasoning-ultra-start) / <alpha-value>)',
+        'reasoning-ultra-end': 'rgb(var(--color-reasoning-ultra-end) / <alpha-value>)',
+        'reasoning-ultra-text': 'rgb(var(--color-reasoning-ultra-text) / <alpha-value>)',
+        'reasoning-contrast': 'rgb(var(--color-reasoning-contrast) / <alpha-value>)',
       },
       borderRadius: {
         DEFAULT: 'var(--radius)',

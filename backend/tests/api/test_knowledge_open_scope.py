@@ -211,6 +211,97 @@ def test_open_folder_create_move_and_list_documents(
     assert folder_id in tree_folder_ids
 
 
+def test_open_list_documents_supports_subfolders_keyword_sort_and_folder_counts(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_api_key,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id, "open-folder-query-kb")
+    parent = _create_folder(test_db, kb_id, test_user.id, "parent")
+    child = _create_folder(test_db, kb_id, test_user.id, "child", parent_id=parent.id)
+    parent_doc = _create_document(
+        test_db, kb_id, test_user.id, "Alpha parent.md", folder_id=parent.id
+    )
+    child_doc = _create_document(
+        test_db, kb_id, test_user.id, "Beta child.md", folder_id=child.id
+    )
+    _create_document(test_db, kb_id, test_user.id, "Gamma root.md", folder_id=0)
+
+    direct_response = test_client.get(
+        "/api/knowledge/documents",
+        headers=_api_key_headers(test_api_key[0]),
+        params={"knowledge_base_id": kb_id, "folder_id": parent.id},
+    )
+    subtree_response = test_client.get(
+        "/api/knowledge/documents",
+        headers=_api_key_headers(test_api_key[0]),
+        params={
+            "knowledge_base_id": kb_id,
+            "folder_id": parent.id,
+            "include_subfolders": True,
+            "sort_by": "name",
+            "sort_order": "asc",
+        },
+    )
+    keyword_response = test_client.get(
+        "/api/knowledge/documents",
+        headers=_api_key_headers(test_api_key[0]),
+        params={
+            "knowledge_base_id": kb_id,
+            "folder_id": parent.id,
+            "include_subfolders": True,
+            "keyword": "child",
+        },
+    )
+    tree_response = test_client.get(
+        "/api/knowledge/folders",
+        headers=_api_key_headers(test_api_key[0]),
+        params={"knowledge_base_id": kb_id},
+    )
+
+    assert direct_response.status_code == 200
+    assert [item["id"] for item in direct_response.json()["items"]] == [parent_doc.id]
+
+    assert subtree_response.status_code == 200
+    assert [item["id"] for item in subtree_response.json()["items"]] == [
+        parent_doc.id,
+        child_doc.id,
+    ]
+
+    assert keyword_response.status_code == 200
+    assert [item["id"] for item in keyword_response.json()["items"]] == [child_doc.id]
+
+    assert tree_response.status_code == 200
+    parent_node = next(item for item in tree_response.json() if item["id"] == parent.id)
+    assert parent_node["document_count"] == 1
+    assert parent_node["direct_document_count"] == 1
+    assert parent_node["total_document_count"] == 2
+    child_node = parent_node["children"][0]
+    assert child_node["direct_document_count"] == 1
+    assert child_node["total_document_count"] == 1
+
+
+def test_rest_list_documents_rejects_folder_from_other_knowledge_base(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_token: str,
+) -> None:
+    source_kb_id = _create_kb(test_db, test_user.id, "rest-source-kb")
+    other_kb_id = _create_kb(test_db, test_user.id, "rest-other-kb")
+    other_folder = _create_folder(test_db, other_kb_id, test_user.id, "other-folder")
+
+    response = test_client.get(
+        f"/api/knowledge-bases/{source_kb_id}/documents",
+        headers={"Authorization": f"Bearer {test_token}"},
+        params={"folder_id": other_folder.id},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found in this knowledge base"
+
+
 def test_open_delete_document_removes_document_and_schedules_summary_update(
     test_client: TestClient,
     test_db: Session,

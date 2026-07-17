@@ -29,12 +29,18 @@ const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
 
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
+export interface EnvironmentInfoLoadOptions {
+  force?: boolean
+}
+
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
-  branch: 'git_diff',
+  branch: 'git_branch_diff',
   unstaged: 'git_diff_unstaged',
   staged: 'git_diff_staged',
   commit: 'git_diff_last_commit',
 }
+const GENERATED_COMMIT_MESSAGE_COMMAND = 'git_generate_commit_message'
+const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 
 type EnvironmentInfoCacheEntry = {
   expiresAt: number
@@ -54,6 +60,22 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
     return output.join('\n')
   }
   throw new Error('Expected text stdout from device command')
+}
+
+function outputAsRecord(output: DeviceCommandResponse['stdout']): Record<string, unknown> | null {
+  if (typeof output === 'string') {
+    try {
+      const parsed = JSON.parse(output)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null
+    } catch {
+      return null
+    }
+  }
+  return output && typeof output === 'object' && !Array.isArray(output)
+    ? (output as Record<string, unknown>)
+    : null
 }
 
 function environmentInfoCacheKey(
@@ -80,6 +102,10 @@ function environmentInfoCacheKey(
 
 function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
   return { ...info }
+}
+
+function isNotGitRepositoryError(error: unknown): boolean {
+  return error instanceof Error && /not a git repository/i.test(error.message)
 }
 
 function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
@@ -277,17 +303,51 @@ async function runGitCommand(
   return outputAsString(response.stdout).trim()
 }
 
+async function generateCommitMessage(
+  api: DeviceCommandApi,
+  deviceId: string,
+  path: string
+): Promise<string> {
+  const response = await api.executeCommand(deviceId, {
+    command_key: GENERATED_COMMIT_MESSAGE_COMMAND,
+    path,
+    timeout_seconds: 120,
+    max_output_bytes: 8192,
+  })
+
+  if (!response.success) {
+    throw new Error(response.error || response.stderr || 'Failed to generate commit message')
+  }
+
+  const payload = outputAsRecord(response.stdout)
+  if (!payload) {
+    throw new Error('Failed to generate commit message')
+  }
+  if (payload.success === false) {
+    const error = typeof payload.error === 'string' ? payload.error.trim() : ''
+    throw new Error(error || 'Failed to generate commit message')
+  }
+
+  const message = typeof payload.message === 'string' ? payload.message.trim() : ''
+  const firstLine = message
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(Boolean)
+  if (!firstLine) {
+    throw new Error('Failed to generate commit message')
+  }
+  return firstLine
+}
+
 async function loadBranchDiffShortStat(
   api: DeviceCommandApi,
   deviceId: string,
   path: string
 ): Promise<string> {
-  // Use diff against HEAD for tracked uncommitted line changes.
-  // This captures staged + unstaged modifications to tracked files.
+  // Compare the current branch with its merge base to the primary branch.
+  // This includes committed branch changes as well as tracked worktree changes.
   try {
-    return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
-      args: ['HEAD', '--'],
-    })
+    return await runGitCommand(api, deviceId, 'git_branch_diff_shortstat', path)
   } catch {
     // HEAD may not exist (no commits yet).
     return ''
@@ -399,6 +459,10 @@ async function loadProjectEnvironmentUncached(
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
     }
   } catch (error) {
+    if (isNotGitRepositoryError(error)) {
+      return environmentWorkspaceInfo
+    }
+
     return {
       ...environmentWorkspaceInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
@@ -409,7 +473,8 @@ async function loadProjectEnvironmentUncached(
 export async function loadProjectEnvironment(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  options: EnvironmentInfoLoadOptions = {}
 ): Promise<EnvironmentInfo> {
   if (!project && !target) {
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
@@ -423,7 +488,7 @@ export async function loadProjectEnvironment(
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
+  if (!options.force && cached && cached.expiresAt > now) {
     return cloneEnvironmentInfo(await cached.promise)
   }
 
@@ -460,11 +525,7 @@ export async function commitProjectChanges(
   message: string,
   target?: EnvironmentWorkspaceTarget | null
 ): Promise<void> {
-  const trimmedMessage = message.trim()
-
-  if (!trimmedMessage) {
-    throw new Error('Commit message is required')
-  }
+  let commitMessage = message.trim()
 
   const { deviceId, path } = await commandContext(api, project, target)
 
@@ -472,11 +533,45 @@ export async function commitProjectChanges(
     timeoutSeconds: 30,
     maxOutputBytes: 4096,
   })
+
+  if (!commitMessage) {
+    const stagedDiff = await runGitCommand(api, deviceId, 'git_diff_staged', path, {
+      timeoutSeconds: 30,
+      maxOutputBytes: 4096,
+    })
+    if (!stagedDiff.trim()) {
+      throw new Error(NO_CHANGES_TO_COMMIT_MESSAGE)
+    }
+    commitMessage = await generateCommitMessage(api, deviceId, path)
+  }
+
   await runGitCommand(api, deviceId, 'git_commit', path, {
-    args: ['-m', trimmedMessage],
+    args: ['-m', commitMessage],
     timeoutSeconds: 30,
     maxOutputBytes: 8192,
   })
+}
+
+export async function pushProjectChanges(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  const { deviceId, path } = await commandContext(api, project, target)
+  await runGitCommand(api, deviceId, 'git_push', path, {
+    timeoutSeconds: 120,
+    maxOutputBytes: 8192,
+  })
+}
+
+export async function commitAndPushProjectChanges(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  message: string,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  await commitProjectChanges(api, project, message, target)
+  await pushProjectChanges(api, project, target)
 }
 
 export async function listProjectBranches(

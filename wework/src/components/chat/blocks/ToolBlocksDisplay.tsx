@@ -23,6 +23,7 @@ import {
   RequestUserInputSummary,
   type RequestUserInputPayload,
 } from '../RequestUserInputCard'
+import type { AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import {
   buildProcessingDisplayRows,
   getToolActivityFilePaths,
@@ -65,7 +66,9 @@ interface ToolBlocksDisplayProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }
@@ -82,6 +85,8 @@ export function ToolBlocksDisplay({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
   hideRequestUserInputBlocks = false,
   hiddenRequestUserInputIds,
 }: ToolBlocksDisplayProps) {
@@ -206,6 +211,8 @@ export function ToolBlocksDisplay({
                 stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                onLoadFullTranscript={onLoadFullTranscript}
+                loadingFullTranscript={loadingFullTranscript}
               />
             )
           })}
@@ -216,6 +223,8 @@ export function ToolBlocksDisplay({
       expanded,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
+      onLoadFullTranscript,
+      loadingFullTranscript,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
       stateKey,
@@ -395,7 +404,7 @@ function ToolActivityGroup({
   if (isGuidanceGroup) {
     return (
       <div
-        className="flex max-w-full items-center gap-1.5 text-[13px] text-text-muted"
+        className="flex max-w-full items-center gap-1.5 text-sm text-text-muted"
         data-testid="processing-activity-group-label"
       >
         {icon}
@@ -405,7 +414,7 @@ function ToolActivityGroup({
   }
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
+    <div className="min-w-0 overflow-x-hidden text-sm">
       <button
         type="button"
         data-testid="processing-activity-group-toggle"
@@ -446,7 +455,7 @@ function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
     >
       <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
       <span
-        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] font-semibold ${textClassName}`}
+        className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-sm font-semibold ${textClassName}`}
       >
         <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
         <span className={`min-w-0 truncate ${isRunning ? 'waiting-thinking-text' : ''}`}>
@@ -510,7 +519,7 @@ function CodeSearchActivityRow({ label }: { label: string }) {
   return (
     <div
       data-testid="code-search-activity-row"
-      className="flex max-w-full text-[13px] leading-5 text-text-muted"
+      className="flex max-w-full text-sm leading-5 text-text-muted"
     >
       <span className="min-w-0 break-words">{label}</span>
     </div>

@@ -397,6 +397,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_diff_definition = resolve_local_device_command(
         "git_diff", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_branch_diff_definition = resolve_local_device_command(
+        "git_branch_diff", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_branch_diff_shortstat_definition = resolve_local_device_command(
         "git_branch_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -408,6 +411,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     )
     git_commit_definition = resolve_local_device_command(
         "git_commit", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_push_definition = resolve_local_device_command(
+        "git_push", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_generate_commit_message_definition = resolve_local_device_command(
+        "git_generate_commit_message", settings.LOCAL_DEVICE_COMMANDS
     )
     ls_skills_definition = resolve_local_device_command(
         "ls_skills", settings.LOCAL_DEVICE_COMMANDS
@@ -489,6 +498,13 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "git diff --binary HEAD --" in git_diff_definition.command
     assert "git ls-files --others --exclude-standard" in git_diff_definition.command
     assert git_diff_definition.post_processor is None
+    assert git_branch_diff_definition is not None
+    assert "git merge-base" in git_branch_diff_definition.command
+    assert "git diff --binary" in git_branch_diff_definition.command
+    assert (
+        "git ls-files --others --exclude-standard" in git_branch_diff_definition.command
+    )
+    assert git_branch_diff_definition.post_processor is None
     assert git_branch_diff_shortstat_definition is not None
     assert "git merge-base" in git_branch_diff_shortstat_definition.command
     assert "git diff --shortstat" in git_branch_diff_shortstat_definition.command
@@ -505,6 +521,17 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_commit_definition is not None
     assert git_commit_definition.command == "git commit"
     assert git_commit_definition.post_processor is None
+    assert git_push_definition is not None
+    assert "@{u}" not in git_push_definition.command
+    assert 'exec git push -u origin "$branch"' in git_push_definition.command
+    assert git_push_definition.post_processor is None
+    assert git_generate_commit_message_definition is not None
+    assert "Generate a Git commit subject line" in (
+        git_generate_commit_message_definition.command
+    )
+    assert "--ask-for-approval" not in git_generate_commit_message_definition.command
+    assert "codex" in git_generate_commit_message_definition.command
+    assert git_generate_commit_message_definition.post_processor == "json"
     assert ls_skills_definition is not None
     assert "python3 -c" in ls_skills_definition.command
     assert ".claude" in ls_skills_definition.command
@@ -1983,6 +2010,249 @@ async def test_execute_configured_device_command_rejects_unowned_device(monkeypa
             device_id="device-abc",
             command_key="pwd",
         )
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_routes_cloud_directory_command_to_runtime_id(
+    monkeypatch,
+):
+    """Cloud CRD IDs should resolve to runtime executor IDs before dispatch."""
+    from app.schemas.device import DeviceType
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "./\n../\nrepo/\n",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="cloud-crd",
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": "runtime-cloud"},
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="cloud-crd",
+        command_key="ls_dirs",
+        path="/",
+    )
+
+    assert result["stdout"] == ["repo"]
+    online_mock.assert_awaited_once_with(
+        7,
+        "runtime-cloud",
+        DeviceType.CLOUD,
+    )
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="runtime-cloud",
+        command="ls -a -p",
+        path="/",
+        args=[],
+        env={},
+        timeout_seconds=60,
+        max_output_bytes=1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_routes_remote_home_directory_command(
+    monkeypatch,
+):
+    """Remote devices should use their submitted device ID for dispatch."""
+    from app.schemas.device import DeviceType
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "/home/ubuntu\n",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="remote-device",
+            json={"spec": {"deviceType": "remote"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="remote-device",
+        command_key="home_dir",
+    )
+
+    assert result["stdout"] == "/home/ubuntu\n"
+    online_mock.assert_awaited_once_with(
+        7,
+        "remote-device",
+        DeviceType.REMOTE,
+    )
+    assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
+    assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_rejects_cloud_unsupported_command_key(
+    monkeypatch,
+):
+    """Cloud directory browsing must not enable the full command registry."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock()
+    online_mock = AsyncMock(return_value={"socket_id": "socket-cloud"})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="cloud-crd",
+            json={
+                "spec": {
+                    "deviceType": "cloud",
+                    "cloudConfig": {"deviceId": "runtime-cloud"},
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="cloud-crd",
+            command_key="ls_a",
+        )
+
+    assert "not supported for cloud devices" in str(exc_info.value)
+    online_mock.assert_not_awaited()
+    execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_rejects_unknown_device_type(
+    monkeypatch,
+):
+    """Unknown Device CRD types should fail before Socket.IO dispatch."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock()
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="unknown-device",
+            json={"spec": {"deviceType": "satellite"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="unknown-device",
+            command_key="pwd",
+        )
+
+    assert "not supported for unknown device type" in str(exc_info.value)
+    execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_rejects_offline_remote_before_dispatch(
+    monkeypatch,
+):
+    """Offline remote devices should fail directly instead of timing out on ACK."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock()
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="remote-device",
+            json={"spec": {"deviceType": "remote"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="remote-device",
+            command_key="pwd",
+        )
+
+    assert "remote device 'remote-device' is offline" in str(exc_info.value).lower()
+    execute_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,12 @@
 import { Loader2, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
+import {
+  WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT,
+  type WorkbenchCloudSearchResultsDetail,
+} from '@/features/workbench/workbenchCloudDataEvents'
 import type {
   RuntimeTaskAddress,
   RuntimeWorkSearchRequest,
@@ -11,6 +16,7 @@ import type {
 
 const SEARCH_DEBOUNCE_MS = 180
 const SEARCH_LIMIT = 20
+const SEARCH_CACHE_LIMIT = 20
 
 interface WorkbenchSearchDialogProps {
   open: boolean
@@ -43,11 +49,14 @@ function WorkbenchSearchDialogPanel({
 }: Omit<WorkbenchSearchDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const inputRef = useRef<HTMLInputElement>(null)
+  const searchCacheRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
+  const cloudResultsRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
   const [query, setQuery] = useState('')
   const [items, setItems] = useState<RuntimeWorkSearchItem[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [searchedQuery, setSearchedQuery] = useState('')
   const trimmedQuery = query.trim()
 
   useEffect(() => {
@@ -55,21 +64,59 @@ function WorkbenchSearchDialogPanel({
   }, [])
 
   useEffect(() => {
+    const handleCloudResults = (event: Event) => {
+      const detail = (event as CustomEvent<WorkbenchCloudSearchResultsDetail>).detail
+      const resultQuery = detail?.request.query.trim()
+      if (!resultQuery) return
+      cloudResultsRef.current.set(resultQuery, detail.response.items)
+      if (resultQuery !== trimmedQuery) return
+      setItems(current => {
+        const merged = mergeSearchItems(current, detail.response.items, SEARCH_LIMIT)
+        rememberSearchResults(searchCacheRef.current, resultQuery, merged)
+        return merged
+      })
+    }
+
+    window.addEventListener(WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT, handleCloudResults)
+    return () =>
+      window.removeEventListener(WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT, handleCloudResults)
+  }, [trimmedQuery])
+
+  useEffect(() => {
     if (!trimmedQuery) return
+
+    if (searchCacheRef.current.has(trimmedQuery)) {
+      const cachedItems = searchCacheRef.current.get(trimmedQuery) ?? []
+      setItems(cachedItems)
+      setSelectedIndex(0)
+      setError(null)
+      setLoading(false)
+      setSearchedQuery(trimmedQuery)
+      return
+    }
 
     let cancelled = false
     const timer = window.setTimeout(() => {
+      setLoading(true)
       onSearchRuntimeWork({ query: trimmedQuery, limit: SEARCH_LIMIT })
         .then(response => {
           if (cancelled) return
-          setItems(response.items)
+          const merged = mergeSearchItems(
+            response.items,
+            cloudResultsRef.current.get(trimmedQuery) ?? [],
+            SEARCH_LIMIT
+          )
+          rememberSearchResults(searchCacheRef.current, trimmedQuery, merged)
+          setItems(merged)
           setSelectedIndex(0)
           setError(null)
+          setSearchedQuery(trimmedQuery)
         })
         .catch(() => {
           if (cancelled) return
           setItems([])
           setError(t('workbench.search_failed'))
+          setSearchedQuery(trimmedQuery)
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -87,9 +134,11 @@ function WorkbenchSearchDialogPanel({
   const statusLabel = useMemo(() => {
     if (loading) return t('workbench.search_loading')
     if (error) return error
-    if (hasQuery && items.length === 0) return t('workbench.search_no_results')
+    if (hasQuery && searchedQuery === trimmedQuery && items.length === 0) {
+      return t('workbench.search_no_results')
+    }
     return null
-  }, [error, hasQuery, items.length, loading, t])
+  }, [error, hasQuery, items.length, loading, searchedQuery, t, trimmedQuery])
 
   const openItem = (item: RuntimeWorkSearchItem | null) => {
     if (!item) return
@@ -117,10 +166,12 @@ function WorkbenchSearchDialogPanel({
               setSelectedIndex(0)
               setError(null)
               if (nextQuery.trim()) {
-                setLoading(true)
+                setLoading(false)
+                setSearchedQuery('')
               } else {
                 setItems([])
                 setLoading(false)
+                setSearchedQuery('')
               }
             }}
             onKeyDown={event => {
@@ -139,6 +190,7 @@ function WorkbenchSearchDialogPanel({
                 setSelectedIndex(index => Math.max(index - 1, 0))
                 return
               }
+              if (isImeEnterEvent(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 openItem(selectedItem)
@@ -185,9 +237,6 @@ function WorkbenchSearchDialogPanel({
               </div>
               <div className="flex max-w-[150px] shrink-0 flex-col items-end gap-1 text-xs text-text-muted">
                 <span className="max-w-full truncate">{item.project?.name || item.deviceName}</span>
-                <span className="rounded bg-surface px-1.5 py-0.5 text-[11px] leading-4">
-                  {`⌘${index + 1}`}
-                </span>
               </div>
             </button>
           ))}
@@ -200,6 +249,49 @@ function WorkbenchSearchDialogPanel({
       </div>
     </div>
   )
+}
+
+function rememberSearchResults(
+  cache: Map<string, RuntimeWorkSearchItem[]>,
+  query: string,
+  items: RuntimeWorkSearchItem[]
+) {
+  if (cache.has(query)) {
+    cache.delete(query)
+  }
+  cache.set(query, items)
+  if (cache.size <= SEARCH_CACHE_LIMIT) return
+  const oldestKey = cache.keys().next().value
+  if (oldestKey) {
+    cache.delete(oldestKey)
+  }
+}
+
+function mergeSearchItems(
+  primary: RuntimeWorkSearchItem[],
+  secondary: RuntimeWorkSearchItem[],
+  limit: number
+): RuntimeWorkSearchItem[] {
+  const merged = new Map<string, RuntimeWorkSearchItem>()
+  const candidates = [...primary, ...secondary]
+  candidates.forEach(item => {
+    const key = [
+      item.address.deviceId,
+      item.address.taskId,
+      item.address.workspacePath ?? '',
+      item.messageId ?? '',
+    ].join('\0')
+    merged.set(key, item)
+  })
+  return [...merged.values()]
+    .sort((left, right) => searchUpdatedAt(right) - searchUpdatedAt(left))
+    .slice(0, limit)
+}
+
+function searchUpdatedAt(item: RuntimeWorkSearchItem): number {
+  if (!item.updatedAt) return 0
+  const timestamp = new Date(item.updatedAt).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
 }
 
 function renderHighlightedSnippet(snippet: string, query: string) {

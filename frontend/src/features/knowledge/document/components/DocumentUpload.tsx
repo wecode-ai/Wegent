@@ -48,22 +48,22 @@ import {
 } from '@/hooks/useBatchAttachment'
 import { MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
+import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants'
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
-
-// Unsupported file extensions that need friendly error message (images are not supported for RAG)
-const KB_UNSUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
-
-/**
- * Check if a file extension is in the unsupported list (images)
- */
-function isKBUnsupportedExtension(filename: string): boolean {
-  const ext = filename.toLowerCase().slice(filename.lastIndexOf('.'))
-  return KB_UNSUPPORTED_EXTENSIONS.includes(ext)
-}
+import {
+  UploadMultimodalPromptSettings,
+  type UploadMultimodalPrompts,
+} from '@/features/knowledge/multimodal/components/UploadMultimodalPromptSettings'
+import {
+  KB_DOCUMENT_ACCEPT,
+  isKBUnsupportedExtension,
+  isVideoModelBlock,
+} from '@/features/knowledge/multimodal/utils/upload-validation'
+import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
 function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
   return {
@@ -86,22 +86,23 @@ export interface TableDocument {
   source_config: { url: string }
 }
 
-// Maximum documents allowed in notebook mode
-export const NOTEBOOK_MAX_DOCUMENTS = 50
-
 interface DocumentUploadProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onUploadComplete: (
     attachments: { attachment: Attachment; file: File }[],
-    splitterConfig?: Partial<SplitterConfig>
+    splitterConfig?: Partial<SplitterConfig>,
+    multimodalAnalysisPrompts?: {
+      video?: string | null
+      image?: string | null
+    }
   ) => Promise<void>
   onTableAdd?: (data: TableDocument) => Promise<void>
   /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
-  /** Knowledge base type: 'notebook' or 'classic' */
+  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   kbType?: string
-  /** Current document count in the knowledge base */
+  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   currentDocumentCount?: number
   /** Currently selected folder ID for upload destination (0 = root) */
   folderId?: number
@@ -109,6 +110,21 @@ interface DocumentUploadProps {
   folderOptions?: Array<{ id: number; name: string; depth: number }>
   /** Callback when folder selection changes */
   onFolderChange?: (folderId: number) => void
+  /** Whether multimodal (video/image) analysis is enabled for this KB — gates video/image file selection */
+  multimodalAnalysisEnabled?: boolean
+  /**
+   * Whether the KB's currently selected multimodal analysis model declares
+   * supportsVideo. When false, video uploads are blocked at the picker with a
+   * friendly message (the backend remains the correctness boundary; this is a
+   * UX early-rejection so users don't waste an upload only to fail at convert
+   * time). Images are unaffected — image-only models are a legitimate choice
+   * for image-only KBs.
+   */
+  multimodalModelSupportsVideo?: boolean
+  /** KB-level video prompt (used to resolve the inherited effective value shown to the user) */
+  multimodalVideoPrompt?: string | null
+  /** KB-level image prompt (used to resolve the inherited effective value shown to the user) */
+  multimodalImagePrompt?: string | null
 }
 
 export function DocumentUpload({
@@ -117,11 +133,13 @@ export function DocumentUpload({
   onUploadComplete,
   onTableAdd,
   onWebAdd,
-  kbType = 'classic',
-  currentDocumentCount = 0,
   folderId = 0,
   folderOptions = [],
   onFolderChange,
+  multimodalAnalysisEnabled: multimodalAnalysisEnabledProp = false,
+  multimodalModelSupportsVideo = true,
+  multimodalVideoPrompt,
+  multimodalImagePrompt,
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -130,6 +148,12 @@ export function DocumentUpload({
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
     buildDefaultSplitterConfig
   )
+  // Gate the KB's multimodal flag by the global pipeline switch: when the
+  // switch is off, an already-enabled KB must still behave as non-multimodal
+  // (reject video/image uploads, hide prompt settings) so users cannot trigger
+  // a disabled pipeline.
+  const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const multimodalAnalysisEnabled = multimodalAnalysisEnabledProp && multimodalFeatureEnabled
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -164,6 +188,11 @@ export function DocumentUpload({
   const [editingFileId, setEditingFileId] = useState<string | null>(null)
   const [editingFileName, setEditingFileName] = useState('')
 
+  // Per-upload multimodal prompt overrides (reported by the
+  // UploadMultimodalPromptSettings child component via onChange). null when the
+  // queue has no multimodal files. Forwarded per-media-type at submit time.
+  const [multimodalPrompts, setMultimodalPrompts] = useState<UploadMultimodalPrompts | null>(null)
+
   // Track pending files count to auto-start upload
   const pendingCount = state.files.filter(f => f.status === 'pending').length
 
@@ -179,13 +208,27 @@ export function DocumentUpload({
     (files: File[]) => {
       if (files.length === 0) return
 
-      // Filter out unsupported files (images) with friendly error message
-      const unsupportedFiles = files.filter(f => isKBUnsupportedExtension(f.name))
-      const supportedFiles = files.filter(f => !isKBUnsupportedExtension(f.name))
+      // Filter out unsupported files (images when multimodal disabled; videos
+      // when the selected model is image-only) with a friendly error message.
+      const unsupportedFiles = files.filter(f =>
+        isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
+      )
+      const supportedFiles = files.filter(
+        f =>
+          !isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
+      )
 
-      // Show friendly error if any unsupported files were selected
+      // Show friendly error if any unsupported files were selected. Video
+      // blocked by an image-only model gets a distinct, actionable message.
       if (unsupportedFiles.length > 0) {
-        setValidationError(t('document.upload.unsupportedFileType'))
+        const blockedByVideoModel = unsupportedFiles.some(f =>
+          isVideoModelBlock(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
+        )
+        setValidationError(
+          blockedByVideoModel
+            ? t('document.upload.videoModelNotSupported')
+            : t('document.upload.unsupportedFileType')
+        )
         setTimeout(() => setValidationError(null), 5000)
       }
 
@@ -198,7 +241,7 @@ export function DocumentUpload({
         setTimeout(() => setValidationError(null), 5000)
       }
     },
-    [addFiles, t]
+    [addFiles, t, multimodalAnalysisEnabled, multimodalModelSupportsVideo]
   )
 
   const handleFileChange = useCallback(
@@ -273,9 +316,17 @@ export function DocumentUpload({
 
     setIsConfirming(true)
     try {
-      await onUploadComplete(successfulAttachments, splitterConfig)
+      await onUploadComplete(
+        successfulAttachments,
+        splitterConfig,
+        // Per-media-type prompt overrides collected by the
+        // UploadMultimodalPromptSettings child; null when the queue has no
+        // multimodal files → each document inherits the KB default.
+        multimodalPrompts ?? undefined
+      )
       reset()
       setSplitterConfig(buildDefaultSplitterConfig())
+      setMultimodalPrompts(null)
     } catch {
       // Error handled by parent
     } finally {
@@ -286,6 +337,7 @@ export function DocumentUpload({
   const handleClose = () => {
     reset()
     setSplitterConfig(buildDefaultSplitterConfig())
+    setMultimodalPrompts(null)
     setValidationError(null)
     setUploadMode('file')
     setTextContent('')
@@ -701,11 +753,6 @@ export function DocumentUpload({
     </>
   )
 
-  // Check if notebook mode has reached document limit
-  const isNotebookMode = kbType === 'notebook'
-  const totalDocumentCount = currentDocumentCount + successCount
-  const isAtLimit = isNotebookMode && totalDocumentCount >= NOTEBOOK_MAX_DOCUMENTS
-
   // Render file upload mode
   const renderFileMode = () => (
     <>
@@ -771,6 +818,9 @@ export function DocumentUpload({
           </p>
           <p className="text-xs text-text-muted mt-1">
             {t('document.document.supportedTypes', {
+              // Show the conservative document/image limit (100 MB). Videos are
+              // validated separately up to 1 GB via isValidFileSizeForFile, but
+              // the generic hint shows the lower limit that applies to most files.
               maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
             })}
           </p>
@@ -779,7 +829,11 @@ export function DocumentUpload({
             type="file"
             className="hidden"
             multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.markdown,.adoc,.asciidoc,.asm,.bat,.c,.cc,.cpp,.css,.conf,.config,.dart,.env,.go,.gradle,.groovy,.h,.html,.ini,.java,.js,.json,.jsx,.kotlin,.less,.license,.log,.lua,.mjs,.php,.pl,.properties,.ps1,.py,.rb,.readme,.rst,.rust,.sass,.scala,.scss,.sh,.sql,.srt,.styl,.svg,.swift,.textile,.toml,.ts,.tsx,.tsv,.vue,.wiki,.xml,.yaml,.yml"
+            accept={
+              multimodalAnalysisEnabled
+                ? `${KB_DOCUMENT_ACCEPT},${MULTIMODAL_EXTENSIONS.join(',')}`
+                : KB_DOCUMENT_ACCEPT
+            }
             onChange={handleFileChange}
             disabled={state.isUploading}
           />
@@ -1035,29 +1089,21 @@ export function DocumentUpload({
                         config={splitterConfig}
                         onChange={setSplitterConfig}
                       />
+
+                      {/* Multimodal analysis prompt overrides — encapsulated in a
+                          dedicated component (media detection + per-type editors)
+                          so this shared file stays free of a large multimodal block. */}
+                      <UploadMultimodalPromptSettings
+                        files={state.files}
+                        multimodalAnalysisEnabled={multimodalAnalysisEnabled}
+                        kbVideoPrompt={multimodalVideoPrompt}
+                        kbImagePrompt={multimodalImagePrompt}
+                        onChange={setMultimodalPrompts}
+                      />
                     </div>
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
-            )}
-          </div>
-        )}
-
-        {/* Notebook mode document limit progress bar - at the bottom */}
-        {isNotebookMode && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-text-secondary">{t('document.upload.documentCount')}</span>
-              <span className={cn('font-medium', isAtLimit ? 'text-error' : 'text-text-primary')}>
-                {totalDocumentCount}/{NOTEBOOK_MAX_DOCUMENTS}
-              </span>
-            </div>
-            <Progress
-              value={(totalDocumentCount / NOTEBOOK_MAX_DOCUMENTS) * 100}
-              className={cn('h-2', isAtLimit && '[&>div]:bg-error')}
-            />
-            {isAtLimit && (
-              <p className="text-xs text-error">{t('document.upload.notebookLimitReached')}</p>
             )}
           </div>
         )}

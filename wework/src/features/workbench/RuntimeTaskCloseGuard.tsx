@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useState } from 'react'
+import { createPortal, flushSync } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { destroyCurrentWindow, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
+import { updateAppPreferences } from '@/tauri/appPreferences'
+import { closeMainWindowToTray, installRuntimeTaskCloseGuard } from '@/tauri/runtimeTaskCloseGuard'
 import type { RuntimeWorkListResponse } from '@/types/api'
 
 interface RuntimeTaskCloseGuardProps {
@@ -13,13 +14,10 @@ interface RuntimeTaskCloseGuardProps {
 
 export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProps) {
   const { t } = useTranslation('common')
-  const runtimeWorkRef = useRef(runtimeWork)
   const [closeDialogOpen, setCloseDialogOpen] = useState(false)
   const [closing, setClosing] = useState(false)
 
-  useEffect(() => {
-    runtimeWorkRef.current = runtimeWork
-  }, [runtimeWork])
+  void runtimeWork
 
   useEffect(() => {
     if (!isTauriRuntime()) return undefined
@@ -27,12 +25,10 @@ export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProp
     let unlisten: (() => void) | undefined
     let cancelled = false
 
-    void installRuntimeTaskCloseGuard(
-      () => runtimeWorkRef.current,
-      () => {
-        setCloseDialogOpen(true)
-      }
-    )
+    void installRuntimeTaskCloseGuard(() => {
+      setClosing(false)
+      setCloseDialogOpen(true)
+    })
       .then(nextUnlisten => {
         if (cancelled) {
           nextUnlisten()
@@ -54,10 +50,10 @@ export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProp
     <RuntimeTaskCloseConfirmDialog
       open={closeDialogOpen}
       closing={closing}
-      title={t('workbench.runtime_task_close_confirm_title')}
-      description={t('workbench.runtime_task_close_confirm_description')}
-      cancelLabel={t('workbench.cancel')}
-      confirmLabel={t('workbench.runtime_task_close_confirm_action')}
+      title={t('workbench.close_to_tray_hint_title')}
+      description={t('workbench.close_to_tray_hint_description')}
+      cancelLabel={t('workbench.close_to_tray_hint_keep_open')}
+      confirmLabel={t('workbench.close_to_tray_hint_action')}
       onCancel={() => {
         if (closing) return
         setCloseDialogOpen(false)
@@ -65,9 +61,15 @@ export function RuntimeTaskCloseGuard({ runtimeWork }: RuntimeTaskCloseGuardProp
       onConfirm={async () => {
         setClosing(true)
         try {
-          await destroyCurrentWindow()
+          await updateAppPreferences({ closeToTrayHintSeen: true })
+          flushSync(() => {
+            setCloseDialogOpen(false)
+            setClosing(false)
+          })
+          await closeMainWindowToTray()
         } catch (error) {
-          console.error('Failed to close window after runtime task close confirmation:', error)
+          console.error('Failed to hide window after close-to-tray hint confirmation:', error)
+          setCloseDialogOpen(true)
           setClosing(false)
         }
       }}
@@ -119,7 +121,7 @@ function RuntimeTaskCloseConfirmDialog({
         >
           {title}
         </h2>
-        <p className="mt-2 text-[13px] leading-[18px] text-text-secondary">{description}</p>
+        <p className="mt-2 text-sm leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-6 flex justify-end gap-2">
           <Button
             type="button"

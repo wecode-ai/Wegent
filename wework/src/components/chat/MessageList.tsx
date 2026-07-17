@@ -1,4 +1,5 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
@@ -14,6 +15,8 @@ import {
   Copy,
   File as FileIcon,
   FileText,
+  Folder,
+  MessageSquare,
   Package,
   Pencil,
   Target,
@@ -26,6 +29,7 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import {
   getAttachmentTextPreview,
   getAttachmentTypeLabel,
@@ -36,6 +40,7 @@ import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
+import { isImeEnterEvent } from '@/lib/ime'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -50,7 +55,9 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
+import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -61,8 +68,14 @@ interface MessageListProps {
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
-  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string
     loadDiff: () => Promise<string>
@@ -70,17 +83,23 @@ interface MessageListProps {
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
-  onOpenWorkspaceFile?: (path: string) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onAddSelectionToConversation?: (text: string) => void
+  onAskSelectionInSidebar?: (text: string) => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -90,6 +109,14 @@ interface MessageListProps {
 const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
+const SELECTION_ACTION_GAP = 8
+
+interface MessageTextSelection {
+  text: string
+  left: number
+  top: number
+  conversationKey?: string | number | null
+}
 const CODEX_FILE_MENTIONS_HEADER_PATTERN = /^\s*# Files mentioned by the user:\s*/i
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 const CODEX_FILE_MENTION_LINE_PATTERN = /^##\s+(.+?):\s+(.+)$/gm
@@ -121,19 +148,27 @@ export const MessageList = memo(function MessageList({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onAddSelectionToConversation,
+  onAskSelectionInSidebar,
   renderGapAfterMessage,
 }: MessageListProps) {
+  const { t } = useTranslation('common')
   const listRef = useRef<HTMLDivElement>(null)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
+  const [textSelection, setTextSelection] = useState<MessageTextSelection | null>(null)
   const [layoutWidth, setLayoutWidth] = useState(0)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
@@ -151,8 +186,14 @@ export const MessageList = memo(function MessageList({
     editingMessageId === editableLastUserMessageId ? editingMessageId : null
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
+  const lastVisibleMessage = visibleMessages.at(-1)
+  const waitingForAssistantTurn =
+    !lastVisibleMessage ||
+    lastVisibleMessage.role === 'user' ||
+    lastVisibleMessage.status === 'failed'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
+    waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const disableMessageContentVisibility =
     disableContentVisibility || isTextSelectionActive || isTauri
@@ -205,25 +246,45 @@ export const MessageList = memo(function MessageList({
   }, [])
 
   useEffect(() => {
-    if (isTauri) {
-      return
-    }
+    if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
 
     const updateSelectionState = () => {
       const selection = document.getSelection?.()
       const root = listRef.current
       if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
         setIsTextSelectionActive(false)
+        setTextSelection(null)
         return
       }
 
       const selectionTouchesList =
         isNodeInsideElement(selection.anchorNode, root) ||
         isNodeInsideElement(selection.focusNode, root)
-      setIsTextSelectionActive(selectionTouchesList)
+      setIsTextSelectionActive(!isTauri && selectionTouchesList)
+      if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
+
+      const range = selection.getRangeAt(0)
+      const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
+      if (selectedMessageBodies.length !== 1) {
+        setTextSelection(null)
+        return
+      }
+
+      const text = selection.toString().trim()
+      if (!text) {
+        setTextSelection(null)
+        return
+      }
+      const rect = range.getBoundingClientRect()
+      setTextSelection({
+        text,
+        left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
+        top: Math.max(rect.top - SELECTION_ACTION_GAP, 44),
+        conversationKey,
+      })
     }
 
-    const handlePointerUp = () => {
+    const scheduleSelectionUpdate = () => {
       window.requestAnimationFrame(updateSelectionState)
     }
 
@@ -231,18 +292,31 @@ export const MessageList = memo(function MessageList({
       updateSelectionState()
     }
 
-    document.addEventListener('pointerup', handlePointerUp)
-    document.addEventListener('pointercancel', handlePointerUp)
-    document.addEventListener('selectionchange', updateSelectionState)
+    document.addEventListener('pointerup', scheduleSelectionUpdate)
+    document.addEventListener('pointercancel', scheduleSelectionUpdate)
+    document.addEventListener('mouseup', scheduleSelectionUpdate)
+    document.addEventListener('keyup', scheduleSelectionUpdate)
+    document.addEventListener('selectionchange', scheduleSelectionUpdate)
+    window.addEventListener('scroll', updateSelectionState, true)
     window.addEventListener('blur', handleBlur)
 
     return () => {
-      document.removeEventListener('pointerup', handlePointerUp)
-      document.removeEventListener('pointercancel', handlePointerUp)
-      document.removeEventListener('selectionchange', updateSelectionState)
+      document.removeEventListener('pointerup', scheduleSelectionUpdate)
+      document.removeEventListener('pointercancel', scheduleSelectionUpdate)
+      document.removeEventListener('mouseup', scheduleSelectionUpdate)
+      document.removeEventListener('keyup', scheduleSelectionUpdate)
+      document.removeEventListener('selectionchange', scheduleSelectionUpdate)
+      window.removeEventListener('scroll', updateSelectionState, true)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [isTauri])
+  }, [conversationKey, isTauri, onAddSelectionToConversation, onAskSelectionInSidebar])
+
+  const applySelectionAction = (action: (text: string) => void) => {
+    if (!textSelection) return
+    action(textSelection.text)
+    document.getSelection()?.removeAllRanges()
+    setTextSelection(null)
+  }
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
@@ -250,6 +324,34 @@ export const MessageList = memo(function MessageList({
 
   return (
     <div ref={listRef} className={cn(listLayoutClass, className)}>
+      {textSelection &&
+        textSelection.conversationKey === conversationKey &&
+        createPortal(
+          <div
+            data-testid="message-selection-actions"
+            className="fixed z-critical flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-lg border border-border bg-base p-1 shadow-lg"
+            style={{ left: textSelection.left, top: textSelection.top }}
+            onPointerDown={event => event.preventDefault()}
+          >
+            <button
+              type="button"
+              data-testid="add-selection-to-conversation-button"
+              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => applySelectionAction(onAddSelectionToConversation!)}
+            >
+              {t('workbench.add_selection_to_conversation')}
+            </button>
+            <button
+              type="button"
+              data-testid="ask-selection-in-sidebar-button"
+              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => applySelectionAction(onAskSelectionInSidebar!)}
+            >
+              {t('workbench.ask_selection_in_sidebar')}
+            </button>
+          </div>,
+          document.body
+        )}
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
         return (
@@ -272,6 +374,7 @@ export const MessageList = memo(function MessageList({
                 <UserMessage
                   message={message}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onOpenLocalSkillFile={onOpenLocalSkillFile}
                   editable={message.id === editableLastUserMessageId}
                   editing={message.id === activeEditingMessageId}
                   editSubmitting={message.id === activeSubmittingEditMessageId}
@@ -303,10 +406,13 @@ export const MessageList = memo(function MessageList({
                   onLoadFileChangesDiff={onLoadFileChangesDiff}
                   onRevertFileChanges={onRevertFileChanges}
                   onOpenFileChangesReview={onOpenFileChangesReview}
+                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
                   onRequestUserInputSubmit={onRequestUserInputSubmit}
                   onRequestUserInputIgnore={onRequestUserInputIgnore}
                   onOpenAssistantPlan={onOpenAssistantPlan}
+                  onLoadFullTranscript={onLoadFullTranscript}
+                  loadingFullTranscript={loadingFullTranscript}
                   hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                   hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
@@ -329,6 +435,26 @@ function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSPro
   return {
     containIntrinsicSize: `0 ${Math.ceil(estimatedHeight ?? 220)}px`,
   } as CSSProperties
+}
+
+function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(
+    element => selectedTextWithinElement(range, element).trim().length > 0
+  )
+}
+
+function selectedTextWithinElement(range: Range, element: HTMLElement): string {
+  if (!range.intersectsNode(element)) return ''
+
+  const intersection = document.createRange()
+  intersection.selectNodeContents(element)
+  if (intersection.compareBoundaryPoints(Range.START_TO_START, range) < 0) {
+    intersection.setStart(range.startContainer, range.startOffset)
+  }
+  if (intersection.compareBoundaryPoints(Range.END_TO_END, range) > 0) {
+    intersection.setEnd(range.endContainer, range.endOffset)
+  }
+  return intersection.toString()
 }
 
 function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
@@ -360,7 +486,12 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
       ? 'onOpenFileChangesReview'
       : null,
+    previous.fileChangesDiffPreviewDisabledSubtaskId !==
+    next.fileChangesDiffPreviewDisabledSubtaskId
+      ? 'fileChangesDiffPreviewDisabledSubtaskId'
+      : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
       : null,
@@ -372,11 +503,19 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
+    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
+    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
     previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
       ? 'hiddenRequestUserInputIds'
+      : null,
+    previous.onAddSelectionToConversation !== next.onAddSelectionToConversation
+      ? 'onAddSelectionToConversation'
+      : null,
+    previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
+      ? 'onAskSelectionInSidebar'
       : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
@@ -458,13 +597,14 @@ function formatCompactDuration(durationMs: number): string {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
-function getStoppedElapsedDuration(message: WorkbenchMessage): string {
+function getStoppedElapsedDuration(message: WorkbenchMessage): string | null {
   const startedAt = getTurnStartMs(message.createdAt)
-  if (startedAt === undefined) return '0s'
+  if (startedAt === undefined) return null
 
   const completedAt = getMessageTimestampMs(message.completedAt)
   if (completedAt !== undefined && completedAt >= startedAt) {
-    return formatCompactDuration(completedAt - startedAt)
+    const durationMs = completedAt - startedAt
+    return durationMs >= 1000 ? formatCompactDuration(durationMs) : null
   }
 
   const blockEndTimes =
@@ -473,7 +613,8 @@ function getStoppedElapsedDuration(message: WorkbenchMessage): string {
       .filter((createdAt): createdAt is number => Number.isFinite(createdAt)) ?? []
   const endedAt = blockEndTimes.length > 0 ? Math.max(...blockEndTimes) : startedAt
 
-  return formatCompactDuration(endedAt - startedAt)
+  const durationMs = endedAt - startedAt
+  return durationMs >= 1000 ? formatCompactDuration(durationMs) : null
 }
 
 function getProcessingSummaryStartMs(
@@ -555,6 +696,7 @@ async function copyText(text: string) {
 function UserMessage({
   message,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   editable = false,
   editing = false,
   editSubmitting = false,
@@ -563,7 +705,8 @@ function UserMessage({
   onSubmitEdit,
 }: {
   message: WorkbenchMessage
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
   editing?: boolean
   editSubmitting?: boolean
@@ -608,10 +751,12 @@ function UserMessage({
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
   const shouldCollapse =
-    displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-    displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+    message.runtimeGuidance !== true &&
+    (displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+      displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
+  const codeCommentCount = message.codeComments?.length ?? 0
 
   return (
     <div
@@ -710,18 +855,19 @@ function UserMessage({
         ) : displayContent ? (
           <div
             className={[
-              'overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary',
+              'overflow-hidden rounded-2xl bg-muted text-sm leading-5 text-text-primary',
               hasImagePreviews ? 'max-w-[80%]' : 'max-w-full',
             ].join(' ')}
           >
             <div
               data-testid="user-message-content"
+              data-message-selectable-text
               className={[
                 'relative overflow-hidden break-words whitespace-pre-wrap bg-muted px-4 py-1.5',
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
-              {renderUserContent(displayContent)}
+              {renderUserContent(displayContent, onOpenLocalSkillFile, onOpenWorkspaceFile)}
               {showGoalRequestBadge && (
                 <div className="mt-1.5 flex">
                   <span
@@ -730,6 +876,17 @@ function UserMessage({
                   >
                     <Target className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>{t('workbench.goal_chip', '目标')}</span>
+                  </span>
+                </div>
+              )}
+              {codeCommentCount > 0 && (
+                <div className="mt-1.5 flex">
+                  <span
+                    data-testid="message-code-comment-context-badge"
+                    className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t('workbench.code_comment_count', { count: codeCommentCount })}</span>
                   </span>
                 </div>
               )}
@@ -819,7 +976,7 @@ function UserMessageEditForm({
   return (
     <div
       data-testid="edit-user-message-form"
-      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-[13px] leading-5 text-text-primary"
+      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-sm leading-5 text-text-primary"
     >
       <textarea
         ref={textareaRef}
@@ -828,7 +985,7 @@ function UserMessageEditForm({
         disabled={submitting}
         onChange={event => setDraft(event.target.value)}
         onKeyDown={event => {
-          if (event.nativeEvent.isComposing) return
+          if (isImeEnterEvent(event)) return
           if (event.key === 'Enter' && event.shiftKey) return
           if (event.key === 'Enter') {
             event.preventDefault()
@@ -840,7 +997,7 @@ function UserMessageEditForm({
             onCancel?.()
           }
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-[13px] leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-sm leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -848,7 +1005,7 @@ function UserMessageEditForm({
           data-testid="cancel-edit-user-message-button"
           disabled={submitting}
           onClick={onCancel}
-          className="flex h-8 items-center justify-center rounded-md px-3 text-[13px] font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
         >
           取消
         </button>
@@ -857,7 +1014,7 @@ function UserMessageEditForm({
           data-testid="submit-edit-user-message-button"
           disabled={submitDisabled}
           onClick={submit}
-          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-[13px] font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           发送
         </button>
@@ -961,7 +1118,7 @@ function MessageCodexFileMention({
     <button
       type="button"
       data-testid="message-codex-file-mention"
-      className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
+      className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
       title={file.path}
       aria-label={file.filename}
       onClick={() => onOpenFile?.(file.path)}
@@ -1018,7 +1175,7 @@ function MessageDocumentAttachment({
       className="flex h-14 w-[220px] max-w-full items-center gap-3 rounded-2xl border border-border bg-base px-3 text-left text-xs text-text-secondary shadow-sm"
       aria-label={attachment.filename}
     >
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-[9px] font-semibold leading-none text-red-600">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-xs font-semibold leading-none text-red-600">
         {typeLabel}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -1040,7 +1197,7 @@ function MessageTextAttachment({
   const attachmentPath = openableAttachmentPath(attachment)
   const clickable = Boolean(attachmentPath)
   const className =
-    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm'
+    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm'
   const content = (
     <>
       <FileText
@@ -1268,13 +1425,14 @@ function MessageHoverActions({
   )
 }
 
-const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
+const CODEX_MENTION_LINK_PATTERN =
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+))\)/g
 
-function localSkillTokenTestId(name: string): string {
+function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-function displayLocalSkillName(name: string): string {
+function displayCodexMentionName(name: string): string {
   return name
     .split(/[-_\s]+/)
     .filter(Boolean)
@@ -1282,32 +1440,67 @@ function displayLocalSkillName(name: string): string {
     .join(' ')
 }
 
-function renderUserContent(content: string) {
+function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' | 'file' | 'folder' {
+  if (href.startsWith('app://')) return 'app'
+  if (href.startsWith('plugin://')) return 'plugin'
+  if (href.startsWith('file://')) return 'file'
+  if (href.startsWith('folder://')) return 'folder'
+  return 'skill'
+}
+
+function renderUserContent(
+  content: string,
+  onOpenLocalSkillFile?: (path: string) => void,
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+) {
   const parts: ReactNode[] = []
   let offset = 0
 
-  for (const match of content.matchAll(LOCAL_SKILL_LINK_PATTERN)) {
+  for (const match of content.matchAll(CODEX_MENTION_LINK_PATTERN)) {
     const start = match.index ?? 0
     const text = content.slice(offset, start)
     if (text) {
       parts.push(<span key={`text-${offset}`}>{text}</span>)
     }
 
-    const skillName = match[1]
-    const href = match[2]
+    const mentionName = match[2]
+    const href = match[3]
+    const skillFilePath = composerSkillFilePath(match[0])
+    const pathReference = composerPathReference(match[0])
+    const mentionKind = codexMentionKind(href)
+    const tokenTestId = codexMentionTokenTestId(mentionName)
+    const testId =
+      mentionKind === 'skill'
+        ? `sent-local-skill-token-${tokenTestId}`
+        : `sent-${mentionKind}-token-${tokenTestId}`
+    const iconTestId =
+      mentionKind === 'skill'
+        ? `sent-local-skill-icon-${tokenTestId}`
+        : `sent-${mentionKind}-icon-${tokenTestId}`
     parts.push(
       <a
-        key={`skill-${start}`}
+        key={`${mentionKind}-${start}`}
         href={href}
-        data-testid={`sent-local-skill-token-${localSkillTokenTestId(skillName)}`}
-        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
-        onClick={event => event.preventDefault()}
+        data-testid={testId}
+        className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-sm font-medium leading-none text-blue-600 no-underline"
+        onClick={event => {
+          event.preventDefault()
+          if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+          if (pathReference && !pathReference.directory) onOpenWorkspaceFile?.(pathReference.path)
+        }}
       >
-        <Package
-          data-testid={`sent-local-skill-icon-${localSkillTokenTestId(skillName)}`}
-          className="h-3.5 w-3.5 shrink-0 text-blue-600"
-        />
-        <span className="min-w-0 truncate">{displayLocalSkillName(skillName)}</span>
+        {mentionKind === 'folder' ? (
+          <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : mentionKind === 'file' ? (
+          <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : (
+          <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        )}
+        <span className="min-w-0 truncate">
+          {mentionKind === 'file' || mentionKind === 'folder'
+            ? mentionName
+            : displayCodexMentionName(mentionName)}
+        </span>
       </a>
     )
     offset = start + match[0].length
@@ -1341,14 +1534,23 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
 }
 
-function getDisplayProcessingBlocks(blocks: ProcessingBlock[] | undefined): ProcessingBlock[] {
+function getDisplayProcessingBlocks(
+  blocks: ProcessingBlock[] | undefined,
+  settleForCancelledTurn = false
+): ProcessingBlock[] {
   if (!blocks?.length) return []
 
-  return blocks.filter(block => {
-    if (block.type !== 'text') return true
+  return blocks
+    .filter(block => {
+      if (block.type !== 'text') return true
 
-    return Boolean(block.content.trim())
-  })
+      return Boolean(block.content.trim())
+    })
+    .map(block =>
+      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+        ? { ...block, status: 'done' as const }
+        : block
+    )
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1367,10 +1569,13 @@ function AssistantMessage({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onLoadFullTranscript,
+  loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
 }: {
@@ -1379,8 +1584,14 @@ function AssistantMessage({
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
-  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string
     loadDiff: () => Promise<string>
@@ -1388,15 +1599,20 @@ function AssistantMessage({
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
-  onOpenWorkspaceFile?: (path: string) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
+  const stoppedElapsedDuration =
+    isCancelled && message.stoppedNotice !== false ? getStoppedElapsedDuration(message) : null
   const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
   const shouldHideContent =
     shouldHideFailedAssistantContent(message) ||
@@ -1404,10 +1620,10 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks)
+  const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
-  const isStreaming = message.status === 'streaming'
+  const isStreaming = !isCancelled && message.status === 'streaming'
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning
@@ -1422,21 +1638,12 @@ function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
+  const generatedImages = getGeneratedImages(displayBlocks)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
-  // A file referenced in the response usually belongs to this turn's changes, so
-  // route the link into the previous-turn diff review focused on that file. When
-  // the turn has no recorded changes, fall back to the workspace file panel.
-  const fileChangesSubtaskId = message.fileChanges ? message.subtaskId : undefined
-  const openFileFromLink = (path: string) => {
-    if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
-      onOpenFileChangesReview({
-        subtaskId: fileChangesSubtaskId,
-        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
-        reviewTitle: t('file_changes.previous_turn_label'),
-        defaultFileTreeVisible: false,
-        focusFilePath: path,
-      })
+  const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
+    if (options) {
+      onOpenWorkspaceFile?.(path, options)
       return
     }
     onOpenWorkspaceFile?.(path)
@@ -1444,7 +1651,7 @@ function AssistantMessage({
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
 
   return (
-    <div className="min-w-0 max-w-full text-[13px] leading-6 text-text-primary">
+    <div className="min-w-0 max-w-full text-chat text-text-primary">
       <div
         className="w-full max-w-full"
         data-testid="message-hover-region"
@@ -1457,9 +1664,11 @@ function AssistantMessage({
               data-testid="assistant-stopped-notice"
               className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
             >
-              {t('assistant_status.stopped_after', {
-                duration: getStoppedElapsedDuration(message),
-              })}
+              {stoppedElapsedDuration
+                ? t('assistant_status.stopped_after', {
+                    duration: stoppedElapsedDuration,
+                  })
+                : t('assistant_status.stopped')}
             </div>
           ) : null}
           {shouldShowProcessingSummary && (
@@ -1467,7 +1676,11 @@ function AssistantMessage({
               blocks={displayBlocks}
               isStreaming={isStreaming}
               startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={isCancelled}
+              forceExpanded={
+                isCancelled ||
+                message.runtimeGuidanceSplitBefore === true ||
+                message.runtimeGuidanceContinuation === true
+              }
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
@@ -1475,13 +1688,29 @@ function AssistantMessage({
               onRequestUserInputSubmit={onRequestUserInputSubmit}
               onRequestUserInputIgnore={onRequestUserInputIgnore}
               onOpenAssistantPlan={onOpenAssistantPlan}
+              onLoadFullTranscript={onLoadFullTranscript}
+              loadingFullTranscript={loadingFullTranscript}
               hideRequestUserInputBlocks={hideRequestUserInputBlocks}
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
+          {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
+          {message.contentTruncated ? (
+            <ContentTruncatedNotice
+              originalChars={message.contentOriginalChars}
+              onLoadFullTranscript={onLoadFullTranscript}
+              loadingFullTranscript={loadingFullTranscript}
+            />
+          ) : null}
           {hasVisibleContent ? (
-            <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
+            <div data-message-selectable-text data-testid="assistant-message-content">
+              <AssistantMarkdown
+                content={visibleContent}
+                isStreaming={isStreaming}
+                onOpenFile={openFileFromLink}
+              />
+            </div>
           ) : null}
           {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
@@ -1518,6 +1747,9 @@ function AssistantMessage({
               onLoadDiff={onLoadFileChangesDiff}
               onRevert={onRevertFileChanges}
               onOpenReview={onOpenFileChangesReview}
+              diffPreviewDisabled={
+                fileChangesDiffPreviewDisabledSubtaskId === String(message.subtaskId)
+              }
             />
           ) : null}
         </div>
@@ -1527,6 +1759,82 @@ function AssistantMessage({
             <MessageHoverActions message={message} align="left" visible={areHoverActionsVisible} />
           )}
       </div>
+    </div>
+  )
+}
+
+interface GeneratedImageArtifact {
+  id: string
+  src: string
+  alt: string
+}
+
+function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
+  return blocks.flatMap(block => {
+    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
+    const payload = block.renderPayload
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+    const imageBase64 = Reflect.get(payload, 'imageBase64')
+    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
+    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    return [
+      {
+        id: block.id,
+        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
+        alt:
+          typeof revisedPrompt === 'string' && revisedPrompt.trim()
+            ? revisedPrompt
+            : 'Generated image',
+      },
+    ]
+  })
+}
+
+function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  return (
+    <div
+      className="mb-3 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2"
+      data-testid="generated-image-gallery"
+    >
+      {images.map(image => (
+        <img
+          key={image.id}
+          src={image.src}
+          alt={image.alt}
+          className="h-auto w-full rounded-lg border border-border bg-surface object-contain"
+          data-testid="generated-image"
+        />
+      ))}
+    </div>
+  )
+}
+
+function ContentTruncatedNotice({
+  originalChars,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
+}: {
+  originalChars?: number
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
+      <span>
+        早期内容已从当前视图卸载
+        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
+      </span>
+      {onLoadFullTranscript ? (
+        <button
+          type="button"
+          data-testid="load-full-runtime-transcript-button"
+          onClick={() => void onLoadFullTranscript()}
+          disabled={loadingFullTranscript}
+          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+        >
+          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -1587,6 +1895,7 @@ function AssistantErrorCard({
 }) {
   const { t } = useTranslation('chat')
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
+  const [isDismissed, setIsDismissed] = useState(false)
   const displayError = rawError || error
   const hasErrorDetails = Boolean(displayError)
   const parsedError = parseChatError(displayError ?? '', errorType)
@@ -1611,6 +1920,10 @@ function AssistantErrorCard({
             ),
           })
 
+  if (isDismissed) {
+    return null
+  }
+
   return (
     <div
       data-testid="assistant-error-card"
@@ -1620,7 +1933,7 @@ function AssistantErrorCard({
         <AlertTriangle className="h-3 w-3" strokeWidth={2} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-semibold leading-5 text-text-primary">{title}</p>
+        <p className="text-sm font-semibold leading-5 text-text-primary">{title}</p>
         <p className="mt-0.5 text-xs leading-[18px] text-text-secondary">{description}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
@@ -1634,7 +1947,10 @@ function AssistantErrorCard({
           <button
             type="button"
             data-testid="assistant-error-retry"
-            onClick={() => onRetry?.(message)}
+            onClick={() => {
+              setIsDismissed(true)
+              onRetry?.(message)
+            }}
             className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             {t('assistant_error.actions.retry', '重试')}
@@ -1661,7 +1977,7 @@ function AssistantErrorCard({
           <pre
             data-testid="assistant-error-details"
             className={[
-              'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-[11px] leading-4 text-text-muted',
+              'mt-2 max-w-full rounded-md bg-base px-2.5 py-1.5 font-mono text-xs leading-4 text-text-muted',
               isDetailExpanded
                 ? 'max-h-32 overflow-auto whitespace-pre-wrap break-words'
                 : 'overflow-hidden truncate whitespace-nowrap',

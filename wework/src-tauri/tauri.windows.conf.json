@@ -1,0 +1,26 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./nsis/installer-hooks.nsh"
+      }
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "WeWork",
+        "create": false,
+        "width": 1280,
+        "height": 720,
+        "visible": false,
+        "decorations": true,
+        "dragDropEnabled": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}

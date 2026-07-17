@@ -25,10 +25,12 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { canManageNamespace } from '@/utils/namespace-permissions'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
+import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { getKnowledgeBase } from '@/apis/knowledge'
+import type { KnowledgeViewState } from './KnowledgeDocumentPage'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -45,12 +47,15 @@ interface KnowledgeDocumentPageMobileProps {
   initialKbName?: string
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Notifies the parent shell so it can render page-level view controls */
+  onKnowledgeViewStateChange?: (state: KnowledgeViewState) => void
 }
 
 export function KnowledgeDocumentPageMobile({
   initialKbNamespace,
   initialKbName,
   initialDocPath,
+  onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
 
@@ -64,6 +69,15 @@ export function KnowledgeDocumentPageMobile({
 
   const [detailKb, setDetailKb] = useState<KnowledgeBase | null>(null)
   const [detailKbLoading, setDetailKbLoading] = useState(false)
+  const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
+
+  useEffect(() => {
+    onKnowledgeViewStateChange?.({
+      visible: Boolean(detailKb && isDetailMode),
+      currentView,
+      onViewChange: setCurrentView,
+    })
+  }, [currentView, detailKb, isDetailMode, onKnowledgeViewStateChange, setCurrentView])
 
   const allLoadedKbs = useMemo((): KnowledgeBase[] => {
     const kbs: KnowledgeBase[] = []
@@ -247,6 +261,12 @@ export function KnowledgeDocumentPageMobile({
           guided_questions: data.guided_questions,
           max_calls_per_conversation: data.max_calls_per_conversation,
           exempt_calls_before_check: data.exempt_calls_before_check,
+          // Forward multimodal config assembled by the dialog — omitting these
+          // dropped the toggle on create (while edit passed `data` through).
+          multimodal_analysis_enabled: data.multimodal_analysis_enabled,
+          multimodal_analysis_model_ref: data.multimodal_analysis_model_ref,
+          multimodal_analysis_video_prompt: data.multimodal_analysis_video_prompt,
+          multimodal_analysis_image_prompt: data.multimodal_analysis_image_prompt,
         })
 
         // Save model preference when summary is enabled and model is selected
@@ -310,6 +330,7 @@ export function KnowledgeDocumentPageMobile({
             selectedKb={detailKb}
             onSyncKnowledgeBase={setDetailKb}
             initialDocPath={initialDocPath}
+            currentView={currentView}
           />
         </div>
       )

@@ -29,6 +29,7 @@ def _local_device(device_id: str, device_type: str) -> Kind:
                 "connectionMode": "websocket",
                 "bindShell": "claudecode",
                 "displayName": device_id,
+                "runtimeInstanceId": f"runtime-{device_id}",
                 "isDefault": False,
             },
         },
@@ -56,4 +57,6 @@ async def test_app_provider_lists_app_devices_separately(test_db):
 
     assert [device["device_id"] for device in app_devices] == ["app-device"]
     assert app_devices[0]["device_type"] == DeviceType.APP.value
+    assert app_devices[0]["runtime_instance_id"] == "runtime-app-device"
     assert [device["device_id"] for device in local_devices] == ["local-device"]
+    assert local_devices[0]["runtime_instance_id"] == "runtime-local-device"

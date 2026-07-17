@@ -5,6 +5,28 @@ import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+
+const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
+  ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
+  ['gpt-5.6-terra', 'GPT-5.6-Terra', 'medium', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
+  ['gpt-5.6-luna', 'GPT-5.6-Luna', 'medium', ['low', 'medium', 'high', 'xhigh', 'max']],
+  ['gpt-5.5', 'GPT-5.5', 'medium', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5.4', 'GPT-5.4', 'medium', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5.4-mini', 'GPT-5.4-Mini', 'medium', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5.3-codex-spark', 'GPT-5.3-Codex-Spark', 'high', ['low', 'medium', 'high', 'xhigh']],
+]
+
+const OFFICIAL_CODEX_MODELS = OFFICIAL_CODEX_MODEL_DEFINITIONS.map(
+  ([model, displayName, defaultReasoningEffort, efforts], index) => ({
+    id: model,
+    model,
+    displayName,
+    isDefault: index === 0,
+    defaultReasoningEffort,
+    supportedReasoningEfforts: efforts.map(reasoningEffort => ({ reasoningEffort })),
+  })
+)
 
 describe('createLocalAppServices', () => {
   beforeEach(() => {
@@ -31,28 +53,10 @@ describe('createLocalAppServices', () => {
               current: true,
               available: true,
               error: null,
-              data: [
-                {
-                  id: 'gpt-5.5',
-                  model: 'gpt-5.5',
-                  displayName: 'GPT 5.5',
-                  isDefault: true,
-                },
-              ],
+              data: OFFICIAL_CODEX_MODELS,
             },
           ],
-          data: [
-            {
-              id: 'gpt-5.5',
-              model: 'gpt-5.5',
-              displayName: 'GPT 5.5',
-              isDefault: true,
-              providerId: 'openai',
-              providerName: 'CodeX',
-              providerType: 'official',
-              providerCurrent: true,
-            },
-          ],
+          data: OFFICIAL_CODEX_MODELS,
         }
       }
       return { projects: [], chats: [], totalTasks: 0 }
@@ -74,7 +78,9 @@ describe('createLocalAppServices', () => {
       name: 'local-wework',
       is_active: true,
     })
-    await expect(services.modelApi.listModels()).resolves.toEqual({
+    const models = await services.modelApi.listModels()
+
+    expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
           name: 'gpt-5.5',
@@ -95,23 +101,12 @@ describe('createLocalAppServices', () => {
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
-        expect.objectContaining({
-          name: 'Sol',
-          type: 'runtime',
-          modelId: 'Sol',
-        }),
-        expect.objectContaining({
-          name: 'Terra',
-          type: 'runtime',
-          modelId: 'Terra',
-        }),
-        expect.objectContaining({
-          name: 'Luna',
-          type: 'runtime',
-          modelId: 'Luna',
-        }),
       ]),
     })
+    const modelIds = models.data.map(model => model.modelId)
+    expect(modelIds).not.toContain('Sol')
+    expect(modelIds).not.toContain('Terra')
+    expect(modelIds).not.toContain('Luna')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
@@ -237,6 +232,13 @@ describe('createLocalAppServices', () => {
               runtime: 'codex',
               runtimeHandle: {
                 threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                modelSelection: {
+                  modelName: 'local-model:mimo',
+                  modelType: 'runtime',
+                  options: {
+                    collaborationMode: 'plan',
+                  },
+                },
               },
             },
           ],
@@ -259,6 +261,13 @@ describe('createLocalAppServices', () => {
                   taskId: 'local-visible-task',
                   runtimeHandle: {
                     threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                  },
+                  modelSelection: {
+                    modelName: 'local-model:mimo',
+                    modelType: 'runtime',
+                    options: {
+                      collaborationMode: 'plan',
+                    },
                   },
                 },
               ],
@@ -381,8 +390,9 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+          local_preview_url:
+            '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
     })
@@ -415,8 +425,9 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+          local_preview_url:
+            '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
       executionRequest: expect.objectContaining({
@@ -466,8 +477,9 @@ describe('createLocalAppServices', () => {
             mime_type: 'image/png',
             subtask_id: expect.any(String),
             file_extension: '.png',
-            local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
-            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+            local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+            local_preview_url:
+              '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
           },
         ],
       }),
@@ -506,23 +518,22 @@ describe('createLocalAppServices', () => {
           if (data.command_key === 'git_is_worktree') {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
-          if (data.command_key === 'project_workspace_root') {
-            return {
-              success: true,
-              stdout: '/Users/me/.wegent-executor/workspace/projects',
-              stderr: '',
-              exit_code: 0,
-            }
-          }
-          if (data.command_key === 'git_worktree_add') {
-            return { success: true, stdout: '', stderr: '', exit_code: 0 }
-          }
+        }
+        if (method === 'runtime.worktrees.prepare') {
+          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
             taskId: 'task-1',
             runtime: 'codex',
+            runtimeHandle: {
+              modelSelection: {
+                modelName: 'local-model:mimo',
+                modelType: 'runtime',
+              },
+            },
           }
         }
         return {}
@@ -556,18 +567,22 @@ describe('createLocalAppServices', () => {
       /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/runtime-\d+\/project$/
     )
     expect(response?.workspacePath).toBe(worktreePath)
+    expect(response?.runtimeHandle).toEqual({
+      modelSelection: {
+        modelName: 'local-model:mimo',
+        modelType: 'runtime',
+      },
+    })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'git_is_worktree',
       args: ['/Users/me/project'],
       timeout_seconds: 15,
     })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
+    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
       deviceId: 'device-uuid',
-      command_key: 'git_worktree_add',
-      args: ['/Users/me/project', worktreePath],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
+      sourcePath: '/Users/me/project',
+      worktreeId: expect.stringMatching(/^runtime-\d+$/),
     })
     expect(createPayload).toEqual(
       expect.objectContaining({
@@ -601,17 +616,10 @@ describe('createLocalAppServices', () => {
           if (data.command_key === 'git_is_worktree') {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
-          if (data.command_key === 'project_workspace_root') {
-            return {
-              success: true,
-              stdout: '/Users/me/.wegent-executor/workspace/projects',
-              stderr: '',
-              exit_code: 0,
-            }
-          }
-          if (data.command_key === 'git_worktree_add') {
-            return { success: true, stdout: '', stderr: '', exit_code: 0 }
-          }
+        }
+        if (method === 'runtime.worktrees.prepare') {
+          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
           return {
@@ -648,12 +656,11 @@ describe('createLocalAppServices', () => {
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
     const worktreePath = String(createPayload.workspacePath)
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
+    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
       deviceId: 'device-uuid',
-      command_key: 'git_worktree_add',
-      args: ['/Users/me/project', worktreePath, 'develop'],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
+      sourcePath: '/Users/me/project',
+      worktreeId: expect.stringMatching(/^runtime-\d+$/),
+      ref: 'develop',
     })
     expect(createPayload).toEqual(
       expect.objectContaining({
@@ -708,8 +715,9 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+          local_preview_url:
+            '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
         },
       ],
     })
@@ -740,8 +748,9 @@ describe('createLocalAppServices', () => {
             status: 'ready',
             file_extension: '.png',
             created_at: '2026-06-29T00:00:00.000Z',
-            local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+            local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+            local_preview_url:
+              '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
           },
         ],
         executionRequest: expect.objectContaining({
@@ -786,8 +795,10 @@ describe('createLocalAppServices', () => {
               mime_type: 'image/png',
               subtask_id: expect.any(String),
               file_extension: '.png',
-              local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-              local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+              local_path:
+                '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+              local_preview_url:
+                '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
             },
           ],
         }),
@@ -860,6 +871,7 @@ describe('createLocalAppServices', () => {
       displayName: 'Ollama GPT',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      contextWindow: 128000,
     })
     saveLocalModelConfig({
       id: 'lmstudio',
@@ -867,6 +879,15 @@ describe('createLocalAppServices', () => {
       modelId: 'qwen3-coder',
       baseUrl: 'http://localhost:1234/v1',
       apiKey: 'real-key',
+      webSearchMode: 'cached',
+      imageGenerationEnabled: true,
+    })
+    saveLocalModelConfig({
+      id: 'custom',
+      displayName: 'Custom Gateway',
+      modelId: 'custom-model',
+      baseUrl: 'http://localhost:9876/api',
+      requestPath: '/respond',
     })
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -903,6 +924,15 @@ describe('createLocalAppServices', () => {
       message: 'secure continue',
       modelId: 'local-model:lmstudio',
     })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'custom continue',
+      modelId: 'local-model:custom',
+    })
 
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
@@ -913,6 +943,7 @@ describe('createLocalAppServices', () => {
     const createModelConfig = createPayload.executionRequest.model_config
     const continueModelConfig = sendPayloads[0].executionRequest.model_config
     const keyedModelConfig = sendPayloads[1].executionRequest.model_config
+    const customModelConfig = sendPayloads[2].executionRequest.model_config
 
     expect(continueModelConfig).toEqual(createModelConfig)
     expect(createModelConfig).toEqual(
@@ -922,7 +953,12 @@ describe('createLocalAppServices', () => {
         api_format: 'responses',
         protocol: 'openai-responses',
         base_url: 'http://localhost:11434/v1',
+        responses_url: 'http://localhost:11434/v1/responses',
         api_key: 'dummy',
+        model_context_window: 128000,
+        web_search: 'disabled',
+        image_generation: false,
+        codex_responses_compat_proxy: true,
         runtime_config: {
           codex: {
             use_user_config: false,
@@ -936,6 +972,17 @@ describe('createLocalAppServices', () => {
         model_id: 'qwen3-coder',
         base_url: 'http://localhost:1234/v1',
         api_key: 'real-key',
+        web_search: 'cached',
+        image_generation: true,
+        codex_responses_compat_proxy: true,
+      })
+    )
+    expect(customModelConfig).toEqual(
+      expect.objectContaining({
+        model_id: 'custom-model',
+        base_url: 'http://localhost:9876/api',
+        responses_url: 'http://localhost:9876/api/respond',
+        codex_responses_compat_proxy: true,
       })
     )
   })
@@ -999,6 +1046,98 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
+    )
+  })
+
+  test('builds cloud model gateway config without resolving credentials', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelContextWindow: '128000',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model: 'openai',
+        model_id: 'shared-model',
+        api_format: 'responses',
+        protocol: 'openai-responses',
+        base_url: 'https://cloud.example.com/custom/api/runtime-work/llm-responses-proxy',
+        api_key: 'cloud-login-token',
+        model_context_window: 128000,
+        codex_responses_compat_proxy: true,
+        default_headers: {
+          'X-Wegent-Model-Type': 'user',
+          'X-Wegent-Model-Namespace': 'default',
+          'X-Wegent-Model-User-Id': '42',
+        },
+        runtime_config: {
+          codex: {
+            use_user_config: false,
+            configured: true,
+          },
+        },
+      })
+    )
+    expect(request).not.toHaveBeenCalledWith('runtime.models.resolve', expect.anything())
+  })
+
+  test('adds configured local proxy to local runtime execution requests', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'gpt-5.5',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const modelConfig = createPayload.executionRequest.model_config
+
+    expect(modelConfig.proxy).toEqual({ url: 'http://127.0.0.1:7890' })
+    expect(modelConfig.runtime_config.codex).toEqual(
+      expect.objectContaining({
+        use_user_config: true,
+        configured: true,
+        use_proxy: true,
+        proxy_configured: true,
+      })
     )
   })
 
@@ -1166,6 +1305,14 @@ describe('createLocalAppServices', () => {
             key: 'local:/Users/me/project',
             id: expect.any(Number),
             name: 'Project',
+            kind: 'local',
+            source: 'legacy_root',
+            stateDeviceId: 'device-uuid',
+            roots: [{ kind: 'local', path: '/Users/me/project' }],
+            pinned: false,
+            pinnedOrder: null,
+            active: false,
+            appearance: null,
           },
           deviceWorkspaces: [
             expect.objectContaining({
@@ -1341,6 +1488,50 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('drops empty remote workspace shells when a local workspace has the same label', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/Users/me',
+          label: 'me',
+          workspaceSource: 'local',
+          tasks: [
+            {
+              taskId: 'task-1',
+              workspacePath: '/Users/me',
+              title: 'Local task',
+              runtime: 'codex',
+            },
+          ],
+        },
+        {
+          workspacePath: '/home/me',
+          label: 'me',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-ssh-codex-managed:host',
+          tasks: [],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+
+    expect(response?.projects.map(project => project.project.key)).toEqual(['local:/Users/me'])
+    expect(response?.projects[0].deviceWorkspaces).toHaveLength(1)
+    expect(response?.projects[0].deviceWorkspaces[0]).toEqual(
+      expect.objectContaining({
+        workspacePath: '/Users/me',
+        workspaceSource: 'local',
+      })
+    )
+  })
+
   test('routes workspace file APIs through local executor commands', async () => {
     const request = vi
       .fn()
@@ -1350,11 +1541,11 @@ describe('createLocalAppServices', () => {
           return {
             success: true,
             stdout: {
-              path: '/Users/me/project',
+              path: '/Users/me/.canonical/project',
               entries: [
                 {
                   name: 'src',
-                  path: '/Users/me/project/src',
+                  path: '/Users/me/.canonical/project/src',
                   is_directory: true,
                   size: 0,
                   modified_at: '2026-06-20T01:00:00Z',
@@ -1369,12 +1560,47 @@ describe('createLocalAppServices', () => {
           return {
             success: true,
             stdout: {
-              path: '/Users/me/project/README.md',
+              path: '/Users/me/.canonical/project/README.md',
               name: 'README.md',
               content: 'hello',
+              editable: true,
+              revision: 'sha256:old',
               truncated: false,
               size: 5,
               modified_at: '2026-06-20T01:00:00Z',
+            },
+            stderr: '',
+            exit_code: 0,
+          }
+        }
+        if (data.command_key === 'workspace_write_text_file') {
+          return {
+            success: true,
+            stdout: {
+              path: '/Users/me/.canonical/project/README.md',
+              name: 'README.md',
+              content: data.stdin,
+              editable: true,
+              revision: 'sha256:new',
+              truncated: false,
+              size: 7,
+              modified_at: '2026-06-20T01:01:00Z',
+            },
+            stderr: '',
+            exit_code: 0,
+          }
+        }
+        if (data.command_key === 'workspace_read_file_chunk') {
+          return {
+            success: true,
+            stdout: {
+              path: '/Users/me/.canonical/project/image.png',
+              name: 'image.png',
+              content_base64: 'aW1hZ2U=',
+              offset: 0,
+              eof: true,
+              size: 5,
+              modified_at: '2026-06-20T01:02:00Z',
             },
             stderr: '',
             exit_code: 0,
@@ -1408,9 +1634,43 @@ describe('createLocalAppServices', () => {
       path: '/Users/me/project/README.md',
       name: 'README.md',
       content: 'hello',
+      editable: true,
+      revision: 'sha256:old',
       truncated: false,
       size: 5,
       modifiedAt: '2026-06-20T01:00:00Z',
+    })
+    await expect(
+      services.deviceApi.writeWorkspaceTextFile(
+        'local-device',
+        '/Users/me/project/README.md',
+        'updated',
+        'sha256:old'
+      )
+    ).resolves.toEqual({
+      path: '/Users/me/project/README.md',
+      name: 'README.md',
+      content: 'updated',
+      editable: true,
+      revision: 'sha256:new',
+      truncated: false,
+      size: 7,
+      modifiedAt: '2026-06-20T01:01:00Z',
+    })
+    await expect(
+      services.deviceApi.readWorkspaceFileChunk?.(
+        'local-device',
+        '/Users/me/.alias/project/image.png',
+        0
+      )
+    ).resolves.toEqual({
+      path: '/Users/me/.alias/project/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+      modifiedAt: '2026-06-20T01:02:00Z',
     })
 
     expect(request).toHaveBeenCalledWith('device.execute_command', {
@@ -1426,6 +1686,23 @@ describe('createLocalAppServices', () => {
       path: '/Users/me/project',
       args: ['README.md'],
       timeout_seconds: 15,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'workspace_write_text_file',
+      path: '/Users/me/project',
+      args: ['README.md', 'sha256:old'],
+      stdin: 'updated',
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'workspace_read_file_chunk',
+      path: '/Users/me/.alias/project',
+      args: ['image.png', '0'],
+      timeout_seconds: 30,
       max_output_bytes: 1024 * 1024 * 2,
     })
   })

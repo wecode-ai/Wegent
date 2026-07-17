@@ -48,9 +48,7 @@ export function SlashCommandMenu({
       ].join(' ')}
     >
       {commands.length === 0 && !loadingSkills && !skillLoadError ? (
-        <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
-          {noResultsLabel}
-        </div>
+        <div className="px-2.5 py-2 text-sm leading-[18px] text-text-muted">{noResultsLabel}</div>
       ) : (
         groupedSlashCommands(commands).map(group => (
           <div key={group.label ?? 'commands'}>
@@ -90,11 +88,11 @@ export function SlashCommandMenu({
                 >
                   <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
                   <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                    <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
+                    <span className="shrink-0 truncate text-sm font-medium leading-5 text-text-primary">
                       {command.title}
                     </span>
                     {command.description && (
-                      <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
+                      <span className="min-w-0 truncate text-sm font-normal leading-5 text-text-muted">
                         {command.description}
                       </span>
                     )}
@@ -115,7 +113,7 @@ export function SlashCommandMenu({
           <div className="px-2 pb-1 pt-1.5 text-xs font-normal leading-4 text-text-muted">
             {skillGroupLabel}
           </div>
-          <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
+          <div className="px-2.5 py-2 text-sm leading-[18px] text-text-muted">
             {skillLoadingLabel}
           </div>
         </div>
@@ -128,7 +126,7 @@ export function SlashCommandMenu({
           <button
             type="button"
             data-testid="slash-command-skill-load-error"
-            className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
+            className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-sm leading-5 text-text-muted hover:bg-muted"
             onClick={onRetrySkills}
           >
             <Package className="h-4 w-4 shrink-0 text-text-secondary" />

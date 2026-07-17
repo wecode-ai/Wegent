@@ -60,6 +60,7 @@ function createApis(devices: DeviceInfo[] = [createDevice()]) {
     revertRuntimeFileChanges: vi.fn(),
     sendRuntimeMessage: vi.fn(),
     rollbackRuntimeTask: vi.fn(),
+    compactRuntimeTask: vi.fn(),
     openRuntimeWorkspace: vi.fn(),
     renameRuntimeWorkspace: vi.fn(),
     removeRuntimeWorkspace: vi.fn(),
@@ -133,6 +134,20 @@ describe('executor access layer', () => {
 
     await expect(client.commands.getHomeDirectory('missing-device')).rejects.toThrow(
       'executor-not-found:missing-device'
+    )
+    expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
+  })
+
+  test('normalizes offline devices into executor-offline errors', async () => {
+    const { deviceApi, runtimeWorkApi } = createApis([createDevice({ status: 'offline' })])
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await expect(client.commands.getHomeDirectory('device-1')).rejects.toThrow(
+      'executor-offline:device-1'
     )
     expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
   })

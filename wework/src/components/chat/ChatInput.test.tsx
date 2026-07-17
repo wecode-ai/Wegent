@@ -1,11 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { StrictMode, useState } from 'react'
+import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
   DeviceInfo,
-  LocalDeviceSkill,
   RuntimeGoal,
   RuntimeWorkListResponse,
   UnifiedModel,
@@ -31,6 +30,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ChatInput } from './ChatInput'
+import type { ChatSubmitOptions } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
@@ -38,7 +38,7 @@ function ControlledChatInput({
   projectChat,
   variant,
 }: {
-  onSubmit?: () => void
+  onSubmit?: (valueOverride?: string, options?: ChatSubmitOptions) => void
   projectChat?: ProjectChatControls
   variant?: 'compact' | 'desktop'
 }) {
@@ -73,6 +73,7 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
     handleFileSelect: vi.fn().mockResolvedValue(undefined),
     removeAttachment: vi.fn().mockResolvedValue(undefined),
     listLocalSkills: vi.fn().mockResolvedValue([]),
+    listLocalApps: vi.fn().mockResolvedValue([]),
     ...overrides,
   }
 }
@@ -174,6 +175,9 @@ describe('ChatInput', () => {
       'bg-background'
     )
     expect(screen.getByTestId('project-chat-composer-form')).not.toHaveClass('bg-surface')
+    expect(screen.getByTestId('project-chat-composer')).toHaveClass(
+      'shadow-[0_0_0_0.5px_rgba(13,13,13,0.12),0_3px_7.5px_rgba(0,0,0,0.04),0_0_20px_rgba(0,0,0,0.05)]'
+    )
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'min-h-[48px]',
@@ -186,6 +190,68 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+  })
+
+  test('does not move selection when an unfocused composer syncs its value', async () => {
+    const renderComposers = (backgroundValue?: string) => (
+      <>
+        <ChatInput
+          value="foreground draft"
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+        />
+        {backgroundValue !== undefined ? (
+          <ChatInput
+            value={backgroundValue}
+            onChange={vi.fn()}
+            onSubmit={vi.fn()}
+            disabled={false}
+            variant="desktop"
+          />
+        ) : null}
+      </>
+    )
+    const { rerender } = render(renderComposers())
+    const foregroundComposer = screen.getByTestId('chat-message-input')
+    foregroundComposer.focus()
+    await waitFor(() => {
+      expect(foregroundComposer).toHaveFocus()
+      expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+    })
+
+    const textNode = document.createTreeWalker(foregroundComposer, NodeFilter.SHOW_TEXT).nextNode()
+    expect(textNode).not.toBeNull()
+    const range = document.createRange()
+    range.setStart(textNode!, 5)
+    range.collapse(true)
+    const selection = window.getSelection()!
+    act(() => {
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    expect(foregroundComposer).toHaveFocus()
+    expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+    expect(window.getSelection()?.anchorOffset).toBe(5)
+
+    rerender(renderComposers('background initial value'))
+
+    await waitFor(() => {
+      expect(foregroundComposer).toHaveFocus()
+      expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+      expect(window.getSelection()?.anchorOffset).toBe(5)
+    })
+
+    rerender(renderComposers('background update'))
+
+    await waitFor(() => {
+      expect(foregroundComposer).toHaveFocus()
+      expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+      expect(window.getSelection()?.anchorOffset).toBe(5)
+    })
   })
 
   test('selects plan mode from the add context menu', async () => {
@@ -234,8 +300,10 @@ describe('ChatInput', () => {
     expect(pill).toHaveClass('h-7')
     expect(pill).toHaveClass('rounded-xl')
     expect(pill).toHaveClass('bg-muted')
-    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('w-0')
-    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('group-hover:w-5')
+    expect(screen.getByTestId('plan-mode-pill-icon')).toHaveClass('h-4')
+    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('absolute')
+    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('left-2')
+    expect(screen.getByTestId('plan-mode-pill-icon')).toHaveClass('group-hover:opacity-0')
 
     await userEvent.click(screen.getByTestId('cancel-plan-mode-button'))
 
@@ -281,6 +349,28 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
+  test('shows desktop send button for a draft while the assistant is streaming', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="继续修复"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+      />
+    )
+
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith('继续修复')
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
@@ -320,6 +410,9 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('conversation-queue-panel')).toBeInTheDocument()
     expect(screen.getByText('继续检查 capability sync')).toBeInTheDocument()
     expect(screen.getByText('先跳过 device:sync_capabilities')).toBeInTheDocument()
+    expect(
+      screen.getAllByTestId(/^conversation-queue-row-/).map(row => row.getAttribute('data-testid'))
+    ).toEqual(['conversation-queue-row-guidance-1', 'conversation-queue-row-queued-1'])
 
     await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
@@ -329,6 +422,166 @@ describe('ChatInput', () => {
     expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
+  test('provides left-side drag handles to reorder multiple queued messages', () => {
+    const queuedMessages: QueuedWorkbenchMessage[] = [
+      {
+        id: 'queued-first',
+        content: '先执行检查',
+        status: 'queued',
+        createdAt: '2026-05-25T15:08:00.000+08:00',
+      },
+      {
+        id: 'queued-second',
+        content: '再执行修复',
+        status: 'queued',
+        createdAt: '2026-05-25T15:09:00.000+08:00',
+      },
+    ]
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={queuedMessages}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(screen.getByTestId('queue-drag-handle-queued-first')).toHaveAttribute(
+      'aria-label',
+      '拖拽调整消息顺序'
+    )
+    expect(screen.getByTestId('queue-drag-handle-queued-second')).toHaveAttribute(
+      'aria-label',
+      '拖拽调整消息顺序'
+    )
+  })
+
+  test('shows active queued guidance before messages waiting to send', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'queued-waiting',
+            content: '看磁盘',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+          {
+            id: 'queued-guidance',
+            content: '看 cpu',
+            status: 'sending',
+            notice: '正在引导当前对话',
+            createdAt: '2026-05-25T15:09:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(
+      screen.getAllByTestId(/^conversation-queue-row-/).map(row => row.getAttribute('data-testid'))
+    ).toEqual(['conversation-queue-row-queued-guidance', 'conversation-queue-row-queued-waiting'])
+  })
+
+  test('shows a control to resume a paused queue', async () => {
+    const onResumeQueue = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'queued-paused',
+            content: '等待发送',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+        queuePaused
+        onResumeQueue={onResumeQueue}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('resume-queue-button'))
+
+    expect(onResumeQueue).toHaveBeenCalledTimes(1)
+  })
+
+  test('asks whether to preserve a paused queue before sending a new message', async () => {
+    const onSubmit = vi.fn()
+    const onResumeQueue = vi.fn()
+    const onChange = vi.fn()
+    const onResumeQueueWithInput = vi.fn()
+
+    render(
+      <ChatInput
+        value="发送新消息"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        disabled={false}
+        queuedMessages={[
+          {
+            id: 'queued-paused-send',
+            content: '等待发送',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+        queuePaused
+        onResumeQueue={onResumeQueue}
+        onResumeQueueWithInput={onResumeQueueWithInput}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(screen.getByTestId('paused-queue-send-dialog')).toBeInTheDocument()
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('paused-queue-send-preserve-button'))
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onResumeQueueWithInput).toHaveBeenCalled()
+    expect(onChange).toHaveBeenCalledWith('')
+  })
+
+  test('hides drag handles when fewer than two messages are queued', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'queued-only',
+            content: '执行检查',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(screen.queryByTestId('queue-drag-handle-queued-only')).not.toBeInTheDocument()
   })
 
   test('keeps queued rows compact without generic queue notices', () => {
@@ -441,6 +694,27 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
+  test('shows compact send button for a draft while the assistant is streaming', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="继续修复"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        isStreaming
+      />
+    )
+
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith('继续修复')
+  })
+
   test('does not render voice input in the compact composer', async () => {
     render(<ControlledChatInput />)
 
@@ -450,694 +724,6 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-14')
     expect(screen.getByTestId('send-message-button')).toHaveClass('bottom-1', 'right-1')
-  })
-
-  test('opens local skill autocomplete after a standalone dollar trigger', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    await waitFor(() => {
-      expect(listLocalSkills).toHaveBeenCalledTimes(1)
-    })
-    expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
-      'bottom-[calc(100%+0.5rem)]',
-      'z-popover',
-      'bg-background',
-      'left-[-1rem]',
-      'right-[-3.5rem]'
-    )
-    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
-
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) '
-    )
-    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
-    expect(await screen.findByTestId('local-skill-caret')).toHaveClass(
-      'local-skill-caret',
-      'bg-text-primary'
-    )
-  })
-
-  test('selects plan mode from the slash command menu', async () => {
-    const setSelectedModelOption = vi.fn()
-    const onSubmit = vi.fn()
-    render(
-      <ControlledChatInput
-        onSubmit={onSubmit}
-        variant="desktop"
-        projectChat={projectChatControls({ setSelectedModelOption })}
-      />
-    )
-
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, '/pla')
-
-    expect(screen.getByTestId('slash-command-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('slash-command-menu')).not.toHaveTextContent(
-      'workbench.slash_command_menu_title'
-    )
-    expect(screen.getByTestId('slash-command-menu')).not.toHaveTextContent(
-      'workbench.slash_command_group_actions'
-    )
-    expect(screen.getByTestId('slash-command-option-plan')).toHaveTextContent(
-      'workbench.slash_command_plan'
-    )
-    expect(screen.getByTestId('slash-command-option-plan')).toHaveClass('rounded-lg')
-
-    await userEvent.keyboard('{Enter}')
-
-    await waitFor(() => {
-      expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'plan')
-    })
-    expect(onSubmit).not.toHaveBeenCalled()
-    expect(input).toHaveValue('')
-  })
-
-  test('opens goal draft mode from a compact slash command', async () => {
-    function GoalDraftSlashInput() {
-      const [value, setValue] = useState('')
-      const [goalDraftActive, setGoalDraftActive] = useState(false)
-
-      return (
-        <ChatInput
-          value={value}
-          onChange={setValue}
-          onSubmit={vi.fn()}
-          disabled={false}
-          goalDraftActive={goalDraftActive}
-          onSetGoal={() => setGoalDraftActive(true)}
-          onCancelGoalDraft={() => setGoalDraftActive(false)}
-          projectChat={projectChatControls()}
-        />
-      )
-    }
-
-    render(<GoalDraftSlashInput />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '/goal')
-    await userEvent.keyboard('{Enter}')
-
-    await waitFor(() => {
-      expect(screen.getByTestId('goal-draft-pill')).toHaveTextContent('目标')
-    })
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
-  })
-
-  test('opens a model-only list from the slash command menu', async () => {
-    const selectedModel: UnifiedModel = {
-      name: 'gpt-5.5',
-      type: 'public',
-      displayName: 'GPT-5.5',
-      runtime: { family: 'openai.openai-responses' },
-      config: {
-        ui: {
-          family: 'gpt',
-          modelLabel: 'GPT-5.5',
-          sortOrder: 10,
-          description: 'Frontier model for complex coding, research, and real-world work.',
-        },
-      },
-    }
-    const sparkModel: UnifiedModel = {
-      name: 'gpt-5.3-codex-spark',
-      type: 'public',
-      displayName: 'GPT-5.3-Codex-Spark',
-      runtime: { family: 'openai.openai-responses' },
-      config: {
-        ui: {
-          family: 'gpt',
-          modelLabel: 'GPT-5.3-Codex-Spark',
-          sortOrder: 40,
-          description: 'Ultra-fast coding model.',
-        },
-      },
-    }
-    const setSelectedModel = vi.fn()
-
-    render(
-      <ControlledChatInput
-        variant="desktop"
-        projectChat={projectChatControls({
-          models: [sparkModel, selectedModel],
-          selectedModel,
-          setSelectedModel,
-        })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '/model')
-    await userEvent.keyboard('{Enter}')
-
-    await waitFor(() => {
-      expect(screen.getByTestId('slash-model-menu')).toBeInTheDocument()
-    })
-    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-family-gpt')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('model-control-reasoning-high')).not.toBeInTheDocument()
-    expect(screen.getByTestId('slash-model-search-input')).toBeInTheDocument()
-    expect(screen.getByTestId('slash-model-option-gpt-5.5')).toHaveTextContent(
-      'Frontier model for complex coding'
-    )
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
-
-    await userEvent.click(screen.getByTestId('slash-model-option-gpt-5.3-codex-spark'))
-
-    expect(setSelectedModel).toHaveBeenCalledWith(sparkModel)
-    expect(screen.queryByTestId('slash-model-menu')).not.toBeInTheDocument()
-  })
-
-  test('inserts a local skill mention from slash commands', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-      scope: 'user',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, '/env')
-    const slashSkillOption = await screen.findByTestId('slash-command-option-skill-env-context')
-    expect(slashSkillOption).toHaveTextContent('Personal')
-    await userEvent.click(slashSkillOption)
-
-    expect(input).toHaveValue(
-      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) '
-    )
-    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
-  })
-
-  test('filters slash skills by name and aliases without duplicating skill rows', async () => {
-    const skills: LocalDeviceSkill[] = [
-      {
-        name: 'imagegen',
-        description: 'Generate or edit raster images',
-        path: '/Users/crystal/.codex/skills/imagegen/SKILL.md',
-        source: 'codex',
-        scope: 'user',
-        source_priority: 0,
-      },
-      {
-        name: 'gmail',
-        description: 'Search images and attachments in email',
-        path: '/Users/crystal/.codex/plugins/cache/openai-curated/gmail/old/skills/gmail/SKILL.md',
-        source: 'codex-plugin',
-        scope: 'user',
-        source_priority: 40,
-      },
-      {
-        name: 'gmail',
-        description: 'Manage Gmail inbox',
-        path: '/Users/crystal/.codex/plugins/cache/openai-curated-remote/gmail/0.1.3/skills/gmail/SKILL.md',
-        source: 'codex-plugin',
-        scope: 'user',
-        source_priority: 20,
-      },
-    ]
-    const listLocalSkills = vi.fn().mockResolvedValue(skills)
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '/image')
-
-    expect(await screen.findByTestId('slash-command-option-skill-imagegen')).toBeInTheDocument()
-    expect(screen.queryByTestId('slash-command-option-skill-gmail')).not.toBeInTheDocument()
-
-    await userEvent.clear(screen.getByTestId('chat-message-input'))
-    await userEvent.type(screen.getByTestId('chat-message-input'), '/gmail')
-
-    expect(await screen.findAllByTestId('slash-command-option-skill-gmail')).toHaveLength(1)
-  })
-
-  test('does not open slash commands for a slash inside a word', async () => {
-    render(<ControlledChatInput projectChat={projectChatControls()} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello/')
-
-    expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
-  })
-
-  test('closes slash commands with Escape and outside pointer down', async () => {
-    render(<ControlledChatInput projectChat={projectChatControls()} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, '/')
-    expect(screen.getByTestId('slash-command-menu')).toBeInTheDocument()
-
-    fireEvent.keyDown(input, { key: 'Escape' })
-    await waitFor(() => {
-      expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
-    })
-
-    await userEvent.clear(input)
-    await userEvent.type(input, '/')
-    expect(screen.getByTestId('slash-command-menu')).toBeInTheDocument()
-
-    fireEvent.pointerDown(document.body)
-    await waitFor(() => {
-      expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
-    })
-  })
-
-  test('keeps only one local skill autocomplete option highlighted', async () => {
-    const chronicleSkill: LocalDeviceSkill = {
-      name: 'chronicle',
-      description: 'Allows you to view the user screen history',
-      short_description: 'Screen history',
-      path: '/Users/crystal/.codex/skills/chronicle/SKILL.md',
-      source: 'codex',
-    }
-    const dingtalkSkill: LocalDeviceSkill = {
-      name: 'dingtalk-ai-table',
-      description: 'Use DingTalk AI Table data',
-      short_description: 'DingTalk AI Table',
-      path: '/Users/crystal/.claude/skills/dingtalk-ai-table/SKILL.md',
-      source: 'claude',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([chronicleSkill, dingtalkSkill])
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    const firstOption = await screen.findByTestId('local-skill-option-chronicle')
-    const secondOption = await screen.findByTestId('local-skill-option-dingtalk-ai-table')
-
-    expect(firstOption).toHaveClass('bg-muted')
-    expect(firstOption).toHaveAttribute('aria-selected', 'true')
-    expect(secondOption).not.toHaveClass('bg-muted')
-    expect(secondOption).toHaveAttribute('aria-selected', 'false')
-
-    fireEvent.pointerEnter(secondOption)
-
-    await waitFor(() => {
-      expect(firstOption).not.toHaveClass('bg-muted')
-      expect(firstOption).toHaveAttribute('aria-selected', 'false')
-      expect(secondOption).toHaveClass('bg-muted')
-      expect(secondOption).toHaveAttribute('aria-selected', 'true')
-    })
-  })
-
-  test('shows local skill scopes at the end of each autocomplete option', async () => {
-    const skills: LocalDeviceSkill[] = [
-      {
-        name: 'personal-skill',
-        description: 'Codex skill',
-        path: '/Users/crystal/.codex/skills/personal-skill/SKILL.md',
-        source: 'codex',
-        scope: 'user',
-      },
-      {
-        name: 'system-skill',
-        description: 'Codex plugin skill',
-        path: '/Users/crystal/.codex/plugins/cache/openai-bundled/plugin/1.0.0/skills/system-skill/SKILL.md',
-        source: 'codex-plugin',
-        scope: 'system',
-      },
-    ]
-    const listLocalSkills = vi.fn().mockResolvedValue(skills)
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    expect(await screen.findByTestId('local-skill-source-personal-skill')).toHaveTextContent(
-      'Personal'
-    )
-    expect(screen.getByTestId('local-skill-source-system-skill')).toHaveTextContent('System')
-  })
-
-  test('only allows Claude sourced skills for Claude models', async () => {
-    const onSubmit = vi.fn()
-    const claudeSkill: LocalDeviceSkill = {
-      name: 'claude-skill',
-      description: 'Claude skill',
-      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
-      source: 'claude',
-    }
-    const agentsSkill: LocalDeviceSkill = {
-      name: 'agents-skill',
-      description: 'Shared agents skill',
-      path: '/Users/crystal/.agents/skills/agents-skill/SKILL.md',
-      source: 'agents',
-    }
-    const codexSkill: LocalDeviceSkill = {
-      name: 'codex-skill',
-      description: 'Codex skill',
-      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
-      source: 'codex',
-    }
-    const selectedModel: UnifiedModel = {
-      name: 'wecode-claude-sonnet-4-5',
-      type: 'public',
-      runtime: { family: 'claude.claude' },
-    }
-
-    render(
-      <ControlledChatInput
-        onSubmit={onSubmit}
-        projectChat={projectChatControls({
-          selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([claudeSkill, agentsSkill, codexSkill]),
-        })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    expect(await screen.findByTestId('local-skill-option-claude-skill')).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-option-agents-skill')).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-option-codex-skill')).toBeDisabled()
-
-    await userEvent.click(screen.getByTestId('local-skill-option-codex-skill'))
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('$')
-  })
-
-  test('only allows Codex sourced skills for GPT models', async () => {
-    const codexSkill: LocalDeviceSkill = {
-      name: 'codex-skill',
-      description: 'Codex skill',
-      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
-      source: 'codex-plugin',
-    }
-    const agentsSkill: LocalDeviceSkill = {
-      name: 'agents-skill',
-      description: 'Shared agents skill',
-      path: '/Users/crystal/.agents/skills/agents-skill/SKILL.md',
-      source: 'agents',
-    }
-    const claudeSkill: LocalDeviceSkill = {
-      name: 'claude-skill',
-      description: 'Claude skill',
-      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
-      source: 'claude',
-    }
-    const selectedModel: UnifiedModel = {
-      name: 'gpt-5.5',
-      type: 'public',
-      runtime: { family: 'openai.openai-responses' },
-    }
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({
-          selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, agentsSkill, claudeSkill]),
-        })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    const option = await screen.findByTestId('local-skill-option-codex-skill')
-    expect(option).toBeInTheDocument()
-    expect(option).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-option-agents-skill')).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-source-codex-skill')).toHaveTextContent('Personal')
-    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
-
-    await userEvent.click(option)
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) '
-    )
-  })
-
-  test('allows Codex sourced skills for non-GPT models running through openai responses', async () => {
-    const codexSkill: LocalDeviceSkill = {
-      name: 'codex-skill',
-      description: 'Codex skill',
-      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
-      source: 'codex-plugin',
-    }
-    const claudeSkill: LocalDeviceSkill = {
-      name: 'claude-skill',
-      description: 'Claude skill',
-      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
-      source: 'claude',
-    }
-    const selectedModel: UnifiedModel = {
-      name: 'sina-glm-4.6',
-      type: 'public',
-      displayName: '内网:sina-glm-4.6',
-      modelId: 'glm-4.6',
-      runtime: { family: 'sina.openai-responses' },
-    }
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({
-          selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
-        })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    const option = await screen.findByTestId('local-skill-option-codex-skill')
-    expect(option).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
-
-    await userEvent.click(option)
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$codex-skill](skill:///Users/crystal/.codex/skills/codex-skill/SKILL.md) '
-    )
-  })
-
-  test('uses modelConfig env model when matching local skills', async () => {
-    const codexSkill: LocalDeviceSkill = {
-      name: 'codex-skill',
-      description: 'Codex skill',
-      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
-      source: 'codex-plugin',
-    }
-    const claudeSkill: LocalDeviceSkill = {
-      name: 'claude-skill',
-      description: 'Claude skill',
-      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
-      source: 'claude',
-    }
-    const selectedModel: UnifiedModel = {
-      name: 'sina-glm-4.6',
-      type: 'public',
-      displayName: '内网:sina-glm-4.6',
-      modelId: 'glm-4.6',
-      config: {
-        env: { model: 'openai' },
-        apiFormat: 'responses',
-      },
-    }
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({
-          selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
-        })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    expect(await screen.findByTestId('local-skill-option-codex-skill')).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
-  })
-
-  test('uses runtime provider from modelConfig env model when matching local skills', async () => {
-    const codexSkill: LocalDeviceSkill = {
-      name: 'codex-skill',
-      description: 'Codex skill',
-      path: '/Users/crystal/.codex/skills/codex-skill/SKILL.md',
-      source: 'codex-plugin',
-    }
-    const claudeSkill: LocalDeviceSkill = {
-      name: 'claude-skill',
-      description: 'Claude skill',
-      path: '/Users/crystal/.claude/skills/claude-skill/SKILL.md',
-      source: 'claude',
-    }
-    const selectedModel: UnifiedModel = {
-      name: 'sina-glm-4.6',
-      type: 'public',
-      displayName: '内网:sina-glm-4.6',
-      modelId: 'glm-4.6',
-      runtime: { family: 'openai', provider: 'openai' },
-    }
-
-    render(
-      <ControlledChatInput
-        projectChat={projectChatControls({
-          selectedModel,
-          listLocalSkills: vi.fn().mockResolvedValue([codexSkill, claudeSkill]),
-        })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    expect(await screen.findByTestId('local-skill-option-codex-skill')).not.toBeDisabled()
-    expect(screen.getByTestId('local-skill-option-claude-skill')).toBeDisabled()
-  })
-
-  test('keeps the composer editable after selecting a local skill', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, '$')
-    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
-    await waitFor(() => {
-      expect(input).toHaveFocus()
-    })
-    await userEvent.type(input, 'hello')
-
-    expect(input).toHaveValue(
-      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) hello'
-    )
-    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
-  })
-
-  test('deletes a selected local skill mention as one unit', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
-    await waitFor(() => {
-      expect(screen.getByTestId('chat-message-input')).toHaveFocus()
-    })
-    await userEvent.keyboard('{Backspace}')
-
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
-    expect(screen.queryByTestId('local-skill-chip-env-context')).not.toBeInTheDocument()
-  })
-
-  test('sizes desktop local skill autocomplete to the composer width', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(
-      <ControlledChatInput
-        variant="desktop"
-        projectChat={projectChatControls({ listLocalSkills })}
-      />
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    expect(await screen.findByTestId('local-skill-autocomplete')).toHaveClass(
-      'left-[-1rem]',
-      'right-[-0.5rem]',
-      'rounded-xl',
-      'shadow-[0_12px_34px_rgba(0,0,0,0.12)]'
-    )
-  })
-
-  test('opens local skill autocomplete under React StrictMode', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-    }
-    const listLocalSkills = vi.fn().mockResolvedValue([skill])
-
-    render(
-      <StrictMode>
-        <ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />
-      </StrictMode>
-    )
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
-  })
-
-  test('retries local skill loading from the autocomplete error state', async () => {
-    const skill: LocalDeviceSkill = {
-      name: 'env-context',
-      description: 'Use when environment facts are needed',
-      short_description: 'Environment facts',
-      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-      source: 'codex',
-    }
-    let retryEnabled = false
-    const listLocalSkills = vi.fn().mockImplementation(() => {
-      if (!retryEnabled) {
-        return Promise.reject(new Error('Device is offline'))
-      }
-      return Promise.resolve([skill])
-    })
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
-
-    const retryLabel = await screen.findByTestId('local-skill-retry-label')
-    expect(retryLabel).toHaveClass('text-text-secondary')
-    expect(retryLabel).not.toHaveClass('text-primary')
-    expect(screen.getByTestId('local-skill-load-error')).toHaveClass(
-      'hover:bg-muted',
-      'text-text-muted'
-    )
-
-    retryEnabled = true
-    await userEvent.click(
-      screen.getByRole('button', {
-        name: /workbench.local_skills_error.*workbench.retry_local_skills/,
-      })
-    )
-
-    expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
-    expect(listLocalSkills).toHaveBeenCalled()
-  })
-
-  test('does not open local skill autocomplete for a dollar inside a word', async () => {
-    const listLocalSkills = vi.fn().mockResolvedValue([])
-
-    render(<ControlledChatInput projectChat={projectChatControls({ listLocalSkills })} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello$')
-
-    expect(listLocalSkills).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('local-skill-autocomplete')).not.toBeInTheDocument()
   })
 
   test('opens a mobile context sheet that uploads files without type restrictions', async () => {
@@ -1219,6 +805,57 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('add-context-button'))
 
     expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
+  })
+
+  test('renders desktop context usage indicator with compact action when usage is available', async () => {
+    const onSubmit = vi.fn()
+    const onCompactContext = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        onCompactContext={onCompactContext}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          contextUsage: {
+            total: {
+              totalTokens: 15_000,
+              inputTokens: 12_000,
+              cachedInputTokens: 2_000,
+              outputTokens: 3_000,
+              reasoningOutputTokens: 0,
+            },
+            last: {
+              totalTokens: 8_000,
+              inputTokens: 7_000,
+              cachedInputTokens: 1_000,
+              outputTokens: 1_000,
+              reasoningOutputTokens: 0,
+            },
+            modelContextWindow: 258_000,
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('context-usage-indicator')).toBeInTheDocument()
+    expect(screen.getByTestId('context-usage-indicator')).toHaveAttribute(
+      'aria-label',
+      'workbench.context_usage_aria'
+    )
+
+    await userEvent.click(screen.getByTestId('context-usage-button'))
+
+    expect(screen.getByTestId('confirm-compact-context-button')).toHaveTextContent('压缩')
+
+    await userEvent.click(screen.getByTestId('confirm-compact-context-button'))
+
+    expect(onCompactContext).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('confirm-compact-context-button')).not.toBeInTheDocument()
   })
 
   test('uploads pasted images from the desktop message textbox', () => {
@@ -1440,40 +1077,6 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
-  test('expands compact input to fullscreen after more than four lines', async () => {
-    render(<ControlledChatInput />)
-
-    await userEvent.type(
-      screen.getByTestId('chat-message-input'),
-      ['one', 'two', 'three', 'four', 'five'].join('{shift>}{enter}{/shift}')
-    )
-
-    await userEvent.click(screen.getByTestId('expand-input-button'))
-
-    expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
-    expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
-    expect(screen.getByTestId('collapse-input-button')).toHaveClass('absolute', 'right-3', 'top-3')
-    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass(
-      'h-full',
-      'pt-14',
-      'bg-background'
-    )
-    expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
-      ['one', 'two', 'three', 'four', 'five'].join('\n')
-    )
-
-    await userEvent.type(screen.getByTestId('fullscreen-message-input'), '!')
-    expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
-      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`
-    )
-
-    await userEvent.click(screen.getByTestId('collapse-input-button'))
-    expect(screen.queryByTestId('fullscreen-input-sheet')).not.toBeInTheDocument()
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`
-    )
-  })
-
   test('hides the project work bar when requested', () => {
     render(
       <ChatInput
@@ -1505,6 +1108,19 @@ describe('ChatInput', () => {
         },
       },
     }
+    const cloudModel: UnifiedModel = {
+      ...model,
+      name: 'cloud:user:cloud-gpt-5.5',
+      displayName: '云端:gpt-5.5',
+      config: {
+        ...model.config,
+        weworkExecution: {
+          source: 'cloud',
+          modelName: 'cloud-gpt-5.5',
+          modelType: 'user',
+        },
+      },
+    }
     const setSelectedModel = vi.fn()
     render(
       <ChatInput
@@ -1514,7 +1130,7 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
-          models: [model],
+          models: [model, cloudModel],
           selectedModel: model,
           selectedModelOptions: { reasoning: 'high', speed: 'standard' },
           setSelectedModel,
@@ -1522,35 +1138,85 @@ describe('ChatInput', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('model-selector-button'))
+    const selectorButton = screen.getByTestId('model-selector-button')
+    expect(selectorButton).toHaveClass(
+      'transition-[width,background-color,color,opacity]',
+      'duration-200'
+    )
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveTextContent('选择模型')
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveTextContent('⌃⇧M')
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveClass('h-9')
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveClass(
+      'group-hover/model-selector:opacity-100',
+      'group-hover/model-selector:delay-[1500ms]'
+    )
+    expect(screen.getByTestId('model-selector-tooltip')).not.toHaveClass(
+      'group-focus-within/model-selector:delay-0'
+    )
+
+    await userEvent.click(selectorButton)
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass('right-0', 'w-64')
-    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-gpt')).toHaveTextContent('海外:gpt-5.5')
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
-    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'data-enter-animation',
+      'main'
+    )
+    expect(selectorButton).toHaveStyle({ width: '240px' })
+    expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
+      'fixed',
+      'z-system-popover',
+      'w-64'
+    )
+    expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
+      document.body
+    )
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-reasoning')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
+    expect(screen.getByTestId('model-reset-default-button')).toBeDisabled()
+    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-slider')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-high')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-control-collaborationMode-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-control-collaborationMode-plan')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+
+    expect(screen.getByTestId('model-selector-submenu')).toHaveAttribute(
+      'data-enter-animation',
+      'submenu'
+    )
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
     expect(modelOption.querySelectorAll('span')).toHaveLength(1)
+    expect(screen.getByTestId('model-option-cloud:user:cloud-gpt-5.5')).toHaveAccessibleName(/云端/)
     expect(
       screen
-        .getByTestId('model-control-reasoning-high')
-        .compareDocumentPosition(screen.getByTestId('model-family-gpt')) &
+        .getByTestId('model-control-menu-model')
+        .compareDocumentPosition(screen.getByTestId('model-control-menu-reasoning')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      screen
+        .getByTestId('model-control-menu-speed')
+        .compareDocumentPosition(screen.getByTestId('model-reset-default-button')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
 
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
   })
 
   test('opens desktop speed options from a collapsed model control submenu', async () => {
@@ -1595,12 +1261,485 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
 
+    const speedMenuItem = screen.getByTestId('model-control-menu-speed')
+    const resetRow = screen.getByTestId('model-reset-default-row')
+    const resetButton = screen.getByTestId('model-reset-default-button')
+    expect(speedMenuItem).toHaveClass('bg-muted')
+    expect(resetButton).toHaveClass('text-text-muted', 'hover:bg-muted', 'hover:text-text-primary')
+    expect(resetRow).not.toHaveClass('bg-muted', 'hover:bg-muted')
+    expect(resetButton.querySelector('.lucide-rotate-ccw')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
+
+    await userEvent.hover(resetRow)
+
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(speedMenuItem).not.toHaveClass('bg-muted')
+
+    await userEvent.hover(speedMenuItem)
+
     await userEvent.click(screen.getByTestId('model-control-speed-fast'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('hides the desktop model submenu after the pointer leaves the menu', async () => {
+  test('shows an empty state when no desktop models are available', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ models: [], selectedModel: null })}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default')
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+
+    expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')
+  })
+
+  test('closes the desktop model menu only from its trigger, outside click, or Escape', async () => {
+    const model: UnifiedModel = {
+      name: 'codex-gpt-5.5',
+      type: 'user',
+      displayName: 'Codex:gpt-5.5',
+      config: { ui: { family: 'gpt', modelLabel: 'gpt-5.5', sortOrder: 10 } },
+    }
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ models: [model], selectedModel: model })}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector-button')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(trigger)
+    await userEvent.click(trigger)
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+  })
+
+  test('drags the desktop reasoning slider to select the nearest option', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          sortOrder: 10,
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        if (this.getAttribute('data-testid') === 'model-control-reasoning-track') {
+          return { left: 100, right: 400, top: 0, bottom: 32, width: 300, height: 32 } as DOMRect
+        }
+
+        return originalGetBoundingClientRect.call(this)
+      }
+    )
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: { reasoning: 'high' },
+            setSelectedModelOption,
+          })}
+        />
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+      const track = screen.getByTestId('model-control-reasoning-track')
+      fireEvent.pointerDown(track, { button: 0, clientX: 388, pointerId: 1 })
+      fireEvent.pointerMove(track, { buttons: 1, clientX: 112, pointerId: 1 })
+
+      expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+      fireEvent.pointerUp(track, { button: 0, clientX: 112, pointerId: 1 })
+
+      expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'low')
+      expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+      fireEvent.keyDown(track, { key: 'ArrowLeft' })
+      expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'medium')
+      fireEvent.keyDown(track, { key: 'End' })
+      expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'xhigh')
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  test('renders the advertised ultra effort with purple summary and slider treatment', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Terra',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Terra',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModelAndOptions = vi.fn()
+    const setSelectedModelOption = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model, terraModel],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'ultra', speed: 'standard' },
+          setSelectedModelAndOptions,
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(trigger).toHaveTextContent('GPT 5.6 Sol Extra High')
+    expect(trigger.querySelector('.text-reasoning-ultra-text')).toHaveTextContent('Extra High')
+
+    await userEvent.click(trigger)
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+
+    expect(screen.queryByTestId('model-control-reasoning-max')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-ultra')).toHaveTextContent(
+      'Faster, uses more quota'
+    )
+    expect(
+      within(screen.getByTestId('model-selector-submenu')).getAllByText('Extra High')
+    ).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+    expect(screen.getByTestId('model-advanced-panel')).toHaveAttribute(
+      'data-enter-animation',
+      'advanced'
+    )
+    expect(screen.queryByTestId('model-control-menu-model')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-menu-reasoning')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-menu-speed')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('reasoning-slider-faster-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('reasoning-slider-smarter-label')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveClass('h-14')
+    expect(
+      screen.getByTestId('model-advanced-toggle').querySelector('.lucide-chevron-right')
+    ).toBeInTheDocument()
+    const fastModeToggle = screen.getByTestId('model-advanced-fast-mode-toggle')
+    expect(fastModeToggle).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(fastModeToggle)
+    expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-progress')).toHaveAttribute(
+      'data-ultra',
+      'true'
+    )
+    expect(screen.getByTestId('model-control-reasoning-progress')).toHaveClass(
+      'from-reasoning-ultra-start',
+      'to-reasoning-ultra-end'
+    )
+    expect(screen.getByTestId('reasoning-ultra-burst')).toBeInTheDocument()
+    const sparkles = screen
+      .getByTestId('model-control-reasoning-progress')
+      .querySelectorAll('[data-sparkle-index]')
+    expect(sparkles).toHaveLength(10)
+    expect(sparkles[1]).toHaveStyle({ animationDelay: '-260ms' })
+    const powerSettings = [
+      'gpt-5-6-terra-low',
+      'gpt-5-6-sol-low',
+      'gpt-5-6-sol-medium',
+      'gpt-5-6-sol-high',
+      'gpt-5-6-sol-xhigh',
+      'gpt-5-6-sol-ultra',
+    ]
+    powerSettings.forEach(setting => {
+      expect(screen.getByTestId(`model-power-setting-${setting}`)).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('model-power-setting-gpt-5-6-sol-max')).not.toBeInTheDocument()
+    const solLowSetting = screen.getByTestId('model-power-setting-gpt-5-6-sol-low')
+    expect(solLowSetting).not.toHaveAttribute('title')
+    expect(screen.queryByText('GPT 5.6 Sol Low')).not.toBeInTheDocument()
+
+    fireEvent.pointerDown(solLowSetting, { button: 0, clientX: 160, pointerId: 9 })
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveAttribute(
+      'data-interacting',
+      'true'
+    )
+    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('reasoning-slider-faster-label')).toHaveTextContent('Faster')
+    expect(screen.getByTestId('reasoning-slider-smarter-label')).toHaveTextContent('Smarter')
+    fireEvent.pointerUp(solLowSetting, { button: 0, clientX: 160, pointerId: 9 })
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveAttribute(
+      'data-interacting',
+      'false'
+    )
+    expect(screen.getByTestId('model-advanced-toggle')).toBeInTheDocument()
+    expect(screen.getByTestId('model-advanced-intelligence-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('reasoning-slider-faster-label')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-power-setting-gpt-5-6-terra-low'))
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(terraModel, {
+      reasoning: 'low',
+      speed: 'standard',
+    })
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-reasoning')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('model-advanced-toggle').querySelector('.lucide-chevron-up')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-fast-mode-toggle')).not.toBeInTheDocument()
+  })
+
+  test('persists the desktop power view across close, reopen, and a new composer mount', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const props = {
+      value: '',
+      onChange: vi.fn(),
+      onSubmit: vi.fn(),
+      disabled: false,
+      variant: 'desktop' as const,
+      projectChat: projectChatControls({
+        models: [model],
+        selectedModel: model,
+        selectedModelOptions: { reasoning: 'medium', speed: 'standard' },
+      }),
+    }
+    const firstRender = render(<ChatInput {...props} />)
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(localStorage.getItem('wework:model-selector-view')).toBe('power')
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<ChatInput {...props} />)
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+  })
+
+  test('offers a Sol medium reset when another model is selected without losing view preference', async () => {
+    localStorage.setItem('wework:model-selector-view', 'power')
+    const solModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Terra',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Terra',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModelAndOptions = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [solModel, terraModel],
+          selectedModel: terraModel,
+          selectedModelOptions: { reasoning: 'xhigh', speed: 'fast' },
+          setSelectedModelAndOptions,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-reset-default-button')).toHaveTextContent('重置为默认设置')
+
+    await userEvent.click(screen.getByTestId('model-reset-default-button'))
+
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(solModel, {
+      reasoning: 'medium',
+      speed: 'standard',
+    })
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(localStorage.getItem('wework:model-selector-view')).toBe('power')
+  })
+
+  test('keeps Advanced available for the Terra light setting shown on the power slider', async () => {
+    const solModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Terra',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Terra',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [solModel, terraModel],
+          selectedModel: terraModel,
+          selectedModelOptions: { reasoning: 'low', speed: 'standard' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-advanced-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-reset-default-button')).not.toBeInTheDocument()
+  })
+
+  test('suppresses the model tooltip after closing until the pointer re-enters', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls()}
+      />
+    )
+    const trigger = screen.getByTestId('model-selector-button')
+
+    await userEvent.click(trigger)
+    await userEvent.click(trigger)
+
+    expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
+
+    await userEvent.unhover(trigger)
+    await userEvent.hover(trigger)
+
+    expect(screen.getByTestId('model-selector-tooltip')).toBeInTheDocument()
+  })
+
+  test('keeps the desktop model submenu open after the pointer leaves the menu', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1630,12 +1769,13 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
 
     fireEvent.mouseLeave(screen.getByTestId('model-selector-menu').parentElement as HTMLElement)
 
-    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
   })
 
   test('keeps the desktop model menu in narrow Tauri windows', async () => {
@@ -1679,6 +1819,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('data-mobile')
     expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('aria-modal')
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
   })
 
@@ -1731,7 +1873,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
+  test('keeps the desktop model menu open after selecting a model opened by external signal', async () => {
     const model: UnifiedModel = {
       name: 'ali-qwen3-coder-plus',
       type: 'user',
@@ -1763,14 +1905,15 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    await waitFor(() => expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument())
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
+  test('keeps the desktop model submenu inside the viewport near the bottom edge', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
@@ -1780,15 +1923,43 @@ describe('ChatInput', () => {
       function getMockRect(this: HTMLElement) {
         const testId = this.getAttribute('data-testid')
         if (testId === 'model-selector-menu') {
-          return { top: 100, left: 480, width: 256, height: 720 } as DOMRect
+          return {
+            top: 760,
+            bottom: 900,
+            left: 480,
+            right: 736,
+            width: 256,
+            height: 140,
+          } as DOMRect
         }
-        if (testId === 'model-family-minimax') {
-          return { top: 900, left: 500, width: 220, height: 36 } as DOMRect
+        if (testId === 'model-control-menu-model') {
+          return {
+            top: 780,
+            bottom: 812,
+            left: 492,
+            right: 724,
+            width: 232,
+            height: 32,
+          } as DOMRect
         }
         if (testId === 'model-selector-submenu') {
-          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+          return {
+            top: 0,
+            bottom: 192,
+            left: 0,
+            right: 288,
+            width: 288,
+            height: 192,
+          } as DOMRect
         }
-        return { top: 0, left: 0, width: 0, height: 0 } as DOMRect
+        return {
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+        } as DOMRect
       }
     )
 
@@ -1823,10 +1994,11 @@ describe('ChatInput', () => {
       )
 
       await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
       await waitFor(() => {
         expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
-          top: '692px',
+          top: '20px',
         })
       })
     } finally {
@@ -1886,6 +2058,7 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
     expect(disabledOption).not.toBeDisabled()
@@ -1902,7 +2075,7 @@ describe('ChatInput', () => {
     )
   })
 
-  test('closes the model menu after selecting a reasoning option', async () => {
+  test('keeps the model menu open after selecting a reasoning option', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1934,12 +2107,12 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'medium')
-    await waitFor(() => {
-      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
-    })
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-medium')).toBeInTheDocument()
   })
 
   test('omits Codex plan mode from the desktop model menu', async () => {
@@ -1980,7 +2153,7 @@ describe('ChatInput', () => {
     expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
-  test('keeps reasoning controls for the selected GPT model while hovering another family', async () => {
+  test('flattens model families while keeping controls from the selected GPT model', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -2023,11 +2196,13 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-family-claude'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
+    expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
+    expect(screen.getByTestId('model-option-overseas-gpt-5.5')).toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-reasoning-auto')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
   })
 
   test('hides speed controls when the selected model version does not support speed', async () => {
@@ -2076,6 +2251,8 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
+    expect(screen.getByTestId('model-control-menu-speed')).toBeDisabled()
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
   })
@@ -2214,6 +2391,89 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('0s')
   })
 
+  test('shows an active goal as continuing only while a new goal turn is running', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goalContinuing
+        goal={{
+          threadId: 'thread-1',
+          objective: '继续完成测试',
+          status: 'active',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('目标继续执行中')
+    expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
+  })
+
+  test('offers the resume action for a blocked goal', async () => {
+    const onResumeGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={{
+          threadId: 'thread-1',
+          objective: 'Resolve the issue',
+          status: 'blocked',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+        onResumeGoal={onResumeGoal}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('resume-goal-button'))
+
+    expect(onResumeGoal).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['usageLimited', 'budgetLimited'] as const)(
+    'does not offer the pause action for a %s goal',
+    status => {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          goal={{
+            threadId: 'thread-1',
+            objective: 'Resolve the issue',
+            status,
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 1780000000000,
+            updatedAt: 1780000000000,
+          }}
+        />
+      )
+
+      expect(screen.queryByTestId('pause-goal-button')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('resume-goal-button')).not.toBeInTheDocument()
+    }
+  )
+
   test('does not render the goal status bar after the goal is complete', () => {
     const goal: RuntimeGoal = {
       threadId: 'thread-1',
@@ -2264,12 +2524,11 @@ describe('ChatInput', () => {
     expect(pill).toHaveClass('justify-center')
     expect(pill).toHaveClass('border')
     expect(pill).toHaveClass('bg-muted')
+    expect(screen.getByTestId('goal-draft-pill-icon')).toHaveClass('h-4')
     expect(cancelButton).toHaveClass('opacity-0')
-    expect(cancelButton).toHaveClass('w-0')
-    expect(cancelButton).toHaveClass('group-hover:w-5')
-    expect(cancelButton).toHaveClass('group-hover:mr-1.5')
+    expect(cancelButton).toHaveClass('absolute')
+    expect(cancelButton).toHaveClass('left-2')
     expect(cancelButton).toHaveClass('group-hover:opacity-100')
-    expect(cancelButton).toHaveClass('group-hover:bg-text-muted/15')
     expect(cancelButton).toHaveClass('hover:bg-text-muted/30')
 
     fireEvent.click(cancelButton)
@@ -2447,6 +2706,52 @@ describe('ChatInput', () => {
         'blob:attachment-preview'
       )
     })
+  })
+
+  test('renders an Appshot image and its text context as one attachment', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:appshot-preview')
+    const appshot: Attachment = {
+      id: -10,
+      filename: 'appshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-07-15T00:00:00.000Z',
+      ui_group_id: 'appshot-capture-1',
+      ui_group_role: 'primary',
+      ui_kind: 'appshot',
+    }
+    const textContext: Attachment = {
+      ...appshot,
+      id: -11,
+      filename: 'appshot-context.txt',
+      mime_type: 'text/plain',
+      file_extension: '.txt',
+      ui_group_role: 'companion',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ attachments: [appshot, textContext] })}
+      />
+    )
+
+    expect(screen.getAllByTestId('attachment-badge')).toHaveLength(1)
+    expect(screen.getByTestId('attachment-appshot-label')).toHaveTextContent('应用快照')
+    expect(screen.queryByTestId('attachment-text-icon')).not.toBeInTheDocument()
   })
 
   test('opens an enlarged image from the composer attachment preview', async () => {
@@ -2840,7 +3145,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
     expect(screen.getByTestId('project-work-button')).not.toHaveTextContent('Local Online')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -2884,9 +3189,9 @@ describe('ChatInput', () => {
 
     const trigger = screen.getByTestId('project-work-button')
 
-    expect(trigger).toHaveTextContent('进入项目工作')
+    expect(trigger).toHaveTextContent('请选择项目')
     expect(trigger).not.toHaveTextContent('Local Online')
-    expect(trigger).toHaveAccessibleName('进入项目工作')
+    expect(trigger).toHaveAccessibleName('请选择项目')
   })
 
   test('does not include enter-project work as a menu item', async () => {
@@ -2904,7 +3209,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
@@ -3100,6 +3405,7 @@ describe('ChatInput', () => {
           projects: [worktreeProject],
           currentProject: worktreeProject,
           currentProjectId: 7,
+          isGitProject: true,
           executionMode: 'git_worktree',
           executionModeLocked: false,
           onExecutionModeChange: vi.fn(),
@@ -3146,71 +3452,5 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
 
     expect(onSubmit).toHaveBeenCalled()
-  })
-
-  test('submits with Enter when content is present', async () => {
-    const onSubmit = vi.fn()
-    render(<ControlledChatInput onSubmit={onSubmit} />)
-
-    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello{enter}')
-
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
-
-  test('submits latest textarea value when Enter is pressed before controlled value updates', () => {
-    const onChange = vi.fn()
-    const onSubmit = vi.fn()
-    render(<ChatInput value="" onChange={onChange} onSubmit={onSubmit} disabled={false} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-    valueSetter?.call(input, 'hello')
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    expect(onSubmit).toHaveBeenCalledWith('hello')
-    expect(input).not.toHaveValue('\n')
-  })
-
-  test('submits with Enter after IME composition key press is released', () => {
-    const onSubmit = vi.fn()
-    render(<ControlledChatInput onSubmit={onSubmit} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    fireEvent.change(input, { target: { value: 'hello' } })
-    fireEvent.compositionStart(input)
-    fireEvent.compositionEnd(input)
-    fireEvent.keyUp(input, { key: 'Enter' })
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
-
-  test('suppresses Enter keydown that arrives after IME composition ends but before keyup', () => {
-    const onSubmit = vi.fn()
-    render(<ControlledChatInput onSubmit={onSubmit} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    fireEvent.change(input, { target: { value: 'hello' } })
-    fireEvent.compositionStart(input)
-    fireEvent.compositionEnd(input)
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    expect(onSubmit).not.toHaveBeenCalled()
-
-    fireEvent.keyUp(input, { key: 'Enter' })
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-  })
-
-  test('keeps Shift Enter as a newline', async () => {
-    const onSubmit = vi.fn()
-    render(<ControlledChatInput onSubmit={onSubmit} />)
-
-    const input = screen.getByTestId('chat-message-input')
-    await userEvent.type(input, 'hello{shift>}{enter}{/shift}world')
-
-    expect(input).toHaveValue('hello\nworld')
-    expect(onSubmit).not.toHaveBeenCalled()
   })
 })

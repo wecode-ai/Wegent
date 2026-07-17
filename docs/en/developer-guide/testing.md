@@ -232,35 +232,25 @@ The `.github/workflows/test.yml` workflow runs automatically on:
 
 ### Workflow Jobs
 
-1. **test-backend**: Python backend tests
-   - Matrix strategy: Python 3.10 and 3.11
-   - Coverage reports uploaded to Codecov
-   - Dependency caching for faster builds
+Regular PR checks must cover module tests; E2E jobs do not replace them:
 
-2. **test-executor**: Executor engine tests
-   - Python 3.10
-   - Coverage for agents module
-   - Tests AI agent factory and base classes
+1. **test-backend** runs the Backend suite with Python 3.11 and `uv run pytest`.
+2. **test-executor** runs `cargo fmt --check`, `cargo test --all-features`, and
+   Clippy for the Rust Executor. It places `CARGO_TARGET_DIR` under the runner's
+   temporary directory to avoid shared build contamination and workspace disk pressure.
+3. **test-executor-manager**, **test-shared**, and **test-knowledge-engine** run
+   their Python suites with `uv run pytest`.
+4. **test-frontend** runs the Chat Core and Frontend unit tests.
+5. **test-wework** runs the Wework unit suite with Vitest and generates coverage.
+6. **test-wegent-cli** and **test-wegent-cli-integration** run CLI unit tests and
+   integration tests backed by MySQL, Redis, and a real Backend, respectively.
+7. **test-summary** always runs and depends on every job above. It must fail when
+   any module test job fails.
 
-3. **test-executor-manager**: Task manager tests
-   - Python 3.10
-   - Coverage for executors module
-   - Tests Docker executor and dispatcher
-
-4. **test-shared**: Shared utilities tests
-   - Python 3.10
-   - Coverage for utils module
-   - Tests cryptography and data masking
-
-5. **test-frontend**: Frontend tests (Node.js 20.x)
-   - Jest with React Testing Library
-   - Runs with `--passWithNoTests` flag
-   - Coverage uploaded to Codecov
-
-6. **test-summary**: Aggregate results
-   - Depends on all test jobs
-   - Fails if any test job fails
-   - Always runs regardless of individual job status
+E2E coverage lives in dedicated workflows: `.github/workflows/e2e-tests.yml`
+covers product end-to-end flows, while `.github/workflows/wework-e2e.yml` covers
+Wework flows. They add cross-module verification and do not replace the module
+tests in `.github/workflows/test.yml`.
 
 ### Coverage Reports
 

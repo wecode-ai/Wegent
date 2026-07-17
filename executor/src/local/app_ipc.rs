@@ -2,129 +2,53 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, env, future::Future, path::PathBuf, pin::Pin, sync::Arc};
-
-#[cfg(unix)]
+#[cfg(windows)]
+use std::path::Path;
 use std::{
-    fs, io,
-    path::Path,
-    time::{Duration, Instant},
+    collections::HashMap, env, future::Future, net::SocketAddr, path::PathBuf, pin::Pin, sync::Arc,
 };
 
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
-
-#[cfg(unix)]
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{UnixListener, UnixStream},
-    sync::mpsc,
+    net::{TcpListener, TcpStream},
+    sync::{broadcast, mpsc},
+    time::{Duration, Instant},
 };
 
 use crate::{
     agents::resolve_codex_binary,
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::git_commit_message::generate_commit_message,
+    local::local_skills::list_local_skills,
+    local::workspace_files::{
+        execute_workspace_file_command_with_input, is_workspace_file_command,
+    },
     logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
 };
 
+#[cfg(windows)]
+use crate::local::command::build_env;
+
 const DEFAULT_DEVICE_ID: &str = "local-device";
-const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
+const DEFAULT_APP_IPC_ADDR: &str = "127.0.0.1:0";
+const APP_IPC_ADDR_FILE_NAME: &str = "app-ipc.addr";
+const APP_IPC_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-#[cfg(unix)]
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
-const WORKSPACE_TREE_SCRIPT: &str = r#"
-import json
-import os
-import stat as stat_module
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-def iso_mtime(path_stat):
-    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
-
-
-root = Path.cwd().resolve()
-entries = []
-for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
-    if child.name in {'.', '..'}:
-        continue
-    try:
-        child_stat = child.lstat()
-    except OSError:
-        continue
-    is_directory = stat_module.S_ISDIR(child_stat.st_mode)
-    entries.append(
-        {
-            "name": child.name,
-            "path": str(child),
-            "is_directory": is_directory,
-            "size": 0 if is_directory else child_stat.st_size,
-            "modified_at": iso_mtime(child_stat),
-        }
-    )
-
-entries.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
-print(json.dumps({"path": str(root), "entries": entries}, ensure_ascii=False))
-"#;
-const WORKSPACE_READ_TEXT_FILE_SCRIPT: &str = r#"
-import json
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-MAX_BYTES = 262144
-
-
-def fail(message, code=64):
-    print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
-    raise SystemExit(code)
-
-
-def is_relative_to(path, root):
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
-if len(sys.argv) != 2:
-    fail("file name is required")
-
-root = Path.cwd().resolve()
-target = (root / sys.argv[1]).resolve()
-if not is_relative_to(target, root):
-    fail("file path is outside workspace")
-if not target.is_file():
-    fail("file does not exist")
-
-with target.open("rb") as target_file:
-    data = target_file.read(MAX_BYTES + 1)
-truncated = len(data) > MAX_BYTES
-content = data[:MAX_BYTES].decode("utf-8", errors="replace")
-stat = target.stat()
-print(
-    json.dumps(
-        {
-            "success": True,
-            "path": str(target),
-            "name": target.name,
-            "content": content,
-            "truncated": truncated,
-            "size": stat.st_size,
-            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-        },
-        ensure_ascii=False,
-    )
-)
-"#;
+const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
+if [ -z "$branch" ]; then
+  echo "Cannot push detached HEAD" >&2
+  exit 64
+fi
+exec git push -u origin "$branch""#;
 const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,7 +57,8 @@ def iso_mtime(path_stat):
     return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
 
 
-target = Path.home() / ".codex" / "auth.json"
+codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+target = codex_home / "auth.json"
 result = {
     "runtime": "codex",
     "target_path": str(target),
@@ -163,234 +88,9 @@ if target.exists() and target.is_file():
 
 print(json.dumps(result, ensure_ascii=False))
 "#;
-const LOCAL_SKILLS_SCRIPT: &str = r##"
-import json
-from pathlib import Path
-
-
-def strip_quotes(value):
-    stripped = value.strip()
-    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"\"", "'"}:
-        return stripped[1:-1]
-    return stripped
-
-
-def normalize_block_scalar(lines, style):
-    non_empty_indents = [
-        len(line) - len(line.lstrip(" "))
-        for line in lines
-        if line.strip()
-    ]
-    trim_indent = min(non_empty_indents) if non_empty_indents else 0
-    values = [
-        line[trim_indent:] if len(line) >= trim_indent else line
-        for line in lines
-    ]
-    if style == ">":
-        paragraphs = []
-        current = []
-        for line in values:
-            if line.strip():
-                current.append(line.strip())
-                continue
-            if current:
-                paragraphs.append(" ".join(current))
-                current = []
-        if current:
-            paragraphs.append(" ".join(current))
-        return "\n".join(paragraphs).strip()
-    return "\n".join(values).strip()
-
-
-def parse_frontmatter(path):
-    metadata = {}
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return metadata
-    if not lines or lines[0].strip() != "---":
-        return metadata
-
-    frontmatter = []
-    for line in lines[1:]:
-        stripped = line.strip()
-        if stripped == "---":
-            break
-        frontmatter.append(line)
-
-    index = 0
-    while index < len(frontmatter):
-        line = frontmatter[index]
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or ":" not in line:
-            index += 1
-            continue
-        current_indent = len(line) - len(line.lstrip(" "))
-        key, value = line.split(":", 1)
-        key = key.strip()
-        raw_value = value.strip()
-        if not key:
-            index += 1
-            continue
-        if raw_value in {"|", ">"} or raw_value.startswith("|") or raw_value.startswith(">"):
-            style = raw_value[0]
-            block_lines = []
-            index += 1
-            while index < len(frontmatter):
-                next_line = frontmatter[index]
-                next_stripped = next_line.strip()
-                next_indent = len(next_line) - len(next_line.lstrip(" "))
-                if next_stripped and next_indent <= current_indent and ":" in next_line:
-                    break
-                block_lines.append(next_line)
-                index += 1
-            metadata[key] = normalize_block_scalar(block_lines, style)
-            continue
-        metadata[key] = strip_quotes(raw_value)
-        index += 1
-    return metadata
-
-
-def skill_entry(skill_dir, source, scope, source_priority, plugin_name=None):
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_dir.is_dir() or not skill_md.is_file():
-        return None
-    metadata = parse_frontmatter(skill_md)
-    name = metadata.get("name") or skill_dir.name
-    description = metadata.get("description") or ""
-    try:
-        mtime = skill_md.stat().st_mtime
-    except OSError:
-        mtime = None
-    entry = {
-        "name": name,
-        "description": description,
-        "path": str(skill_md),
-        "source": source,
-        "scope": scope,
-        "origin": "local",
-        "source_priority": source_priority,
-    }
-    if description:
-        entry["short_description"] = description
-    if plugin_name:
-        entry["plugin_name"] = plugin_name
-    if mtime is not None:
-        entry["mtime"] = mtime
-    return entry
-
-
-def scan_skill_dir(root, source, scope, source_priority):
-    output = []
-    if not root.is_dir():
-        return output
-    for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
-        if child.name == ".system":
-            continue
-        entry = skill_entry(child, source, scope, source_priority)
-        if entry is not None:
-            output.append(entry)
-    return output
-
-
-def scan_system_skill_dir(root, source):
-    return scan_skill_dir(root / ".system", source, "system", 10)
-
-
-def plugin_source_priority(provider):
-    return {
-        "openai-curated-remote": 20,
-        "openai-bundled": 30,
-        "openai-primary-runtime": 30,
-        "openai-curated": 40,
-    }.get(provider or "", 50)
-
-
-def plugin_metadata(root, skill_dir):
-    plugin_root = skill_dir.parent.parent
-    plugin_name = plugin_root.name
-    provider = None
-    version = None
-    try:
-        parts = plugin_root.relative_to(root).parts
-    except ValueError:
-        parts = ()
-    if len(parts) >= 4 and parts[0] == "cache":
-        provider = parts[1]
-        plugin_name = parts[2]
-        version = parts[3]
-    elif parts:
-        plugin_name = parts[0]
-    return plugin_name, provider, version
-
-
-def scan_plugin_dir(root, source):
-    output = []
-    if not root.is_dir():
-        return output
-    for skill_md in sorted(root.rglob("SKILL.md"), key=lambda item: str(item).lower()):
-        skill_dir = skill_md.parent
-        if skill_dir.parent.name != "skills":
-            continue
-        plugin_name, provider, version = plugin_metadata(root, skill_dir)
-        entry = skill_entry(
-            skill_dir,
-            source,
-            "user",
-            plugin_source_priority(provider),
-            plugin_name,
-        )
-        if entry is not None:
-            if provider:
-                entry["plugin_provider"] = provider
-            if version:
-                entry["plugin_version"] = version
-            output.append(entry)
-    return output
-
-
-def skill_identity(skill):
-    name = (skill.get("name") or "").strip().lower()
-    return name or skill["path"]
-
-
-def prefer_skill(left, right):
-    left_rank = left.get("source_priority", 99)
-    right_rank = right.get("source_priority", 99)
-    if left_rank != right_rank:
-        return left if left_rank < right_rank else right
-    left_mtime = left.get("mtime") or 0
-    right_mtime = right.get("mtime") or 0
-    if left_mtime != right_mtime:
-        return left if left_mtime > right_mtime else right
-    return left if left["path"] <= right["path"] else right
-
-
-home = Path.home()
-skills = []
-codex_skills_root = home / ".codex" / "skills"
-skills.extend(scan_skill_dir(codex_skills_root, "codex", "user", 0))
-skills.extend(scan_system_skill_dir(codex_skills_root, "codex"))
-skills.extend(scan_plugin_dir(home / ".codex" / "plugins", "codex-plugin"))
-
-deduped_by_name = {}
-for skill in skills:
-    key = skill_identity(skill)
-    current = deduped_by_name.get(key)
-    deduped_by_name[key] = prefer_skill(current, skill) if current else skill
-
-deduped = sorted(
-    deduped_by_name.values(),
-    key=lambda skill: (
-        skill.get("source_priority", 99),
-        skill["name"].lower(),
-        skill["path"],
-    ),
-)
-
-print(json.dumps(deduped, ensure_ascii=False))
-"##;
+const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
 const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
+const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const TURN_FILE_CHANGES_SCRIPT: &str = r#"
 import gzip
 import hashlib
@@ -496,6 +196,22 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "codex_app_server_unavailable",
+                "Codex app-server handler is not available",
+            ))
+        })
+    }
+}
+
+pub trait BackendConnectionHandler: Send + Sync {
+    fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -529,7 +245,9 @@ enum PostProcessor {
 #[derive(Clone)]
 pub struct AppIpcServer {
     device_id: String,
+    runtime_instance_id: Option<String>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
+    backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
 }
@@ -539,7 +257,9 @@ impl Default for AppIpcServer {
         let (event_tx, _) = broadcast::channel(512);
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
+            runtime_instance_id: None,
             runtime_work_handler: None,
+            backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
             event_tx,
         }
@@ -561,6 +281,13 @@ impl AppIpcServer {
         self
     }
 
+    pub fn with_runtime_instance_id(mut self, runtime_instance_id: impl Into<String>) -> Self {
+        self.runtime_instance_id = Some(runtime_instance_id.into())
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        self
+    }
+
     pub fn with_runtime_work_handler<H>(mut self, handler: H) -> Self
     where
         H: RuntimeWorkHandler + 'static,
@@ -575,6 +302,14 @@ impl AppIpcServer {
             codex_binary.into(),
             self.event_tx.clone(),
         )));
+        self
+    }
+
+    pub fn with_backend_connection_handler<H>(mut self, handler: H) -> Self
+    where
+        H: BackendConnectionHandler + 'static,
+    {
+        self.backend_connection_handler = Some(Arc::new(handler));
         self
     }
 
@@ -623,15 +358,23 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        if method == "executor.health" {
+            return Ok(json!({"status": "healthy"}));
+        }
+
+        if method == "executor.backend.configure" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.configure_backend(params).await;
+        }
+
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
         }
-
-        let method = if method == "runtime.tasks.guidance" {
-            "runtime.tasks.send"
-        } else {
-            method
-        };
 
         if method.starts_with("runtime.") {
             let Some(handler) = &self.runtime_work_handler else {
@@ -643,6 +386,16 @@ impl AppIpcServer {
             return handler
                 .handle_runtime_rpc(json!({"method": method, "payload": params}))
                 .await;
+        }
+
+        if method == "codex.app_server_request" {
+            let Some(handler) = &self.runtime_work_handler else {
+                return Err(AppIpcError::new(
+                    "codex_app_server_unavailable",
+                    "Codex app-server handler is not available",
+                ));
+            };
+            return handler.handle_codex_app_server_rpc(params).await;
         }
 
         Err(AppIpcError::new(
@@ -671,42 +424,36 @@ impl AppIpcServer {
     }
 
     pub fn ready_event(&self) -> Value {
-        self.event_message(
-            "executor.ready",
-            json!({
-                "device_id": self.device_id,
-                "ready": true,
-                "version": get_version(),
-            }),
-        )
+        let mut payload = json!({
+            "device_id": self.device_id,
+            "ready": true,
+            "version": get_version(),
+        });
+        if let Some(runtime_instance_id) = &self.runtime_instance_id {
+            payload["runtime_instance_id"] = Value::String(runtime_instance_id.clone());
+        }
+        self.event_message("executor.ready", payload)
     }
 
-    #[cfg(unix)]
-    pub async fn serve_forever(&self, socket_path: PathBuf) -> Result<(), String> {
-        prepare_socket_path(&socket_path).map_err(|error| {
-            format!(
-                "failed to prepare app IPC socket {}: {error}",
-                socket_path.display()
-            )
-        })?;
-        let listener = UnixListener::bind(&socket_path).map_err(|error| {
-            format!(
-                "failed to bind app IPC socket {}: {error}",
-                socket_path.display()
-            )
-        })?;
-        set_socket_permissions(&socket_path);
+    pub async fn serve_forever(&self) -> Result<(), String> {
+        let addr = local_app_ipc_addr();
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|error| format!("failed to bind app IPC TCP socket {addr}: {error}"))?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|error| format!("failed to read app IPC TCP local address: {error}"))?;
+        if let Err(error) = write_app_ipc_addr_file(local_addr) {
+            eprintln!("failed to write app IPC address file: {error}");
+        }
         write_executor_log_line(&app_ipc_listening_log_line(
             &self.device_id,
-            &socket_path.display().to_string(),
+            &local_addr.to_string(),
         ));
 
         loop {
             let (stream, _) = listener.accept().await.map_err(|error| {
-                format!(
-                    "failed to accept app IPC client on {}: {error}",
-                    socket_path.display()
-                )
+                format!("failed to accept app IPC client on {local_addr}: {error}")
             })?;
             let server = self.clone();
             tokio::spawn(async move {
@@ -717,13 +464,7 @@ impl AppIpcServer {
         }
     }
 
-    #[cfg(not(unix))]
-    pub async fn serve_forever(&self, _socket_path: PathBuf) -> Result<(), String> {
-        Err("app IPC sidecar requires Unix socket support".to_owned())
-    }
-
-    #[cfg(unix)]
-    async fn handle_stream(&self, stream: UnixStream) -> Result<(), String> {
+    async fn handle_stream(&self, stream: TcpStream) -> Result<(), String> {
         let (reader, writer) = stream.into_split();
         let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
         let mut writer_task = tokio::spawn(async move {
@@ -865,14 +606,52 @@ impl AppIpcServer {
         let command_key = string_field(&params, "command_key")
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("bad_request", "command_key is required"))?;
-        let command = local_app_command(command_key.trim()).ok_or_else(|| {
+        let command_key = command_key.trim();
+
+        if command_key == "git_generate_commit_message" {
+            let cwd = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+            let env = string_env(params.get("env"))?;
+            let result = generate_commit_message(cwd, env).await;
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        if command_key == "ls_skills" {
+            let result = list_local_skills().await;
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        let args = string_list(params.get("args"))?;
+        let env = string_env(params.get("env"))?;
+        if is_workspace_file_command(command_key) {
+            return serde_json::to_value(
+                execute_workspace_file_command_with_input(
+                    command_key,
+                    string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
+                    args,
+                    env,
+                    string_field(&params, "stdin"),
+                )
+                .await,
+            )
+            .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        if let Some((result, post_processor)) =
+            handle_builtin_device_command(command_key, &params).await
+        {
+            return serde_json::to_value(apply_post_processor(result, post_processor))
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        let command = local_app_command(command_key).ok_or_else(|| {
             AppIpcError::new(
                 "unknown_command",
                 format!("Device command key '{command_key}' is not configured"),
             )
         })?;
 
-        let args = string_list(params.get("args"))?;
         let request = CommandRequest {
             command: command.command.to_owned(),
             argv: command
@@ -882,7 +661,7 @@ impl AppIpcServer {
                 .chain(args)
                 .collect(),
             cwd: string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
-            env: string_env(params.get("env"))?,
+            env,
             timeout_seconds: positive_number(
                 params.get("timeout_seconds"),
                 DEFAULT_TIMEOUT_SECONDS,
@@ -900,17 +679,222 @@ impl AppIpcServer {
     }
 }
 
-pub fn app_ipc_listening_log_line(device_id: &str, socket_path: &str) -> String {
+#[cfg(windows)]
+async fn handle_builtin_device_command(
+    command_key: &str,
+    params: &Value,
+) -> Option<(CommandResult, Option<PostProcessor>)> {
+    match command_key {
+        "home_dir" => Some((
+            CommandResult::ok(
+                dirs::home_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| ".".to_string()),
+            ),
+            None,
+        )),
+        "pwd" => Some((
+            CommandResult::ok(
+                std::env::current_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| ".".to_string()),
+            ),
+            None,
+        )),
+        "project_workspace_root" => match project_workspace_root_path() {
+            Ok(path) => Some((CommandResult::ok(path), None)),
+            Err(error) => Some((CommandResult::error(error, 0.0, false), None)),
+        },
+        "mkdir_p" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((
+                match std::fs::create_dir_all(path) {
+                    Ok(()) => CommandResult::ok(""),
+                    Err(error) => CommandResult::error(
+                        format!("Failed to create directory {path}: {error}"),
+                        0.0,
+                        false,
+                    ),
+                },
+                None,
+            ))
+        }
+        "path_exists" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((
+                CommandResult::ok(if Path::new(path).exists() { "true" } else { "" }),
+                None,
+            ))
+        }
+        "ls_dirs" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            Some((
+                match std::fs::read_dir(&path) {
+                    Ok(entries) => {
+                        let mut output = String::new();
+                        for entry in entries.flatten() {
+                            if let Ok(metadata) = entry.metadata() {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if metadata.is_dir() {
+                                    output.push_str(&name);
+                                    output.push('/');
+                                } else {
+                                    output.push_str(&name);
+                                }
+                                output.push('\n');
+                            }
+                        }
+                        CommandResult::ok(output)
+                    }
+                    Err(error) => CommandResult::error(
+                        format!("Failed to list directory {path}: {error}"),
+                        0.0,
+                        false,
+                    ),
+                },
+                Some(PostProcessor::DirectoryList),
+            ))
+        }
+        "runtime_auth_status" => {
+            let codex_home = env::var("CODEX_HOME")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join(".codex")
+                });
+            let target = codex_home.join("auth.json");
+            let mut result = json!({
+                "runtime": "codex",
+                "target_path": target.display().to_string(),
+                "exists": target.exists() && target.is_file(),
+                "updated_at": Value::Null,
+                "sha256": Value::Null,
+                "size_bytes": Value::Null,
+                "error": Value::Null,
+            });
+            if target.exists() && target.is_file() {
+                match std::fs::metadata(&target) {
+                    Ok(metadata) => {
+                        if let Ok(updated_at) = metadata.modified() {
+                            let datetime = chrono::DateTime::<chrono::Utc>::from(updated_at);
+                            result["updated_at"] = Value::String(datetime.to_rfc3339());
+                        }
+                        result["size_bytes"] = Value::Number(metadata.len().into());
+                        match std::fs::read(&target) {
+                            Ok(content) => {
+                                use sha2::{Digest, Sha256};
+                                let hash = Sha256::digest(&content);
+                                result["sha256"] = Value::String(format!("{hash:x}"));
+                            }
+                            Err(error) => {
+                                result["error"] = Value::String(error.to_string());
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        result["error"] = Value::String(error.to_string());
+                    }
+                }
+            }
+            Some((
+                CommandResult::ok(result.to_string()),
+                Some(PostProcessor::Json),
+            ))
+        }
+        "git_is_worktree" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((
+                CommandResult::ok(if git_is_worktree(path) { "true" } else { "" }),
+                None,
+            ))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+async fn handle_builtin_device_command(
+    _command_key: &str,
+    _params: &Value,
+) -> Option<(CommandResult, Option<PostProcessor>)> {
+    None
+}
+
+#[cfg(windows)]
+fn git_is_worktree(path: &str) -> bool {
+    git_stdout(path, &["rev-parse", "--is-inside-work-tree"])
+        .map(|output| output.trim() == "true")
+        .unwrap_or(false)
+        || git_stdout(path, &["rev-parse", "--git-dir"]).is_some()
+}
+
+#[cfg(windows)]
+fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env_clear()
+        .envs(build_env(&HashMap::new()))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(windows)]
+fn project_workspace_root_path() -> Result<String, String> {
+    if let Ok(value) = env::var("WEGENT_EXECUTOR_PROJECTS_DIR") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_owned());
+        }
+    }
+    if let Ok(value) = env::var("WECODE_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed)
+                .join("wegent-executor")
+                .join("workspace")
+                .join("projects")
+                .display()
+                .to_string());
+        }
+    }
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    Ok(home
+        .join(".wecode")
+        .join("wegent-executor")
+        .join("workspace")
+        .join("projects")
+        .display()
+        .to_string())
+}
+
+pub fn app_ipc_listening_log_line(device_id: &str, addr: &str) -> String {
     format_executor_log(
         "app IPC listening",
         &[
             ("device_id", device_id.to_owned()),
-            ("socket_path", socket_path.to_owned()),
+            ("addr", addr.to_owned()),
+            ("process_id", std::process::id().to_string()),
+            (
+                "addr_file",
+                local_app_ipc_addr_file_path().display().to_string(),
+            ),
         ],
     )
 }
 
-#[cfg(unix)]
 fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
     match serde_json::from_str::<Value>(line) {
         Ok(Value::Object(message)) => {
@@ -930,7 +914,6 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-#[cfg(unix)]
 fn log_app_ipc_request(
     event: &str,
     request_id: Option<&str>,
@@ -982,26 +965,15 @@ fn log_app_ipc_response_error(
     write_executor_log_line(&format_executor_log("app IPC request failed", &fields));
 }
 
-pub fn app_ipc_socket_path() -> PathBuf {
-    if let Ok(path) = env::var("WEGENT_EXECUTOR_APP_IPC_SOCKET") {
-        let path = path.trim();
-        if !path.is_empty() {
-            return expand_home(path);
-        }
-    }
-
-    let home = env::var("WEGENT_EXECUTOR_HOME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "~/.wegent-executor".to_owned());
-    expand_home(&home).join(DEFAULT_SOCKET_NAME)
-}
-
-pub async fn serve_app_ipc_sidecar(device_id: String) -> Result<(), String> {
+pub async fn serve_app_ipc_sidecar(
+    device_id: String,
+    runtime_instance_id: String,
+) -> Result<(), String> {
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
+        .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary());
-    server.serve_forever(app_ipc_socket_path()).await
+    server.serve_forever().await
 }
 
 pub fn normalize_device_id(device_id: impl Into<String>) -> String {
@@ -1030,16 +1002,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "ls -a -p",
             &["ls", "-a", "-p"],
             Some(PostProcessor::DirectoryList),
-        )),
-        "workspace_tree" => Some(command_definition(
-            "python3 -c <workspace_tree>",
-            &["python3", "-c", WORKSPACE_TREE_SCRIPT],
-            Some(PostProcessor::Json),
-        )),
-        "workspace_read_text_file" => Some(command_definition(
-            "python3 -c <workspace_read_text_file>",
-            &["python3", "-c", WORKSPACE_READ_TEXT_FILE_SCRIPT],
-            Some(PostProcessor::Json),
         )),
         "runtime_auth_status" => Some(command_definition(
             "python3 -c <runtime_auth_status>",
@@ -1072,6 +1034,16 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "git_diff" => Some(command_definition(
             "bash -lc <git_workspace_diff>",
             &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            None,
+        )),
+        "git_branch_diff" => Some(command_definition(
+            "bash -lc <git_branch_diff>",
+            &["bash", "-lc", GIT_BRANCH_DIFF_SCRIPT],
+            None,
+        )),
+        "git_branch_diff_shortstat" => Some(command_definition(
+            "bash -lc <git_branch_diff_shortstat>",
+            &["bash", "-lc", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
             None,
         )),
         "git_diff_unstaged" => Some(command_definition(
@@ -1150,9 +1122,28 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
-        "ls_skills" => Some(command_definition(
-            "python3 -c <local_skills>",
-            &["python3", "-c", LOCAL_SKILLS_SCRIPT],
+        "git_push" => Some(command_definition(
+            "sh -c <git_push>",
+            &["sh", "-c", GIT_PUSH_SCRIPT],
+            None,
+        )),
+        "browser_relay_restart" => Some(command_definition(
+            "sh -lc <browser_relay_restart>",
+            &[
+                "sh",
+                "-lc",
+                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+            ],
+            None,
+        )),
+        "browser_tool" => Some(command_definition(
+            "sh -lc <browser_tool>",
+            &[
+                "sh",
+                "-lc",
+                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "--",
+            ],
             Some(PostProcessor::Json),
         )),
         "turn_file_changes_review" => Some(command_definition(
@@ -1364,6 +1355,58 @@ fn stdout_string(result: &CommandResult) -> String {
         .unwrap_or_else(|| result.stdout.to_string())
 }
 
+pub fn app_ipc_socket_path() -> PathBuf {
+    local_app_ipc_addr_file_path()
+}
+
+pub fn local_app_ipc_addr_file_path() -> PathBuf {
+    if let Ok(value) = env::var(APP_IPC_ADDR_FILE_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return expand_home(trimmed);
+        }
+    }
+    let home = env::var("WEGENT_EXECUTOR_HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| expand_home(&value))
+        .unwrap_or_else(|| home_dir().join(".wegent-executor"));
+    home.join(APP_IPC_ADDR_FILE_NAME)
+}
+
+fn local_app_ipc_addr() -> SocketAddr {
+    if let Ok(value) = env::var("WEGENT_EXECUTOR_APP_IPC_ADDR") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+                return addr;
+            }
+            if let Ok(port) = trimmed.parse::<u16>() {
+                if let Ok(addr) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
+                    return addr;
+                }
+            }
+        }
+    }
+    DEFAULT_APP_IPC_ADDR
+        .parse()
+        .expect("default address is valid")
+}
+
+fn write_app_ipc_addr_file(addr: SocketAddr) -> std::io::Result<()> {
+    let path = local_app_ipc_addr_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, addr.to_string())
+}
+
+pub fn read_app_ipc_addr_file() -> Option<SocketAddr> {
+    let path = local_app_ipc_addr_file_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    content.trim().parse::<SocketAddr>().ok()
+}
+
 fn expand_home(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir();
@@ -1375,32 +1418,10 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-#[cfg(unix)]
-fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
-    if let Some(parent) = socket_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match fs::remove_file(socket_path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(unix)]
-fn set_socket_permissions(socket_path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _ = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(unix)]
-async fn write_message<W>(writer: &mut W, message: &Value) -> io::Result<()>
+async fn write_message<W>(writer: &mut W, message: &Value) -> std::io::Result<()>
 where
     W: AsyncWrite + Unpin,
 {
@@ -1408,4 +1429,41 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment lock should be available")
+    }
+
+    fn restore_env(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            env::set_var(key, value);
+        } else {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn explicit_app_ipc_addr_file_is_independent_from_executor_home() {
+        let _guard = env_lock();
+        let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        let previous_addr_file = env::var_os(APP_IPC_ADDR_FILE_ENV);
+        env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/shared-executor-home");
+        env::set_var(APP_IPC_ADDR_FILE_ENV, "/tmp/wework-runtime/app-ipc.addr");
+
+        let path = local_app_ipc_addr_file_path();
+
+        restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+        restore_env(APP_IPC_ADDR_FILE_ENV, previous_addr_file);
+        assert_eq!(path, PathBuf::from("/tmp/wework-runtime/app-ipc.addr"));
+    }
 }

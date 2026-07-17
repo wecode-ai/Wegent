@@ -3,15 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env, fs,
     future::Future,
     io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
+    pin::Pin,
     process::Stdio,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod config;
@@ -25,8 +26,9 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
+use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use crate::{
@@ -87,6 +89,10 @@ where
         .route("/init", post(envd_init))
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
+        .route(
+            "/v1/codex-responses-proxy/responses",
+            post(codex_responses_proxy),
+        )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
@@ -154,7 +160,11 @@ pub async fn serve(config: ServerConfig) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .map_err(|error| format!("failed to bind executor server at {bind_addr}: {error}"))?;
-    write_executor_log_line(&startup_log_line(bind_addr));
+    let local_addr = listener
+        .local_addr()
+        .map_err(|error| format!("failed to read executor server local address: {error}"))?;
+    set_executor_http_addr(local_addr);
+    write_executor_log_line(&startup_log_line(local_addr));
     let _heartbeat = start_heartbeat_from_env();
 
     axum::serve(listener, create_docker_router_from_env()?)
@@ -166,12 +176,504 @@ pub fn startup_log_line(bind_addr: SocketAddr) -> String {
     format!("{} listening on {bind_addr}", executor_log_timestamp())
 }
 
+pub fn executor_loopback_base_url() -> Option<String> {
+    let addr = *executor_http_addr()
+        .lock()
+        .expect("executor HTTP address should not be poisoned");
+    addr.map(|addr| format!("http://127.0.0.1:{}", addr.port()))
+}
+
+fn set_executor_http_addr(addr: SocketAddr) {
+    *executor_http_addr()
+        .lock()
+        .expect("executor HTTP address should not be poisoned") = Some(addr);
+}
+
+fn executor_http_addr() -> &'static Mutex<Option<SocketAddr>> {
+    static ADDR: OnceLock<Mutex<Option<SocketAddr>>> = OnceLock::new();
+    ADDR.get_or_init(|| Mutex::new(None))
+}
+
 async fn health_check() -> Json<Value> {
     Json(json!({"status": "healthy", "service": "task_executor"}))
 }
 
 async fn envd_health_check() -> StatusCode {
     StatusCode::NO_CONTENT
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexResponsesProxyUpstream {
+    pub base_url: String,
+    pub responses_url: Option<String>,
+    pub api_key: String,
+    pub default_headers: Vec<(String, String)>,
+    pub proxy_url: Option<String>,
+}
+
+pub fn register_codex_responses_proxy(upstream: CodexResponsesProxyUpstream) -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let token = {
+        let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+        let mut guard = next_id
+            .lock()
+            .expect("proxy token counter should not be poisoned");
+        *guard += 1;
+        format!("codex-{}-{}", std::process::id(), *guard)
+    };
+    codex_responses_proxy_registry()
+        .lock()
+        .expect("proxy registry should not be poisoned")
+        .insert(token.clone(), upstream);
+    token
+}
+
+fn codex_responses_proxy_registry() -> &'static Mutex<HashMap<String, CodexResponsesProxyUpstream>>
+{
+    static REGISTRY: OnceLock<Mutex<HashMap<String, CodexResponsesProxyUpstream>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn extract_codex_responses_proxy_local_token(headers: &HeaderMap) -> Option<String> {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    let mut parts = auth.split_whitespace();
+    if parts.next()?.eq_ignore_ascii_case("Bearer") {
+        parts.next().map(str::to_owned)
+    } else {
+        None
+    }
+}
+
+async fn codex_responses_proxy(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
+    let request_id = next_codex_responses_proxy_request_id();
+    let started_at = Instant::now();
+    let local_token =
+        extract_codex_responses_proxy_local_token(&headers).ok_or_else(|| HttpError {
+            status: StatusCode::UNAUTHORIZED,
+            detail: "missing Codex responses proxy local token".to_owned(),
+        })?;
+    let upstream = codex_responses_proxy_registry()
+        .lock()
+        .expect("proxy registry should not be poisoned")
+        .get(&local_token)
+        .cloned()
+        .ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "unknown Codex responses proxy token".to_owned(),
+        })?;
+    let upstream_url = upstream
+        .responses_url
+        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    log_executor_event(
+        "codex responses proxy request started",
+        &[
+            ("request_id", request_id.clone()),
+            ("token", local_token.clone()),
+            ("upstream", codex_responses_proxy_log_target(&upstream_url)),
+            ("proxy_configured", upstream.proxy_url.is_some().to_string()),
+            ("body_bytes", body.len().to_string()),
+            (
+                "accept",
+                headers
+                    .get(header::ACCEPT)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned(),
+            ),
+        ],
+    );
+    let client = codex_responses_proxy_client(upstream.proxy_url.as_deref())?;
+    let mut request = client
+        .post(upstream_url)
+        .bearer_auth(upstream.api_key)
+        .body(body.to_vec());
+    if let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+    }
+    if let Some(accept) = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(reqwest::header::ACCEPT, accept);
+    }
+    for (key, value) in upstream.default_headers {
+        request = request.header(key, value);
+    }
+
+    let upstream_response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            log_executor_event(
+                "codex responses proxy request failed",
+                &[
+                    ("request_id", request_id),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return Err(HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Codex responses proxy request failed: {error}"),
+            });
+        }
+    };
+    let upstream_headers_elapsed = started_at.elapsed();
+    let status = upstream_response.status();
+    let content_type = upstream_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    log_executor_event(
+        "codex responses proxy upstream headers received",
+        &[
+            ("request_id", request_id.clone()),
+            ("status", status.as_u16().to_string()),
+            (
+                "elapsed_ms",
+                upstream_headers_elapsed.as_millis().to_string(),
+            ),
+            ("content_type", content_type.clone().unwrap_or_default()),
+        ],
+    );
+    let stream_stats = CodexResponsesProxyStreamStats::new(request_id, started_at);
+    let stream =
+        normalize_codex_responses_sse_stream(upstream_response.bytes_stream(), stream_stats);
+    let mut response = Response::new(Body::from_stream(stream));
+    *response.status_mut() = status;
+    if let Some(content_type) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type);
+    }
+    Ok(response)
+}
+
+fn codex_responses_proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(reqwest::Client::new());
+    };
+    reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Invalid Codex responses proxy URL: {error}"),
+        })?)
+        .build()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to configure Codex responses proxy client: {error}"),
+        })
+}
+
+fn next_codex_responses_proxy_request_id() -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+    let mut guard = next_id
+        .lock()
+        .expect("proxy request id counter should not be poisoned");
+    *guard += 1;
+    format!("proxy-{}-{}", std::process::id(), *guard)
+}
+
+fn codex_responses_proxy_log_target(upstream_url: &str) -> String {
+    reqwest::Url::parse(upstream_url)
+        .ok()
+        .and_then(|url| {
+            let host = url.host_str()?;
+            let port = url
+                .port()
+                .map(|port| format!(":{port}"))
+                .unwrap_or_default();
+            Some(format!("{}://{}{}{}", url.scheme(), host, port, url.path()))
+        })
+        .unwrap_or_else(|| "<invalid-url>".to_owned())
+}
+
+#[derive(Debug)]
+struct CodexResponsesProxyStreamStats {
+    request_id: String,
+    started_at: Instant,
+    first_upstream_chunk_ms: Option<u128>,
+    first_forwarded_event_ms: Option<u128>,
+    last_upstream_chunk_at: Option<Instant>,
+    last_forwarded_event_at: Option<Instant>,
+    max_upstream_chunk_gap_ms: u128,
+    max_forward_gap_ms: u128,
+    upstream_chunk_count: u64,
+    upstream_bytes: u64,
+    forwarded_event_count: u64,
+    completed_event_count: u64,
+    max_pending_bytes: usize,
+}
+
+impl CodexResponsesProxyStreamStats {
+    fn new(request_id: String, started_at: Instant) -> Self {
+        Self {
+            request_id,
+            started_at,
+            first_upstream_chunk_ms: None,
+            first_forwarded_event_ms: None,
+            last_upstream_chunk_at: None,
+            last_forwarded_event_at: None,
+            max_upstream_chunk_gap_ms: 0,
+            max_forward_gap_ms: 0,
+            upstream_chunk_count: 0,
+            upstream_bytes: 0,
+            forwarded_event_count: 0,
+            completed_event_count: 0,
+            max_pending_bytes: 0,
+        }
+    }
+
+    fn record_upstream_chunk(&mut self, bytes_len: usize, pending_len: usize) {
+        let now = Instant::now();
+        if let Some(last_upstream_chunk_at) = self.last_upstream_chunk_at {
+            let gap_ms = now.duration_since(last_upstream_chunk_at).as_millis();
+            self.max_upstream_chunk_gap_ms = self.max_upstream_chunk_gap_ms.max(gap_ms);
+        }
+        self.last_upstream_chunk_at = Some(now);
+        self.upstream_chunk_count += 1;
+        self.upstream_bytes += bytes_len as u64;
+        self.max_pending_bytes = self.max_pending_bytes.max(pending_len);
+        if self.first_upstream_chunk_ms.is_none() {
+            let elapsed_ms = self.started_at.elapsed().as_millis();
+            self.first_upstream_chunk_ms = Some(elapsed_ms);
+            log_executor_event(
+                "codex responses proxy first upstream chunk received",
+                &[
+                    ("request_id", self.request_id.clone()),
+                    ("elapsed_ms", elapsed_ms.to_string()),
+                    ("chunk_bytes", bytes_len.to_string()),
+                ],
+            );
+        }
+    }
+
+    fn record_forwarded_event(&mut self, event_type: Option<&str>, output_bytes: usize) {
+        let now = Instant::now();
+        let elapsed_ms = self.started_at.elapsed().as_millis();
+        if self.first_forwarded_event_ms.is_none() {
+            self.first_forwarded_event_ms = Some(elapsed_ms);
+            log_executor_event(
+                "codex responses proxy first event forwarded",
+                &[
+                    ("request_id", self.request_id.clone()),
+                    ("elapsed_ms", elapsed_ms.to_string()),
+                    ("event_type", event_type.unwrap_or("").to_owned()),
+                    ("output_bytes", output_bytes.to_string()),
+                ],
+            );
+        }
+        if let Some(last_forwarded_event_at) = self.last_forwarded_event_at {
+            let gap_ms = now.duration_since(last_forwarded_event_at).as_millis();
+            self.max_forward_gap_ms = self.max_forward_gap_ms.max(gap_ms);
+        }
+        self.last_forwarded_event_at = Some(now);
+        self.forwarded_event_count += 1;
+        if event_type == Some("response.completed") {
+            self.completed_event_count += 1;
+        }
+    }
+
+    fn record_upstream_error(&self, error: &reqwest::Error) {
+        log_executor_event(
+            "codex responses proxy upstream stream error",
+            &[
+                ("request_id", self.request_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+                ("error", error.to_string()),
+            ],
+        );
+    }
+
+    fn log_finished(&self, pending_bytes: usize) {
+        log_executor_event(
+            "codex responses proxy stream finished",
+            &[
+                ("request_id", self.request_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+                (
+                    "first_upstream_chunk_ms",
+                    self.first_upstream_chunk_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "first_forwarded_event_ms",
+                    self.first_forwarded_event_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_chunk_count",
+                    self.upstream_chunk_count.to_string(),
+                ),
+                ("upstream_bytes", self.upstream_bytes.to_string()),
+                (
+                    "forwarded_event_count",
+                    self.forwarded_event_count.to_string(),
+                ),
+                (
+                    "completed_event_count",
+                    self.completed_event_count.to_string(),
+                ),
+                (
+                    "max_upstream_chunk_gap_ms",
+                    self.max_upstream_chunk_gap_ms.to_string(),
+                ),
+                ("max_forward_gap_ms", self.max_forward_gap_ms.to_string()),
+                ("max_pending_bytes", self.max_pending_bytes.to_string()),
+                ("pending_bytes", pending_bytes.to_string()),
+            ],
+        );
+    }
+}
+
+struct CodexResponsesProxyStreamState<S> {
+    stream: Pin<Box<S>>,
+    pending: String,
+    output: VecDeque<Result<Bytes, std::io::Error>>,
+    stats: CodexResponsesProxyStreamStats,
+}
+
+fn normalize_codex_responses_sse_stream<S>(
+    stream: S,
+    stats: CodexResponsesProxyStreamStats,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
+    let state = CodexResponsesProxyStreamState {
+        stream: Box::pin(stream),
+        pending: String::new(),
+        output: VecDeque::new(),
+        stats,
+    };
+    futures_util::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(output) = state.output.pop_front() {
+                return Some((output, state));
+            }
+            match state.stream.next().await {
+                Some(Ok(bytes)) => {
+                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    state
+                        .stats
+                        .record_upstream_chunk(bytes.len(), state.pending.len());
+                    while let Some(index) = state.pending.find("\n\n") {
+                        let event = state.pending[..index].to_owned();
+                        state.pending = state.pending[index + 2..].to_owned();
+                        let event_type = codex_responses_sse_event_type(&event);
+                        let normalized = normalize_codex_responses_sse_event(&event);
+                        let output = Bytes::from(format!("{normalized}\n\n"));
+                        state
+                            .stats
+                            .record_forwarded_event(event_type.as_deref(), output.len());
+                        state.output.push_back(Ok(output));
+                    }
+                }
+                Some(Err(error)) => {
+                    state.stats.record_upstream_error(&error);
+                    return Some((Err(std::io::Error::other(error.to_string())), state));
+                }
+                None => {
+                    state.stats.log_finished(state.pending.len());
+                    return None;
+                }
+            }
+        }
+    })
+}
+
+fn codex_responses_sse_event_type(event: &str) -> Option<String> {
+    event.lines().find_map(|line| {
+        let data = line.strip_prefix("data:")?.trim_start();
+        if data == "[DONE]" {
+            return Some("[DONE]".to_owned());
+        }
+        serde_json::from_str::<Value>(data)
+            .ok()
+            .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
+    })
+}
+
+fn normalize_codex_responses_sse_event(event: &str) -> String {
+    if !event.contains("response.completed") {
+        return event.to_owned();
+    }
+    let mut changed = false;
+    let lines = event
+        .lines()
+        .map(|line| {
+            let Some(data) = line.strip_prefix("data:") else {
+                return line.to_owned();
+            };
+            let data = data.trim_start();
+            if data == "[DONE]" {
+                return line.to_owned();
+            }
+            let Ok(mut value) = serde_json::from_str::<Value>(data) else {
+                return line.to_owned();
+            };
+            if value.get("type").and_then(Value::as_str) != Some("response.completed") {
+                return line.to_owned();
+            }
+            normalize_codex_response_completed_usage(&mut value);
+            changed = true;
+            format!(
+                "data: {}",
+                serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
+            )
+        })
+        .collect::<Vec<_>>();
+    if changed {
+        lines.join("\n")
+    } else {
+        event.to_owned()
+    }
+}
+
+fn normalize_codex_response_completed_usage(value: &mut Value) {
+    let Some(response) = value.get_mut("response").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(usage) = response.get_mut("usage").and_then(Value::as_object_mut) else {
+        return;
+    };
+    ensure_object_field_with_default(usage, "input_tokens_details", "cached_tokens");
+    ensure_object_field_with_default(usage, "output_tokens_details", "reasoning_tokens");
+}
+
+fn ensure_object_field_with_default(
+    usage: &mut Map<String, Value>,
+    details_key: &str,
+    field: &str,
+) {
+    match usage.get_mut(details_key) {
+        Some(Value::Object(details)) => {
+            details
+                .entry(field.to_owned())
+                .or_insert_with(|| Value::Number(0.into()));
+        }
+        Some(Value::Null) | None => {}
+        Some(_) => {
+            usage.insert(details_key.to_owned(), Value::Null);
+        }
+    }
 }
 
 async fn envd_metrics() -> Json<MetricsResponse> {
@@ -676,10 +1178,14 @@ async fn archive_workspace(
     })
     .map_err(archive_error_to_http)?;
 
+    let size_bytes = archive.bytes.len() as u64;
+    let session_file_included = archive.session_file_included;
+    let git_included = archive.git_included;
+
     reqwest::Client::new()
         .put(&request.upload_url)
         .header(header::CONTENT_TYPE.as_str(), "application/gzip")
-        .body(archive.bytes.clone())
+        .body(archive.bytes)
         .send()
         .await
         .map_err(|error| HttpError {
@@ -694,9 +1200,9 @@ async fn archive_workspace(
 
     Ok(Json(ArchiveResponse {
         task_id: request.task_id,
-        size_bytes: archive.bytes.len() as u64,
-        session_file_included: archive.session_file_included,
-        git_included: archive.git_included,
+        size_bytes,
+        session_file_included,
+        git_included,
     }))
 }
 
@@ -1416,9 +1922,7 @@ fn runtime_home_path(mode: ArchiveMode) -> PathBuf {
 }
 
 fn home_path() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/home/user"))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user"))
 }
 
 fn parse_archive_mode(value: &str) -> Result<ArchiveMode, HttpError> {
@@ -1513,7 +2017,7 @@ fn parse_envd_timestamp(value: &str) -> Option<SystemTime> {
 }
 
 fn default_archive_max_size_mb() -> u32 {
-    500
+    2048
 }
 
 fn default_runtime_type() -> String {
@@ -1761,5 +2265,45 @@ mod tests {
 
         assert!(preview.ends_with("..."));
         assert!(preview.chars().count() <= 19);
+    }
+
+    #[test]
+    fn codex_responses_proxy_fills_missing_completed_usage_detail_fields() {
+        let event = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":",
+            "{\"input_tokens\":1,\"input_tokens_details\":{},\"output_tokens\":2,",
+            "\"output_tokens_details\":{},\"total_tokens\":3}}}"
+        );
+
+        let normalized = normalize_codex_responses_sse_event(event);
+        let data = normalized
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("normalized event should contain data");
+        let value = serde_json::from_str::<Value>(data).unwrap();
+
+        assert_eq!(
+            value["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            json!(0)
+        );
+        assert_eq!(
+            value["response"]["usage"]["output_tokens_details"]["reasoning_tokens"],
+            json!(0)
+        );
+    }
+
+    #[test]
+    fn codex_responses_proxy_client_rejects_invalid_proxy_url() {
+        let result = codex_responses_proxy_client(Some("not a proxy url"));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn codex_responses_proxy_leaves_non_completed_events_unchanged() {
+        let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
+
+        assert_eq!(normalize_codex_responses_sse_event(event), event);
     }
 }

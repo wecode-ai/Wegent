@@ -142,17 +142,98 @@ def _task_model_override_available(
     return model_spec is not None
 
 
-def _build_codex_runtime_model_config(model_name: str) -> Dict[str, Any]:
-    """Build a minimal Codex-compatible model config for Wework runtime models."""
-    model_id = (
-        CODEX_RUNTIME_MODEL_ID if model_name == CODEX_RUNTIME_MODEL_NAME else model_name
+def _model_has_explicit_provider_credentials(model_config: Dict[str, Any]) -> bool:
+    """Return True when the model config already carries its own endpoint credentials."""
+    base_url = str(model_config.get("base_url") or "").strip()
+    api_key = str(model_config.get("api_key") or "").strip()
+    return bool(base_url) and bool(api_key)
+
+
+def _build_codex_runtime_model_config(
+    model_name: str,
+    model_options: Optional[Dict[str, Any]] = None,
+    db: Optional["Session"] = None,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a Codex-compatible model config for Wework runtime models.
+
+    When the requested name matches a Wegent Model CRD, the full model config
+    (model_id, base_url, api_key, default_headers, etc.) is extracted from the
+    CRD so that third-party Codex providers receive the same credentials the
+    Wegent web frontend would use. Otherwise a minimal runtime config is built
+    for runtime-only or official Codex models.
+
+    """
+    requested_name = model_name
+    options = model_options or {}
+    provider_id = options.get("codexProviderId") or options.get("codex_model_provider")
+    provider_name = options.get("codexProviderName") or options.get(
+        "codex_provider_name"
     )
-    return {
-        "model": "openai",
-        "model_id": model_id,
-        "api_format": "responses",
-        "protocol": "openai-responses",
-    }
+
+    # Official Codex runtime model: keep the existing minimal config.
+    if model_name == CODEX_RUNTIME_MODEL_NAME:
+        config: Dict[str, Any] = {
+            "model": "openai",
+            "model_id": CODEX_RUNTIME_MODEL_ID,
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+        if provider_id:
+            config["model_provider"] = str(provider_id)
+        if provider_name:
+            config["provider_name"] = str(provider_name)
+        return config
+
+    resolved_config: Optional[Dict[str, Any]] = None
+    if db is not None and user_id is not None:
+        try:
+            from app.services.chat.config.model_resolver import (
+                _extract_model_config,
+                _find_model_with_namespace,
+            )
+
+            _kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+            if model_spec:
+                full_config = _extract_model_config(model_spec)
+                resolved_config = {
+                    "model": "openai",
+                    "model_id": str(full_config.get("model_id") or model_name),
+                    "api_format": "responses",
+                    "protocol": "openai-responses",
+                    "base_url": str(full_config.get("base_url") or "").strip(),
+                    "api_key": str(full_config.get("api_key") or "").strip(),
+                }
+                if full_config.get("default_headers"):
+                    resolved_config["default_headers"] = dict(
+                        full_config["default_headers"]
+                    )
+                if full_config.get("context_window") is not None:
+                    resolved_config["context_window"] = full_config["context_window"]
+                if full_config.get("max_output_tokens") is not None:
+                    resolved_config["max_output_tokens"] = full_config[
+                        "max_output_tokens"
+                    ]
+                if full_config.get("temperature") is not None:
+                    resolved_config["temperature"] = full_config["temperature"]
+                if full_config.get("think_config"):
+                    resolved_config["think_config"] = dict(full_config["think_config"])
+        except Exception:
+            pass
+
+    if resolved_config is None:
+        resolved_config = {
+            "model": "openai",
+            "model_id": model_name,
+            "api_format": "responses",
+            "protocol": "openai-responses",
+        }
+
+    if provider_id:
+        resolved_config["model_provider"] = str(provider_id)
+    if provider_name:
+        resolved_config["provider_name"] = str(provider_name)
+    return resolved_config
 
 
 def _is_codex_model_config(model_config: Dict[str, Any]) -> bool:
@@ -175,7 +256,14 @@ def _apply_user_runtime_config(
     request: "ExecutionRequest",
     user: User,
 ) -> Optional[Dict[str, Any]]:
-    """Attach user runtime config status to model_config for executor routing."""
+    """Attach user runtime config status to model_config for executor routing.
+
+    If the selected model already carries explicit endpoint credentials (base_url +
+    api_key), keep the user's Codex auth.json synced to the device for convenience
+    but do not override the request with use_user_config. This lets Wegent-managed
+    third-party Codex models use their own credentials instead of being shadowed by
+    the user's personal auth.json.
+    """
     if not _is_codex_model_config(request.model_config):
         return None
 
@@ -192,9 +280,12 @@ def _apply_user_runtime_config(
         )
         return None
 
+    has_credentials = _model_has_explicit_provider_credentials(request.model_config)
+    prefer_user_config = bool(status.get("use_user_config")) and not has_credentials
+
     runtime_config = dict(request.model_config.get("runtime_config") or {})
     runtime_config[CODEX_RUNTIME] = {
-        "use_user_config": bool(status.get("use_user_config")),
+        "use_user_config": prefer_user_config,
         "configured": bool(status.get("configured")),
         "target_path": status.get("target_path"),
         "auth_json_sha256": status.get("auth_json_sha256"),
@@ -445,7 +536,9 @@ async def build_execution_request(
                 and (override_model_type == RUNTIME_MODEL_TYPE)
             ):
                 runtime_model_config = _build_codex_runtime_model_config(
-                    override_model_name
+                    override_model_name,
+                    db=db,
+                    user_id=user.id,
                 )
                 logger.info(
                     "[build_execution_request] Using runtime model config: "

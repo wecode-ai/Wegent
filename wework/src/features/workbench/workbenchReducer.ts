@@ -12,7 +12,13 @@ import type {
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
+import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
@@ -27,6 +33,7 @@ export const initialWorkbenchState: WorkbenchState = {
   runtimeWork: null,
   currentProject: null,
   currentRuntimeTask: null,
+  activeRuntimeTasks: [],
   standaloneChatKey: 0,
   selectedDeviceWorkspaceId: null,
   pendingProjectWorkspaceProjectId: null,
@@ -112,10 +119,8 @@ export type WorkbenchAction =
       type: 'runtime_task_optimistic_removed'
       address: RuntimeTaskAddress
     }
-  | {
-      type: 'runtime_task_settled'
-      address: RuntimeTaskAddress
-    }
+  | { type: 'runtime_task_started'; address: RuntimeTaskAddress }
+  | { type: 'runtime_task_settled'; address: RuntimeTaskAddress }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
 
@@ -131,12 +136,21 @@ function keepDevicesOnTransientEmpty(
 function updateRuntimeWorkDeviceStatus(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   deviceId: string,
-  status: WorkbenchDeviceStatus
+  status: WorkbenchDeviceStatus,
+  device?: DeviceInfo
 ): RuntimeWorkListResponse | null {
   if (!runtimeWork) return null
 
   const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    if (workspace.deviceId !== deviceId) return workspace
+    const matchesDevice =
+      workspace.deviceId === deviceId ||
+      workspace.remoteHostId === deviceId ||
+      Boolean(
+        device &&
+        (workbenchDeviceMatchesId(device, workspace.deviceId) ||
+          (workspace.remoteHostId && workbenchDeviceMatchesId(device, workspace.remoteHostId)))
+      )
+    if (!matchesDevice) return workspace
     return {
       ...workspace,
       deviceStatus: status,
@@ -288,7 +302,9 @@ function mergeRuntimeTasks(
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) return nextTask
+      if (nextTask) {
+        return nextTask
+      }
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task)) &&
@@ -309,7 +325,7 @@ function mergeRuntimeTasks(
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating'
+  return task.status === 'creating' || (task.optimistic === true && task.status === 'failed')
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -581,50 +597,49 @@ function removeOptimisticRuntimeTask(
   }
 }
 
-function settleRuntimeTask(
-  current: RuntimeWorkListResponse | null | undefined,
+function sameRuntimeTaskActivity(left: RuntimeTaskAddress, right: RuntimeTaskAddress): boolean {
+  if (left.deviceId !== right.deviceId || left.taskId !== right.taskId) return false
+  if (!left.workspacePath || !right.workspacePath) return true
+  return left.workspacePath === right.workspacePath
+}
+
+function upsertActiveRuntimeTask(
+  current: RuntimeTaskAddress[],
   address: RuntimeTaskAddress
+): RuntimeTaskAddress[] {
+  return [
+    ...current.filter(activeAddress => !sameRuntimeTaskActivity(activeAddress, address)),
+    address,
+  ]
+}
+
+function updateRuntimeTaskRunning(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  running: boolean
 ): RuntimeWorkListResponse | null {
-  if (!current) return null
+  if (!runtimeWork) return null
 
-  const settleWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    if (workspace.deviceId !== address.deviceId) return workspace
-    return {
-      ...workspace,
-      tasks: workspace.tasks.map(task => {
-        if (task.taskId !== address.taskId) return task
-        if (
-          address.workspacePath &&
-          getRuntimeTaskWorkspacePath(workspace, task) !== address.workspacePath
-        ) {
-          return task
-        }
-        return {
-          ...task,
-          running: false,
-          status: task.status === 'creating' ? undefined : task.status,
-        }
-      }),
-    }
-  }
-
-  const projects = current.projects.map(project => {
-    const deviceWorkspaces = project.deviceWorkspaces.map(settleWorkspace)
-    return {
-      ...project,
-      deviceWorkspaces,
-      totalTasks: countRuntimeTasks(deviceWorkspaces),
-    }
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.map(task => {
+      const taskAddress: RuntimeTaskAddress = {
+        deviceId: workspace.deviceId,
+        taskId: task.taskId,
+        workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+      }
+      if (!sameRuntimeTaskActivity(taskAddress, address) || task.running === running) return task
+      return { ...task, running }
+    }),
   })
-  const chats = current.chats.map(settleWorkspace)
-  const nextRuntimeWork = {
-    ...current,
-    projects,
-    chats,
-  }
+
   return {
-    ...nextRuntimeWork,
-    totalTasks: countRuntimeWorkTasks(nextRuntimeWork),
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    chats: runtimeWork.chats.map(updateWorkspace),
   }
 }
 
@@ -713,20 +728,6 @@ function runtimeWorkspaceFromMapping(
   }
 }
 
-function stableRuntimeProjectId(value: string): number {
-  let hash = 0
-  for (const char of value) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  }
-  return (hash % 1_000_000_000) + 1
-}
-
-function normalizeRuntimeWorkspacePath(path: string): string {
-  const trimmedPath = path.trim()
-  if (trimmedPath === '/') return trimmedPath
-  return trimmedPath.replace(/\/+$/, '')
-}
-
 function runtimeWorkspaceLabel(workspacePath: string, label?: string | null): string {
   const trimmedLabel = label?.trim()
   if (trimmedLabel) return trimmedLabel
@@ -777,8 +778,7 @@ function upsertOpenedRuntimeWorkspace(
     projectLabel,
     devices
   )
-  const projectKey = `local:${normalizedWorkspacePath}`
-  const projectId = stableRuntimeProjectId(normalizedWorkspacePath)
+  const projectKey = standaloneRuntimeProjectKey(normalizedWorkspacePath)
   const remainingProjects = currentRuntimeWork.projects
     .map(projectWork => ({
       ...projectWork,
@@ -795,7 +795,7 @@ function upsertOpenedRuntimeWorkspace(
     {
       project: {
         key: projectKey,
-        id: projectId,
+        stateDeviceId: normalizedDeviceId,
         name: projectLabel,
       },
       deviceWorkspaces: [nextWorkspace],
@@ -1004,11 +1004,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ),
       }
     }
-    case 'device_status_changed':
+    case 'device_status_changed': {
+      const matchedDevice =
+        state.devices.find(device => workbenchDeviceMatchesId(device, action.deviceId)) ?? undefined
       return {
         ...state,
         devices: state.devices.map(device => {
-          if (device.device_id !== action.deviceId) return device
+          if (!workbenchDeviceMatchesId(device, action.deviceId)) return device
           return {
             ...device,
             name: action.name || device.name,
@@ -1018,9 +1020,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         runtimeWork: updateRuntimeWorkDeviceStatus(
           state.runtimeWork,
           action.deviceId,
-          action.status
+          action.status,
+          matchedDevice
         ),
       }
+    }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_created':
@@ -1156,10 +1160,19 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
       }
+    case 'runtime_task_started':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, true),
+        activeRuntimeTasks: upsertActiveRuntimeTask(state.activeRuntimeTasks, action.address),
+      }
     case 'runtime_task_settled':
       return {
         ...state,
-        runtimeWork: settleRuntimeTask(state.runtimeWork, action.address),
+        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, false),
+        activeRuntimeTasks: state.activeRuntimeTasks.filter(
+          address => !sameRuntimeTaskActivity(address, action.address)
+        ),
       }
     case 'current_task_cleared':
       return {

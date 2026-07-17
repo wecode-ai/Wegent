@@ -1,8 +1,8 @@
 import type { RuntimePaneStatus } from '@/features/workbench/runtimePaneStatus'
 import type {
-  RuntimeTaskSummary,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
+  RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type {
@@ -28,11 +28,11 @@ export interface WorkbenchDebugSnapshot {
     isBootstrapping: boolean
     error: string | null
     currentProject: WorkbenchState['currentProject']
-    currentRuntimeTask: RuntimeTaskAddress | null
+    currentRuntimeTask: RuntimeTaskAddressDebug | null
     currentRuntimeTaskRunning: boolean
     runningState: RuntimeTaskRunningDebugState
-    activeTask: RuntimeTaskSummary | null
-    activeWorkspace: RuntimeDeviceWorkspace | null
+    activeTask: RuntimeTaskSummaryDebug | null
+    activeWorkspace: RuntimeDeviceWorkspaceDebug | null
     runtimeWorkSummary: RuntimeWorkSummary
     devices: WorkbenchState['devices']
     standaloneDeviceId: string | null
@@ -48,10 +48,11 @@ export interface WorkbenchDebugSnapshot {
 
 export interface RuntimePaneDebugSnapshot {
   updatedAt: string
-  currentRuntimeTask: RuntimeTaskAddress | null
+  currentRuntimeTask: RuntimeTaskAddressDebug | null
   status: RuntimePaneStatus
   messageSummary: MessageSummary
   messageStyleComparison: MessageStyleComparison
+  memory: RuntimePaneMemoryDiagnostics
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
   codeCommentContextCount: number
@@ -61,10 +62,16 @@ export interface RuntimePaneDebugSnapshot {
     hasMoreBefore: boolean
     loadingMoreBefore: boolean
     turnNavigationCount: number
+    loadedRanges: RuntimePaneLoadedRange[]
   }
   subagentStatuses: RuntimeSubagentStatus[]
   goal: unknown
   goalDraftActive: boolean
+}
+
+export interface RuntimePaneLoadedRange {
+  start: number
+  end: number
 }
 
 export interface RuntimeTaskRunningDebugState {
@@ -116,12 +123,52 @@ interface RuntimeWorkSummary {
   runningTaskCount: number
 }
 
+interface RuntimeTaskAddressDebug {
+  deviceId: string
+  taskId: string
+  threadId?: string | null
+  workspacePath?: string | null
+  hasRuntimeHandle: boolean
+  runtimeHandleKeys: string[]
+  runtimeHandleApproxChars: number
+  runtimeHandleEstimateTruncated: boolean
+}
+
+interface RuntimeTaskSummaryDebug {
+  taskId: string
+  workspacePath: string
+  workspaceKind?: string | null
+  worktreeId?: string | null
+  title: string
+  runtime: string
+  createdAt?: string | number | null
+  updatedAt?: string | number | null
+  running?: boolean
+  status?: string | null
+  modelSelection?: unknown
+  hasRuntimeHandle: boolean
+  runtimeHandleKeys: string[]
+  runtimeHandleApproxChars: number
+  runtimeHandleEstimateTruncated: boolean
+}
+
+interface RuntimeDeviceWorkspaceDebug {
+  deviceId: string
+  deviceName?: string | null
+  workspacePath: string
+  workspaceKind?: string | null
+  worktreeId?: string | null
+  label?: string | null
+  tasks: RuntimeTaskSummaryDebug[]
+}
+
 interface WorkbenchComposerDebugSnapshot {
   scopeKey: string
   standaloneChatKey: number
   currentInputLength: number
   scopedInputLengths: Record<string, number>
   attachmentCount: number
+  contextUsagePercent?: number
 }
 
 interface MessageSummary {
@@ -145,7 +192,54 @@ interface MessageSummaryItem {
   memoryCitationCount: number
 }
 
+interface RuntimePaneMemoryDiagnostics {
+  messages: {
+    count: number
+    contentChars: number
+    blockCount: number
+    toolBlockCount: number
+    toolOutputApproxChars: number
+    renderPayloadApproxChars: number
+    attachmentCount: number
+    attachmentPathChars: number
+    referenceCount: number
+    memoryCitationCount: number
+    topToolOutputs: RuntimePaneToolOutputDiagnostic[]
+  }
+  currentRuntimeTask: {
+    hasRuntimeHandle: boolean
+    runtimeHandleKeys: string[]
+    runtimeHandleApproxChars: number
+    runtimeHandleEstimateTruncated: boolean
+  } | null
+  transcript: {
+    loadedRangeCount: number
+    loadedRanges: RuntimePaneLoadedRange[]
+    loadedMessageSlots: number
+  }
+  dom: {
+    messageNodes: number
+    processingBlockNodes: number
+    codeBlocks: number
+  }
+}
+
+interface RuntimePaneToolOutputDiagnostic {
+  messageId: string
+  blockId: string
+  toolName: string
+  status: string
+  approxChars: number
+  outputType: string
+}
+
 const DEBUG_LOG_LIMIT = 500
+const DEBUG_LOG_ARGUMENT_LIMIT = 2000
+const DEBUG_LOG_ENTRY_LIMIT = 8000
+const MEMORY_ESTIMATE_NODE_LIMIT = 20_000
+const TOP_TOOL_OUTPUT_LIMIT = 8
+const DEBUG_PANEL_ID = 'wework-debug-panel'
+const RUNTIME_MEMORY_DIAGNOSTICS_STORAGE_KEY = 'wework:debug-runtime-memory'
 
 let installed = false
 let debugLogSequence = 0
@@ -177,11 +271,12 @@ export function updateWorkbenchDebugSnapshot({
   composer?: WorkbenchComposerDebugSnapshot | null
 }) {
   const activeTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
+  const activeWorkspace = findRuntimeWorkspace(state.runtimeWork, state.currentRuntimeTask)
   workbenchSnapshot = {
     isBootstrapping: state.isBootstrapping,
     error: state.error,
     currentProject: state.currentProject,
-    currentRuntimeTask: state.currentRuntimeTask,
+    currentRuntimeTask: sanitizeRuntimeTaskAddress(state.currentRuntimeTask),
     currentRuntimeTaskRunning,
     runningState: {
       hasCurrentRuntimeTask: Boolean(state.currentRuntimeTask),
@@ -190,8 +285,8 @@ export function updateWorkbenchDebugSnapshot({
       activeTaskStatus: activeTask?.status ?? null,
       providerRunning: currentRuntimeTaskRunning,
     },
-    activeTask,
-    activeWorkspace: findRuntimeWorkspace(state.runtimeWork, state.currentRuntimeTask),
+    activeTask: sanitizeRuntimeTaskSummary(activeTask),
+    activeWorkspace: sanitizeRuntimeWorkspace(activeWorkspace),
     runtimeWorkSummary: summarizeRuntimeWork(state.runtimeWork),
     devices: state.devices,
     standaloneDeviceId: state.standaloneDeviceId,
@@ -203,10 +298,13 @@ export function updateWorkbenchDebugSnapshot({
 }
 
 export function updateRuntimePaneDebugSnapshot(
-  snapshot: Omit<RuntimePaneDebugSnapshot, 'updatedAt'>
+  snapshot: Omit<RuntimePaneDebugSnapshot, 'updatedAt' | 'currentRuntimeTask'> & {
+    currentRuntimeTask: RuntimeTaskAddress | null
+  }
 ) {
   paneSnapshot = {
     ...snapshot,
+    currentRuntimeTask: sanitizeRuntimeTaskAddress(snapshot.currentRuntimeTask),
     updatedAt: new Date().toISOString(),
   }
 }
@@ -240,6 +338,202 @@ export function summarizeMessages(messages: WorkbenchMessage[]): MessageSummary 
       ? createMessageSummaryItem(activeAssistantMessage)
       : null,
     lastMessage: lastMessage ? createMessageSummaryItem(lastMessage) : null,
+  }
+}
+
+export function summarizeRuntimePaneMemory({
+  messages,
+  currentRuntimeTask,
+  loadedRanges,
+}: {
+  messages: WorkbenchMessage[]
+  currentRuntimeTask: RuntimeTaskAddress | null
+  loadedRanges: RuntimePaneLoadedRange[]
+}): RuntimePaneMemoryDiagnostics {
+  if (!isRuntimePaneMemoryDiagnosticsEnabled()) {
+    return emptyRuntimePaneMemoryDiagnostics()
+  }
+
+  let contentChars = 0
+  let blockCount = 0
+  let toolBlockCount = 0
+  let toolOutputApproxChars = 0
+  let renderPayloadApproxChars = 0
+  let attachmentCount = 0
+  let attachmentPathChars = 0
+  let referenceCount = 0
+  let memoryCitationCount = 0
+  const topToolOutputs: RuntimePaneToolOutputDiagnostic[] = []
+
+  for (const message of messages) {
+    contentChars += message.content.length
+    attachmentCount += message.attachments?.length ?? 0
+    attachmentPathChars +=
+      message.attachments?.reduce(
+        (total, attachment) =>
+          total +
+          String(attachment.filename ?? '').length +
+          String(attachment.local_path ?? '').length +
+          String(attachment.local_preview_url ?? '').length,
+        0
+      ) ?? 0
+    referenceCount += message.references?.length ?? 0
+    memoryCitationCount += message.memoryCitations?.length ?? 0
+
+    for (const block of message.blocks ?? []) {
+      blockCount += 1
+      if (block.type !== 'tool') continue
+
+      toolBlockCount += 1
+      const outputEstimate = estimateApproxChars(block.toolOutput)
+      const renderPayloadEstimate = estimateApproxChars(block.renderPayload)
+      toolOutputApproxChars += outputEstimate.chars
+      renderPayloadApproxChars += renderPayloadEstimate.chars
+      topToolOutputs.push({
+        messageId: message.id,
+        blockId: block.id,
+        toolName: block.toolName,
+        status: block.status,
+        approxChars: outputEstimate.chars,
+        outputType: valueType(block.toolOutput),
+      })
+    }
+  }
+
+  const runtimeHandleEstimate = estimateApproxChars(currentRuntimeTask?.runtimeHandle)
+  const normalizedRanges = loadedRanges
+    .filter(range => Number.isFinite(range.start) && Number.isFinite(range.end))
+    .map(range => ({ start: range.start, end: range.end }))
+
+  return {
+    messages: {
+      count: messages.length,
+      contentChars,
+      blockCount,
+      toolBlockCount,
+      toolOutputApproxChars,
+      renderPayloadApproxChars,
+      attachmentCount,
+      attachmentPathChars,
+      referenceCount,
+      memoryCitationCount,
+      topToolOutputs: topToolOutputs
+        .sort((left, right) => right.approxChars - left.approxChars)
+        .slice(0, TOP_TOOL_OUTPUT_LIMIT),
+    },
+    currentRuntimeTask: currentRuntimeTask
+      ? {
+          hasRuntimeHandle: Boolean(currentRuntimeTask.runtimeHandle),
+          runtimeHandleKeys: currentRuntimeTask.runtimeHandle
+            ? Object.keys(currentRuntimeTask.runtimeHandle).sort()
+            : [],
+          runtimeHandleApproxChars: runtimeHandleEstimate.chars,
+          runtimeHandleEstimateTruncated: runtimeHandleEstimate.truncated,
+        }
+      : null,
+    transcript: {
+      loadedRangeCount: normalizedRanges.length,
+      loadedRanges: normalizedRanges,
+      loadedMessageSlots: normalizedRanges.reduce(
+        (total, range) => total + Math.max(0, range.end - range.start),
+        0
+      ),
+    },
+    dom: summarizeRuntimePaneDom(),
+  }
+}
+
+function isRuntimePaneMemoryDiagnosticsEnabled(): boolean {
+  if (typeof document !== 'undefined' && document.getElementById(DEBUG_PANEL_ID)) {
+    return true
+  }
+  return globalThis.localStorage?.getItem(RUNTIME_MEMORY_DIAGNOSTICS_STORAGE_KEY) === '1'
+}
+
+function emptyRuntimePaneMemoryDiagnostics(): RuntimePaneMemoryDiagnostics {
+  return {
+    messages: {
+      count: 0,
+      contentChars: 0,
+      blockCount: 0,
+      toolBlockCount: 0,
+      toolOutputApproxChars: 0,
+      renderPayloadApproxChars: 0,
+      attachmentCount: 0,
+      attachmentPathChars: 0,
+      referenceCount: 0,
+      memoryCitationCount: 0,
+      topToolOutputs: [],
+    },
+    currentRuntimeTask: null,
+    transcript: {
+      loadedRangeCount: 0,
+      loadedRanges: [],
+      loadedMessageSlots: 0,
+    },
+    dom: {
+      messageNodes: 0,
+      processingBlockNodes: 0,
+      codeBlocks: 0,
+    },
+  }
+}
+
+function sanitizeRuntimeTaskAddress(
+  address: RuntimeTaskAddress | null
+): RuntimeTaskAddressDebug | null {
+  if (!address) return null
+  const runtimeHandleEstimate = estimateApproxChars(address.runtimeHandle)
+  return {
+    deviceId: address.deviceId,
+    taskId: address.taskId,
+    threadId: address.threadId ?? null,
+    workspacePath: address.workspacePath ?? null,
+    hasRuntimeHandle: Boolean(address.runtimeHandle),
+    runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
+    runtimeHandleApproxChars: runtimeHandleEstimate.chars,
+    runtimeHandleEstimateTruncated: runtimeHandleEstimate.truncated,
+  }
+}
+
+function sanitizeRuntimeTaskSummary(
+  task: RuntimeDeviceWorkspace['tasks'][number] | null
+): RuntimeTaskSummaryDebug | null {
+  if (!task) return null
+  const runtimeHandleEstimate = estimateApproxChars(task.runtimeHandle)
+  return {
+    taskId: task.taskId,
+    workspacePath: task.workspacePath,
+    workspaceKind: task.workspaceKind ?? null,
+    worktreeId: task.worktreeId ?? null,
+    title: task.title,
+    runtime: task.runtime,
+    createdAt: task.createdAt ?? null,
+    updatedAt: task.updatedAt ?? null,
+    running: task.running,
+    status: task.status ?? null,
+    modelSelection: task.modelSelection,
+    hasRuntimeHandle: Boolean(task.runtimeHandle),
+    runtimeHandleKeys: task.runtimeHandle ? Object.keys(task.runtimeHandle).sort() : [],
+    runtimeHandleApproxChars: runtimeHandleEstimate.chars,
+    runtimeHandleEstimateTruncated: runtimeHandleEstimate.truncated,
+  }
+}
+
+function sanitizeRuntimeWorkspace(
+  workspace: RuntimeDeviceWorkspace | null
+): RuntimeDeviceWorkspaceDebug | null {
+  if (!workspace) return null
+  return {
+    deviceId: workspace.deviceId,
+    deviceName: workspace.deviceName ?? null,
+    workspacePath: workspace.workspacePath,
+    workspaceKind: workspace.workspaceKind ?? null,
+    worktreeId: workspace.worktreeId ?? null,
+    label: workspace.label ?? null,
+    tasks: workspace.tasks
+      .map(task => sanitizeRuntimeTaskSummary(task))
+      .filter((task): task is RuntimeTaskSummaryDebug => task !== null),
   }
 }
 
@@ -298,10 +592,18 @@ export function compareMessageStyles(messages: WorkbenchMessage[]): MessageStyle
 }
 
 function recordDebugLog(args: unknown[]) {
+  const serializedArgs = args.map(arg =>
+    truncateDebugLogValue(serializeLogArgument(arg), DEBUG_LOG_ARGUMENT_LIMIT)
+  )
+  const entryLength = serializedArgs.reduce((total, arg) => total + arg.length, 0)
+
   debugLogs.push({
     id: ++debugLogSequence,
     timestamp: new Date().toISOString(),
-    args: args.map(serializeLogArgument),
+    args:
+      entryLength <= DEBUG_LOG_ENTRY_LIMIT
+        ? serializedArgs
+        : trimDebugLogEntry(serializedArgs, DEBUG_LOG_ENTRY_LIMIT),
   })
 
   if (debugLogs.length > DEBUG_LOG_LIMIT) {
@@ -369,9 +671,7 @@ function buildExpectedMessageUi({
   referenceCount: number
   memoryCitationCount: number
 }): string[] {
-  const entries = [
-    'base assistant: min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary',
-  ]
+  const entries = ['base assistant: min-w-0 overflow-x-hidden text-sm leading-6 text-text-primary']
   if (hasBlocks || isAssistantRunning) {
     entries.push(`ToolBlocksDisplay isStreaming=${isStreaming}`)
   }
@@ -426,6 +726,72 @@ function truncatePreview(value: string): string {
   return value.length <= 600 ? value : `${value.slice(0, 600)}...`
 }
 
+function estimateApproxChars(value: unknown): { chars: number; truncated: boolean } {
+  const seen = new WeakSet<object>()
+  let visited = 0
+  let truncated = false
+
+  const visit = (item: unknown): number => {
+    if (visited >= MEMORY_ESTIMATE_NODE_LIMIT) {
+      truncated = true
+      return 0
+    }
+    visited += 1
+
+    if (typeof item === 'string') return item.length
+    if (typeof item === 'number' || typeof item === 'boolean' || typeof item === 'bigint') {
+      return String(item).length
+    }
+    if (
+      item === null ||
+      item === undefined ||
+      typeof item === 'symbol' ||
+      typeof item === 'function'
+    ) {
+      return 0
+    }
+    if (Array.isArray(item)) {
+      if (seen.has(item)) return 0
+      seen.add(item)
+      return item.reduce((total, value) => total + visit(value), 0)
+    }
+    if (typeof item === 'object') {
+      if (seen.has(item)) return 0
+      seen.add(item)
+      let total = 0
+      for (const [key, nestedValue] of Object.entries(item as Record<string, unknown>)) {
+        total += key.length + visit(nestedValue)
+        if (visited >= MEMORY_ESTIMATE_NODE_LIMIT) {
+          truncated = true
+          break
+        }
+      }
+      return total
+    }
+    return 0
+  }
+
+  return { chars: visit(value), truncated }
+}
+
+function valueType(value: unknown): string {
+  if (Array.isArray(value)) return 'array'
+  if (value === null) return 'null'
+  return typeof value
+}
+
+function summarizeRuntimePaneDom(): RuntimePaneMemoryDiagnostics['dom'] {
+  if (typeof document === 'undefined') {
+    return { messageNodes: 0, processingBlockNodes: 0, codeBlocks: 0 }
+  }
+
+  return {
+    messageNodes: document.querySelectorAll('[data-message-id]').length,
+    processingBlockNodes: document.querySelectorAll('[data-processing-block-id]').length,
+    codeBlocks: document.querySelectorAll('pre code, pre').length,
+  }
+}
+
 function serializeLogArgument(value: unknown): string {
   if (value instanceof Error) {
     return value.stack || `${value.name}: ${value.message}`
@@ -441,6 +807,32 @@ function serializeLogArgument(value: unknown): string {
   }
 
   return String(value)
+}
+
+function truncateDebugLogValue(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  const suffix = `... [truncated ${value.length - maxLength} chars]`
+  if (maxLength <= suffix.length) return value.slice(0, maxLength)
+  return `${value.slice(0, maxLength - suffix.length)}${suffix}`
+}
+
+function trimDebugLogEntry(args: string[], maxLength: number): string[] {
+  const trimmed: string[] = []
+  let remaining = maxLength
+
+  for (const arg of args) {
+    if (remaining <= 0) break
+    const next = truncateDebugLogValue(arg, remaining)
+    trimmed.push(next)
+    remaining -= next.length
+  }
+
+  const omittedCount = args.length - trimmed.length
+  if (omittedCount > 0) {
+    trimmed.push(`[omitted ${omittedCount} debug args]`)
+  }
+
+  return trimmed
 }
 
 function summarizeRuntimeWork(runtimeWork: RuntimeWorkListResponse | null): RuntimeWorkSummary {

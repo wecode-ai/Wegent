@@ -1,5 +1,4 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
@@ -35,16 +34,42 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
+vi.mock('@/features/appshots/AppshotBridge', () => ({
+  AppshotBridge: () => null,
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  requestLocalExecutor: vi.fn().mockResolvedValue({}),
+  subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
   connectLocalExecutorToBackend: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
   disconnectLocalExecutorFromBackend: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+}))
+
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/api/local/codexPlugins', () => ({
+  createLocalCodexPluginApi: () => ({
+    codexHomeMigrationStatus: vi.fn().mockResolvedValue({
+      weworkCodexHome: '/Users/test/.wegent-executor/codex',
+      nativeCodexHome: '/Users/test/.codex',
+      weworkCodexHomeExists: true,
+      nativeCodexHomeExists: true,
+      shouldPromptMigration: false,
+    }),
+  }),
 }))
 
 vi.mock('@/pages/WorkbenchPage', () => ({
@@ -119,6 +144,7 @@ describe('App center route', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
   })
 
   async function waitForStartupScreenToClose() {
@@ -127,21 +153,18 @@ describe('App center route', () => {
     })
   }
 
-  test('opens the app center from the fixed titlebar tab', async () => {
-    window.history.pushState({}, '', '/')
+  test('renders the app center with fixed titlebar tabs on the app route', async () => {
+    window.history.pushState({}, '', '/apps')
 
     render(<App />)
 
     await waitForStartupScreenToClose()
-    await userEvent.click(await screen.findByTestId('chrome-tab-apps'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('chrome-tab-todo')).toHaveClass('w-8', 'min-w-0', 'px-0')
     expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('w-8', 'min-w-0', 'px-0')
-    expect(screen.getByTestId('titlebar-sidebar-toggle-placeholder')).toHaveClass(
-      'invisible',
-      'pointer-events-none'
-    )
+    expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
@@ -152,20 +175,36 @@ describe('App center route', () => {
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
   })
 
-  test('overlays the workbench titlebar so the sidebar can reach the window top', async () => {
+  test('does not render the global chrome titlebar on the workbench route', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
     await waitForStartupScreenToClose()
-    expect(screen.getByTestId('chrome-titlebar')).toHaveClass(
-      'absolute',
-      'inset-x-0',
-      'top-0',
-      'z-system',
-      'bg-transparent'
-    )
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
+  })
+
+  test('renders copyable debug instance rows', async () => {
+    window.history.pushState({}, '', '/')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: { writeText },
+    })
+    vi.stubEnv('VITE_WEWORK_DEV_TITLE', 'Runtime task')
+    vi.stubEnv('VITE_WEWORK_DEV_PORT', '1420')
+    vi.stubEnv('VITE_WEWORK_DEV_WORKTREE', '/Users/me/Wegent')
+    vi.stubEnv('VITE_WEWORK_PARENT_TITLE', 'Parent task')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Runtime task')
+    fireEvent.click(screen.getByTestId('copy-wework-dev-port-button'))
+    expect(writeText).toHaveBeenCalledWith('1420')
+    fireEvent.click(screen.getByTestId('copy-wework-dev-parent-title-button'))
+    expect(writeText).toHaveBeenCalledWith('Parent task')
   })
 
   test('keeps the app center sidebar available on desktop app widths', async () => {
@@ -186,6 +225,31 @@ describe('App center route', () => {
     expect(sidebar).not.toHaveClass('xl:flex')
     expect(sectionTabs).toHaveClass('md:hidden')
     expect(sectionTabs).not.toHaveClass('xl:hidden')
+  })
+
+  test('uses the fixed titlebar switcher and collapses the app center sidebar', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+
+    const weworkTab = screen.getByTestId('chrome-tab-wework')
+    const todoTab = screen.getByTestId('chrome-tab-todo')
+    const appsTab = screen.getByTestId('chrome-tab-apps')
+    expect(
+      weworkTab.compareDocumentPosition(todoTab) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(todoTab.compareDocumentPosition(appsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('apps-page')).toHaveAttribute('data-sidebar-collapsed', 'true')
+    })
+    expect(screen.queryByTestId('apps-sidebar-nav')).not.toBeInTheDocument()
+    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {

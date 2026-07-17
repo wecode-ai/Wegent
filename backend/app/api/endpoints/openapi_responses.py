@@ -73,6 +73,32 @@ class _DispatchWithoutTerminalError(RuntimeError):
     """Raised when dispatch fails before any terminal event is emitted."""
 
 
+async def _iter_callback_events(pubsub_obj: Any, cancel_event: Any):
+    """Yield callback events until the executor sends a terminal event."""
+    from shared.models import EventType, ExecutionEvent
+
+    while True:
+        if cancel_event.is_set():
+            return
+        message = await pubsub_obj.get_message(
+            ignore_subscribe_messages=True,
+            timeout=1.0,
+        )
+        if message is None or message.get("type") != "message":
+            continue
+        data = message["data"]
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        event = ExecutionEvent.from_dict(json.loads(data))
+        yield event
+        if event.type in (
+            EventType.DONE.value,
+            EventType.ERROR.value,
+            EventType.CANCELLED.value,
+        ):
+            return
+
+
 def _normalize_auto_delete_executor_header(value: Optional[str]) -> Optional[str]:
     """Normalize auto-delete header values to task label strings."""
     if value is None:
@@ -960,29 +986,8 @@ async def _create_streaming_response_unified(
                     async for ev in emitter.stream():
                         yield ev
                 else:
-                    # Poll the pub/sub channel; 1s timeout keeps cancellation responsive
-                    max_wait_until = asyncio.get_event_loop().time() + 600
-                    while asyncio.get_event_loop().time() < max_wait_until:
-                        if cancel_event.is_set():
-                            return
-                        message = await pubsub_obj.get_message(
-                            ignore_subscribe_messages=True, timeout=1.0
-                        )
-                        if message is None:
-                            continue
-                        if message.get("type") != "message":
-                            continue
-                        data = message["data"]
-                        if isinstance(data, bytes):
-                            data = data.decode("utf-8")
-                        event = ExecutionEvent.from_dict(json.loads(data))
-                        yield event
-                        if event.type in (
-                            EventType.DONE.value,
-                            EventType.ERROR.value,
-                            EventType.CANCELLED.value,
-                        ):
-                            return
+                    async for ev in _iter_callback_events(pubsub_obj, cancel_event):
+                        yield ev
 
             # Stream events from the unified source
             event_count = 0
@@ -1028,6 +1033,24 @@ async def _create_streaming_response_unified(
                                 allocate_output_index()
                             accumulated_reasoning += reasoning
                             yield StreamingChunk(type="reasoning", content=reasoning)
+                    elif event.type == EventType.BLOCK_CREATED.value:
+                        block = event.data.get("block") if event.data else None
+                        if isinstance(block, dict):
+                            yield StreamingChunk(
+                                type="block_created",
+                                data={"block": block},
+                            )
+                    elif event.type == EventType.BLOCK_UPDATED.value:
+                        block_id = event.data.get("block_id") if event.data else None
+                        updates = event.data.get("updates") if event.data else None
+                        if block_id and isinstance(updates, dict):
+                            yield StreamingChunk(
+                                type="block_updated",
+                                data={
+                                    "block_id": str(block_id),
+                                    "updates": updates,
+                                },
+                            )
                     elif event.type == EventType.TOOL_START.value:
                         tool_use_id = event.tool_use_id or ""
                         if not tool_use_id:

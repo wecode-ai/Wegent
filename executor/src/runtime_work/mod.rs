@@ -13,9 +13,9 @@ mod response;
 mod runtime_handle_messages;
 mod store;
 mod transcript;
-mod transcript_cache;
 mod transcript_page;
 mod util;
+mod worktrees;
 
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;

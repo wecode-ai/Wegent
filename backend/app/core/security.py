@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from fastapi import Depends, Header, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
+from fastapi.security.utils import get_authorization_scheme_param
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select
@@ -68,6 +69,14 @@ oauth2_scheme_optional = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_PREFIX}/auth/oauth2", auto_error=False
 )
 api_key_header_optional = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def extract_authorization_token(authorization: Optional[str]) -> str:
+    """Extract a case-insensitive Bearer credential or return a plain token."""
+    scheme, token = get_authorization_scheme_param(authorization)
+    if scheme.lower() == "bearer":
+        return token
+    return authorization or ""
 
 
 def get_current_user(
@@ -784,8 +793,14 @@ def get_current_user_flexible(
 
 def get_current_user_flexible_for_executor(
     db: Session = Depends(get_db),
-    authorization: str = Header(default=""),
-    x_api_key: str = Header(default="", alias="X-API-Key"),
+    oauth2_token: Optional[str] = Security(oauth2_scheme_optional),
+    x_api_key_security: Optional[str] = Security(api_key_header_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+    x_api_key: str = Header(
+        default="",
+        alias="X-API-Key",
+        include_in_schema=False,
+    ),
 ) -> User:
     """
     Flexible authentication supporting both JWT Token and API Key.
@@ -799,6 +814,8 @@ def get_current_user_flexible_for_executor(
 
     Args:
         db: Database session
+        oauth2_token: Bearer credential parsed by FastAPI
+        x_api_key_security: API key parsed by FastAPI
         authorization: Authorization header value (Bearer token)
         x_api_key: X-API-Key header value
 
@@ -813,13 +830,15 @@ def get_current_user_flexible_for_executor(
     with _get_tracer().start_as_current_span(
         "auth.get_current_user_flexible_for_executor"
     ) as span:
+        resolved_x_api_key = x_api_key_security or x_api_key
+
         # Priority 1: X-API-Key header
-        if x_api_key and is_api_key(x_api_key):
+        if resolved_x_api_key and is_api_key(resolved_x_api_key):
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_METHOD, "api_key")
                 span.set_attribute(SpanAttributes.AUTH_SOURCE, "x_api_key_header")
 
-            user = verify_api_key(db, x_api_key)
+            user = verify_api_key(db, resolved_x_api_key)
             if user:
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
@@ -840,13 +859,8 @@ def get_current_user_flexible_for_executor(
             )
 
         # Priority 2: Authorization Bearer header
-        if authorization:
-            # Handle both "Bearer xxx" and plain token
-            if authorization.startswith("Bearer "):
-                token = authorization[7:]
-            else:
-                token = authorization
-
+        token = oauth2_token or extract_authorization_token(authorization)
+        if token:
             # Check if it's an API Key in Bearer header
             if is_api_key(token):
                 if is_telemetry_enabled():

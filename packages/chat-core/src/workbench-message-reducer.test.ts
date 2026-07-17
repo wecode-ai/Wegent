@@ -6,6 +6,165 @@ import {
 } from './index'
 
 describe('reduceWorkbenchMessages', () => {
+  test('keeps only a preview window for very long assistant content', () => {
+    const longPrefix = 'a'.repeat(200_010)
+    const state = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: 'long-text',
+      content: `${longPrefix}tail`
+    })
+
+    expect(state[0].content.length).toBe(200_000)
+    expect(state[0].content.endsWith('tail')).toBe(true)
+    expect(state[0]).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 200_014,
+      contentLoadRef: {
+        messageId: 'assistant-long-text',
+        subtaskId: 'long-text',
+        kind: 'message_content'
+      }
+    })
+  })
+
+  test('does not restore full long assistant content on done', () => {
+    const done = reduceWorkbenchMessages([], {
+      type: 'assistant_done',
+      subtaskId: 'done-long-text',
+      content: `${'b'.repeat(200_010)}final`
+    })
+
+    expect(done[0].content.length).toBe(200_000)
+    expect(done[0].content.endsWith('final')).toBe(true)
+    expect(done[0].contentTruncated).toBe(true)
+  })
+
+  test('clears stale stream truncation metadata when done supplies short content', () => {
+    const streamed = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: 'short-final-content',
+      content: 'partial response',
+      offset: 20_000
+    })
+    const done = reduceWorkbenchMessages(streamed, {
+      type: 'assistant_done',
+      subtaskId: 'short-final-content',
+      content: 'final response'
+    })
+
+    expect(done[0]).toMatchObject({
+      content: 'final response',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    })
+  })
+
+  test('keeps growing assistant original length after content is unloaded', () => {
+    const truncated = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: 'growing-long-text',
+      content: `${'a'.repeat(200_010)}tail`,
+      offset: 0
+    })
+    const next = reduceWorkbenchMessages(truncated, {
+      type: 'assistant_chunk',
+      subtaskId: 'growing-long-text',
+      content: 'next',
+      offset: 200_014
+    })
+
+    expect(next[0].content.length).toBe(200_000)
+    expect(next[0].content.endsWith('tailnext')).toBe(true)
+    expect(next[0].contentOriginalChars).toBe(200_018)
+  })
+
+  test('keeps only a preview window for very long tool output', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'block_created',
+        subtaskId: '9',
+        block: {
+          id: 'call_1',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'pending',
+          createdAt: 1770000000000
+        }
+      }),
+      {
+        type: 'block_updated',
+        subtaskId: '9',
+        blockId: 'call_1',
+        updates: {
+          status: 'streaming',
+          toolOutputDelta: `${'x'.repeat(120_010)}tail`
+        }
+      }
+    )
+
+    expect(state[0].blocks?.[0]).toMatchObject({
+      id: 'call_1',
+      type: 'tool',
+      toolOutputTruncated: true,
+      toolOutputOriginalChars: 120_014,
+      toolOutputLoadRef: {
+        subtaskId: '9',
+        blockId: 'call_1',
+        kind: 'tool_output'
+      }
+    })
+    const output =
+      state[0].blocks?.[0]?.type === 'tool' ? state[0].blocks[0].toolOutput : ''
+    expect(typeof output).toBe('string')
+    expect((output as string).length).toBe(64 * 1024)
+    expect((output as string).endsWith('tail')).toBe(true)
+  })
+
+  test('keeps growing tool output original length after output is unloaded', () => {
+    const truncated = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'block_created',
+        subtaskId: '9',
+        block: {
+          id: 'call_1',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'pending',
+          createdAt: 1770000000000
+        }
+      }),
+      {
+        type: 'block_updated',
+        subtaskId: '9',
+        blockId: 'call_1',
+        updates: {
+          status: 'streaming',
+          toolOutputDelta: `${'x'.repeat(120_010)}tail`
+        }
+      }
+    )
+
+    const next = reduceWorkbenchMessages(truncated, {
+      type: 'block_updated',
+      subtaskId: '9',
+      blockId: 'call_1',
+      updates: {
+        status: 'streaming',
+        toolOutputDelta: 'next'
+      }
+    })
+
+    const block = next[0].blocks?.[0]
+    expect(block?.type).toBe('tool')
+    if (block?.type !== 'tool') return
+    expect(block.toolOutputOriginalChars).toBe(120_018)
+    expect(String(block.toolOutput).length).toBe(64 * 1024)
+    expect(String(block.toolOutput).endsWith('tailnext')).toBe(true)
+  })
+
   test('adds user message and streams assistant chunks into one message', () => {
     const initial: WorkbenchMessage[] = []
     const withUser = reduceWorkbenchMessages(initial, {
@@ -430,15 +589,60 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('appends tool output deltas without replacing existing output', () => {
+    const state = reduceWorkbenchMessages(
+      reduceWorkbenchMessages([], {
+        type: 'block_created',
+        subtaskId: '9',
+        block: {
+          id: 'call_1',
+          subtaskId: '9',
+          type: 'tool',
+          toolName: 'bash',
+          status: 'pending',
+          createdAt: 1770000000000
+        }
+      }),
+      {
+        type: 'block_updated',
+        subtaskId: '9',
+        blockId: 'call_1',
+        updates: {
+          status: 'streaming',
+          toolOutputDelta: 'hello'
+        }
+      }
+    )
+
+    const next = reduceWorkbenchMessages(state, {
+      type: 'block_updated',
+      subtaskId: '9',
+      blockId: 'call_1',
+      updates: {
+        status: 'streaming',
+        toolOutputDelta: ' world'
+      }
+    })
+
+    expect(next[0].blocks).toMatchObject([
+      {
+        id: 'call_1',
+        type: 'tool',
+        status: 'streaming',
+        toolOutput: 'hello world'
+      }
+    ])
+  })
+
   test('preserves custom tool render payload on block create and update', () => {
     const requestPayload = {
       kind: 'request_user_input',
       request_id: 12,
-      questions: [{ id: 'goal', question: 'What should I prioritize?' }],
+      questions: [{ id: 'goal', question: 'What should I prioritize?' }]
     }
     const updatedPayload = {
       ...requestPayload,
-      submitted: true,
+      submitted: true
     }
 
     const state = reduceWorkbenchMessages([], {
@@ -451,8 +655,8 @@ describe('reduceWorkbenchMessages', () => {
         toolName: 'request_user_input',
         renderPayload: requestPayload,
         status: 'pending',
-        createdAt: 1770000000000,
-      },
+        createdAt: 1770000000000
+      }
     })
     const updated = reduceWorkbenchMessages(state, {
       type: 'block_updated',
@@ -460,19 +664,19 @@ describe('reduceWorkbenchMessages', () => {
       blockId: 'request-1',
       updates: {
         status: 'done',
-        renderPayload: updatedPayload,
-      },
+        renderPayload: updatedPayload
+      }
     })
 
     expect(state[0].blocks?.[0]).toMatchObject({
       type: 'tool',
       toolName: 'request_user_input',
-      renderPayload: requestPayload,
+      renderPayload: requestPayload
     })
     expect(updated[0].blocks?.[0]).toMatchObject({
       type: 'tool',
       status: 'done',
-      renderPayload: updatedPayload,
+      renderPayload: updatedPayload
     })
   })
 
@@ -526,7 +730,9 @@ describe('reduceWorkbenchMessages', () => {
 
 describe('normalizeWorkbenchBlockStatus', () => {
   test('keeps supported statuses and normalizes legacy or unknown statuses', () => {
-    expect(normalizeWorkbenchBlockStatus('generating_arguments')).toBe('generating_arguments')
+    expect(normalizeWorkbenchBlockStatus('generating_arguments')).toBe(
+      'generating_arguments'
+    )
     expect(normalizeWorkbenchBlockStatus('pending')).toBe('pending')
     expect(normalizeWorkbenchBlockStatus('streaming')).toBe('streaming')
     expect(normalizeWorkbenchBlockStatus('done')).toBe('done')

@@ -12,6 +12,7 @@ export interface DesktopReviewState {
   branchName?: string
   targetBranchName?: string
   focusFilePath?: string
+  sourceSubtaskId?: string
   reloadDiff?: () => Promise<string>
 }
 
@@ -22,6 +23,7 @@ export interface DesktopReviewMetadata {
   branchName?: string
   targetBranchName?: string
   focusFilePath?: string
+  sourceSubtaskId?: string
 }
 
 export type DesktopReviewMode = EnvironmentDiffMode | 'previous-turn'
@@ -32,6 +34,7 @@ export interface BottomPanelRenderContext {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal: boolean
+  terminalContextTitle?: string | null
 }
 
 export function formatEnvironmentReviewErrorMessage({

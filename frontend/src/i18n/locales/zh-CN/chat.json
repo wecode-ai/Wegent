@@ -259,6 +259,22 @@
       "kb_search": "搜索知识库",
       "web_search": "网页搜索",
       "load_skill": "加载技能"
+    },
+    "subagent": {
+      "title": "子 Agent",
+      "agent": "Agent",
+      "tool_count": "{{count}} 个工具",
+      "step_count": "{{count}} 个步骤",
+      "parallel_title": "并行处理 {{count}} 个子任务",
+      "parallel_progress": "{{completed}} / {{total}} 完成",
+      "parallel_progress_running": "{{completed}} / {{total}} 完成 · {{running}} 运行中",
+      "parallel_progress_failed": "{{completed}} / {{total}} 完成 · {{failed}} 失败",
+      "parallel_progress_queued": "{{completed}} / {{total}} 完成 · {{queued}} 等待启动",
+      "status_queued": "等待启动",
+      "status_running": "运行中",
+      "status_completed": "已完成",
+      "status_failed": "失败",
+      "remaining": "另外 {{count}} 个任务"
     }
   },
   "send_button": {

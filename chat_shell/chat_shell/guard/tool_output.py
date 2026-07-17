@@ -177,7 +177,7 @@ def _truncate_body(
         ``(rendered_body, total_input_tokens, truncated_flag, header_fields)``.
     """
     if policy.kind == "tokens":
-        ids = counter.encoding.encode(body)
+        ids = counter.encoding.encode(body, disallowed_special=())
         total_tokens = len(ids)
         if total_tokens <= policy.limit:
             return (

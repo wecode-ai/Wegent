@@ -1,5 +1,5 @@
 import { SquareTerminal, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -23,6 +23,7 @@ interface BottomWorkspacePanelProps {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal?: boolean
+  terminalContextTitle?: string | null
   onRequestClose: () => void
   onTerminalTabsEmpty?: () => void
 }
@@ -31,7 +32,7 @@ function createTerminalTab(index: number): BottomWorkspacePanelTab {
   return { id: `terminal-${index}`, title: `Terminal ${index}` }
 }
 
-export function BottomWorkspacePanel({
+export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   open,
   active = true,
   preserveContent = false,
@@ -40,11 +41,12 @@ export function BottomWorkspacePanel({
   devices,
   workspaceTarget,
   preferLocalTerminal = false,
+  terminalContextTitle,
   onRequestClose,
   onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const { height, handleResizeStart } = useResizableBottomPanel()
+  const { height, resizing, handleResizeStart } = useResizableBottomPanel()
   const terminalSequenceRef = useRef(2)
   const [tabs, setTabs] = useState<BottomWorkspacePanelTab[]>(() => [createTerminalTab(1)])
   const [activeTabId, setActiveTabId] = useState('terminal-1')
@@ -115,7 +117,8 @@ export function BottomWorkspacePanel({
     <section
       data-testid={testId('bottom-workspace-panel')}
       className={cn(
-        'relative flex shrink-0 flex-col overflow-hidden bg-background transition-[height,opacity,transform] duration-300 ease-out',
+        'relative flex shrink-0 flex-col overflow-hidden bg-background ease-out',
+        resizing ? 'transition-none' : 'transition-[height,opacity,transform] duration-300',
         open
           ? 'pointer-events-auto translate-y-0 border-t border-border opacity-100'
           : 'pointer-events-none translate-y-3 border-t border-transparent opacity-0'
@@ -180,6 +183,7 @@ export function BottomWorkspacePanel({
                   onRequestClose={() => closeTab(tab.id)}
                   hideTerminalChrome
                   preferLocalTerminal={preferLocalTerminal}
+                  terminalContextTitle={terminalContextTitle}
                   panelActive={panelActive}
                   testIdsEnabled={contentTestIdsEnabled}
                   onTerminalTitleChange={title => updateTabTitle(tab.id, title)}
@@ -191,7 +195,7 @@ export function BottomWorkspacePanel({
       )}
     </section>
   )
-}
+})
 
 function BottomWorkspaceTitleTab({
   testIdsEnabled,

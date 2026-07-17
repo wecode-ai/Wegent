@@ -48,6 +48,8 @@ from app.schemas.runtime_work import (
     RuntimeFileChangesRevertRequest,
     RuntimeFileChangesRevertResponse,
     RuntimeGlobalIMNotificationUpdateRequest,
+    RuntimeGuidanceRequest,
+    RuntimeGuidanceResponse,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
     RuntimeProjectRef,
@@ -76,6 +78,8 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceOpenResponse,
     RuntimeWorkspaceRemoveRequest,
     RuntimeWorkspaceRenameRequest,
+    RuntimeWorkspaceSearchRequest,
+    RuntimeWorkspaceSearchResponse,
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
@@ -359,13 +363,14 @@ async def get_runtime_transcript(
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
-        "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s",
+        "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s include_full_content=%s",
         user_id,
         normalized_address.device_id,
         normalized_address.local_task_id,
         normalized_address.workspace_path,
         payload.get("limit"),
         payload.get("beforeCursor"),
+        payload.get("includeFullContent"),
     )
     try:
         result = await runtime_rpc_service.call(
@@ -566,6 +571,8 @@ async def send_runtime_message(
         payload["source"] = request.source.model_dump()
     if request.request_user_input_response is not None:
         payload["requestUserInputResponse"] = request.request_user_input_response
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -580,6 +587,44 @@ async def send_runtime_message(
             detail=str(exc),
         ) from exc
     return _runtime_send_response(result, address.local_task_id)
+
+
+async def send_runtime_guidance(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeGuidanceRequest,
+) -> RuntimeGuidanceResponse:
+    """Steer an active LocalTask turn through the owning local executor."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    payload = {
+        **_runtime_task_address_payload(address),
+        "message": request.message,
+    }
+    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    if attachments:
+        payload["attachments"] = attachments
+    if request.client_guidance_id:
+        payload["clientGuidanceId"] = request.client_guidance_id
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.guidance",
+            payload=payload,
+            timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_guidance_response(result, address.local_task_id)
 
 
 async def bind_runtime_task_to_im_sessions(
@@ -1198,6 +1243,38 @@ async def remove_runtime_workspace(
     )
 
 
+async def search_runtime_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkspaceSearchRequest,
+) -> RuntimeWorkspaceSearchResponse:
+    """Search one workspace through its owning online local executor."""
+
+    device_id = request.device_id.strip()
+    _ensure_owned_device(db, user_id, device_id)
+    payload: dict[str, Any] = {
+        "root": normalize_workspace_path(request.root),
+        "query": request.query.strip(),
+    }
+    if request.cancellation_token:
+        payload["cancellationToken"] = request.cancellation_token
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspace.search",
+            payload=payload,
+            timeout_seconds=RUNTIME_SEARCH_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return RuntimeWorkspaceSearchResponse.model_validate(result)
+
+
 async def fork_runtime_task(
     *,
     db: Session,
@@ -1814,6 +1891,23 @@ def _runtime_send_response(
         accepted=bool(result.get("accepted", True)),
         taskId=str(result.get("taskId") or local_task_id),
         error=result.get("error"),
+    )
+
+
+def _runtime_guidance_response(
+    result: dict[str, Any],
+    local_task_id: str,
+) -> RuntimeGuidanceResponse:
+    success = result.get("success")
+    accepted = bool(result.get("accepted", success is not False))
+    return RuntimeGuidanceResponse(
+        accepted=accepted,
+        success=success is not False,
+        taskId=str(result.get("taskId") or local_task_id),
+        guidanceId=result.get("guidanceId") or result.get("guidance_id"),
+        turnId=result.get("turnId") or result.get("turn_id"),
+        error=result.get("error"),
+        code=result.get("code"),
     )
 
 
@@ -3113,10 +3207,16 @@ def _runtime_transcript_payload(
     payload = _runtime_task_address_payload(normalized_address)
     limit = getattr(request, "limit", None)
     before_cursor = getattr(request, "before_cursor", None)
+    after_cursor = getattr(request, "after_cursor", None)
+    include_full_content = getattr(request, "include_full_content", False)
     if limit is not None:
         payload["limit"] = limit
     if before_cursor:
         payload["beforeCursor"] = before_cursor
+    if after_cursor:
+        payload["afterCursor"] = after_cursor
+    if include_full_content:
+        payload["includeFullContent"] = True
     return payload
 
 
@@ -3305,7 +3405,6 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Build an executor request from CRD config without persisting Task rows."""
-
     from app.services.execution import TaskRequestBuilder
 
     user = _get_user(db, user_id)
@@ -3327,7 +3426,9 @@ def _build_runtime_execution_request(
     )
     payload = _runtime_execution_payload(request)
     runtime_model_config, override_model_name, force_override = _runtime_model_override(
-        request
+        db,
+        user_id,
+        request,
     )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
@@ -3465,14 +3566,24 @@ def _request_execution_workspace(
 
 
 def _runtime_model_override(
+    db: Session,
+    user_id: int,
     request: RuntimeTaskCreateRequest,
 ) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
     if not request.model_id:
         return None, None, False
     if request.runtime == "codex" and request.model_type == RUNTIME_MODEL_TYPE:
-        from app.services.chat.trigger.unified import _build_codex_runtime_model_config
+        from app.services.chat.trigger.unified import (
+            _build_codex_runtime_model_config,
+        )
 
-        return _build_codex_runtime_model_config(request.model_id), None, False
+        config = _build_codex_runtime_model_config(
+            request.model_id,
+            dict(request.model_options),
+            db=db,
+            user_id=user_id,
+        )
+        return config, None, False
     return None, request.model_id, True
 
 

@@ -73,21 +73,35 @@ describe('ChromeTitlebar', () => {
       'shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
     )
     expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
-    expect(screen.getByTestId('titlebar-actions')).toHaveClass('gap-1', 'pr-3')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
+      'top-0',
+      'h-full',
+      'items-center'
+    )
+    expect(screen.getByTestId('titlebar-center')).toHaveClass('h-full', 'flex-1')
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'pr-3')
   })
 
   test('renders app tabs as icon-only controls with hover labels', () => {
     render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
 
     const weworkTab = screen.getByTestId('chrome-tab-wework')
+    const todoTab = screen.getByTestId('chrome-tab-todo')
     const appsTab = screen.getByTestId('chrome-tab-apps')
 
     expect(weworkTab).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(todoTab).toHaveClass('w-8', 'min-w-0', 'px-0')
     expect(appsTab).toHaveClass('w-8', 'min-w-0', 'px-0')
     expect(weworkTab).toHaveAttribute('title', 'WeWork')
+    expect(todoTab).toHaveAttribute('title', 'TODO')
     expect(appsTab).toHaveAttribute('title', '应用')
     expect(weworkTab.querySelector('.sr-only')).toHaveTextContent('WeWork')
+    expect(todoTab.querySelector('.sr-only')).toHaveTextContent('TODO')
     expect(appsTab.querySelector('.sr-only')).toHaveTextContent('应用')
+    expect(
+      weworkTab.compareDocumentPosition(todoTab) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(todoTab.compareDocumentPosition(appsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   test('renders after-tabs content between tabs and titlebar actions', () => {
@@ -153,7 +167,7 @@ describe('ChromeTitlebar', () => {
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     const dragRegion = screen.getByTestId('macos-traffic-light-spacer')
-    expect(dragRegion.className).toContain('w-[95px]')
+    expect(dragRegion.className).toContain('w-[92px]')
     expect(dragRegion).toHaveClass('self-stretch')
     expect(within(dragRegion).getByTestId('macos-titlebar-drag-region')).toHaveAttribute(
       'data-tauri-drag-region'
@@ -168,8 +182,8 @@ describe('ChromeTitlebar', () => {
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
 
-    const dragRegion = screen.getByTestId('chrome-titlebar-window-drag-region')
-    expect(dragRegion).toHaveClass('self-stretch')
+    const dragRegion = screen.getByTestId('titlebar-center')
+    expect(dragRegion).toHaveClass('h-full', 'flex-1')
     fireEvent.mouseDown(within(dragRegion).getByTestId('macos-titlebar-drag-region'), {
       button: 0,
     })

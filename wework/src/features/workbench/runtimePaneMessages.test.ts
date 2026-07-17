@@ -40,6 +40,38 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('forwards structured task-plan updates for the active runtime task', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onRuntimePlanUpdated = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onRuntimePlanUpdated,
+    })
+
+    handlers.onRuntimePlanUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Implement the requested change.',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+
+    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Implement the requested change.',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+  })
+
   test('streams camelCase reasoning chunks into assistant messages', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
@@ -103,6 +135,48 @@ describe('createRuntimeTaskStreamHandlers', () => {
     )
   })
 
+  test('updates context usage from task-scoped chunks without subtask identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onContextUsageUpdated = vi.fn()
+    const contextUsage = {
+      total: {
+        totalTokens: 15_000,
+        inputTokens: 12_000,
+        cachedInputTokens: 2_000,
+        outputTokens: 3_000,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: 8_000,
+        inputTokens: 7_000,
+        cachedInputTokens: 1_000,
+        outputTokens: 1_000,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 258_000,
+    }
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onContextUsageUpdated,
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      deviceId: 'device-1',
+      content: '',
+      result: { contextUsage },
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(onContextUsageUpdated).toHaveBeenCalledWith(contextUsage)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
   test('warns when snake case reasoning chunks reach the pane layer', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
@@ -142,8 +216,58 @@ describe('createRuntimeTaskStreamHandlers', () => {
       taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
+    const onAssistantSettled = vi.fn()
+    const onRefreshWorkLists = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => actions.push(action),
+      onAssistantSettled,
+      onRefreshWorkLists,
+    })
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'runtime-task-1-context-compact',
+      deviceId: 'device-1',
+      block: {
+        id: 'ctx-1',
+        type: 'tool',
+        tool_name: 'context_compaction',
+        status: 'done',
+        timestamp: 1770000000000,
+      },
+    })
+
+    expect(actions).toHaveLength(2)
+    expect(actions[0]).toMatchObject({
+      type: 'block_created',
+      block: {
+        id: 'ctx-1',
+        type: 'tool',
+        toolName: 'context_compaction',
+        status: 'done',
+      },
+    })
+    expect(actions[1]).toMatchObject({
+      type: 'assistant_done',
+      subtaskId: 'runtime-task-1-context-compact',
+      content: '',
+    })
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not finish an active assistant turn for automatic context compaction', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantSettled = vi.fn()
+    const onRefreshWorkLists = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantSettled,
+      onRefreshWorkLists,
     })
 
     handlers.onBlockCreated?.({
@@ -162,6 +286,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       type: 'block_created',
+      subtaskId: 'subtask-9',
       block: {
         id: 'ctx-1',
         type: 'tool',
@@ -169,6 +294,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
         status: 'done',
       },
     })
+    expect(onAssistantSettled).not.toHaveBeenCalled()
+    expect(onRefreshWorkLists).not.toHaveBeenCalled()
   })
 
   test('preserves request user input render payload on block created events', () => {
@@ -485,6 +612,41 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     expect(messages[0].content).toBe(
       ['完成了。', '', '```text', '::git-stage{cwd="/workspace/project"}', '```'].join('\n')
     )
+  })
+
+  test('ignores invalid short-content truncation markers from a runtime transcript', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '这是一段完整的短回复。',
+        content_truncated: true,
+        content_original_chars: 11,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      content: '这是一段完整的短回复。',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+    })
+  })
+
+  test('keeps valid runtime content truncation markers so full content can be loaded', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '回复末尾预览',
+        contentTruncated: true,
+        contentOriginalChars: 200_001,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 200_001,
+    })
   })
 
   test('keeps user-authored Codex directive text unchanged', () => {

@@ -75,6 +75,7 @@ pub(crate) fn debug_ignored_codex_notification(message: &Value, method: &str, pa
 
 fn wrapped_item_method(wrapper_type: &str, payload_type: &str) -> Option<&'static str> {
     match (wrapper_type, payload_type) {
+        ("eventmsg", "execcommandoutputdelta") => Some("item/commandExecution/outputDelta"),
         ("eventmsg", "agentmessage") | ("responseitem", "message") => Some("item/completed"),
         ("eventmsg", "subagentactivity") | ("responseitem", "subagentactivity") => {
             Some("subagent/activity")
@@ -111,7 +112,7 @@ fn wrapped_item_method(wrapper_type: &str, payload_type: &str) -> Option<&'stati
     }
 }
 
-fn is_root_codex_turn_event(params: &Value) -> bool {
+pub(crate) fn is_root_codex_turn_event(params: &Value) -> bool {
     codex_agent_path(params)
         .or_else(|| params.get("turn").and_then(codex_agent_path))
         .map_or(true, |agent_path| agent_path == "/root")

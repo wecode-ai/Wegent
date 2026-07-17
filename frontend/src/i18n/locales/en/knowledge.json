@@ -44,6 +44,8 @@
     "selectWholeKb": "Select KB",
     "selected": "Selected",
     "selectedDocuments": "{{count}} documents selected",
+    "selectedFolders": "{{count}} folders selected, including subfolders",
+    "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"
@@ -208,14 +210,12 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
-      "createNotebook": "Create Notebook",
-      "createClassic": "Create Knowledge Base",
       "createDesc": "Create your first knowledge base",
-      "notebookDesc": "Upload files and start conversations directly in the notebook, supports up to 50 files",
-      "classicDesc": "Uploaded files can be referenced in chat, no file limit in knowledge base",
-      "type": "Type",
-      "typeNotebook": "Notebook",
-      "typeClassic": "Knowledge Base",
+      "notebookDesc": "Open Notebook View by default for document selection and chat",
+      "classicDesc": "Open Document View by default for browsing, uploading, and management",
+      "type": "Default Opening View",
+      "typeNotebook": "Notebook View",
+      "typeClassic": "Document View",
       "edit": "Edit Knowledge Base",
       "delete": "Delete Knowledge Base",
       "name": "Name",
@@ -231,19 +231,20 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
-      "convertType": "Convert Type",
-      "currentType": "Current Type",
-      "convertToNotebook": "Convert to Notebook",
-      "convertToClassic": "Convert to Knowledge Base",
-      "convertToNotebookDisabled": "Document count exceeds 50 file limit, cannot convert to notebook mode",
-      "convertToClassicConfirm": "After conversion, you will no longer be able to chat directly in the knowledge base, but there will be no document limit. Are you sure you want to convert?",
-      "convertToNotebookConfirm": "After conversion to notebook, you can upload files and chat directly in the knowledge base, but the document limit will be 50 files. Are you sure you want to convert?",
-      "convertSuccess": "Knowledge base type converted successfully",
-      "convertFailed": "Failed to convert knowledge base type",
+      "currentDefaultView": "Current Default Opening View",
+      "convertToNotebook": "Open Notebook View by Default",
+      "convertToClassic": "Open Document View by Default",
+      "changeDefaultView": "Change Default View",
+      "changeDefaultViewConfirm": "This only changes the default view used when opening the knowledge base. Existing content and permissions are unchanged.",
+      "defaultViewUpdateSuccess": "Default opening view updated",
+      "defaultViewUpdateFailed": "Failed to update default opening view",
       "targetGroup": "Target Group",
       "selectGroup": "Select Group"
     },
     "folder": {
+      "folderType": "Folder",
+      "expand": "Expand folder",
+      "collapse": "Collapse folder",
       "docCount": "{{count}} docs",
       "create": "Create Folder",
       "createTitle": "New Folder",
@@ -322,6 +323,7 @@
         "web": "Web Page"
       },
       "search": "Search documents",
+      "searchInFolder": "Search documents in {{folder}}",
       "empty": "No documents yet",
       "emptyHint": "Upload your first document to get started",
       "noResults": "No matching documents",
@@ -344,19 +346,30 @@
       "batch": {
         "selected": "{{count}} selected",
         "selectedWithFolders": "{{docCount}} document(s) and {{folderCount}} folder(s) selected",
+        "selectedDocuments": "{{docCount}} document(s) selected",
+        "selectedFolders": "{{folderCount}} folder(s) selected, including subfolders",
+        "selectedMixed": "{{folderCount}} folder(s) and {{docCount}} document(s) selected",
         "selectAll": "Select All",
+        "selectCurrentPage": "Select Current Page",
         "enable": "Enable",
         "disable": "Disable",
         "delete": "Delete",
         "move": "Move",
         "transfer": "Transfer to KB",
+        "folderScopeTransferOnly": "Folder selections can only be transferred to another knowledge base. Select documents only to move or delete.",
         "transferTitle": "Transfer to Knowledge Base",
         "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
+        "transferHintDocuments": "Transfer {{docCount}} document(s) to an allowed target knowledge base.",
+        "transferHintFolders": "Transfer {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
+        "transferHintMixed": "Transfer {{folderCount}} folder(s) and {{docCount}} document(s) to an allowed target knowledge base. The folder structure will be preserved.",
         "selectTargetKb": "Select target knowledge base",
         "targetKbRequired": "Please select a target knowledge base",
         "transferring": "Transferring...",
         "transferringProgress": "Transferring {{current}}/{{total}} item(s)...",
         "transferSuccess": "Transferred {{docCount}} document(s) and {{folderCount}} folder(s) successfully",
+        "transferSuccessDocuments": "Transferred {{docCount}} document(s) successfully",
+        "transferSuccessFolders": "Transferred {{folderCount}} folder(s) successfully",
+        "transferSuccessMixed": "Transferred {{folderCount}} folder(s) and {{docCount}} document(s) successfully",
         "transferFailed": "Transfer failed",
         "noOtherKbs": "No target knowledge bases match the transfer rules",
         "errors": {
@@ -366,7 +379,6 @@
           "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
           "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
-          "NOTEBOOK_DOC_LIMIT_EXCEEDED": "Notebook mode knowledge base document limit exceeded",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
@@ -375,6 +387,8 @@
         "title": "Document Detail",
         "backToList": "Back to List",
         "summary": "Document Summary",
+        "derivedSummary": "AI Summary (based on parsed content)",
+        "refreshSummary": "Refresh AI summary",
         "status": "Status",
         "statusValues": {
           "pending": "Pending",
@@ -385,6 +399,8 @@
         "topics": "Topics",
         "metaInfo": "Metadata",
         "content": "Document Content",
+        "parsedContent": "Parsed Content",
+        "sourceFile": "Original File",
         "truncated": "Content Truncated",
         "copy": "Copy",
         "copied": "Copied",
@@ -416,10 +432,23 @@
         "viewChunks": "View Chunks",
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype",
-        "qaPairsDetected": "{{count}} Q/A pairs detected"
+        "qaPairsDetected": "{{count}} Q/A pairs detected",
+        "contentUpdatedAt": "Updated",
+        "sourcePreview": {
+          "loading": "Loading original file...",
+          "download": "Download original",
+          "downloadFailed": "Failed to download the original file",
+          "tooLargeTitle": "File is too large for online preview",
+          "tooLargeDescription": "This file is {{size}}, which exceeds the current {{limit}} preview limit. Download it to continue.",
+          "fetchFailedTitle": "Unable to load the original file",
+          "fetchFailedDescription": "The original file could not be loaded. Check your network connection or access permissions, then retry.",
+          "renderFailedTitle": "Original file preview failed",
+          "renderFailedDescription": "The file may be damaged, encrypted, or use unsupported Office features. Retry the preview or download the original file."
+        }
       },
       "downloadFailed": "Failed to download file",
-      "fetchFailed": "Failed to fetch documents"
+      "fetchFailed": "Failed to fetch documents",
+      "reanalyze": "Modify prompt & re-analyze"
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
@@ -445,7 +474,7 @@
       "textRequired": "Please enter text content",
       "insert": "Insert",
       "clickToRename": "Click to rename",
-      "unsupportedFileType": "Image files are not supported yet. Support will be added in future versions.",
+      "unsupportedFileType": "Multimedia files require multimodal analysis to be enabled for this knowledge base before uploading",
       "addTable": "Add Data Table",
       "tableHint": "Enter the table link and name to add it to your knowledge base.",
       "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",
@@ -475,7 +504,6 @@
         }
       },
       "documentCount": "Document Count",
-      "notebookLimitReached": "Notebook supports up to 50 files",
       "web": {
         "addWebPage": "Add Web Page",
         "orAddWebPage": "Or enter a web page URL",
@@ -499,7 +527,8 @@
         "refetchSuccess": "Web page content updated",
         "refetchFailed": "Failed to re-fetch web page",
         "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
-      }
+      },
+      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action",
@@ -743,7 +772,39 @@
     "pagination": {
       "totalCount": "{{count}} items",
       "pageSize": "Per page",
-      "searchHint": "Search applies to current page only"
+      "searchHint": "Search and sort apply to the full query result"
+    },
+    "multimodal": {
+      "enableLabel": "Enable multimodal analysis",
+      "enableDescription": "Allow uploading video/image files, analyzed by Gemini to extract content",
+      "selectModel": "Multimodal analysis model",
+      "modelRequired": "Please select a model for multimodal analysis",
+      "noMultimodalModel": "No models support multimodal analysis",
+      "uploadDisabled": "Multimodal analysis is not enabled for this knowledge base",
+      "costHint": "Multimodal analysis is billed per the selected model, same as summaries",
+      "videoPromptLabel": "Video analysis prompt",
+      "imagePromptLabel": "Image analysis prompt",
+      "promptPlaceholder": "Enter the analysis prompt...",
+      "loadingPrompt": "Loading default prompt...",
+      "videoPromptHint": "How to analyze the video. If the {{VIDEO_FILENAME}} placeholder is included, it is replaced with the filename.",
+      "imagePromptHint": "Customize how images are analyzed.",
+      "resetToDefault": "Reset to default",
+      "resetToInherited": "Reset to inherited",
+      "promptSource": {
+        "system": "System default",
+        "knowledge": "Inherited from knowledge base",
+        "knowledgeDefault": "Inherited: system default",
+        "document": "Document custom",
+        "customized": "Customized"
+      },
+      "video": "Video",
+      "image": "Image",
+      "reanalyzeTitle": "Modify prompt & re-analyze",
+      "reanalyzeDescription": "Document: {{name}} ({{type}}). Edit the prompt below, then re-analyze from the original file.",
+      "reanalyze": "Re-analyze",
+      "reanalyzing": "Re-analyzing...",
+      "reanalyzeSuccess": "Re-analysis started",
+      "reanalyzeFailed": "Re-analysis failed"
     }
   },
   "add_repository": "Add Repository",

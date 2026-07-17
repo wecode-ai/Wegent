@@ -62,7 +62,7 @@ export function CloudConnectionSidebarButton({
     !needsAttention &&
     !cloudWorkUnavailable &&
     !cloudWorkEmpty &&
-    cloudWorkStatus?.availability !== 'available'
+    cloudWorkStatus?.availability === 'syncing'
   const cloudWorkAvailable =
     connected && !needsAttention && cloudWorkStatus?.availability === 'available'
   const hasErrorDetail = connected && (needsAttention || cloudWorkUnavailable)
@@ -79,7 +79,7 @@ export function CloudConnectionSidebarButton({
   const label = connected
     ? t('workbench.cloud_work_entry', '云端工作')
     : needsAttention
-      ? t('workbench.cloud_connection_attention', '云端需重新登录')
+      ? t('workbench.cloud_connection_attention', '云端连接已失效')
       : t('workbench.cloud_connection_sidebar_disconnected', '连接云端')
   const title = connected
     ? t('workbench.cloud_connection_sidebar_connected', {
@@ -121,8 +121,8 @@ export function CloudConnectionSidebarButton({
 
   return (
     <>
-      <div className="group/cloud relative flex h-8 items-center rounded-md hover:bg-[rgb(var(--color-sidebar-hover))]">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center">
+      <div className="group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]">
+        <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center">
           {cloudWorkSyncing ? (
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
           ) : hasErrorDetail ? (
@@ -145,7 +145,7 @@ export function CloudConnectionSidebarButton({
                 'h-4 w-4',
                 connected && !cloudWorkEmpty
                   ? 'text-primary'
-                  : 'text-[rgb(var(--color-sidebar-text-secondary))]'
+                  : 'text-[rgb(var(--color-sidebar-text-primary))]'
               )}
             />
           )}
@@ -170,16 +170,16 @@ export function CloudConnectionSidebarButton({
           }}
           title={statusTitle}
           className={cn(
-            'flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-0 pl-0 pr-8 text-left text-[13px] font-medium leading-[18px]',
-            connected ? 'text-[rgb(var(--color-sidebar-text-primary))]' : 'text-text-primary',
+            'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-sm font-normal leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
             (needsAttention || cloudWorkUnavailable) && 'text-red-500'
           )}
         >
           <span className="min-w-0 flex-1 truncate">{label}</span>
           {connected && statusLabel && (
             <span
+              data-testid="sidebar-cloud-status-label"
               className={cn(
-                'rounded-full px-1.5 text-[11px] font-semibold leading-5',
+                'ml-auto shrink-0 rounded-full px-1.5 text-xs font-semibold leading-5 group-hover/cloud:invisible group-focus-within/cloud:invisible',
                 cloudWorkAvailable && 'bg-primary/10 text-primary',
                 cloudWorkSyncing && 'bg-primary/10 text-primary',
                 cloudWorkEmpty &&
@@ -202,7 +202,7 @@ export function CloudConnectionSidebarButton({
             title={t('workbench.cloud_connection_manage', '管理云端连接')}
             aria-label={t('workbench.cloud_connection_manage', '管理云端连接')}
             className={cn(
-              'absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 transition-opacity hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:opacity-100 group-hover/cloud:opacity-100',
+              'pointer-events-none absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] opacity-0 transition-opacity hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] focus:pointer-events-auto focus:opacity-100 group-hover/cloud:pointer-events-auto group-hover/cloud:opacity-100 group-focus-within/cloud:pointer-events-auto group-focus-within/cloud:opacity-100',
               needsAttention && 'text-red-500'
             )}
           >

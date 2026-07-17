@@ -57,7 +57,17 @@ flowchart LR
 
 Tauri first connects to `~/.wegent-executor/app-ipc.sock`. If the local executor sidecar is not running yet, the App starts the executor with no arguments and retries the socket connection. Sidecars started by the App are owned by the Tauri process: on macOS/Linux they run in an isolated process group, and App close or restart sends `SIGTERM` before using `SIGKILL` for remaining child processes. The dev-mode reload supervisor and the executor it launches are included in that cleanup scope. When no remote Backend address is configured, the executor only starts the local socket and does not connect to Backend. The App and executor only use newline-delimited JSON over the local socket. Executor logs are written to `~/.wegent-executor/logs/executor.log`, not to the protocol channel. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
 
+Every 10 seconds, Tauri sends an `executor.health` request over the same connection to verify both directions of the IPC transport. If the request does not receive a response within 5 seconds or the transport fails, the App explicitly closes the old socket and reconnects to the still-running executor sidecar. Recovery does not restart the executor or terminate tasks that are running in the background. After the new connection is established, task events continue to flow to the WebView. This mechanism recovers half-open connections whose handles remain present but can no longer deliver events after system sleep or another transport failure.
+
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over the local socket and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
+
+### Runtime Task and Goal State
+
+The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
+
+Goals have an independent lifecycle. An `active` goal means that its objective can continue in later turns; it does not mean that a model turn is currently executing. Keeping an active goal while a task is idle must not mark the task as running again. A user's next message creates a new turn directly instead of being sent as guidance to an in-progress turn.
+
+Codex guidance is sent to the active turn through the shared app-server. If that turn finishes or changes while guidance is being sent, the executor reports the race as `no_active_turn`; Wework then sends the same content as a normal follow-up message so user input is preserved without a misleading send failure.
 
 ### Backend Device Chat Task REST Entrypoint
 
@@ -164,6 +174,13 @@ the local device currently registers and handles:
 - `runtime:rpc`
 - `device:upgrade`
 - `device:run_extension`
+
+The `extension_scope` field of `device:run_extension` accepts `task` or
+`global` and defaults to `task` when omitted. Task-scoped extensions run from
+the current task's `.claude/skills/<extension>` directory; global extensions
+run from `~/.claude/skills/<extension>` for the user running the executor. The
+script path must remain inside the selected extension directory, and other
+scope values are rejected.
 
 The migration coverage matrix is tracked in
 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local
@@ -293,7 +310,7 @@ Capability package downloads are constrained to the configured Backend origin. T
 
 When a project task runs through the local executor, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
 
-Claude Code, Codex, and Agno runtimes receive a task identity environment set. `WEGENT_TASK_ID` identifies the current Task, `AUTH_TOKEN` provides the per-turn bearer token for Backend API access, and `WEGENT_SKILL_IDENTITY_TOKEN` plus `WEGENT_SKILL_USER_NAME` identify task-scoped Skill operations. The executor does not inject `WEGENT_SUBTASK_ID` into these child runtimes; code that needs turn-level identity should keep using Responses events, artifact metadata, or existing task/subtask protocol fields instead of environment variables.
+Claude Code and Agno runtimes receive a task identity environment set. `WEGENT_TASK_ID` identifies the current Task, `AUTH_TOKEN` provides the per-turn bearer token for Backend API access, and `WEGENT_SKILL_IDENTITY_TOKEN` plus `WEGENT_SKILL_USER_NAME` identify task-scoped Skill operations. Codex uses a shared app-server process and does not receive task identity environment variables; code that needs task or turn identity should keep using Responses events, artifact metadata, or existing task/subtask protocol fields instead of environment variables. The executor does not inject `WEGENT_SUBTASK_ID` into these child runtimes.
 
 When project mode calls Claude or Codex model APIs, the executor adds a `wecode-project: <project_id>` request header in the directly launched runtime context and fills source identity headers: `wecode-action: wegent`, `wecode-source: wegent-local`, and `wecode-executor: <runtime>`, where Claude Code uses `claudecode` and Codex uses `codex`. Claude Code local mode first merges existing `ANTHROPIC_CUSTOM_HEADERS` from the executor startup process environment and the runtime environment, then appends the project identity and writes the resulting header set to both `ANTHROPIC_CUSTOM_HEADERS` and `DEFAULT_HEADERS`/`default_headers`. This keeps the Claude Code child process and downstream model gateways on the same header set. Codex writes the header into provider `http_headers` for Wegent-managed provider configs, and also injects it for personal Codex config runs when the execution model explicitly names the provider.
 
@@ -312,7 +329,7 @@ Before launching a Claude Code child process, the executor prepares the task con
 - It downloads turn attachments into the task directory. Project workspaces use `.wegent/attachments/<taskId>/<subtaskId>/`; non-Project tasks use an attachment subdirectory under the executor task directory.
 - It restores plugin packages from `~/.claude/plugins/cache` when they are still enabled in `enabledPlugins` but their install directory is missing, and it repairs plugin hook permissions.
 - It deploys task-selected Skills into `SKILLS_DIR`. Regular Project tasks use global `~/.claude/skills`; standalone local work with `project_id = 0` and task Skills uses task-level `.claude/skills` so the global directory is not polluted.
-- If `WEGENT_FILE_EDIT_HOOK_COMMAND` is configured, it writes `Write|Edit|MultiEdit|NotebookEdit` `PreToolUse` and `PostToolUse` hooks into Claude `settings.json` so file-change records can be captured as turn artifacts.
+- If `WEGENT_FILE_EDIT_HOOK_COMMAND` is configured, it writes `Write|Edit|MultiEdit|NotebookEdit` `PreToolUse` and `PostToolUse` hooks into Claude `settings.json` so file-change records can be captured as turn artifacts. When Wework macapp starts the local sidecar, it generates this command by default; `WEGENT_FILE_EDIT_HOOK_COMMAND` can override the full command, and `WEWORK_FILE_EDIT_LOG_ENDPOINT` can change the default reporting endpoint.
 
 The local executor converts Claude stdout NDJSON into Responses API events as soon as output arrives: visible text becomes `response.output_text.delta`, reasoning summaries become `response.reasoning_summary_text.delta`, and the process still sends a final `response.completed` or error event after exit. Backend and frontend code must not assume that `response.created` is followed immediately by a terminal event.
 

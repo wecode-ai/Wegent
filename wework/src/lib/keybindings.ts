@@ -7,10 +7,16 @@ export const GO_BACK_COMMAND = 'goBack'
 export const GO_FORWARD_COMMAND = 'goForward'
 export const TOGGLE_SIDEBAR_COMMAND = 'toggleSidebar'
 export const TOGGLE_SIDE_PANEL_COMMAND = 'toggleSidePanel'
+export const TOGGLE_MODEL_SELECTOR_COMMAND = 'toggleModelSelector'
+export const INCREASE_FONT_SIZE_COMMAND = 'increaseFontSize'
+export const DECREASE_FONT_SIZE_COMMAND = 'decreaseFontSize'
 export const WEWORK_OPEN_TERMINAL_EVENT = 'wework:open-terminal'
+export const WEWORK_STEP_FONT_SIZE_EVENT = 'wework:step-font-size'
 export const KEYBINDINGS_CHANGED_EVENT = 'wework:keybindings-changed'
+export const ACTIVE_KEYBINDINGS_CHANGED_EVENT = 'wework:active-keybindings-changed'
 export const TOGGLE_BOTTOM_WORKSPACE_PANEL_BUTTON_TEST_ID = 'toggle-bottom-workspace-panel-button'
 export const TOGGLE_RIGHT_WORKSPACE_PANEL_BUTTON_TEST_ID = 'toggle-right-workspace-panel-button'
+export const MODEL_SELECTOR_BUTTON_TEST_ID = 'model-selector-button'
 
 export interface KeybindingOverride {
   command: string
@@ -50,7 +56,21 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
     command: TOGGLE_SIDE_PANEL_COMMAND,
     defaultKey: 'Alt+Command+B',
   },
+  {
+    command: TOGGLE_MODEL_SELECTOR_COMMAND,
+    defaultKey: 'Control+Shift+M',
+  },
+  {
+    command: INCREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+Plus',
+  },
+  {
+    command: DECREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Command+Minus',
+  },
 ]
+
+let activeKeybindings = mergeKeybindings([])
 
 export function mergeKeybindings(overrides: KeybindingOverride[]): Record<string, string | null> {
   const merged = new Map<string, string | null>(
@@ -71,7 +91,7 @@ export function normalizeKeybinding(value: string): string {
   const key = parts.pop()
   if (!key) return ''
 
-  const modifiers = ['Shift', 'Control', 'Alt', 'Command'].filter(modifier =>
+  const modifiers = ['Control', 'Alt', 'Shift', 'Command'].filter(modifier =>
     parts.includes(modifier)
   )
   return [...modifiers, key].join('+')
@@ -79,15 +99,28 @@ export function normalizeKeybinding(value: string): string {
 
 export function keybindingFromKeyboardEvent(event: KeyboardEvent): string {
   const key = normalizeKeyPart(event.key)
+  const includeShift = event.shiftKey && key !== 'Plus' && key !== 'Minus'
   return [
-    event.shiftKey ? 'Shift' : null,
     event.ctrlKey ? 'Control' : null,
     event.altKey ? 'Alt' : null,
+    includeShift ? 'Shift' : null,
     event.metaKey ? 'Command' : null,
     key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null,
   ]
     .filter(Boolean)
     .join('+')
+}
+
+export function setActiveKeybindings(
+  overrides: KeybindingOverride[]
+): Record<string, string | null> {
+  activeKeybindings = mergeKeybindings(overrides)
+  window.dispatchEvent(new CustomEvent(ACTIVE_KEYBINDINGS_CHANGED_EVENT))
+  return activeKeybindings
+}
+
+export function getActiveKeybinding(command: string): string | null {
+  return activeKeybindings[command] ?? null
 }
 
 export function isEditableShortcutTarget(target: EventTarget | null): boolean {
@@ -144,6 +177,24 @@ export function dispatchToggleSidePanelShortcut() {
   }
 }
 
+export function dispatchToggleModelSelectorShortcut() {
+  const activePaneButton = document.querySelector<HTMLButtonElement>(
+    `[data-active-workbench-pane="true"] [data-testid="${MODEL_SELECTOR_BUTTON_TEST_ID}"]`
+  )
+  const button =
+    activePaneButton ??
+    Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        `[data-testid="${MODEL_SELECTOR_BUTTON_TEST_ID}"]`
+      )
+    ).find(candidate => !candidate.disabled && candidate.getAttribute('aria-hidden') !== 'true')
+  if (button && !button.disabled) button.click()
+}
+
+export function dispatchStepFontSizeShortcut(delta: -1 | 1) {
+  window.dispatchEvent(new CustomEvent(WEWORK_STEP_FONT_SIZE_EVENT, { detail: { delta } }))
+}
+
 export function shortcutsAvailable(): boolean {
   return isTauriRuntime()
 }
@@ -156,6 +207,8 @@ function normalizeKeyPart(value: string): string {
   if (['shift', '⇧'].includes(lower)) return 'Shift'
   if (lower === ' ') return 'Space'
   if (lower === 'escape') return 'Esc'
+  if (lower === '+' || lower === '=' || lower === 'plus') return 'Plus'
+  if (lower === '-' || lower === '_' || lower === 'minus') return 'Minus'
   if (value.length === 1) return value.toUpperCase()
   return value
 }

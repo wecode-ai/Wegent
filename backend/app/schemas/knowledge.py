@@ -23,6 +23,13 @@ from app.schemas.kind import (
     RetrieverRef,
     SummaryModelRef,
 )
+from app.schemas.knowledge_multimodal import (
+    DocumentReindexRequest,
+    MultimodalAnalysisFieldsMixin,
+    MultimodalAnalysisResponseFieldsMixin,
+    MultimodalDocumentPromptMixin,
+    multimodal_response_kwargs,
+)
 from app.schemas.knowledge_search import KnowledgeSearchRequest
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
@@ -117,7 +124,7 @@ class RetrievalConfigCreate(BaseModel):
     )
 
 
-class KnowledgeBaseCreate(BaseModel):
+class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     """Schema for creating a knowledge base."""
 
     name: str = Field(..., min_length=1, max_length=100)
@@ -125,7 +132,7 @@ class KnowledgeBaseCreate(BaseModel):
     namespace: str = Field(default="default", max_length=255)
     kb_type: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
@@ -186,7 +193,7 @@ class RetrievalConfigUpdate(BaseModel):
     )
 
 
-class KnowledgeBaseUpdate(BaseModel):
+class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     """Schema for updating a knowledge base."""
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -253,16 +260,16 @@ class KnowledgeBaseUpdate(BaseModel):
 
 
 class KnowledgeBaseTypeUpdate(BaseModel):
-    """Schema for updating knowledge base type (notebook <-> classic conversion)."""
+    """Schema for updating the default opening view."""
 
     kb_type: str = Field(
         ...,
         pattern="^(notebook|classic)$",
-        description="New knowledge base type: 'notebook' or 'classic'",
+        description="New default opening view: 'notebook' or 'classic'",
     )
 
 
-class KnowledgeBaseResponse(BaseModel):
+class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     """Schema for knowledge base response."""
 
     id: int
@@ -272,7 +279,7 @@ class KnowledgeBaseResponse(BaseModel):
     namespace: str
     kb_type: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     document_count: int
     is_active: bool
@@ -378,6 +385,7 @@ class KnowledgeBaseResponse(BaseModel):
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
+            **multimodal_response_kwargs(spec),
         )
 
     class Config:
@@ -399,7 +407,7 @@ class KnowledgeBaseListResponse(BaseModel):
 # Note: SplitterConfig is imported from app.schemas.rag to use unified splitter configuration
 
 
-class KnowledgeDocumentCreate(BaseModel):
+class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     """Schema for creating a knowledge document."""
 
     attachment_id: Optional[int] = Field(
@@ -499,6 +507,22 @@ class KnowledgeDocumentListResponse(BaseModel):
     items: list[KnowledgeDocumentResponse]
 
 
+class KnowledgeDocumentSortField(str, Enum):
+    """Supported sort fields for document list queries."""
+
+    NAME = "name"
+    SIZE = "size"
+    CREATED_AT = "createdAt"
+    UPDATED_AT = "updatedAt"
+
+
+class SortOrder(str, Enum):
+    """Supported sort order values."""
+
+    ASC = "asc"
+    DESC = "desc"
+
+
 # ============== Knowledge Folder Schemas ==============
 
 
@@ -586,6 +610,12 @@ class KnowledgeFolderResponse(BaseModel):
     children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
     document_count: int = Field(
         default=0, description="Number of documents in this folder"
+    )
+    direct_document_count: int = Field(
+        default=0, description="Number of documents directly in this folder"
+    )
+    total_document_count: int = Field(
+        default=0, description="Number of documents in this folder subtree"
     )
     created_at: datetime
     updated_at: datetime

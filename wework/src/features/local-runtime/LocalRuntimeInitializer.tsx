@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   AlertCircle,
@@ -14,8 +14,12 @@ import {
 import { Button } from '@/components/ui/button'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { getRuntimeConfig } from '@/config/runtime'
+import {
+  applyLocalExecutorCloudConnection,
+  type LocalExecutorCloudConnection,
+} from '@/features/cloud-connection/localExecutorCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
   ensureLocalExecutorStarted,
@@ -25,7 +29,6 @@ import {
 } from '@/tauri/localExecutor'
 
 const LOCAL_EXECUTOR_LOG_PATH = '~/.wegent-executor/logs/executor.log'
-const LOCAL_RUNTIME_ANIMATION_CYCLE_MS = 4800
 const LOCAL_RUNTIME_SLOW_STARTUP_MS = 10000
 
 type LocalRuntimePhase = 'starting' | 'ready' | 'failed'
@@ -33,6 +36,7 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 
 interface LocalRuntimeInitializerProps {
   children: ReactNode
+  initialCloudConnection?: LocalExecutorCloudConnection
   startupReady?: boolean
 }
 
@@ -51,7 +55,6 @@ interface LocalRuntimeDebugInfo {
   runtimeMode: string
   phase: LocalRuntimePhase
   startupReady: boolean
-  minimumDelayElapsed: boolean
   ensureCallState: string
   error: string | null
   log: LocalExecutorLog | null
@@ -59,7 +62,7 @@ interface LocalRuntimeDebugInfo {
 }
 
 function shouldInitializeLocalRuntime(): boolean {
-  return getRuntimeConfig().runtimeMode === 'local-first' && isTauriRuntime()
+  return isLocalFirstAppRuntime()
 }
 
 function localRuntimeError(
@@ -78,10 +81,6 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function sanitizeLocalRuntimeDebugText(text: string): string {
   return text.replace(/\btauri\b/gi, 'desktop app').replace(/\bsidecar\b/gi, 'executor process')
-}
-
-function localRuntimeMinimumReadyDelayMs(): number {
-  return import.meta.env.DEV ? LOCAL_RUNTIME_ANIMATION_CYCLE_MS : 0
 }
 
 async function resolveLocalRuntimeState(
@@ -115,7 +114,6 @@ function formatLocalRuntimeDebugInfo(info: LocalRuntimeDebugInfo): string {
     `App mode: ${info.runtimeMode}`,
     `Startup phase: ${info.phase}`,
     `Startup ready: ${info.startupReady ? 'true' : 'false'}`,
-    `Minimum delay elapsed: ${info.minimumDelayElapsed ? 'true' : 'false'}`,
     `Startup check: ${info.ensureCallState}`,
     `Error: ${info.error ?? 'none'}`,
     `Socket path: ${info.log?.socketPath ?? 'unknown'}`,
@@ -282,13 +280,13 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 
 export function LocalRuntimeInitializer({
   children,
+  initialCloudConnection,
   startupReady = true,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
-  const minimumReadyDelayMs = localRuntimeMinimumReadyDelayMs()
-  const [minimumDelayElapsed, setMinimumDelayElapsed] = useState(() => minimumReadyDelayMs === 0)
+  const initialCloudConnectionRef = useRef(initialCloudConnection)
   const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
@@ -315,17 +313,6 @@ export function LocalRuntimeInitializer({
     return () => window.clearTimeout(timer)
   }, [enabled, startupAttempt])
 
-  useEffect(() => {
-    if (minimumReadyDelayMs === 0) {
-      return undefined
-    }
-
-    const timer = window.setTimeout(() => {
-      setMinimumDelayElapsed(true)
-    }, minimumReadyDelayMs)
-    return () => window.clearTimeout(timer)
-  }, [minimumReadyDelayMs])
-
   const retryInitialize = useCallback(async () => {
     if (!enabled) return
     setStartupAttempt(attempt => attempt + 1)
@@ -348,6 +335,14 @@ export function LocalRuntimeInitializer({
     }
   }, [enabled, fallbackError, runtimeErrorText])
 
+  useEffect(() => {
+    if (!enabled || state.phase !== 'ready' || !initialCloudConnectionRef.current) return
+
+    void applyLocalExecutorCloudConnection(initialCloudConnectionRef.current).catch(error => {
+      console.error('[Wework] Failed to apply cloud connection to local executor:', error)
+    })
+  }, [enabled, state.phase])
+
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')
     let log: LocalExecutorLog | null = null
@@ -364,7 +359,6 @@ export function LocalRuntimeInitializer({
       runtimeMode: getRuntimeConfig().runtimeMode,
       phase: state.phase,
       startupReady,
-      minimumDelayElapsed,
       ensureCallState:
         state.phase === 'starting' ? 'pending' : state.phase === 'failed' ? 'failed' : 'resolved',
       error: state.error,
@@ -378,10 +372,10 @@ export function LocalRuntimeInitializer({
     } catch {
       setCopyDebugState('failed')
     }
-  }, [minimumDelayElapsed, startupReady, state.error, state.phase, t])
+  }, [startupReady, state.error, state.phase, t])
 
   const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren && (!enabled || (startupReady && minimumDelayElapsed))
+  const canRevealChildren = canMountChildren
   const shouldShowStartupScreen = !canRevealChildren
   const failed = state.phase === 'failed'
 
@@ -411,9 +405,7 @@ export function LocalRuntimeInitializer({
             ) : (
               <WorkspaceSetupAnimation />
             )}
-            <h1 className="text-xl font-semibold">
-              {failed ? t('failed_title') : t('starting_title')}
-            </h1>
+            <h1 className="heading-base">{failed ? t('failed_title') : t('starting_title')}</h1>
             <p className="mt-3 max-w-[360px] text-sm leading-6 text-text-secondary">
               {failed ? t('failed_description') : t('starting_description')}
             </p>

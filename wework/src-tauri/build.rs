@@ -5,9 +5,13 @@ use std::process::Command;
 
 const SIDECAR_NAME: &str = "wegent-executor";
 const SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
+const EXECUTOR_NAMESPACE_ENV: &str = "WEWORK_EXECUTOR_NAMESPACE";
 
 fn main() {
+    println!("cargo:rerun-if-env-changed={EXECUTOR_NAMESPACE_ENV}");
     prepare_local_executor_sidecar();
+    verify_bundled_codex_binary();
+    ensure_codex_resource_glob_exists();
     tauri_build::build()
 }
 
@@ -61,6 +65,89 @@ fn prepare_local_executor_sidecar() {
     if !sidecar_path.exists() || marker_path.exists() {
         build_debug_stub(&sidecar_path, &marker_path, &target);
     }
+}
+
+fn verify_bundled_codex_binary() {
+    let profile = env::var("PROFILE").unwrap_or_default();
+    if profile != "release" {
+        return;
+    }
+
+    let manifest_dir = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by Cargo"),
+    );
+    let target = env::var("TARGET").expect("TARGET must be set by Cargo");
+    let Some(binary_relative_path) = codex_binary_relative_path(&target) else {
+        println!("cargo:warning=No bundled Codex binary target mapping for {target}");
+        return;
+    };
+    let binary_path = manifest_dir
+        .join("binaries")
+        .join("codex")
+        .join(&target)
+        .join(binary_relative_path);
+    println!("cargo:rerun-if-changed={}", binary_path.display());
+    if !binary_path.is_file() {
+        panic!(
+            "Missing bundled Codex binary for {target}: {}. Run `pnpm --filter wework run prepare:codex` with WEWORK_CODEX_TARGET={target} before creating a release app bundle.",
+            binary_path.display()
+        );
+    }
+    let code_mode_host_path = binary_path
+        .parent()
+        .expect("Codex binary path must have a parent")
+        .join(if target.contains("windows") {
+            "codex-code-mode-host.exe"
+        } else {
+            "codex-code-mode-host"
+        });
+    println!("cargo:rerun-if-changed={}", code_mode_host_path.display());
+    if !code_mode_host_path.is_file() {
+        panic!(
+            "Missing bundled Codex code-mode host for {target}: {}. Run `pnpm --filter wework run prepare:codex` with WEWORK_CODEX_TARGET={target} before creating a release app bundle.",
+            code_mode_host_path.display()
+        );
+    }
+}
+
+fn codex_binary_relative_path(target: &str) -> Option<&'static str> {
+    match target {
+        "aarch64-apple-darwin" => Some("vendor/aarch64-apple-darwin/bin/codex"),
+        "x86_64-apple-darwin" => Some("vendor/x86_64-apple-darwin/bin/codex"),
+        "x86_64-unknown-linux-gnu" => Some("vendor/x86_64-unknown-linux-musl/bin/codex"),
+        "aarch64-unknown-linux-gnu" => Some("vendor/aarch64-unknown-linux-musl/bin/codex"),
+        "x86_64-pc-windows-msvc" => Some("vendor/x86_64-pc-windows-msvc/bin/codex.exe"),
+        _ => None,
+    }
+}
+
+fn ensure_codex_resource_glob_exists() {
+    let manifest_dir = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set by Cargo"),
+    );
+    let codex_dir = manifest_dir.join("binaries").join("codex");
+    if directory_contains_file(&codex_dir) {
+        return;
+    }
+    fs::create_dir_all(&codex_dir).expect("failed to create Codex resource placeholder directory");
+    fs::write(
+        codex_dir.join(".resource-placeholder"),
+        b"Generated only so Tauri resource globs resolve in non-release builds.\n",
+    )
+    .expect("failed to write Codex resource placeholder");
+}
+
+fn directory_contains_file(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() || (path.is_dir() && directory_contains_file(&path)) {
+            return true;
+        }
+    }
+    false
 }
 
 fn configured_sidecar_source() -> Option<PathBuf> {

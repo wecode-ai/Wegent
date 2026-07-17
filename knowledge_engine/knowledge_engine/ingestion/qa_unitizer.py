@@ -14,21 +14,20 @@ from llama_index.core import Document
 from llama_index.core.schema import TextNode
 
 MIN_QA_PAIRS_FOR_DOCUMENT = 2
-MIN_QA_COVERAGE = 0.35
-MIN_FALLBACK_CHARS = 40
+MIN_QA_COVERAGE = 0.8
 
 QUESTION_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:\*\*)?"
     r"(?P<label>(?:Q(?:uestion)?|问题)\s*(?P<number>\d+)?)"
     r"\s*[：:.)、]\s*(?P<question>.+?)"
     r"(?:\*\*)?\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    re.IGNORECASE,
 )
 ANSWER_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:\*\*)?"
     r"(?:A(?:nswer)?|答案|答)\s*[：:.)、]\s*"
     r"(?:\*\*)?\s*(?P<inline>.*?)\s*$",
-    re.IGNORECASE | re.MULTILINE,
+    re.IGNORECASE,
 )
 MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", re.MULTILINE)
 DECORATION_RE = re.compile(r"^[\s*_`#>\-~]+|[\s*_`#>\-~]+$")
@@ -48,7 +47,8 @@ class QAPairUnit:
 
     @property
     def text(self) -> str:
-        return f"Q: {self.question}\n\nA: {self.answer}".strip()
+        answer_separator = "\n" if self.answer.startswith((" ", "\t")) else " "
+        return f"Q: {self.question}\n\nA:{answer_separator}{self.answer}".strip()
 
     @property
     def retrieval_text(self) -> str:
@@ -62,76 +62,76 @@ class QAPairUnit:
         return "\n".join(parts)
 
 
-def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
-    """Return one node per Q/A pair when a document is clearly Q/A structured."""
+@dataclass(frozen=True, slots=True)
+class QAUnitizationResult:
+    """Q/A nodes and uncovered prose documents from one input batch."""
+
+    qa_nodes: list[TextNode]
+    prose_documents: list[Document]
+
+
+@dataclass(frozen=True, slots=True)
+class _SourceLine:
+    """One physical source line and its original offsets."""
+
+    text: str
+    start: int
+    end: int
+
+    @property
+    def is_blank(self) -> bool:
+        return not self.text.strip()
+
+
+def unitize_qa_documents(
+    documents: list[Document],
+) -> QAUnitizationResult | None:
+    """Unitize documents when blank-line-bounded Q/A blocks cover most content."""
+    extracted: list[tuple[str, list[QAPairUnit], dict[str, Any]]] = []
     all_units: list[tuple[QAPairUnit, dict[str, Any]]] = []
-    fallback_nodes: list[TextNode] = []
 
     for document_index, document in enumerate(documents):
         text = document.text or ""
+        metadata = dict(document.metadata or {})
         units = extract_qa_pairs(text, document_index=document_index)
-        if units:
-            all_units.extend((unit, dict(document.metadata or {})) for unit in units)
-            fallback_nodes.extend(
-                _build_uncovered_text_nodes(
-                    text=text,
-                    units=units,
-                    source_metadata=dict(document.metadata or {}),
-                )
-            )
+        extracted.append((text, units, metadata))
+        all_units.extend((unit, metadata) for unit in units)
 
-    if not _is_confident_qa_document(documents, [unit for unit, _ in all_units]):
+    covered_chars = sum(
+        _content_length(text[unit.start : unit.end])
+        for text, units, _ in extracted
+        for unit in units
+    )
+    if not _is_confident_qa_document(documents, len(all_units), covered_chars):
         return None
 
-    nodes: list[TextNode] = []
-    for index, (unit, source_metadata) in enumerate(all_units):
-        display_text = unit.text
-        metadata = {
-            **source_metadata,
-            "node_role": "qa_pair",
-            "qa_id": unit.qa_id,
-            "qa_index": index,
-            "question": unit.question,
-            "retrieval_text": unit.retrieval_text,
-            "display_text": display_text,
-            "qa_confidence": unit.confidence,
-            "source_position": f"{unit.start}:{unit.end}",
-        }
-        if unit.section_path:
-            metadata["heading_path"] = unit.section_path
-
-        nodes.append(
-            TextNode(
-                text=display_text,
-                metadata=metadata,
-                excluded_embed_metadata_keys=[
-                    "qa_id",
-                    "qa_index",
-                    "question",
-                    "qa_confidence",
-                    "source_position",
-                    "retrieval_text",
-                    "display_text",
-                ],
-                excluded_llm_metadata_keys=[
-                    "qa_id",
-                    "qa_index",
-                    "question",
-                    "qa_confidence",
-                    "source_position",
-                    "retrieval_text",
-                    "display_text",
-                ],
+    qa_nodes = [
+        _build_qa_node(unit=unit, index=index, source_metadata=metadata)
+        for index, (unit, metadata) in enumerate(all_units)
+    ]
+    prose_documents: list[Document] = []
+    for text, units, metadata in extracted:
+        prose_documents.extend(
+            _build_uncovered_documents(
+                text=text,
+                units=units,
+                source_metadata=metadata,
             )
         )
-
-    nodes.extend(fallback_nodes)
-    return nodes
+    return QAUnitizationResult(
+        qa_nodes=qa_nodes,
+        prose_documents=prose_documents,
+    )
 
 
 def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
-    """Extract Q/A pairs from Markdown-like or plain text content."""
-    question_matches = list(QUESTION_LINE_RE.finditer(text))
+    """Extract Q/A blocks whose question starts a block and answer has no blanks."""
+    lines = _source_lines(text)
+    question_matches = [
+        match
+        for line in lines
+        if (match := QUESTION_LINE_RE.fullmatch(line.text)) is not None
+    ]
     reserved_numbers = {
         int(match.group("number"))
         for match in question_matches
@@ -139,29 +139,35 @@ def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
     }
     next_implicit_number = (max(reserved_numbers) + 1) if reserved_numbers else 1
     units: list[QAPairUnit] = []
+    line_index = 0
 
-    for match_index, question_match in enumerate(question_matches):
-        next_start = (
-            question_matches[match_index + 1].start()
-            if match_index + 1 < len(question_matches)
-            else len(text)
-        )
-        block = text[question_match.end() : next_start]
-        answer_match = ANSWER_LINE_RE.search(block)
-        if answer_match is None:
+    while line_index < len(lines):
+        question_line = lines[line_index]
+        question_match = QUESTION_LINE_RE.fullmatch(question_line.text)
+        if question_match is None or not _starts_after_blank(lines, line_index):
+            line_index += 1
             continue
 
-        answer_prefix_end = question_match.end() + answer_match.end()
-        question_continuation = block[: answer_match.start()].strip()
-        inline_answer = answer_match.group("inline").strip()
-        answer_body = text[answer_prefix_end:next_start].strip()
-        answer = _clean_answer_text(
-            f"{inline_answer}\n{answer_body}".strip() if inline_answer else answer_body
+        answer_index = _next_non_blank_line(lines, line_index + 1)
+        if answer_index is None:
+            break
+        answer_match = ANSWER_LINE_RE.fullmatch(lines[answer_index].text)
+        if answer_match is None:
+            line_index += 1
+            continue
+
+        answer_end_index = answer_index + 1
+        while answer_end_index < len(lines) and not lines[answer_end_index].is_blank:
+            answer_end_index += 1
+
+        answer_lines = [answer_match.group("inline").strip()]
+        answer_lines.extend(
+            line.text for line in lines[answer_index + 1 : answer_end_index]
         )
-        question = _clean_boundary_text(
-            f"{question_match.group('question')}\n{question_continuation}".strip()
-        )
-        if not question or not answer:
+        question = _clean_boundary_text(question_match.group("question"))
+        answer = "\n".join(answer_lines).strip("\r\n")
+        if not question or not answer.strip():
+            line_index += 1
             continue
 
         qa_number = question_match.group("number")
@@ -170,15 +176,15 @@ def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
         else:
             qa_sequence = next_implicit_number
             next_implicit_number += 1
-        qa_id = f"doc{document_index + 1}-q{qa_sequence:04d}"
+        end = lines[answer_end_index - 1].end
         units.append(
             QAPairUnit(
-                qa_id=qa_id,
+                qa_id=f"doc{document_index + 1}-q{qa_sequence:04d}",
                 question=question,
                 answer=answer,
-                section_path=_extract_section_path(text, question_match.start()),
-                start=question_match.start(),
-                end=next_start,
+                section_path=_extract_section_path(text, question_line.start),
+                start=question_line.start,
+                end=end,
                 confidence=_score_pair_confidence(
                     question=question,
                     answer=answer,
@@ -186,48 +192,113 @@ def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
                 ),
             )
         )
+        line_index = answer_end_index
 
     return units
 
 
-def _build_uncovered_text_nodes(
+def _source_lines(text: str) -> list[_SourceLine]:
+    lines: list[_SourceLine] = []
+    offset = 0
+    for raw_line in text.splitlines(keepends=True):
+        content = raw_line.rstrip("\r\n")
+        lines.append(
+            _SourceLine(text=content, start=offset, end=offset + len(raw_line))
+        )
+        offset += len(raw_line)
+    if offset < len(text) or not lines:
+        lines.append(_SourceLine(text=text[offset:], start=offset, end=len(text)))
+    return lines
+
+
+def _starts_after_blank(lines: list[_SourceLine], index: int) -> bool:
+    return index == 0 or lines[index - 1].is_blank
+
+
+def _next_non_blank_line(
+    lines: list[_SourceLine],
+    start: int,
+) -> int | None:
+    for index in range(start, len(lines)):
+        if not lines[index].is_blank:
+            return index
+    return None
+
+
+def _build_qa_node(
+    *,
+    unit: QAPairUnit,
+    index: int,
+    source_metadata: dict[str, Any],
+) -> TextNode:
+    metadata = {
+        **source_metadata,
+        "node_role": "qa_pair",
+        "qa_id": unit.qa_id,
+        "qa_index": index,
+        "question": unit.question,
+        "retrieval_text": unit.retrieval_text,
+        "display_text": unit.text,
+        "qa_confidence": unit.confidence,
+        "source_position": f"{unit.start}:{unit.end}",
+    }
+    if unit.section_path:
+        metadata["heading_path"] = unit.section_path
+    excluded_keys = [
+        "qa_id",
+        "qa_index",
+        "question",
+        "qa_confidence",
+        "source_position",
+        "retrieval_text",
+        "display_text",
+    ]
+    return TextNode(
+        text=unit.text,
+        metadata=metadata,
+        excluded_embed_metadata_keys=excluded_keys,
+        excluded_llm_metadata_keys=excluded_keys,
+    )
+
+
+def _build_uncovered_documents(
     *,
     text: str,
     units: list[QAPairUnit],
     source_metadata: dict[str, Any],
-) -> list[TextNode]:
-    nodes: list[TextNode] = []
+) -> list[Document]:
+    documents: list[Document] = []
     cursor = 0
     for unit in sorted(units, key=lambda item: item.start):
-        nodes.extend(
-            _build_fallback_text_node(
+        documents.extend(
+            _build_prose_document(
                 text[cursor : unit.start],
                 offset=cursor,
                 source_metadata=source_metadata,
             )
         )
-        cursor = max(cursor, unit.end)
-    nodes.extend(
-        _build_fallback_text_node(
+        cursor = unit.end
+    documents.extend(
+        _build_prose_document(
             text[cursor:],
             offset=cursor,
             source_metadata=source_metadata,
         )
     )
-    return nodes
+    return documents
 
 
-def _build_fallback_text_node(
+def _build_prose_document(
     text: str,
     *,
     offset: int,
     source_metadata: dict[str, Any],
-) -> list[TextNode]:
+) -> list[Document]:
     cleaned = text.strip()
-    if len(cleaned) < MIN_FALLBACK_CHARS:
+    if not _has_substantive_prose(cleaned):
         return []
     return [
-        TextNode(
+        Document(
             text=cleaned,
             metadata={
                 **source_metadata,
@@ -238,19 +309,26 @@ def _build_fallback_text_node(
     ]
 
 
+def _has_substantive_prose(text: str) -> bool:
+    without_headings = MARKDOWN_HEADING_RE.sub("", text)
+    return bool(DECORATION_RE.sub("", without_headings.strip()))
+
+
 def _is_confident_qa_document(
     documents: list[Document],
-    units: list[QAPairUnit],
+    unit_count: int,
+    covered_chars: int,
 ) -> bool:
-    if len(units) < MIN_QA_PAIRS_FOR_DOCUMENT:
+    if unit_count < MIN_QA_PAIRS_FOR_DOCUMENT:
         return False
-
-    total_chars = sum(len(document.text or "") for document in documents)
+    total_chars = sum(_content_length(document.text or "") for document in documents)
     if total_chars <= 0:
         return False
-
-    covered_chars = sum(unit.end - unit.start for unit in units)
     return covered_chars / total_chars >= MIN_QA_COVERAGE
+
+
+def _content_length(text: str) -> int:
+    return len(re.sub(r"\s+", "", text))
 
 
 def _extract_section_path(text: str, offset: int) -> str | None:
@@ -263,20 +341,6 @@ def _extract_section_path(text: str, offset: int) -> str | None:
 def _clean_boundary_text(text: str) -> str:
     normalized = DECORATION_RE.sub("", text.strip())
     return re.sub(r"\s+", " ", normalized).strip()
-
-
-def _clean_answer_text(text: str) -> str:
-    lines = text.strip().splitlines()
-    while lines and _is_trailing_section_marker(lines[-1]):
-        lines.pop()
-    return "\n".join(lines).strip()
-
-
-def _is_trailing_section_marker(line: str) -> bool:
-    stripped = line.strip()
-    if bool(stripped) and set(stripped) <= {"-"}:
-        return True
-    return bool(MARKDOWN_HEADING_RE.match(line))
 
 
 def _score_pair_confidence(

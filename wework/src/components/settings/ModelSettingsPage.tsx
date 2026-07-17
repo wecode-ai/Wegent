@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { getLocalCodexOfficialModels } from '@/api/local/codexOfficialModels'
@@ -23,17 +24,23 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import type { CodexOfficialModelList } from '@/features/model-settings/codexOfficialModels'
 import { testLocalModelConnection } from '@/features/model-settings/localModelConnectionTest'
 import {
+  buildLocalModelRequestUrl,
   deleteLocalModelConfig,
+  DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   normalizeLocalModelBaseUrl,
+  normalizeLocalModelRequestPath,
   saveLocalModelConfig,
+  splitLocalModelRequestUrl,
   type LocalModelConfig,
+  type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 interface CloudRuntimeSettingsConnection {
   isConnected: boolean
@@ -174,7 +181,11 @@ interface LocalModelFormState {
   group: string
   modelId: string
   baseUrl: string
+  requestPath: string
   apiKey: string
+  contextWindow: string
+  webSearchMode: LocalModelWebSearchMode
+  imageGenerationEnabled: boolean
   enabled: boolean
 }
 
@@ -188,22 +199,192 @@ type LocalModelTestResult =
       message: string
     }
 
+type PendingLocalModelFormAction =
+  | { kind: 'create' }
+  | { kind: 'edit'; model: LocalModelConfig }
+  | { kind: 'reset' }
+  | { kind: 'delete'; model: LocalModelConfig }
+
 const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   displayName: '',
   group: '',
   modelId: '',
   baseUrl: '',
+  requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
+  contextWindow: '',
+  webSearchMode: 'disabled',
+  imageGenerationEnabled: false,
   enabled: true,
 }
 
-function localModelResponsesUrl(baseUrl: string): string | null {
+const LOCAL_MODEL_FIELD_CLASS =
+  'h-9 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface disabled:text-text-muted'
+const LOCAL_MODEL_COMPOUND_INPUT_CLASS =
+  'h-9 rounded-md border border-border bg-background focus-within:border-primary'
+const LOCAL_MODEL_SEGMENT_INPUT_CLASS =
+  'min-w-0 bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:bg-surface disabled:text-text-muted'
+
+const LOCAL_MODEL_WEB_SEARCH_OPTIONS: Array<{
+  value: LocalModelWebSearchMode
+  labelKey: string
+}> = [
+  {
+    value: 'disabled',
+    labelKey: 'workbench.local_model_web_search_disabled',
+  },
+  {
+    value: 'cached',
+    labelKey: 'workbench.local_model_web_search_cached',
+  },
+  {
+    value: 'live',
+    labelKey: 'workbench.local_model_web_search_live',
+  },
+]
+
+const LOCAL_MODEL_IMAGE_GENERATION_OPTIONS: Array<{
+  value: 'disabled' | 'enabled'
+  labelKey: string
+}> = [
+  {
+    value: 'disabled',
+    labelKey: 'workbench.local_model_codex_feature_disabled',
+  },
+  {
+    value: 'enabled',
+    labelKey: 'workbench.local_model_codex_feature_enabled',
+  },
+]
+
+function localModelWebSearchLabel(
+  mode: LocalModelWebSearchMode,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const option =
+    LOCAL_MODEL_WEB_SEARCH_OPTIONS.find(candidate => candidate.value === mode) ??
+    LOCAL_MODEL_WEB_SEARCH_OPTIONS[0]
+  return t(option.labelKey)
+}
+
+function localModelImageGenerationLabel(
+  enabled: boolean,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  return t(
+    enabled
+      ? 'workbench.local_model_codex_feature_enabled'
+      : 'workbench.local_model_codex_feature_disabled'
+  )
+}
+
+function localModelResponsesUrl(baseUrl: string, requestPath: string): string | null {
   if (!baseUrl.trim()) return null
   try {
-    return `${normalizeLocalModelBaseUrl(baseUrl)}/responses`
+    return buildLocalModelRequestUrl(baseUrl, requestPath)
   } catch {
     return null
   }
+}
+
+function isLocalModelFormDirty(
+  form: LocalModelFormState,
+  editingModel: LocalModelConfig | null
+): boolean {
+  if (!editingModel) {
+    return (
+      form.displayName.trim() !== '' ||
+      form.group.trim() !== '' ||
+      form.modelId.trim() !== '' ||
+      form.baseUrl.trim() !== '' ||
+      form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
+      form.apiKey.trim() !== '' ||
+      form.contextWindow.trim() !== '' ||
+      form.webSearchMode !== 'disabled' ||
+      form.imageGenerationEnabled ||
+      !form.enabled
+    )
+  }
+
+  return (
+    form.displayName !== editingModel.displayName ||
+    form.group !== (editingModel.group ?? '') ||
+    form.modelId !== editingModel.modelId ||
+    form.baseUrl !== editingModel.baseUrl ||
+    form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
+    form.apiKey.trim() !== '' ||
+    form.contextWindow !== (editingModel.contextWindow?.toString() ?? '') ||
+    form.webSearchMode !== (editingModel.webSearchMode ?? 'disabled') ||
+    form.imageGenerationEnabled !== (editingModel.imageGenerationEnabled === true) ||
+    form.enabled !== editingModel.enabled
+  )
+}
+
+function LocalModelDiscardChangesDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t } = useTranslation('common')
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      onClick={event => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="local-model-discard-changes-title"
+        data-testid="local-model-discard-changes-dialog"
+        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+            <AlertCircle className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2
+              id="local-model-discard-changes-title"
+              className="text-sm font-semibold text-text-primary"
+            >
+              {t('workbench.local_model_discard_changes_title', '放弃未保存的模型配置？')}
+            </h2>
+            <p className="mt-1.5 text-xs leading-5 text-text-secondary">
+              {t(
+                'workbench.local_model_discard_changes_description',
+                '当前表单有未保存内容，继续操作会丢弃这些修改。'
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid="local-model-discard-changes-cancel-button"
+            onClick={onCancel}
+            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            {t('common.cancel', '取消')}
+          </button>
+          <button
+            type="button"
+            data-testid="local-model-discard-changes-confirm-button"
+            onClick={onConfirm}
+            className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
+          >
+            {t('workbench.local_model_discard_changes_confirm', '放弃修改')}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
 }
 
 function CodexOfficialModelsSection({
@@ -279,7 +460,7 @@ function CodexOfficialModelsSection({
           <span>{error}</span>
         </div>
       ) : providers.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-surface px-3 py-3 text-sm text-text-secondary">
+        <div className="rounded-lg border border-dashed border-border bg-background px-3 py-3 text-sm text-text-secondary">
           {t('workbench.codex_official_models_empty')}
         </div>
       ) : (
@@ -398,6 +579,8 @@ function LocalModelSettingsSection({
   const [error, setError] = useState<string | null>(null)
   const [testingModel, setTestingModel] = useState(false)
   const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
+  const [pendingDiscardAction, setPendingDiscardAction] =
+    useState<PendingLocalModelFormAction | null>(null)
 
   const refreshModels = useCallback(() => {
     setModels(listLocalModelConfigs())
@@ -412,7 +595,14 @@ function LocalModelSettingsSection({
     () => models.find(model => model.id === editingId) ?? null,
     [editingId, models]
   )
-  const testRequestUrl = useMemo(() => localModelResponsesUrl(form.baseUrl), [form.baseUrl])
+  const testRequestUrl = useMemo(
+    () => localModelResponsesUrl(form.baseUrl, form.requestPath),
+    [form.baseUrl, form.requestPath]
+  )
+  const formDirty = useMemo(
+    () => formVisible && isLocalModelFormDirty(form, editingModel),
+    [editingModel, form, formVisible]
+  )
 
   const resetForm = () => {
     setEditingId(null)
@@ -422,7 +612,7 @@ function LocalModelSettingsSection({
     setTestResult(null)
   }
 
-  const startCreating = () => {
+  const performStartCreating = () => {
     setEditingId(null)
     setFormVisible(true)
     setForm(EMPTY_LOCAL_MODEL_FORM)
@@ -430,7 +620,7 @@ function LocalModelSettingsSection({
     setTestResult(null)
   }
 
-  const startEditing = (model: LocalModelConfig) => {
+  const performStartEditing = (model: LocalModelConfig) => {
     setEditingId(model.id)
     setFormVisible(true)
     setForm({
@@ -438,16 +628,81 @@ function LocalModelSettingsSection({
       group: model.group ?? '',
       modelId: model.modelId,
       baseUrl: model.baseUrl,
+      requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
+      contextWindow: model.contextWindow?.toString() ?? '',
+      webSearchMode: model.webSearchMode ?? 'disabled',
+      imageGenerationEnabled: model.imageGenerationEnabled === true,
       enabled: model.enabled,
     })
     setError(null)
     setTestResult(null)
   }
 
+  const runDiscardableAction = (action: PendingLocalModelFormAction) => {
+    if (formDirty) {
+      setPendingDiscardAction(action)
+      return
+    }
+    executeDiscardableAction(action)
+  }
+
+  const executeDiscardableAction = (action: PendingLocalModelFormAction) => {
+    switch (action.kind) {
+      case 'create':
+        performStartCreating()
+        break
+      case 'edit':
+        performStartEditing(action.model)
+        break
+      case 'reset':
+        resetForm()
+        break
+      case 'delete':
+        deleteModel(action.model)
+        break
+    }
+  }
+
+  const confirmDiscardChanges = () => {
+    if (!pendingDiscardAction) return
+    const action = pendingDiscardAction
+    setPendingDiscardAction(null)
+    executeDiscardableAction(action)
+  }
+
+  const cancelDiscardChanges = () => {
+    setPendingDiscardAction(null)
+  }
+
   const updateForm = (patch: Partial<LocalModelFormState>) => {
     setForm(current => ({ ...current, ...patch }))
     setTestResult(null)
+  }
+
+  const normalizeBaseUrlInput = () => {
+    if (!form.baseUrl.trim()) return
+    try {
+      const splitUrl = splitLocalModelRequestUrl(form.baseUrl, form.requestPath)
+      updateForm({
+        baseUrl: normalizeLocalModelBaseUrl(splitUrl.baseUrl),
+        requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath),
+      })
+    } catch {
+      // Keep invalid input visible; submit/test will show the validation message.
+    }
+  }
+
+  const handleBaseUrlPaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = event.clipboardData.getData('text')
+    const splitUrl = splitLocalModelRequestUrl(text, form.requestPath)
+    if (splitUrl.baseUrl === text) return
+    event.preventDefault()
+    updateForm(splitUrl)
+  }
+
+  const normalizeRequestPathInput = () => {
+    updateForm({ requestPath: normalizeLocalModelRequestPath(form.requestPath) })
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -460,7 +715,11 @@ function LocalModelSettingsSection({
         group: form.group,
         modelId: form.modelId,
         baseUrl: form.baseUrl,
+        requestPath: form.requestPath,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
+        contextWindow: form.contextWindow,
+        webSearchMode: form.webSearchMode,
+        imageGenerationEnabled: form.imageGenerationEnabled,
         enabled: form.enabled,
       })
       resetForm()
@@ -478,10 +737,14 @@ function LocalModelSettingsSection({
         group: editingModel.group,
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
+        requestPath: editingModel.requestPath,
         apiKey: null,
+        contextWindow: editingModel.contextWindow,
+        webSearchMode: editingModel.webSearchMode,
+        imageGenerationEnabled: editingModel.imageGenerationEnabled,
         enabled: editingModel.enabled,
       })
-      startEditing({ ...editingModel, apiKey: undefined })
+      performStartEditing({ ...editingModel, apiKey: undefined })
     } catch (clearError) {
       setError(
         getErrorMessage(
@@ -499,6 +762,7 @@ function LocalModelSettingsSection({
     try {
       await testLocalModelConnection({
         baseUrl: form.baseUrl,
+        requestPath: form.requestPath,
         modelId: form.modelId,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
       })
@@ -523,6 +787,18 @@ function LocalModelSettingsSection({
     }
   }
 
+  const deleteModel = (model: LocalModelConfig) => {
+    setError(null)
+    try {
+      deleteLocalModelConfig(model.id)
+      if (editingId === model.id) resetForm()
+    } catch (deleteError) {
+      setError(
+        getErrorMessage(deleteError, t('workbench.local_model_delete_failed', '删除模型失败'))
+      )
+    }
+  }
+
   return (
     <section data-testid="model-interface-settings">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -540,7 +816,7 @@ function LocalModelSettingsSection({
         <button
           type="button"
           data-testid="local-model-add-button"
-          onClick={startCreating}
+          onClick={() => runDiscardableAction({ kind: 'create' })}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -557,19 +833,40 @@ function LocalModelSettingsSection({
             onSubmit={handleSubmit}
             className="grid gap-3 rounded-lg border border-border bg-background p-5"
           >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            <div className="grid items-start gap-3 sm:grid-cols-2">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_url_label', '模型 URL')}
-                <input
-                  data-testid="local-model-url-input"
-                  value={form.baseUrl}
-                  onChange={event => updateForm({ baseUrl: event.target.value })}
-                  placeholder="http://localhost:11434/v1"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
-                />
+                <div
+                  className={`${LOCAL_MODEL_COMPOUND_INPUT_CLASS} grid grid-cols-[minmax(0,1fr)_7rem]`}
+                >
+                  <input
+                    data-testid="local-model-url-input"
+                    value={form.baseUrl}
+                    onChange={event => updateForm({ baseUrl: event.target.value })}
+                    onPaste={handleBaseUrlPaste}
+                    onBlur={normalizeBaseUrlInput}
+                    placeholder="https://api.example.com/v1"
+                    className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
+                  />
+                  <div className="grid min-w-0 grid-cols-[1px_minmax(0,1fr)]">
+                    <span className="my-1.5 w-px bg-border" />
+                    <input
+                      aria-label={t('workbench.local_model_request_path_label', '请求路径')}
+                      data-testid="local-model-request-path-input"
+                      value={form.requestPath}
+                      onChange={event => updateForm({ requestPath: event.target.value })}
+                      onBlur={normalizeRequestPathInput}
+                      placeholder={t(
+                        'workbench.local_model_request_path_placeholder',
+                        '/responses'
+                      )}
+                      className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
+                    />
+                  </div>
+                </div>
                 <span
                   data-testid="local-model-request-url"
-                  className="break-all font-mono text-[11px] font-normal leading-5 text-text-muted"
+                  className="break-all font-mono text-xs font-normal leading-5 text-text-muted"
                 >
                   {testRequestUrl
                     ? t('workbench.local_model_request_url', {
@@ -578,18 +875,18 @@ function LocalModelSettingsSection({
                       })
                     : t(
                         'workbench.local_model_request_url_empty',
-                        '请求地址会在模型 URL 后追加 /responses'
+                        '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
                       )}
                 </span>
               </label>
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_id_label', '模型 ID')}
                 <input
                   data-testid="local-model-id-input"
                   value={form.modelId}
                   onChange={event => updateForm({ modelId: event.target.value })}
                   placeholder="gpt-oss:20b"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
             </div>
@@ -601,7 +898,7 @@ function LocalModelSettingsSection({
                   value={form.displayName}
                   onChange={event => updateForm({ displayName: event.target.value })}
                   placeholder="Ollama GPT"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
               <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
@@ -611,12 +908,12 @@ function LocalModelSettingsSection({
                   value={form.group}
                   onChange={event => updateForm({ group: event.target.value })}
                   placeholder={t('workbench.local_model_group_placeholder', '例如：本地推理')}
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            <div className="grid items-start gap-3 sm:grid-cols-2">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_api_key_label', 'API Key')}
                 <input
                   data-testid="local-model-api-key-input"
@@ -628,9 +925,79 @@ function LocalModelSettingsSection({
                       : t('workbench.local_model_api_key_placeholder', '可选')
                   }
                   type="password"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                {t('workbench.local_model_context_window_label', 'Context window')}
+                <input
+                  data-testid="local-model-context-window-input"
+                  value={form.contextWindow}
+                  onChange={event => updateForm({ contextWindow: event.target.value })}
+                  placeholder={t('workbench.local_model_context_window_placeholder', 'Optional')}
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  className={LOCAL_MODEL_FIELD_CLASS}
+                />
+                <span className="text-xs font-normal leading-5 text-text-muted">
+                  {t(
+                    'workbench.local_model_context_window_hint',
+                    'Optional. Used to show remaining context and handle long conversations.'
+                  )}
+                </span>
+              </label>
+            </div>
+            <div className="grid gap-3 border-t border-border pt-3">
+              <div>
+                <div className="text-xs font-semibold text-text-primary">
+                  {t('workbench.local_model_codex_features_title')}
+                </div>
+                <div className="mt-1 text-xs leading-5 text-text-muted">
+                  {t('workbench.local_model_codex_features_hint')}
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_web_search_label')}
+                  <select
+                    data-testid="local-model-web-search-select"
+                    value={form.webSearchMode}
+                    onChange={event =>
+                      updateForm({
+                        webSearchMode: event.target.value as LocalModelWebSearchMode,
+                      })
+                    }
+                    className={LOCAL_MODEL_FIELD_CLASS}
+                  >
+                    {LOCAL_MODEL_WEB_SEARCH_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_image_generation_label')}
+                  <select
+                    data-testid="local-model-image-generation-select"
+                    value={form.imageGenerationEnabled ? 'enabled' : 'disabled'}
+                    onChange={event =>
+                      updateForm({
+                        imageGenerationEnabled: event.target.value === 'enabled',
+                      })
+                    }
+                    className={LOCAL_MODEL_FIELD_CLASS}
+                  >
+                    {LOCAL_MODEL_IMAGE_GENERATION_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
@@ -674,7 +1041,7 @@ function LocalModelSettingsSection({
                 <button
                   type="button"
                   data-testid="local-model-cancel-edit-button"
-                  onClick={resetForm}
+                  onClick={() => runDiscardableAction({ kind: 'reset' })}
                   className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -752,6 +1119,27 @@ function LocalModelSettingsSection({
                       {model.group}
                     </span>
                   )}
+                  {model.contextWindow && (
+                    <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                      {t('workbench.local_model_context_window_badge', {
+                        defaultValue: 'Context: {{tokens}} tokens',
+                        tokens: model.contextWindow.toLocaleString(),
+                      })}
+                    </span>
+                  )}
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                    {t('workbench.local_model_web_search_badge', {
+                      mode: localModelWebSearchLabel(model.webSearchMode ?? 'disabled', t),
+                    })}
+                  </span>
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                    {t('workbench.local_model_image_generation_badge', {
+                      mode: localModelImageGenerationLabel(
+                        model.imageGenerationEnabled === true,
+                        t
+                      ),
+                    })}
+                  </span>
                 </div>
                 <div className="mt-1 break-all font-mono text-xs text-text-secondary">
                   {model.modelId} · {model.baseUrl}
@@ -761,7 +1149,7 @@ function LocalModelSettingsSection({
                 <button
                   type="button"
                   data-testid={`local-model-edit-${model.id}`}
-                  onClick={() => startEditing(model)}
+                  onClick={() => runDiscardableAction({ kind: 'edit', model })}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
                   aria-label={t('workbench.local_model_edit_action', '编辑')}
                   title={t('workbench.local_model_edit_action', '编辑')}
@@ -771,20 +1159,11 @@ function LocalModelSettingsSection({
                 <button
                   type="button"
                   data-testid={`local-model-delete-${model.id}`}
-                  onClick={() => {
-                    setError(null)
-                    try {
-                      deleteLocalModelConfig(model.id)
-                      if (editingId === model.id) resetForm()
-                    } catch (deleteError) {
-                      setError(
-                        getErrorMessage(
-                          deleteError,
-                          t('workbench.local_model_delete_failed', '删除模型失败')
-                        )
-                      )
-                    }
-                  }}
+                  onClick={() =>
+                    editingId === model.id && formDirty
+                      ? runDiscardableAction({ kind: 'delete', model })
+                      : deleteModel(model)
+                  }
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-red-500/10 hover:text-red-500"
                   aria-label={t('workbench.local_model_delete_action', '删除')}
                   title={t('workbench.local_model_delete_action', '删除')}
@@ -801,6 +1180,12 @@ function LocalModelSettingsSection({
           )}
         </div>
       </div>
+      {pendingDiscardAction && (
+        <LocalModelDiscardChangesDialog
+          onCancel={cancelDiscardChanges}
+          onConfirm={confirmDiscardChanges}
+        />
+      )}
     </section>
   )
 }
@@ -927,7 +1312,7 @@ function DisconnectedCloudModelsSection({
   return (
     <div
       data-testid="cloud-models-section"
-      className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface px-3 py-3 text-text-muted"
+      className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-background px-3 py-3 text-text-muted"
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -994,7 +1379,10 @@ function DisconnectedCloudCodexSyncSection({
       <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
         <LocalCodexModelRow status={status} loading={loading} error={error} onRefresh={onRefresh} />
 
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3 text-text-muted">
+        <div
+          data-testid="runtime-config-shared-auth-unavailable"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed border-border bg-background px-4 py-3 text-text-muted"
+        >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-secondary">
@@ -1330,16 +1718,12 @@ export function ModelSettingsPage({
 
   if (!cloudConnection.isConnected) {
     return (
-      <div data-testid="model-settings-page" className="mx-auto w-full max-w-[820px]">
+      <SettingsPage data-testid="model-settings-page">
+        <SettingsPageHeader
+          title={t('workbench.model_settings_title', '模型设置')}
+          description={t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
+        />
         <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.model_settings_title', '模型设置')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
-          </p>
-        </div>
-        <div className="mt-8">
           <ModelInterfaceSettingsSection
             cloudConnection={cloudConnection}
             onOpenCloudSettings={onOpenCloudSettings}
@@ -1360,39 +1744,35 @@ export function ModelSettingsPage({
             />
           </CodexAuthSettingsSection>
         </div>
-      </div>
+      </SettingsPage>
     )
   }
 
   return (
-    <div data-testid="model-settings-page" className="mx-auto w-full max-w-[820px]">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.model_settings_title', '模型设置')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
-          </p>
-        </div>
-        <button
-          type="button"
-          data-testid="runtime-config-refresh-button"
-          onClick={() => void loadRuntimeConfig(true)}
-          disabled={loading || refreshing}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label={t('workbench.runtime_config_refresh', '刷新')}
-          title={t('workbench.runtime_config_refresh', '刷新')}
-        >
-          {refreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-        </button>
-      </div>
+    <SettingsPage data-testid="model-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.model_settings_title', '模型设置')}
+        description={t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
+        actions={
+          <button
+            type="button"
+            data-testid="runtime-config-refresh-button"
+            onClick={() => void loadRuntimeConfig(true)}
+            disabled={loading || refreshing}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={t('workbench.runtime_config_refresh', '刷新')}
+            title={t('workbench.runtime_config_refresh', '刷新')}
+          >
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </button>
+        }
+      />
 
-      <div className="mt-8">
+      <div>
         <ModelInterfaceSettingsSection
           cloudConnection={cloudConnection}
           onOpenCloudSettings={onOpenCloudSettings}
@@ -1537,6 +1917,6 @@ export function ModelSettingsPage({
           )}
         </CodexAuthSettingsSection>
       </div>
-    </div>
+    </SettingsPage>
   )
 }

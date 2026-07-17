@@ -21,10 +21,11 @@ use wegent_executor::{
     emitter::EventEnvelope,
     local::{
         backend::{
-            CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceUpgradeHandler, EventHandler,
-            HttpPackageProvider, LocalBackendClient, LocalBackendConfig, LocalBackendRunner,
-            LocalBackendTransport, LocalRunningTaskTracker, LocalTaskController,
-            LocalUpgradeService, ManagedLocalTaskRunner,
+            CapabilityReportProvider, CapabilitySyncRpcHandler, DeviceExtensionHandler,
+            DeviceExtensionRunner, DeviceUpgradeHandler, EventHandler, HttpPackageProvider,
+            LocalBackendClient, LocalBackendConfig, LocalBackendRunner, LocalBackendTransport,
+            LocalRunningTaskTracker, LocalTaskController, LocalUpgradeService,
+            ManagedLocalTaskRunner,
         },
         capabilities::{CapabilityPackageProvider, SkillSyncSpec},
         session::{LocalSessionHandler, PtySpawnRequest, SessionPtyManager, TerminalPty},
@@ -600,6 +601,42 @@ printf '{"success":true,"action":"%s","name":"%s","foo":"%s"}' "$WEGENT_EXTENSIO
 
 #[cfg(unix)]
 #[tokio::test]
+async fn device_extension_runner_runs_global_skill_script() {
+    let temp_root =
+        std::env::temp_dir().join(format!("wegent-global-extension-{}", std::process::id()));
+    let workspace_root = temp_root.join("workspace");
+    let global_skills_root = temp_root.join("home").join(".claude").join("skills");
+    let script_dir = global_skills_root.join("sample-extension");
+    let _ = std::fs::remove_dir_all(&temp_root);
+    std::fs::create_dir_all(script_dir.join("bin")).unwrap();
+    let script = script_dir.join("bin/run.sh");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+printf '{"success":true,"scope":"global"}'
+"#,
+    )
+    .unwrap();
+    make_executable(&script);
+
+    let runner = DeviceExtensionRunner::with_global_skills_root(workspace_root, global_skills_root);
+    let ack = runner
+        .handle_run_extension(json!({
+            "extension_name": "sample-extension",
+            "extension_scope": "global",
+            "action": "render",
+            "task_id": 123,
+            "script_path": "bin/run.sh",
+            "payload": {}
+        }))
+        .await;
+
+    assert_eq!(ack["success"], true, "{ack}");
+    assert_eq!(ack["scope"], "global");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn default_extension_event_rejects_script_path_escape() {
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
@@ -1118,6 +1155,7 @@ fn local_backend_config() -> LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
         device_id: "device-1".to_owned(),
+        runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
         app_device_id: String::new(),

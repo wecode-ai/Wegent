@@ -42,6 +42,16 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("attachments".to_owned(), attachments);
     }
+    if let Some(additional_context) = payload
+        .get("additionalContext")
+        .or_else(|| payload.get("additional_context"))
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("additionalContext".to_owned(), additional_context);
+    }
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))
@@ -124,6 +134,10 @@ pub(crate) fn id_field(value: &Value, key: &str) -> Option<String> {
 
 pub(crate) fn raw_string_field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+pub(crate) fn raw_string_field_ref<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
 }
 
 pub(crate) fn integer_field(value: &Value, key: &str) -> Option<i64> {

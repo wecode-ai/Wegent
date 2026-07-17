@@ -1159,6 +1159,31 @@ async def search_users(
     )
 
 
+@router.get("/by-ids", response_model=SearchUsersResponse)
+async def get_users_by_ids(
+    ids: list[int] = Query(..., description="User IDs to resolve"),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
+):
+    """Resolve active users by ID while preserving the requested order."""
+    unique_ids = list(dict.fromkeys(user_id for user_id in ids if user_id > 0))
+    users_by_id = {
+        user.id: user
+        for user in db.query(User)
+        .filter(User.id.in_(unique_ids), User.is_active == True)
+        .all()
+    }
+    users = [users_by_id[user_id] for user_id in unique_ids if user_id in users_by_id]
+
+    return SearchUsersResponse(
+        users=[
+            UserSearchItem(id=user.id, user_name=user.user_name, email=user.email)
+            for user in users
+        ],
+        total=len(users),
+    )
+
+
 # ==================== Available Notification Channels ====================
 
 

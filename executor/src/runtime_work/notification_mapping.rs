@@ -2,8 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, sync::OnceLock};
+use std::{
+    env,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
+};
 
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
@@ -31,6 +38,12 @@ pub(crate) enum TextChunkMapping {
         text: String,
     },
     FinalCompleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolOutputDeltaMapping {
+    pub(crate) tool_use_id: String,
+    pub(crate) delta: String,
 }
 
 pub(crate) fn map_text_chunk(
@@ -87,6 +100,37 @@ pub(crate) fn map_text_chunk(
     }
 }
 
+pub(crate) fn map_tool_output_delta(
+    method: &str,
+    params: &Value,
+) -> Result<Option<ToolOutputDeltaMapping>, &'static str> {
+    if method != "item/tool/outputDelta"
+        && method != "item/commandExecution/outputDelta"
+        && method != "process/outputDelta"
+        && method != "command/exec/outputDelta"
+    {
+        return Ok(None);
+    }
+
+    let tool_use_id = string_field(params, "call_id")
+        .or_else(|| string_field(params, "callId"))
+        .or_else(|| string_field(params, "itemId"))
+        .or_else(|| string_field(params, "item_id"))
+        .or_else(|| string_field(params, "processId"))
+        .or_else(|| string_field(params, "process_id"))
+        .or_else(|| string_field(params, "processHandle"))
+        .or_else(|| string_field(params, "process_handle"))
+        .ok_or("missing_tool_output_delta_id")?;
+    let delta = raw_string_field(params, "chunk")
+        .or_else(|| raw_string_field(params, "delta"))
+        .or_else(|| decoded_base64_field(params, "deltaBase64"))
+        .or_else(|| decoded_base64_field(params, "delta_base64"))
+        .filter(|delta| !delta.is_empty())
+        .ok_or("missing_tool_output_delta")?;
+
+    Ok(Some(ToolOutputDeltaMapping { tool_use_id, delta }))
+}
+
 pub(crate) fn notification_item_id(params: &Value) -> Option<String> {
     params
         .get("item")
@@ -94,6 +138,12 @@ pub(crate) fn notification_item_id(params: &Value) -> Option<String> {
         .or_else(|| string_field(params, "itemId"))
         .or_else(|| string_field(params, "item_id"))
         .or_else(|| codex_item_id(params))
+}
+
+fn decoded_base64_field(value: &Value, key: &str) -> Option<String> {
+    let encoded = raw_string_field(value, key)?;
+    let bytes = general_purpose::STANDARD.decode(encoded).ok()?;
+    Some(String::from_utf8_lossy(&bytes).to_string())
 }
 
 pub(crate) fn log_dropped_notification(
@@ -181,8 +231,16 @@ pub(crate) fn log_stream_text_mapping(
 }
 
 pub(crate) fn codex_stream_debug_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| env_bool("WEGENT_CODEX_STREAM_DEBUG", true))
+    codex_stream_debug_flag().load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_codex_stream_debug_enabled(enabled: bool) {
+    codex_stream_debug_flag().store(enabled, Ordering::Relaxed);
+}
+
+fn codex_stream_debug_flag() -> &'static AtomicBool {
+    static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
+    ENABLED.get_or_init(|| AtomicBool::new(env_bool("WEGENT_CODEX_STREAM_DEBUG", false)))
 }
 
 fn codex_stream_mapping_debug_enabled() -> bool {
@@ -277,4 +335,25 @@ fn truncate_log_text(text: &str, max_chars: usize) -> String {
         result.push(ch);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{codex_stream_debug_enabled, env_bool, set_codex_stream_debug_enabled};
+
+    #[test]
+    fn stream_debug_env_defaults_to_off_for_missing_values() {
+        let env_name = format!("WEGENT_TEST_MISSING_STREAM_DEBUG_{}", std::process::id());
+
+        assert!(!env_bool(&env_name, false));
+    }
+
+    #[test]
+    fn stream_debug_can_be_toggled_at_runtime() {
+        set_codex_stream_debug_enabled(true);
+        assert!(codex_stream_debug_enabled());
+
+        set_codex_stream_debug_enabled(false);
+        assert!(!codex_stream_debug_enabled());
+    }
 }

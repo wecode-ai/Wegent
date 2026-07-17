@@ -1,4 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
+import {
+  isLocalChatStreamDebugEnabled,
+  setLocalChatStreamDebugEnabled,
+} from '@/api/local/localChatStream'
 import {
   clearWorkbenchDebugLogs,
   getWorkbenchDebugSnapshot,
@@ -10,11 +15,18 @@ import {
   setPerformanceDiagnosticsEnabled,
 } from './performanceDiagnostics'
 import { isTauriRuntime } from './runtime-environment'
+import { setEmbeddedBrowserOcclusion } from './embedded-browser'
+import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
 const MENU_ID = 'wework-developer-command-menu'
 const DEBUG_PANEL_ID = 'wework-debug-panel'
+const DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 const INSPECTOR_COMMAND = 'open_main_webview_devtools'
 const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
+const CODEX_STREAM_DEBUG_GET_METHOD = 'runtime.codex.stream_debug.get'
+const CODEX_STREAM_DEBUG_SET_METHOD = 'runtime.codex.stream_debug.set'
+const DEVELOPER_COMMAND_MENU_OCCLUSION_ID = 'developer-command-menu'
+const DEBUG_PANEL_OCCLUSION_ID = 'debug-panel'
 
 interface DeveloperCommand {
   id: string
@@ -22,6 +34,14 @@ interface DeveloperCommand {
   description: string
   run: () => void | Promise<void>
 }
+
+interface CodexStreamDebugState {
+  enabled: boolean
+}
+
+let codexStreamDebugEnabled: boolean | null = null
+let codexStreamDebugLoad: Promise<void> | null = null
+let collapsedDebugPanelPosition: { left: number; top: number } | null = null
 
 export function installDeveloperCommandMenu() {
   window.addEventListener(
@@ -39,6 +59,7 @@ export function installDeveloperCommandMenu() {
 
 function openDeveloperCommandMenu() {
   closeDeveloperCommandMenu()
+  setEmbeddedBrowserOcclusion(DEVELOPER_COMMAND_MENU_OCCLUSION_ID, true)
 
   const overlay = document.createElement('div')
   overlay.id = MENU_ID
@@ -60,25 +81,7 @@ function openDeveloperCommandMenu() {
 
   const list = document.createElement('div')
   list.className = 'max-h-[60vh] overflow-y-auto p-2'
-
-  getDeveloperCommands().forEach((command, index) => {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className =
-      'flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-muted focus:bg-muted focus:outline-none'
-    button.dataset.commandId = command.id
-    button.dataset.testid = `developer-command-${command.id}`
-    button.innerHTML = `<span class="text-sm font-medium">${escapeHtml(command.label)}</span><span class="mt-0.5 text-xs text-text-muted">${escapeHtml(command.description)}</span>`
-    button.addEventListener('click', () => {
-      closeDeveloperCommandMenu()
-      void command.run()
-    })
-    list.appendChild(button)
-
-    if (index === 0) {
-      window.setTimeout(() => button.focus(), 0)
-    }
-  })
+  renderDeveloperCommandList(list)
 
   dialog.append(header, list)
   overlay.appendChild(dialog)
@@ -88,10 +91,15 @@ function openDeveloperCommandMenu() {
     if (event.target === overlay) closeDeveloperCommandMenu()
   })
   overlay.addEventListener('keydown', handleMenuKeyDown)
+
+  void refreshCodexStreamDebugStatus(() => {
+    if (document.getElementById(MENU_ID)) renderDeveloperCommandList(list)
+  })
 }
 
 function closeDeveloperCommandMenu() {
   document.getElementById(MENU_ID)?.remove()
+  setEmbeddedBrowserOcclusion(DEVELOPER_COMMAND_MENU_OCCLUSION_ID, false)
 }
 
 function handleMenuKeyDown(event: KeyboardEvent) {
@@ -113,14 +121,44 @@ function handleMenuKeyDown(event: KeyboardEvent) {
   buttons[nextIndex]?.focus()
 }
 
+function renderDeveloperCommandList(list: HTMLElement) {
+  list.innerHTML = ''
+  getDeveloperCommands().forEach((command, index) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className =
+      'flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-muted focus:bg-muted focus:outline-none'
+    button.dataset.commandId = command.id
+    button.dataset.testid = `developer-command-${command.id}`
+    button.innerHTML = `<span class="text-sm font-medium">${escapeHtml(command.label)}</span><span class="mt-0.5 text-xs text-text-muted">${escapeHtml(command.description)}</span>`
+    button.addEventListener('click', () => {
+      closeDeveloperCommandMenu()
+      void command.run()
+    })
+    list.appendChild(button)
+
+    if (index === 0) {
+      window.setTimeout(() => button.focus(), 0)
+    }
+  })
+}
+
 function getDeveloperCommands(): DeveloperCommand[] {
   const diagnosticsEnabled = isPerformanceDiagnosticsEnabled()
+  const streamDebugKnown = codexStreamDebugEnabled !== null
+  const streamLogsEnabled = isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false)
   return [
     {
       id: 'open-debug-panel',
       label: 'Debug Panel',
       description: 'Inspect the active runtime task state and recent console.debug logs.',
       run: () => openDebugPanel(),
+    },
+    {
+      id: 'simulate-app-update',
+      label: 'Simulate App Update',
+      description: 'Simulate an update download and installation without changing the app.',
+      run: () => window.dispatchEvent(new Event(APP_UPDATE_SIMULATE_EVENT)),
     },
     {
       id: 'reload',
@@ -138,6 +176,18 @@ function getDeveloperCommands(): DeveloperCommand[] {
         setPerformanceDiagnosticsEnabled(!diagnosticsEnabled)
         window.location.reload()
       },
+    },
+    {
+      id: 'toggle-stream-logs',
+      label: streamDebugKnown
+        ? streamLogsEnabled
+          ? 'Disable Stream Logs'
+          : 'Enable Stream Logs'
+        : 'Toggle Stream Logs',
+      description: streamDebugKnown
+        ? `Frontend stream logs and Codex executor stream logs are currently ${streamLogsEnabled ? 'enabled' : 'disabled'}.`
+        : 'Read and toggle frontend stream logs plus Codex executor stream logs.',
+      run: toggleCodexStreamDebug,
     },
     {
       id: 'print-performance-snapshot',
@@ -183,6 +233,53 @@ function getDeveloperCommands(): DeveloperCommand[] {
   ]
 }
 
+async function refreshCodexStreamDebugStatus(onLoaded?: () => void) {
+  if (!isTauriRuntime()) return
+  if (!codexStreamDebugLoad) {
+    codexStreamDebugLoad = requestLocalExecutor<CodexStreamDebugState>(
+      CODEX_STREAM_DEBUG_GET_METHOD
+    )
+      .then(state => {
+        codexStreamDebugEnabled = state.enabled
+      })
+      .catch(error => {
+        console.warn('[Wework dev] Failed to read Codex stream log state', error)
+      })
+      .finally(() => {
+        codexStreamDebugLoad = null
+      })
+  }
+
+  await codexStreamDebugLoad
+  onLoaded?.()
+}
+
+async function toggleCodexStreamDebug() {
+  if (!isTauriRuntime()) {
+    setLocalChatStreamDebugEnabled(!isLocalChatStreamDebugEnabled())
+    console.info(
+      `[Wework dev] Frontend stream logs ${isLocalChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`
+    )
+    return
+  }
+
+  if (codexStreamDebugEnabled === null) {
+    await refreshCodexStreamDebugStatus()
+  }
+  const enabled = !(isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false))
+  setLocalChatStreamDebugEnabled(enabled)
+  try {
+    const state = await requestLocalExecutor<CodexStreamDebugState>(CODEX_STREAM_DEBUG_SET_METHOD, {
+      enabled,
+    })
+    codexStreamDebugEnabled = state.enabled
+    console.info(`[Wework dev] Stream logs ${state.enabled ? 'enabled' : 'disabled'}.`)
+  } catch (error) {
+    setLocalChatStreamDebugEnabled(!enabled)
+    console.error('[Wework dev] Failed to toggle Codex stream logs', error)
+  }
+}
+
 function openDebugPanel() {
   closeDebugPanel()
 
@@ -194,20 +291,26 @@ function openDebugPanel() {
 
 function closeDebugPanel() {
   document.getElementById(DEBUG_PANEL_ID)?.remove()
+  emitDebugPanelVisibility(false)
 }
 
 function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
+  emitDebugPanelVisibility(expanded)
   const snapshot = getWorkbenchDebugSnapshot()
   root.innerHTML = ''
+  if (expanded) root.removeAttribute('style')
   root.className = expanded
     ? 'fixed inset-0 z-[2147483647] flex items-stretch justify-center bg-black/30 p-4'
-    : 'fixed bottom-4 right-4 z-[2147483647]'
+    : 'fixed z-[2147483647]'
   root.setAttribute('role', 'presentation')
 
   if (!expanded) {
+    applyCollapsedDebugPanelPosition(root)
     root.onclick = null
     root.onkeydown = null
-    root.appendChild(createCollapsedDebugPanel(snapshot, () => renderDebugPanelShell(root, true)))
+    root.appendChild(
+      createCollapsedDebugPanel(root, snapshot, () => renderDebugPanelShell(root, true))
+    )
     return
   }
 
@@ -259,6 +362,15 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
   }
 }
 
+function emitDebugPanelVisibility(expanded: boolean) {
+  setEmbeddedBrowserOcclusion(DEBUG_PANEL_OCCLUSION_ID, expanded)
+  window.dispatchEvent(
+    new CustomEvent(DEBUG_PANEL_VISIBILITY_EVENT, {
+      detail: { expanded },
+    })
+  )
+}
+
 function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSnapshot) {
   container.innerHTML = ''
   container.append(
@@ -266,6 +378,7 @@ function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSn
       `Active Task State (${formatRunningStateLabel(snapshot)})`,
       formatDebugJson(snapshot)
     ),
+    createDebugPanelSection('Memory Diagnostics', formatMemoryDiagnostics(snapshot)),
     createMessageStyleComparisonSection(snapshot),
     createDebugPanelSection(
       `Debug Logs (${snapshot.logs.length}/${snapshot.logLimit})`,
@@ -274,14 +387,33 @@ function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSn
   )
 }
 
-function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: () => void) {
+function applyCollapsedDebugPanelPosition(root: HTMLElement) {
+  if (collapsedDebugPanelPosition) {
+    root.style.left = `${collapsedDebugPanelPosition.left}px`
+    root.style.top = `${collapsedDebugPanelPosition.top}px`
+    root.style.right = 'auto'
+    root.style.bottom = 'auto'
+    return
+  }
+
+  root.style.left = 'auto'
+  root.style.top = 'auto'
+  root.style.right = '16px'
+  root.style.bottom = '16px'
+}
+
+function createCollapsedDebugPanel(
+  root: HTMLElement,
+  snapshot: WorkbenchDebugSnapshot,
+  onExpand: () => void
+) {
   const button = document.createElement('button')
   button.type = 'button'
   button.dataset.testid = 'debug-panel-collapsed'
   button.className =
-    'flex max-w-[min(420px,calc(100vw-2rem))] items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left text-xs text-text-primary shadow-2xl hover:bg-muted focus:bg-muted focus:outline-none'
+    'group flex h-8 max-w-[calc(100vw-2rem)] cursor-grab items-center overflow-hidden rounded-md border border-border bg-background px-[11px] text-xs font-medium text-text-primary shadow-2xl transition-[width,background-color] hover:bg-muted focus:bg-muted focus:outline-none active:cursor-grabbing'
   button.setAttribute('aria-label', 'Expand debug panel')
-  button.addEventListener('click', onExpand)
+  button.title = `Debug Panel - ${formatRunningStateLabel(snapshot)}`
 
   const dot = document.createElement('span')
   dot.className = snapshot.workbench?.runningState.activeTaskRunning
@@ -289,14 +421,48 @@ function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: (
     : 'h-2 w-2 shrink-0 rounded-full bg-border'
 
   const text = document.createElement('span')
-  text.className = 'min-w-0 truncate'
-  text.textContent = `Debug Panel collapsed - ${formatRunningStateLabel(snapshot)}`
+  text.className =
+    'max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,margin,opacity] group-hover:ml-2 group-hover:max-w-20 group-hover:opacity-100 group-focus-visible:ml-2 group-focus-visible:max-w-20 group-focus-visible:opacity-100'
+  text.textContent = 'Debug'
 
-  const hint = document.createElement('span')
-  hint.className = 'shrink-0 text-text-muted'
-  hint.textContent = 'Expand'
+  let dragged = false
+  button.addEventListener('click', event => {
+    if (dragged) {
+      event.preventDefault()
+      dragged = false
+      return
+    }
+    onExpand()
+  })
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return
+    const startX = event.clientX
+    const startY = event.clientY
+    const startRect = root.getBoundingClientRect()
 
-  button.append(dot, text, hint)
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const deltaY = moveEvent.clientY - startY
+      if (!dragged && Math.hypot(deltaX, deltaY) < 4) return
+      dragged = true
+      const maxLeft = Math.max(0, window.innerWidth - startRect.width)
+      const maxTop = Math.max(0, window.innerHeight - startRect.height)
+      collapsedDebugPanelPosition = {
+        left: Math.min(maxLeft, Math.max(0, startRect.left + deltaX)),
+        top: Math.min(maxTop, Math.max(0, startRect.top + deltaY)),
+      }
+      applyCollapsedDebugPanelPosition(root)
+    }
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  })
+
+  button.append(dot, text)
   return button
 }
 
@@ -325,7 +491,7 @@ function createDebugPanelSection(title: string, content: string): HTMLElement {
 
   const pre = document.createElement('pre')
   pre.className =
-    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-5 text-text-primary'
+    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-5 text-text-primary'
   pre.textContent = content
 
   section.append(heading, pre)
@@ -359,7 +525,7 @@ function createMessageStyleComparisonSection(snapshot: WorkbenchDebugSnapshot): 
 
     const diff = document.createElement('pre')
     diff.className =
-      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-5 text-text-primary'
+      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-xs leading-5 text-text-primary'
     diff.textContent = JSON.stringify(
       {
         fieldDiff: comparison.fieldDiff,
@@ -396,7 +562,7 @@ function createMessageStyleSampleCard(
   }
 
   const meta = document.createElement('div')
-  meta.className = 'mt-2 grid gap-1 text-[11px] leading-5 text-text-secondary'
+  meta.className = 'mt-2 grid gap-1 text-xs leading-5 text-text-secondary'
   ;[
     `id: ${sample.id}`,
     `status: ${sample.status}`,
@@ -413,11 +579,11 @@ function createMessageStyleSampleCard(
 
   const preview = document.createElement('div')
   preview.className =
-    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-[12px] leading-5 text-text-primary'
+    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-xs leading-5 text-text-primary'
   preview.textContent = sample.contentPreview
 
   const uiList = document.createElement('ul')
-  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-[11px] leading-5 text-text-secondary'
+  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-xs leading-5 text-text-secondary'
   sample.expectedUi.forEach(rule => {
     const item = document.createElement('li')
     item.textContent = rule
@@ -448,6 +614,13 @@ function formatDebugJson(snapshot: WorkbenchDebugSnapshot): string {
     null,
     2
   )
+}
+
+function formatMemoryDiagnostics(snapshot: WorkbenchDebugSnapshot): string {
+  const memory = snapshot.pane?.memory
+  if (!memory) return 'No runtime pane memory snapshot has been captured yet.'
+
+  return JSON.stringify(memory, null, 2)
 }
 
 function formatDebugLogs(snapshot: WorkbenchDebugSnapshot): string {

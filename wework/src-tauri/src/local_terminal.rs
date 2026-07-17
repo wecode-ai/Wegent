@@ -77,6 +77,20 @@ fn normalized_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(cwd.to_string()))
 }
 
+fn normalized_extra_env(env: Option<HashMap<String, String>>) -> HashMap<String, String> {
+    env.unwrap_or_default()
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim();
+            if key.is_empty() || key.contains('=') || key.contains('\0') || value.contains('\0') {
+                return None;
+            }
+
+            Some((key.to_string(), value))
+        })
+        .collect()
+}
+
 fn decode_pty_output_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     let mut bytes = std::mem::take(pending);
     bytes.extend_from_slice(chunk);
@@ -143,6 +157,15 @@ fn configure_terminal_environment(command: &mut CommandBuilder) {
     );
 }
 
+fn configure_terminal_extra_environment(
+    command: &mut CommandBuilder,
+    env: HashMap<String, String>,
+) {
+    for (key, value) in env {
+        command.env(key, value);
+    }
+}
+
 #[tauri::command]
 pub fn start_local_terminal(
     app: tauri::AppHandle,
@@ -150,98 +173,139 @@ pub fn start_local_terminal(
     cwd: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
+    env: Option<HashMap<String, String>>,
 ) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let cwd = normalized_cwd(cwd)?;
-        let size = PtySize {
-            rows: rows.unwrap_or(24).max(1),
-            cols: cols.unwrap_or(80).max(1),
-            pixel_width: 0,
-            pixel_height: 0,
-        };
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(size)
-            .map_err(|error| format!("Failed to create PTY: {error}"))?;
-        let mut reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| format!("Failed to create PTY reader: {error}"))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| format!("Failed to create PTY writer: {error}"))?;
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        let mut command = CommandBuilder::new(shell);
-        configure_terminal_environment(&mut command);
-        if let Some(cwd) = cwd {
-            command.cwd(cwd);
-        }
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| format!("Failed to spawn shell: {error}"))?;
-        drop(pair.slave);
-
-        let session_id = next_session_id(&state);
-        let session = LocalTerminalSession {
-            master: pair.master,
-            writer,
-            child_pid: child.process_id(),
-            child,
-        };
-        state
-            .sessions
-            .lock()
-            .map_err(|_| "Failed to lock local terminal state".to_string())?
-            .insert(session_id.clone(), session);
-
-        let output_session_id = session_id.clone();
-        let exit_session_id = session_id.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            let mut buffer = [0_u8; 8192];
-            let mut pending_utf8 = Vec::new();
-            loop {
-                match reader.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(size) => {
-                        let data = decode_pty_output_chunk(&mut pending_utf8, &buffer[..size]);
-                        if data.is_empty() {
-                            continue;
-                        }
-                        let _ = app.emit(
-                            TERMINAL_OUTPUT_EVENT,
-                            LocalTerminalOutput {
-                                session_id: output_session_id.clone(),
-                                data,
-                            },
-                        );
-                    }
-                    Err(_) => break,
-                }
-            }
-            let _ = app.emit(
-                TERMINAL_EXIT_EVENT,
-                LocalTerminalExit {
-                    session_id: exit_session_id,
-                },
-            );
-        });
-
-        Ok(session_id)
+        start_pty_shell(app, &state, cwd, rows, cols, env, shell)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let shell = resolve_windows_shell();
+        start_pty_shell(app, &state, cwd, rows, cols, env, shell)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = app;
         let _ = state;
         let _ = cwd;
         let _ = rows;
         let _ = cols;
-        Err("Local terminal is supported only on macOS".to_string())
+        let _ = env;
+        Err("Local terminal is supported only on macOS and Windows".to_string())
     }
+}
+
+fn start_pty_shell(
+    app: tauri::AppHandle,
+    state: &LocalTerminalState,
+    cwd: Option<String>,
+    rows: Option<u16>,
+    cols: Option<u16>,
+    env: Option<HashMap<String, String>>,
+    shell: String,
+) -> Result<String, String> {
+    let cwd = normalized_cwd(cwd)?;
+    let size = PtySize {
+        rows: rows.unwrap_or(24).max(1),
+        cols: cols.unwrap_or(80).max(1),
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(size)
+        .map_err(|error| format!("Failed to create PTY: {error}"))?;
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|error| format!("Failed to create PTY reader: {error}"))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|error| format!("Failed to create PTY writer: {error}"))?;
+    let mut command = CommandBuilder::new(shell);
+    configure_terminal_environment(&mut command);
+    configure_terminal_extra_environment(&mut command, normalized_extra_env(env));
+    if let Some(cwd) = cwd {
+        command.cwd(cwd);
+    }
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|error| format!("Failed to spawn shell: {error}"))?;
+    drop(pair.slave);
+
+    let session_id = next_session_id(state);
+    let session = LocalTerminalSession {
+        master: pair.master,
+        writer,
+        child_pid: child.process_id(),
+        child,
+    };
+    state
+        .sessions
+        .lock()
+        .map_err(|_| "Failed to lock local terminal state".to_string())?
+        .insert(session_id.clone(), session);
+
+    let output_session_id = session_id.clone();
+    let exit_session_id = session_id.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let mut buffer = [0_u8; 8192];
+        let mut pending_utf8 = Vec::new();
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(size) => {
+                    let data = decode_pty_output_chunk(&mut pending_utf8, &buffer[..size]);
+                    if data.is_empty() {
+                        continue;
+                    }
+                    let _ = app.emit(
+                        TERMINAL_OUTPUT_EVENT,
+                        LocalTerminalOutput {
+                            session_id: output_session_id.clone(),
+                            data,
+                        },
+                    );
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = app.emit(
+            TERMINAL_EXIT_EVENT,
+            LocalTerminalExit {
+                session_id: exit_session_id,
+            },
+        );
+    });
+
+    Ok(session_id)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_shell() -> String {
+    if which_shell("pwsh.exe") {
+        return "pwsh.exe".to_string();
+    }
+    if which_shell("powershell.exe") {
+        return "powershell.exe".to_string();
+    }
+    "powershell.exe".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn which_shell(name: &str) -> bool {
+    std::process::Command::new("where")
+        .arg(name)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -304,7 +368,16 @@ pub fn close_local_terminal(
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?;
     if let Some(mut session) = sessions.remove(&session_id) {
-        let _ = session.child.kill();
+        log::warn!(
+            "Tauri local terminal kill requested: sender_pid={}, session_id={session_id}",
+            std::process::id()
+        );
+        if let Err(error) = session.child.kill() {
+            log::warn!(
+                "Tauri local terminal kill failed: sender_pid={}, session_id={session_id}, error={error}",
+                std::process::id()
+            );
+        }
     }
 
     Ok(())

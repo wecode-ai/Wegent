@@ -11,10 +11,175 @@ const tauriCoreMock = vi.hoisted(() => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
 }))
+const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
+vi.mock('@/lib/external-links', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/external-links')>()),
+  openExternalUrl: openExternalUrlMock,
+}))
 
 describe('MessageList', () => {
+  test('offers conversation actions for text selected inside one message body', async () => {
+    const onAddSelectionToConversation = vi.fn()
+    const onAskSelectionInSidebar = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={onAskSelectionInSidebar}
+      />
+    )
+
+    selectText(screen.getByTestId('assistant-message-content'), 'Select this')
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('Select this')
+    expect(screen.queryByTestId('message-selection-actions')).not.toBeInTheDocument()
+
+    selectText(screen.getByTestId('assistant-message-content'), 'response')
+    await userEvent.click(await screen.findByTestId('ask-selection-in-sidebar-button'))
+    expect(onAskSelectionInSidebar).toHaveBeenCalledWith('response')
+  })
+
+  test('does not offer selection actions across message bodies', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-selection',
+            role: 'user',
+            content: 'First message',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+          {
+            id: 'assistant-selection',
+            role: 'assistant',
+            content: 'Second message',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:01Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const range = document.createRange()
+    range.setStart(firstTextNode(screen.getByTestId('user-message-content')), 0)
+    range.setEnd(firstTextNode(screen.getByTestId('assistant-message-content')), 6)
+    setDocumentSelection(range)
+
+    expect(screen.queryByTestId('message-selection-actions')).not.toBeInTheDocument()
+  })
+
+  test('reads the final selection after a mouse interaction completes', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-mouse-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(content), 0)
+    range.setEnd(firstTextNode(content), 6)
+    document.getSelection()?.removeAllRanges()
+    document.getSelection()?.addRange(range)
+    fireEvent.mouseUp(content)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
+  test('offers selection actions when the whole message body is selected', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-before-whole-body-selection',
+            role: 'user',
+            content: 'Previous message',
+            status: 'done',
+            createdAt: '2026-07-15T09:59:59Z',
+          },
+          {
+            id: 'assistant-whole-body-selection',
+            role: 'assistant',
+            content: 'Select the whole paragraph',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const nextMessage = screen.getByTestId('user-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(nextMessage), 0)
+    range.setEnd(firstTextNode(content), 0)
+    setDocumentSelection(range)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
+  test('renders generated image artifacts from image generation blocks', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image',
+            role: 'assistant',
+            content: 'Choose a direction.',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:01Z',
+            blocks: [
+              {
+                id: 'ig-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'image_generation',
+                renderPayload: {
+                  kind: 'image_generation',
+                  imageBase64: 'aW1hZ2U=',
+                  revisedPrompt: 'Minimal dashboard concept',
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const image = screen.getByTestId('generated-image')
+    expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
+  })
+
   test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
     render(
       <MessageList
@@ -409,6 +574,80 @@ describe('MessageList', () => {
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('查看更改')
   })
 
+  test('does not show file change hover diff for the turn currently open in review', () => {
+    vi.useFakeTimers()
+    try {
+      const onOpenFileChangesReview = vi.fn()
+      render(
+        <MessageList
+          fileChangesDiffPreviewDisabledSubtaskId="42"
+          devices={[
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Device 1',
+              status: 'online',
+              is_default: false,
+            },
+          ]}
+          onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+          onRevertFileChanges={vi.fn()}
+          onOpenFileChangesReview={onOpenFileChangesReview}
+          messages={[
+            {
+              id: 'assistant-42',
+              subtaskId: '42',
+              role: 'assistant',
+              content: 'Done',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:00Z',
+              fileChanges: {
+                version: 1,
+                status: 'active',
+                artifact_id: 'turn-42',
+                device_id: 'device-1',
+                workspace_path: '/workspace/project',
+                file_count: 1,
+                additions: 1,
+                deletions: 1,
+                files: [
+                  {
+                    path: 'wework/src/components/chat/FileChangesCard.tsx',
+                    change_type: 'modified',
+                    additions: 1,
+                    deletions: 1,
+                    binary: false,
+                  },
+                ],
+                diff: [
+                  'diff --git a/wework/src/components/chat/FileChangesCard.tsx b/wework/src/components/chat/FileChangesCard.tsx',
+                  '--- a/wework/src/components/chat/FileChangesCard.tsx',
+                  '+++ b/wework/src/components/chat/FileChangesCard.tsx',
+                  '@@ -1 +1 @@',
+                  '-old component',
+                  '+new component',
+                ].join('\n'),
+              },
+            },
+          ]}
+        />
+      )
+
+      fireEvent.pointerEnter(screen.getByTestId('file-change-trigger'))
+      act(() => vi.advanceTimersByTime(500))
+      expect(screen.queryByTestId('file-change-diff-preview')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /FileChangesCard\.tsx/ }))
+      expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
+      expect(onOpenFileChangesReview.mock.calls[0][0].subtaskId).toBe('42')
+      expect(onOpenFileChangesReview.mock.calls[0][0].focusFilePath).toBe(
+        'wework/src/components/chat/FileChangesCard.tsx'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('renders cancelled assistant turns like stopped Codex turns', () => {
     const commandBlock: ProcessingBlock = {
       id: 'call-1',
@@ -475,6 +714,38 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
+  test('keeps late cancelled output without rendering it as active thinking', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-cancelled-late-output',
+            subtaskId: 21,
+            role: 'assistant',
+            content: '取消后仍收到的模型输出。',
+            status: 'streaming',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'late-process',
+                subtaskId: 21,
+                type: 'text',
+                content: '补充分析。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-11T10:00:10Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('取消后仍收到的模型输出。')).toBeInTheDocument()
+    expect(screen.getByText('补充分析。')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
   test('renders tagged proposed plan content as regular assistant markdown', () => {
     render(
       <MessageList
@@ -492,8 +763,11 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
-    expect(screen.getByText('Inspect the desktop chat width.')).toBeInTheDocument()
-    expect(screen.getByText('Match the reference task.')).toBeInTheDocument()
+    const planItems = screen.getAllByRole('listitem')
+    expect(planItems.map(item => item.textContent)).toEqual([
+      'Inspect the desktop chat width.',
+      'Match the reference task.',
+    ])
     expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
   })
 
@@ -616,6 +890,7 @@ describe('MessageList', () => {
 
     const planCard = screen.getByTestId('assistant-plan-card')
     expect(planCard).toHaveTextContent('计划')
+    expect(screen.queryByTestId('assistant-plan-streaming-indicator')).not.toBeInTheDocument()
     expect(planCard).toHaveAttribute('role', 'button')
     expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
     expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
@@ -633,13 +908,17 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
     expect(onOpenAssistantPlan).not.toHaveBeenCalled()
     await user.click(planCard)
-    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     await user.click(screen.getByTestId('assistant-plan-expand-button'))
-    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
@@ -709,6 +988,7 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('流式计划')
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('正在生成第一步')
+    expect(screen.getByTestId('assistant-plan-streaming-indicator')).toHaveTextContent('正在生成')
   })
 
   test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {
@@ -735,7 +1015,9 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
-    expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Wegent 代码质量与前端一致性巡检计划' })
+    ).toBeInTheDocument()
   })
 
   test('shows thinking after partial streaming assistant content', () => {
@@ -753,9 +1035,10 @@ describe('MessageList', () => {
       />
     )
 
-    const content = screen.getByText('我已经完成前面的检查，继续等最后结果。')
+    const content = screen.getByTestId('message-assistant').querySelector('p')
     const thinking = screen.getByTestId('thinking-indicator')
 
+    expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
     expect(thinking).toHaveTextContent('正在思考')
     expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
@@ -1008,7 +1291,7 @@ describe('MessageList', () => {
     expect(screen.getByText('我会继续看 lockfile。')).toBeInTheDocument()
   })
 
-  test('keeps cancelled assistant turns even when no processing blocks were persisted', () => {
+  test('shows stopped notice without duration when a cancelled assistant turn has no elapsed time', () => {
     render(
       <MessageList
         messages={[
@@ -1024,7 +1307,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 0s 后停止了')
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('已停止')
+    expect(screen.getByTestId('assistant-stopped-notice')).not.toHaveTextContent('0s')
   })
 
   test('uses compact spacing between messages and hover actions', () => {
@@ -1078,6 +1362,39 @@ describe('MessageList', () => {
     )
   })
 
+  test('renders attached comment badges on user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-comment',
+            role: 'user',
+            content: '请根据我附加的批注内容继续处理。',
+            status: 'done',
+            createdAt: '2026-06-10T08:00:00Z',
+            codeComments: [
+              {
+                id: 'browser-comment-1',
+                filePath: 'browser:https://example.test/',
+                fileName: 'example.test',
+                startLine: 1,
+                endLine: 1,
+                selectedText: '{}',
+                comment: '这个导航太抢眼',
+                createdAt: '2026-06-10T08:00:00Z',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-code-comment-context-badge')).toHaveTextContent('1 个评论')
+    expect(screen.getByTestId('user-message-content')).not.toHaveTextContent(
+      '<workspace_comment_context>'
+    )
+  })
+
   const originalCreateObjectUrl = URL.createObjectURL
   const originalRevokeObjectUrl = URL.revokeObjectURL
 
@@ -1089,6 +1406,7 @@ describe('MessageList', () => {
     )
     tauriCoreMock.invoke = vi.fn()
     tauriCoreMock.isTauri = vi.fn(() => false)
+    openExternalUrlMock.mockClear()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl
@@ -1288,7 +1606,8 @@ describe('MessageList', () => {
       />
     )
 
-    const finalAnswer = screen.getByText('这是正在流式输出的最终答案。')
+    const finalAnswer = screen.getByTestId('message-assistant').querySelector('p')
+    expect(finalAnswer).toHaveTextContent('这是正在流式输出的最终答案。')
     const processStatus = screen.getByRole('button', { name: /已处理/ })
     const collapseContent = screen.getByTestId('processing-collapse-content')
 
@@ -1306,10 +1625,86 @@ describe('MessageList', () => {
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
+  test('keeps processing expanded for the assistant segment before runtime guidance', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        subtaskId: 11,
+        type: 'text',
+        content: '我正在检查项目结构。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-before-guidance',
+            role: 'assistant',
+            content: '先看一下当前目录。',
+            status: 'done',
+            blocks,
+            runtimeGuidanceSplitBefore: true,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('我正在检查项目结构。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+  })
+
+  test('keeps processing expanded for the assistant continuation after runtime guidance', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-after-guidance',
+            role: 'assistant',
+            content: '继续处理。',
+            status: 'done',
+            runtimeGuidanceContinuation: true,
+            blocks: [
+              {
+                id: 'guidance-1',
+                subtaskId: 12,
+                type: 'tool',
+                toolName: 'conversation_guidance',
+                toolInput: { message: '也看看内存' },
+                status: 'done',
+                createdAt: 1770000002000,
+              },
+            ],
+            createdAt: '2026-06-24T08:00:02.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+  })
+
   test('renders final answer web search sources as a Codex-style source chip', async () => {
     const user = userEvent.setup()
-    const openWindowMock = vi.fn()
-    vi.stubGlobal('open', openWindowMock)
     const blocks: ProcessingBlock[] = [
       {
         id: 'web-search-1',
@@ -1374,10 +1769,8 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('web-search-source-popup-row'))
 
     await waitFor(() =>
-      expect(openWindowMock).toHaveBeenCalledWith(
-        'https://www.weather.com/weather/today/l/Beijing+China',
-        '_blank',
-        'noopener,noreferrer'
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'https://www.weather.com/weather/today/l/Beijing+China'
       )
     )
   })
@@ -1453,7 +1846,27 @@ describe('MessageList', () => {
     expect(orderedList).not.toHaveClass('pl-5')
   })
 
-  test('renders assistant markdown links as reference-style inline links', () => {
+  test('renders assistant markdown headings with the semantic theme color', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-headings',
+            role: 'assistant',
+            content: ['# Heading 1', '## Heading 2', '### Heading 3'].join('\n\n'),
+            status: 'done',
+            createdAt: '2026-07-09T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
+  })
+
+  test('routes assistant markdown links through the configured browser target', () => {
     render(
       <MessageList
         messages={[
@@ -1481,7 +1894,35 @@ describe('MessageList', () => {
     expect(link).not.toHaveClass('hover:bg-blue-100')
     expect(link).not.toHaveClass('ring-1')
     expect(link).not.toHaveClass('text-primary')
+    expect(link).not.toHaveAttribute('target')
     expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
+
+    fireEvent.click(link)
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/MessageList.tsx')
+  })
+
+  test('keeps angle-bracket external link destinations as external links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-angle-bracket-external-link',
+            role: 'assistant',
+            content: '[Wegent](<https://github.com/wecode-ai/Wegent>)',
+            status: 'done',
+            createdAt: '2026-07-13T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('link', { name: 'Wegent' })).toHaveAttribute(
+      'href',
+      'https://github.com/wecode-ai/Wegent'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
   })
 
   test('routes assistant file-path links to the workspace file panel', async () => {
@@ -1507,7 +1948,35 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
-  test('renders assistant file link line numbers without passing them to open-file actions', async () => {
+  test('removes angle brackets from assistant file link destinations', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-angle-bracket-file-link',
+            role: 'assistant',
+            content:
+              '[MessageList.tsx](</Users/dev/repo/wework/src/components/chat/MessageList.tsx:18>)',
+            status: 'done',
+            createdAt: '2026-07-13T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/repo/wework/src/components/chat/MessageList.tsx',
+      {
+        lineStart: 18,
+        lineEnd: undefined,
+      }
+    )
+  })
+
+  test('passes assistant file link line numbers to open-file actions', async () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
       <MessageList
@@ -1534,7 +2003,10 @@ describe('MessageList', () => {
       'break-all'
     )
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md')
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
+      lineStart: 18,
+      lineEnd: undefined,
+    })
   })
 
   test('renders assistant file links with extension-specific Codex-style icons', () => {
@@ -1587,7 +2059,7 @@ describe('MessageList', () => {
     expect(inlineCodes[1]).toHaveClass('rounded', 'bg-muted')
   })
 
-  test('routes assistant file links to the turn diff review focused on that file', async () => {
+  test('routes assistant file links from changed turns to the workspace file panel', async () => {
     const onOpenFileChangesReview = vi.fn()
     const onLoadFileChangesDiff = vi.fn().mockResolvedValue('')
     const onOpenWorkspaceFile = vi.fn()
@@ -1600,9 +2072,9 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-changed-file-link',
-            subtaskId: 42,
+            subtaskId: '42',
             role: 'assistant',
-            content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md)',
+            content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md:18)',
             status: 'done',
             createdAt: '2026-06-24T08:00:01.000Z',
             fileChanges: {
@@ -1630,15 +2102,12 @@ describe('MessageList', () => {
     )
 
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
-    expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
-    const request = onOpenFileChangesReview.mock.calls[0][0]
-    expect(request.subtaskId).toBe(42)
-    expect(request.focusFilePath).toBe('docs/zh/user-guide/chat/managing-tasks.md')
-    expect(request.defaultFileTreeVisible).toBe(false)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('docs/zh/user-guide/chat/managing-tasks.md', {
+      lineStart: 18,
+      lineEnd: undefined,
+    })
+    expect(onOpenFileChangesReview).not.toHaveBeenCalled()
     expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
-    await request.loadDiff()
-    expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
   })
 
   test('renders Codex memory citations and one-column deduped file references', async () => {
@@ -1707,7 +2176,11 @@ describe('MessageList', () => {
 
     await userEvent.click(referenceCards[1])
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-      '/workspace/project/references/github-pr-flow.md'
+      '/workspace/project/references/github-pr-flow.md',
+      {
+        lineStart: 18,
+        lineEnd: undefined,
+      }
     )
 
     expect(screen.getByTestId('codex-memory-citations-toggle')).toHaveTextContent('1 条记忆引用')
@@ -1725,7 +2198,10 @@ describe('MessageList', () => {
 
     onOpenWorkspaceFile.mockClear()
     await userEvent.click(memoryEntry)
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md')
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md', {
+      lineStart: 10,
+      lineEnd: 12,
+    })
   })
 
   test('waits until streaming finishes before rendering final answer artifacts', () => {
@@ -1773,7 +2249,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText(/See/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant').querySelector('p')).toHaveTextContent(/See/)
     expect(screen.queryByTestId('codex-reference-list')).not.toBeInTheDocument()
     expect(screen.queryByTestId('codex-memory-citations')).not.toBeInTheDocument()
     expect(screen.queryByTestId('file-changes-card')).not.toBeInTheDocument()
@@ -2757,7 +3233,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:09:00.000+08:00',
       text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
       local_path:
-        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt',
+        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt',
     }
 
     render(
@@ -2791,7 +3267,7 @@ describe('MessageList', () => {
 
     await waitFor(() =>
       expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt'
+        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt'
       )
     )
   })
@@ -3019,6 +3495,28 @@ describe('MessageList', () => {
             role: 'user',
             content: '短消息',
             status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
+  })
+
+  test('does not collapse long runtime guidance messages', () => {
+    const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'guidance-user',
+            role: 'user',
+            content,
+            status: 'done',
+            runtimeGuidance: true,
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
         ]}
@@ -3301,6 +3799,35 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
+  test('keeps the retry card visible while waiting for the retried response', () => {
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'hi',
+            status: 'done',
+            createdAt: '2026-05-25T18:45:00.000+08:00',
+          },
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: 'temporary failure',
+            createdAt: '2026-05-25T18:45:01.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+  })
+
   test('shows thinking from the message list after completed processing activity', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
@@ -3533,6 +4060,7 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
   })
 
   test('classifies hidden raw failed content before generic task status errors', () => {
@@ -3612,11 +4140,12 @@ describe('MessageList', () => {
       />
     )
 
-    await user.click(screen.getByTestId('assistant-error-retry'))
     await user.click(screen.getByTestId('assistant-error-switch-model-retry'))
+    await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
   })
 
   test('uses backend error type before raw error text when rendering failed messages', () => {
@@ -3696,7 +4225,33 @@ describe('MessageList', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveClass('overflow-hidden')
   })
 
+  test('limits highlighted code selection to the code body', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-code-selection',
+            role: 'assistant',
+            content: ['```bash', 'git push origin feature/example', '```'].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const block = screen.getByTestId('markdown-code-block')
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    const code = block.querySelector('code')
+
+    expect(block).toHaveClass('select-none')
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveClass('select-none')
+    expect(scrollContainer).toHaveClass('select-none')
+    expect(code).toHaveClass('select-text')
+  })
+
   test('renders local skill markdown links in user messages', () => {
+    const onOpenLocalSkillFile = vi.fn()
     render(
       <MessageList
         messages={[
@@ -3704,7 +4259,34 @@ describe('MessageList', () => {
             id: '1',
             role: 'user',
             content:
-              'hello [$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) context',
+              'hello [$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md) context',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+        onOpenLocalSkillFile={onOpenLocalSkillFile}
+      />
+    )
+
+    const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
+
+    expect(skillLink).toHaveAttribute('href', '/Users/crystal/.codex/skills/env-context/SKILL.md')
+    fireEvent.click(skillLink)
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(
+      '/Users/crystal/.codex/skills/env-context/SKILL.md'
+    )
+    expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
+  })
+
+  test('renders plugin markdown links in user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$Documents](plugin://documents@openai-primary-runtime) Draft a project memo as a document',
             status: 'done',
             createdAt: '2026-05-25T00:00:00.000Z',
           },
@@ -3712,12 +4294,43 @@ describe('MessageList', () => {
       />
     )
 
-    const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
+    const pluginLink = screen.getByTestId('sent-plugin-token-Documents')
 
-    expect(skillLink).toHaveAttribute(
-      'href',
-      'skill:///Users/crystal/.codex/skills/env-context/SKILL.md'
+    expect(pluginLink).toHaveAttribute('href', 'plugin://documents@openai-primary-runtime')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent(
+      'Documents Draft a project memo as a document'
     )
-    expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
+    expect(
+      screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
+    ).not.toBeInTheDocument()
   })
 })
+
+function selectText(container: HTMLElement, text: string) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node && !node.textContent?.includes(text)) node = walker.nextNode()
+  if (!node) throw new Error(`Could not find text: ${text}`)
+  const start = node.textContent!.indexOf(text)
+  const range = document.createRange()
+  range.setStart(node, start)
+  range.setEnd(node, start + text.length)
+  setDocumentSelection(range)
+}
+
+function firstTextNode(container: HTMLElement): Node {
+  const node = document.createTreeWalker(container, NodeFilter.SHOW_TEXT).nextNode()
+  if (!node) throw new Error('Could not find a text node')
+  return node
+}
+
+function setDocumentSelection(range: Range) {
+  Object.defineProperty(range, 'getBoundingClientRect', {
+    value: () => ({ left: 100, top: 100, width: 80, height: 20 }),
+  })
+  const selection = window.getSelection()!
+  selection.removeAllRanges()
+  selection.addRange(range)
+  fireEvent(document, new Event('selectionchange'))
+}

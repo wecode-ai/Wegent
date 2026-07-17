@@ -14,6 +14,31 @@ The Wework macOS app uses the Tauri updater for automatic upgrades. The release 
 - The updater manifest includes both `darwin-aarch64` and `darwin-x86_64`; both platform entries can point to the same universal archive.
 - `src-tauri/tauri.conf.json` does not store the update service URL or updater public key. The release script injects them through a temporary Tauri config at build time.
 - Updater private keys and publish tokens are read only from environment variables or local files and must not be committed.
+- Codex CLI is not compiled locally. Before building, `wework/scripts/prepare-codex-binary.mjs` downloads the npm tarball pinned by `wework/codex-binaries.lock.json`, verifies its SHA256, and bundles it as a Tauri resource.
+
+## Bundled Codex Binary
+
+The Wework desktop package includes Codex CLI directly, so users do not need to install it on first launch. The version and per-platform tarball checksums are pinned in `wework/codex-binaries.lock.json`.
+
+Local builds prepare the Codex binary for the current target automatically:
+
+```bash
+pnpm --filter wework run prepare:codex
+```
+
+macOS universal builds prepare both Apple Silicon and Intel binaries:
+
+```bash
+cd wework
+WEWORK_CODEX_TARGET=universal-apple-darwin pnpm run prepare:codex
+```
+
+Release builds verify the target Codex binary in `wework/src-tauri/build.rs`; the build fails if it is missing. At runtime, Wework injects the bundled Codex path into the local executor sidecar:
+
+- `CODEX_BINARY_PATH`
+- `CODEX_MANAGED_PACKAGE_ROOT`
+
+If the user explicitly sets `CODEX_BINARY_PATH` or `CODEX_BIN`, Wework does not override that configuration.
 
 ## Environment Variables
 
@@ -60,6 +85,56 @@ To validate local updater behavior, serve the script output directory:
 
 ```bash
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
+```
+
+## GitHub Release Auto Update
+
+The repository includes `.github/workflows/wework-app.yml` for producing macOS DMGs, Tauri updater archives, signature files, and `latest.json` on GitHub Actions. The updater endpoint embedded in the client points to the GitHub Release latest asset:
+
+```text
+https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+```
+
+The workflow can only be started manually from GitHub Actions and does not respond to tag pushes. A formal run creates or updates a `wework-v<version>` draft release. After both architecture builds finish, it generates `latest.json`, uploads it to the same release, and then publishes that release as GitHub latest. The client reads this manifest during automatic startup checks and when the titlebar update action is used. Preventing tag-push triggers ensures that the tag created while publishing the release cannot start a second build of the same version and overwrite signed artifacts.
+
+Configure these repository secrets in GitHub Actions:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: Tauri updater private key.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: private key password; leave empty if the key has no password.
+- `TAURI_UPDATER_PUBKEY`: updater public key matching the private key. It is injected into the built app.
+
+Do not rotate the updater private key unless it is acceptable for already-installed clients to stop receiving automatic updates. Tauri verifies new releases with the public key embedded in the installed client.
+
+The workflow uploads these release assets:
+
+- `WeWork_<version>_macos_arm64_unsigned-adhoc.dmg`
+- `WeWork_<version>_macos_x64_unsigned-adhoc.dmg`
+- `WeWork_<version>_macos_arm64.app.tar.gz`
+- `WeWork_<version>_macos_arm64.app.tar.gz.sig`
+- `WeWork_<version>_macos_x64.app.tar.gz`
+- `WeWork_<version>_macos_x64.app.tar.gz.sig`
+- `latest.json`
+
+When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. When the workflow is triggered manually without a version input, the release tag auto-increments the patch version from the latest `wework-vX.Y.Z` tag.
+
+For a formal release, the workflow syncs `wework/package.json`, `wework/src-tauri/tauri.conf.json`, `wework/src-tauri/Cargo.toml`, and `wework/src-tauri/Cargo.lock` to the release version before building, then commits those files directly back to the triggering `main` branch. The macOS build jobs and GitHub Release target use that version commit, keeping the About page version, Tauri bundle version, and source version aligned.
+
+Manual workflow runs that do not publish a formal release only produce test artifacts and do not commit version files. An existing `wework-vX.Y.Z` tag can also be selected explicitly when manually starting the workflow; the tag then points to an immutable commit, so the workflow does not rewrite source files. If the tagged version files do not match the tag version, the release fails and the version files must be updated before creating the tag again. Pushing a tag alone does not start a release.
+
+## CI DMG Without Apple Developer
+
+The GitHub workflow applies an ad-hoc codesign signature to the `.app`, but it does not perform Apple notarization, so first launch still triggers Gatekeeper. Use this mode for internal testing and developer distribution only; do not label it as a notarized production package.
+
+To force-open the app on first launch. On macOS 15 and later, the warning can still include a **Move to Trash** button; as long as CI passed `codesign --verify --deep --strict`, this is usually the normal Gatekeeper block for a non-notarized app, not a damaged package:
+
+1. Open the DMG and drag `WeWork.app` to `/Applications`.
+2. If the first launch shows an unidentified developer or **Move to Trash** warning, click Done. Do not click Move to Trash.
+3. Open **System Settings > Privacy & Security**, then click **Open Anyway** in the Security section.
+
+If macOS still keeps the quarantine flag, run this after confirming the source is trusted:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WeWork.app
 ```
 
 ## Production Release

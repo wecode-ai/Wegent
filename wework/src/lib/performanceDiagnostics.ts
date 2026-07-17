@@ -30,6 +30,7 @@ interface ProcessDiagnosticsProcess {
   ppid: number
   group: string
   rss_kib: number
+  physical_footprint_kib: number
   cpu_percent: number
   command: string
 }
@@ -38,6 +39,7 @@ interface ProcessDiagnosticsGroup {
   group: string
   process_count: number
   rss_kib: number
+  physical_footprint_kib: number
   cpu_percent: number
   pids: number[]
 }

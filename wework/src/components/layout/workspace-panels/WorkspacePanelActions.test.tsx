@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { useState } from 'react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from '@/api/projects'
 import { openExternalUrl } from '@/lib/external-links'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
@@ -32,6 +33,14 @@ const openExternalUrlMock = vi.mocked(openExternalUrl)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startCodeServerSessionMock = vi.fn()
+const originalInnerWidth = window.innerWidth
+
+function setWindowWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: width,
+  })
+}
 
 const baseProps = {
   environmentInfo: {
@@ -39,8 +48,14 @@ const baseProps = {
     deletions: '-0',
     executionTarget: 'local' as const,
   },
+  environmentInfoPopoverContainer: document.body,
+  environmentInfoVisible: true,
+  environmentInfoOpen: false,
+  onEnvironmentInfoOpenChange: vi.fn(),
   onRefreshEnvironmentInfo: vi.fn(),
   onCommitEnvironmentChanges: vi.fn(),
+  onCommitAndPushEnvironmentChanges: vi.fn(),
+  onPushEnvironmentChanges: vi.fn(),
   onListEnvironmentBranches: vi.fn(),
   onCheckoutEnvironmentBranch: vi.fn(),
   onCreateEnvironmentBranch: vi.fn(),
@@ -54,6 +69,7 @@ const baseProps = {
 describe('WorkspacePanelActions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setWindowWidth(originalInnerWidth)
     isLocalTerminalAvailableMock.mockReturnValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     startCodeServerSessionMock.mockResolvedValue({
@@ -66,7 +82,19 @@ describe('WorkspacePanelActions', () => {
     openExternalUrlMock.mockResolvedValue(true)
   })
 
-  test('shows environment info while loading and keeps it when environment context is available', () => {
+  afterEach(() => {
+    setWindowWidth(originalInnerWidth)
+  })
+
+  test('hides environment info while a task is being created', () => {
+    render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
+
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+  })
+
+  test('keeps environment info action visible after environment refresh resolves empty context', () => {
     const { rerender } = render(<WorkspacePanelActions {...baseProps} />)
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
@@ -83,7 +111,7 @@ describe('WorkspacePanelActions', () => {
       />
     )
 
-    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
 
     rerender(
       <WorkspacePanelActions
@@ -111,6 +139,121 @@ describe('WorkspacePanelActions', () => {
     )
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
+  })
+
+  test('hides environment info when no task context is available', () => {
+    render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
+
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+  })
+
+  test('keeps environment info collapsed by default in a conversation', () => {
+    setWindowWidth(1280)
+
+    render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
+  test('reflects the shared pinned state in a project', () => {
+    setWindowWidth(1280)
+
+    render(
+      <WorkspacePanelActions
+        {...baseProps}
+        mode="environment"
+        environmentInfoOpen
+        currentProject={{ id: 7, name: 'project38', config: {}, tasks: [] }}
+      />
+    )
+
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
+  test('opens environment info as a floating panel when the dock is collapsed', async () => {
+    setWindowWidth(1024)
+    function FloatingActions() {
+      const [open, setOpen] = useState(false)
+      return (
+        <WorkspacePanelActions
+          {...baseProps}
+          mode="environment"
+          environmentInfoDocked={false}
+          environmentInfoOpen={open}
+          onEnvironmentInfoOpenChange={setOpen}
+        />
+      )
+    }
+    render(<FloatingActions />)
+
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass('fixed', 'z-system')
+  })
+
+  test('renders environment info in its dedicated right-side container', async () => {
+    setWindowWidth(1280)
+    const workspaceContainer = document.createElement('main')
+    document.body.append(workspaceContainer)
+
+    try {
+      function DockedActions() {
+        const [open, setOpen] = useState(false)
+        return (
+          <WorkspacePanelActions
+            {...baseProps}
+            mode="environment"
+            environmentInfoPopoverContainer={workspaceContainer}
+            environmentInfoOpen={open}
+            onEnvironmentInfoOpenChange={setOpen}
+          />
+        )
+      }
+      render(<DockedActions />)
+
+      await userEvent.click(screen.getByTestId('environment-info-button'))
+
+      const popover = screen.getByTestId('environment-info-popover')
+      expect(workspaceContainer).toContainElement(popover)
+      expect(popover).toHaveClass('w-[300px]')
+      expect(popover).not.toHaveClass('absolute', 'fixed')
+    } finally {
+      workspaceContainer.remove()
+    }
+  })
+
+  test('keeps environment info collapsed by default when the dock is unavailable', () => {
+    render(
+      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoDocked={false} />
+    )
+
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
+  test('uses the supplied overlay state when the dock becomes unavailable', () => {
+    const { rerender } = render(
+      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoOpen />
+    )
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    rerender(
+      <WorkspacePanelActions
+        {...baseProps}
+        mode="environment"
+        environmentInfoDocked={false}
+        environmentInfoOpen={false}
+      />
+    )
+
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
 
   test('opens local workspaces with the default VS Code titlebar action', async () => {

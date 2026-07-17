@@ -2,12 +2,14 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   buildPullRequestUrl,
   checkoutProjectBranch,
+  commitAndPushProjectChanges,
   commitProjectChanges,
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
   parseGitShortStat,
+  pushProjectChanges,
   removeGitWorktree,
   workspaceHasUncommittedChanges,
 } from './environment'
@@ -146,9 +148,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/projects/directmessage_single',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -214,9 +215,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -279,7 +279,7 @@ describe('loadProjectEnvironment', () => {
     })
     for (const commandKey of [
       'git_branch',
-      'git_diff_shortstat',
+      'git_branch_diff_shortstat',
       'git_status_porcelain',
       'git_remote_url',
     ]) {
@@ -341,6 +341,41 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('does not surface an error when the workspace is not a git repository', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 3,
+        name: 'plain-workspace',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/plain-workspace',
+          },
+        },
+      }
+    )
+
+    expect(info).toEqual({
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local',
+      deviceId: 'device-123',
+      workspacePath: '/workspace/plain-workspace',
+    })
+  })
+
   test('deduplicates repeated environment loads for the same project briefly', async () => {
     const executeCommand = vi
       .fn()
@@ -352,6 +387,26 @@ describe('loadProjectEnvironment', () => {
       .mockResolvedValueOnce({
         success: true,
         stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'human/narwhal-20260528-073440\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: ' 3 files changed, 13 insertions(+), 5 deletions(-)',
         stderr: '',
       })
       .mockResolvedValueOnce({
@@ -394,7 +449,7 @@ describe('loadProjectEnvironment', () => {
     const cachedInfo = await loadProjectEnvironment(api, project)
 
     expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
-    // 4 calls: git_branch, git_diff_shortstat, git_status_porcelain, git_remote_url
+    // 4 calls: git_branch, git_branch_diff_shortstat, git_status_porcelain, git_remote_url
     expect(executeCommand).toHaveBeenCalledTimes(4)
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch',
@@ -403,9 +458,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -421,6 +475,11 @@ describe('loadProjectEnvironment', () => {
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
+
+    const refreshedInfo = await loadProjectEnvironment(api, project, undefined, { force: true })
+
+    expect(refreshedInfo).toMatchObject({ additions: '+13', deletions: '-5' })
+    expect(executeCommand).toHaveBeenCalledTimes(8)
   })
 
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {
@@ -433,7 +492,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 1 insertion(+), 1 deletion(-)',
@@ -486,9 +545,8 @@ describe('loadProjectEnvironment', () => {
     expect(info.additions).toBe('+1')
     expect(info.deletions).toBe('-1')
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -504,7 +562,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 5 insertions(+), 2 deletions(-)',
@@ -570,7 +628,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: false,
           stdout: '',
@@ -642,7 +700,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: false,
           stdout: '',
@@ -728,7 +786,7 @@ describe('commitProjectChanges', () => {
     ).resolves.toBe('diff --git a/src/env.ts b/src/env.ts\n+new')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff',
+      command_key: 'git_branch_diff',
       path: '/workspace/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,
@@ -768,7 +826,7 @@ describe('commitProjectChanges', () => {
     ).resolves.toBe('')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff',
+      command_key: 'git_branch_diff',
       path: '/workspace/worktrees/1029/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,
@@ -862,8 +920,64 @@ describe('commitProjectChanges', () => {
     })
   })
 
-  test('rejects an empty commit message before calling the device', async () => {
-    const executeCommand = vi.fn()
+  test('generates a commit message before committing when the provided message is empty', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ success: true, stdout: 'diff --git a/src/env.ts b/src/env.ts\n' })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { success: true, message: 'feat: update environment info' },
+        stderr: '',
+      })
+      .mockResolvedValueOnce({ success: true, stdout: '[main abc123] update\n', stderr: '' })
+
+    await commitProjectChanges(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'device-123' },
+          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+        },
+      },
+      '   '
+    )
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
+      command_key: 'git_add_all',
+      path: '/workspace/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
+      command_key: 'git_diff_staged',
+      path: '/workspace/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'device-123', {
+      command_key: 'git_generate_commit_message',
+      path: '/workspace/Wegent',
+      timeout_seconds: 120,
+      max_output_bytes: 8192,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(4, 'device-123', {
+      command_key: 'git_commit',
+      path: '/workspace/Wegent',
+      args: ['-m', 'feat: update environment info'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+  })
+
+  test('does not ask AI for a message when staging leaves no changes', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
 
     await expect(
       commitProjectChanges(
@@ -877,11 +991,104 @@ describe('commitProjectChanges', () => {
             workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
           },
         },
-        '   '
+        ''
       )
-    ).rejects.toThrow('Commit message is required')
+    ).rejects.toThrow('No changes to commit')
 
-    expect(executeCommand).not.toHaveBeenCalled()
+    expect(executeCommand).toHaveBeenCalledTimes(2)
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      'device-123',
+      expect.objectContaining({ command_key: 'git_generate_commit_message' })
+    )
+  })
+
+  test('rejects invalid generated commit messages before running git commit', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ success: true, stdout: 'diff --git a/src/env.ts b/src/env.ts\n' })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { success: false, error: 'Codex auth is missing' },
+        stderr: '',
+      })
+
+    await expect(
+      commitProjectChanges(
+        { executeCommand },
+        {
+          id: 1,
+          name: 'Wegent',
+          config: {
+            mode: 'workspace',
+            execution: { targetType: 'local', deviceId: 'device-123' },
+            workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+          },
+        },
+        ''
+      )
+    ).rejects.toThrow('Codex auth is missing')
+
+    expect(executeCommand).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('pushProjectChanges', () => {
+  const project = {
+    id: 1,
+    name: 'Wegent',
+    config: {
+      mode: 'workspace',
+      execution: { targetType: 'local' as const, deviceId: 'device-123' },
+      workspace: { source: 'local_path' as const, localPath: '/workspace/Wegent' },
+    },
+  }
+
+  test('pushes the current branch through the project device command API', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: 'Everything up-to-date\n',
+      stderr: '',
+    })
+
+    await pushProjectChanges({ executeCommand }, project)
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_push',
+      path: '/workspace/Wegent',
+      timeout_seconds: 120,
+      max_output_bytes: 8192,
+    })
+  })
+
+  test('commits and then pushes changes', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ success: true, stdout: '[main abc123] update\n', stderr: '' })
+      .mockResolvedValueOnce({ success: true, stdout: 'pushed\n', stderr: '' })
+
+    await commitAndPushProjectChanges({ executeCommand }, project, 'feat: update environment info')
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
+      command_key: 'git_add_all',
+      path: '/workspace/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
+      command_key: 'git_commit',
+      path: '/workspace/Wegent',
+      args: ['-m', 'feat: update environment info'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'device-123', {
+      command_key: 'git_push',
+      path: '/workspace/Wegent',
+      timeout_seconds: 120,
+      max_output_bytes: 8192,
+    })
   })
 })
 

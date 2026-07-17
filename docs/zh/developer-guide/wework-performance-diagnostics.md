@@ -6,6 +6,18 @@ sidebar_position: 33
 
 Wework 内置一个默认关闭的前端性能诊断开关，用于定位 release 包中“运行一段时间后变卡”的问题。诊断代码只在显式开启后运行；关闭时不会安装 React Profiler，也不会采集定时样本。
 
+## 多实例调试
+
+使用 `pnpm --filter wework dev:mac` 启动 debug 应用时，每个 Wework 进程都会使用独立的本地 executor runtime 目录和 IPC 地址文件。可以同时启动多个调试窗口，不同窗口不会连接到同一个 executor 实例。
+
+开发环境默认让这些实例复用同一个 Cargo target 目录，以便 executor 源码变化后继续使用增量编译产物。需要排查共享构建缓存问题时，可以设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`，让当前启动过程使用项目内的默认 target 目录。
+
+## 启动耗时诊断
+
+桌面端的启动页只等待本地 executor 报告 ready；debug 构建不会为了播放完整动画而延迟工作台。冷启动时，Tauri 会先清理旧 executor 和 IPC 地址文件，然后直接启动新的 sidecar。只有运行中的连接断开并进入重连路径时，才会尝试连接已有 sidecar。
+
+排查启动页长时间不消失时，对齐前端日志的 `Frontend logging initialized` 与 executor 日志的 `app IPC listening`。两者之间的时间主要反映本地 executor 冷启动；`runtime work list finished` 等后续记录用于判断工作台数据加载耗时。不要把后台云端同步的超时误判为本地启动门控。
+
 ## 开启方式
 
 在 Wework 窗口中按隐藏快捷键：
@@ -37,9 +49,28 @@ Developer Commands 菜单中的 **Debug Panel** 用于排查 Wework 当前运行
 
 Debug 面板可以展开、收起、刷新、复制快照和清空日志。收起后只保留右下角状态条，避免遮挡主界面。
 
+### Runtime 内存快照
+
+Debug 面板的快照会附带当前 runtime pane 的轻量内存摘要，用于定位 WebView 或 executor 内存异常：
+
+- 消息数量、角色分布、状态分布和正文长度汇总。
+- processing block 数量、类型分布和工具输出长度汇总。
+- 队列消息、guidance 消息、代码评论上下文和 transcript 范围状态。
+- 当前 runtime task 在 work list 中的 `running` 原始值，以及由 pane 推导出的运行状态。
+
+快照只记录摘要，不会把完整命令输出、原始 Codex 事件或完整 transcript 内容复制到 Debug 面板。需要排查原始内容时应查看 executor 日志或 Web Inspector 采样，而不是通过前端快照搬运大文本。
+
+## Runtime transcript 与列表载荷
+
+为降低前端和 executor 的内存压力，runtime task 列表、runtime handle 摘要和 transcript 响应只保留 UI 必需字段。命令输出、streaming delta、cached message、原始请求/响应等大块原始载荷不会放进 runtime work list 发送给前端。
+
+前端显示对话时仍以 transcript/message action 生成的 `WorkbenchMessage` 为准；任务列表和状态轮询只用于状态、标题、运行态和 workspace 信息。排查“列表很慢”或“切换任务内存上涨”时，应优先确认是否又把原始消息或命令输出加入了 runtime list/handle/transcript 元数据路径。
+
 ## 本地 Codex 流式日志
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。
+
+Developer Commands 菜单中的 **Enable Stream Logs** / **Disable Stream Logs** 会同时切换前端本地 chat stream 日志和 Codex executor stream 日志。优先使用这个菜单项做现场排查；它会让前端 `console.debug` 中的 stream 订阅/事件日志与 executor 的 Codex stream 详情保持同一个开关状态。
 
 为避免 debug 包在长回复或高频 token 输出时产生过多日志，runtime work 内部的 cache/emit mapping 日志默认关闭。这类日志会为同一个 delta 额外记录缓存和 UI 事件分发路径，只有排查本地 runtime work 路由时才需要打开。
 
@@ -50,6 +81,22 @@ WEGENT_CODEX_STREAM_DEBUG=0          # 关闭 Codex 原始 delta / 分类详情
 WEGENT_CODEX_STREAM_DEBUG=1          # 开启 Codex 原始 delta / 分类详情（默认）
 WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # 开启 runtime work cache/emit mapping 详情
 ```
+
+## 流式消息渲染
+
+Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离。消息状态仍实时接收并保持完整内容，`AssistantMarkdown` 使用轻量缓冲器在浏览器帧上逐步推进可见文本：积压较多时自适应加速，接近队尾时保留少量字符并缓慢释放，以平滑 executor 批量发送和短暂空档造成的视觉顿挫。流结束、内容被替换或发生非追加更新时会立即对齐完整文本，不会影响最终消息正确性。
+
+流式消息不执行 Pretext 全文高度测量，而是使用稳定的离屏占位高度；消息完成后再精确测量并缓存。已完成消息优先按消息对象和宽度命中高度缓存，避免每次流式更新都重新计算历史消息全文 hash。Composer、Workspace 操作栏、右侧工作区和底部终端也使用稳定属性与 memo 边界，避免随每个文本增量重复渲染。
+
+拖动底部终端面板调整高度时，高度更新按浏览器动画帧合并，并在拖动期间关闭高度过渡，避免高频指针事件触发过量 React 更新和终端重排。松开指针时必须提交最终高度，并恢复面板打开、关闭所需的过渡效果。
+
+排查流式卡顿时应区分以下情况：
+
+- 帧率稳定但输出一阵快、一阵慢：检查 stream `message` 事件间隔，通常是 executor 增量批量到达或存在网络/IPC 空档。
+- 存在长帧、密集样式重算或 Markdown 解析：检查是否绕过了文本缓冲、破坏了 Streamdown 组件引用稳定性，或重新引入了逐字符 DOM 动画。
+- GC 时间异常高：确认 Web Inspector 是否开启 **Heap Allocations**。该采集项会显著放大长时间录制中的 GC；只排查交互流畅度时应关闭它。
+
+流式文本缓冲的单元测试位于 `wework/src/components/chat/useBufferedStreamingText.test.ts`。修改缓冲水位或推进速率时，应同时验证 Unicode 字符边界、非追加更新和流结束立即对齐行为。
 
 ## 采集内容
 
@@ -89,9 +136,13 @@ Web Inspector 打开后，在卡顿后执行：
 window.__WEWORK_PERF__.snapshot();
 ```
 
-返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量和最近事件。需要持续观察时可以多次执行，重点比较：
+返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 WebKit XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
+
+进程组同时提供 `rss_kib` 和 `physical_footprint_kib`：RSS 包含共享映射和可回收驻留页，通常明显高于真实内存压力；判断泄漏或系统资源占用时应优先比较 `physical_footprint_kib`，RSS 只作为地址空间驻留的辅助指标。需要持续观察时可以多次执行，重点比较：
 
 - `memory.usedJSHeapSize` 是否持续上涨。
+- `processMemory.groups[].physical_footprint_kib` 是否在任务结束并冷却后仍持续上涨。
+- 增长来自 `webkit-webcontent`、`codex-app-server`、`executor` 还是 `main`。
 - `domNodeCount` 是否持续上涨。
 - 是否存在密集 `longtask` 或 `event-loop-lag`。
 - 是否存在重复的 `slow-react-commit`。

@@ -7,7 +7,6 @@ export const LOCAL_EXECUTOR_COMMANDS = {
   status: 'local_executor_status',
   readLog: 'local_executor_read_log',
   request: 'local_executor_request',
-  restart: 'local_executor_restart',
   connectBackend: 'local_executor_connect_backend',
   disconnectBackend: 'local_executor_disconnect_backend',
 } as const
@@ -18,6 +17,7 @@ export interface LocalExecutorStatus {
   running: boolean
   ready?: boolean
   deviceId?: string
+  runtimeInstanceId?: string
   version?: string
   error?: string
 }
@@ -77,10 +77,6 @@ export function readLocalExecutorLog(): Promise<LocalExecutorLog> {
 
 export function copyLocalExecutorDebugInfo(text: string): Promise<void> {
   return invoke<void>(LOCAL_EXECUTOR_COMMANDS.copyDebugInfo, { text })
-}
-
-export function restartLocalExecutor(): Promise<LocalExecutorStatus> {
-  return invoke<LocalExecutorStatus>(LOCAL_EXECUTOR_COMMANDS.restart)
 }
 
 export function connectLocalExecutorToBackend(

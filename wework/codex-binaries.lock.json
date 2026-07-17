@@ -1,0 +1,41 @@
+{
+  "codexVersion": "0.144.5",
+  "registry": "https://registry.npmjs.org",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "package": "@openai/codex",
+      "version": "0.144.5-darwin-arm64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-darwin-arm64.tgz",
+      "integrity": "sha512-zcT6NfBCqLFt+BReNSETTZW6v6PdbH0dzNtm9j7l7mDGqwPbKZDGJdnpkBao2389I0ZacyIKgSZoI0vez1d4Dw==",
+      "binaryPath": "vendor/aarch64-apple-darwin/bin/codex"
+    },
+    "x86_64-apple-darwin": {
+      "package": "@openai/codex",
+      "version": "0.144.5-darwin-x64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-darwin-x64.tgz",
+      "integrity": "sha512-//Mo0m1MwaoT6psu5xsmofXpKx4/0irIkeq10xJvk59+886EG355ibjA+ZmlRcKhE3bLjsKD7p81nTbAdRL/bw==",
+      "binaryPath": "vendor/x86_64-apple-darwin/bin/codex"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "package": "@openai/codex",
+      "version": "0.144.5-linux-x64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-linux-x64.tgz",
+      "integrity": "sha512-FalLJlBQGFdK8Gc3kj9sa/ekNdgkHhUawLaKkvy5CtB18JaP2YxtTP/Pe1pD2iBiq8mMUliRnafpF6AdBdQMbg==",
+      "binaryPath": "vendor/x86_64-unknown-linux-musl/bin/codex"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "package": "@openai/codex",
+      "version": "0.144.5-linux-arm64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-linux-arm64.tgz",
+      "integrity": "sha512-zAHggxVwR2TBxKmybXY7ZMiB0G8DMonY2YPdwNNjwXcf+LOIqNGgswwNCDMbP/HEe6r8j+R9ZX/yYoo8f+n/RQ==",
+      "binaryPath": "vendor/aarch64-unknown-linux-musl/bin/codex"
+    },
+    "x86_64-pc-windows-msvc": {
+      "package": "@openai/codex",
+      "version": "0.144.5-win32-x64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.144.5-win32-x64.tgz",
+      "integrity": "sha512-DnsSTlnnzleTxvLwIGnBitKInscxn2I7qASqosS8Fv+qysBygd+ZiBn/SQsRCgQ28PAlsNzmd3Gf3ZTecolAmg==",
+      "binaryPath": "vendor/x86_64-pc-windows-msvc/bin/codex.exe"
+    }
+  }
+}

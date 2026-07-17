@@ -14,11 +14,19 @@ import {
   getTerminalTheme,
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
+import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { createXtermWebLinksAddon } from './xtermLinks'
+import { installXtermSelectionGuard } from './xtermSelectionGuard'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
   active: boolean
+  taskId?: string | null
+  workspacePath?: string | null
+  cwd?: string | null
+  title?: string | null
   onExit?: () => void
   onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
@@ -27,21 +35,49 @@ interface EmbeddedLocalTerminalProps {
 export function EmbeddedLocalTerminal({
   sessionId,
   active,
+  taskId,
+  workspacePath,
+  cwd,
+  title,
   onExit,
   onTitleChange,
   testIdsEnabled = true,
 }: EmbeddedLocalTerminalProps) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const activeRef = useRef(active)
+  const contextRef = useRef({ taskId, workspacePath, cwd, title })
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
+  const appearanceRef = useRef(appearance)
+
+  useEffect(() => {
+    appearanceRef.current = appearance
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal) return
+
+    terminal.options.fontFamily = appearance.codeFont
+    terminal.options.fontSize = appearance.codeFontSize
+    requestAnimationFrame(() => {
+      try {
+        fitAddon?.fit()
+      } catch (error) {
+        console.error('Failed to resize local terminal after typography change:', error)
+      }
+    })
+  }, [appearance])
 
   useEffect(() => {
     activeRef.current = active
   }, [active])
+
+  useEffect(() => {
+    contextRef.current = { taskId, workspacePath, cwd, title }
+  }, [cwd, taskId, title, workspacePath])
 
   useEffect(() => {
     onExitRef.current = onExit
@@ -55,16 +91,18 @@ export function EmbeddedLocalTerminal({
     const container = containerRef.current
     if (!container) return
 
+    const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      fontSize: 13,
+      fontFamily: terminalAppearance.codeFont,
+      fontSize: terminalAppearance.codeFontSize,
       lineHeight: 1.2,
       scrollback: 2000,
       theme: getTerminalTheme(),
     })
     const fitAddon = new FitAddon()
+    const webLinksAddon = createXtermWebLinksAddon()
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
@@ -80,7 +118,9 @@ export function EmbeddedLocalTerminal({
     const unlisteners: Array<() => void> = []
 
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(webLinksAddon)
     terminal.open(container)
+    const selectionGuard = installXtermSelectionGuard({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -122,6 +162,16 @@ export function EmbeddedLocalTerminal({
 
     void listenLocalTerminalOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
+        const context = contextRef.current
+        appendRuntimeTerminalContext({
+          sessionId,
+          taskId: context.taskId,
+          workspacePath: context.workspacePath,
+          cwd: context.cwd,
+          title: context.title,
+          kind: 'local',
+          data: payload.data,
+        })
         terminal.write(payload.data)
         scheduleThemeSync()
       }
@@ -151,6 +201,7 @@ export function EmbeddedLocalTerminal({
       resizeObserver.disconnect()
       dataDisposable.dispose()
       titleDisposable.dispose()
+      selectionGuard.dispose()
       inputFallback.dispose()
       unlisteners.forEach(unlisten => unlisten())
       terminal.dispose()

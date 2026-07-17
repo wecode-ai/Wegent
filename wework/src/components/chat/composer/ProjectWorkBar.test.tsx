@@ -292,9 +292,96 @@ describe('ProjectWorkBar', () => {
       />
     )
 
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
     expect(screen.queryByTestId('execution-mode-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-work-remote-status')).not.toBeInTheDocument()
+  })
+
+  test('keeps project changing and project clearing as separate desktop actions', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={onSelectStandaloneDevice}
+        onExecutionModeChange={vi.fn()}
+      />
+    )
+
+    const projectTrigger = screen.getByTestId('project-work-button')
+    expect(projectTrigger).toHaveTextContent('Wegent')
+    expect(projectTrigger).toHaveAttribute('title', '更改项目')
+    expect(projectTrigger.querySelector('.lucide-chevron-down')).not.toBeInTheDocument()
+    expect(screen.getByTestId('clear-project-button')).toHaveAccessibleName('不使用项目')
+
+    await userEvent.click(screen.getByTestId('clear-project-button'))
+
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('local-device')
+  })
+
+  test('opens the project chooser when the external open signal changes', () => {
+    const props = {
+      projects: [project],
+      devices: [localDevice],
+      currentProject: project,
+      currentProjectId: project.id,
+      currentStandaloneDeviceId: null,
+      executionMode: 'current_workspace' as const,
+      onSelectProject: vi.fn(),
+      onSelectStandaloneDevice: vi.fn(),
+      onExecutionModeChange: vi.fn(),
+    }
+    const { rerender } = render(<ProjectWorkBar {...props} projectMenuOpenSignal={0} />)
+
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+
+    rerender(<ProjectWorkBar {...props} projectMenuOpenSignal={1} />)
+
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
+  })
+
+  test('positions an externally opened project chooser next to its title anchor', async () => {
+    const titleAnchor = document.createElement('button')
+    vi.spyOn(titleAnchor, 'getBoundingClientRect').mockReturnValue({
+      x: 400,
+      y: 180,
+      top: 180,
+      right: 520,
+      bottom: 212,
+      left: 400,
+      width: 120,
+      height: 32,
+      toJSON: () => ({}),
+    })
+    const props = {
+      projects: [project],
+      devices: [localDevice],
+      currentProject: project,
+      currentProjectId: project.id,
+      currentStandaloneDeviceId: null,
+      executionMode: 'current_workspace' as const,
+      onSelectProject: vi.fn(),
+      onSelectStandaloneDevice: vi.fn(),
+      onExecutionModeChange: vi.fn(),
+      projectMenuAnchorElement: titleAnchor,
+    }
+    const { rerender } = render(<ProjectWorkBar {...props} projectMenuOpenSignal={0} />)
+
+    rerender(<ProjectWorkBar {...props} projectMenuOpenSignal={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-work-menu')).toHaveClass('fixed')
+      expect(screen.getByTestId('project-work-menu')).toHaveStyle({
+        top: '220px',
+        left: '300px',
+      })
+    })
   })
 
   test('resolves the selected workspace within the current project before showing remote state', () => {
@@ -323,8 +410,35 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('project-work-button')).toHaveTextContent('Notes')
-    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.queryByTestId('execution-mode-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('project-work-remote-status')).not.toBeInTheDocument()
+  })
+
+  test('hides execution and branch controls for a non-Git remote project', () => {
+    render(
+      <ProjectWorkBar
+        projects={[nonGitProject]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProject={nonGitProject}
+        currentProjectId={nonGitProject.id}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={201}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-work-remote-status')).toHaveTextContent('10.201.3.200')
+    expect(screen.queryByTestId('execution-mode-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
   })
 
   test('selects the local device when choosing no project', async () => {
@@ -493,15 +607,15 @@ describe('ProjectWorkBar', () => {
     expect(onBindProjectWorkspace).not.toHaveBeenCalled()
   })
 
-  test('shows worktree controls for local workspaces even when current branch is empty', async () => {
+  test('shows worktree controls for Git workspaces even when current branch is empty', async () => {
     const user = userEvent.setup()
 
     render(
       <ProjectWorkBar
-        projects={[nonGitProject]}
+        projects={[project]}
         devices={[device]}
-        currentProject={nonGitProject}
-        currentProjectId={nonGitProject.id}
+        currentProject={project}
+        currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="current_workspace"
         onSelectProject={vi.fn()}
@@ -528,10 +642,10 @@ describe('ProjectWorkBar', () => {
 
     render(
       <ProjectWorkBar
-        projects={[nonGitProject]}
+        projects={[project]}
         devices={[device]}
-        currentProject={nonGitProject}
-        currentProjectId={nonGitProject.id}
+        currentProject={project}
+        currentProjectId={project.id}
         currentStandaloneDeviceId={null}
         executionMode="git_worktree"
         onSelectProject={vi.fn()}
@@ -552,7 +666,7 @@ describe('ProjectWorkBar', () => {
     expect(onExecutionModeChange).not.toHaveBeenCalled()
   })
 
-  test('does not show a branch selector in local execution mode', () => {
+  test('shows a branch selector in local execution mode', () => {
     render(
       <ProjectWorkBar
         projects={[project]}
@@ -574,8 +688,98 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
-    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
     expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
+  })
+
+  test('checks out a selected branch in local execution mode', async () => {
+    const onListBranches = vi.fn().mockResolvedValue(['main', 'develop'])
+    const onCheckoutBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={onListBranches}
+        onCheckoutBranch={onCheckoutBranch}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+
+    const menu = await screen.findByTestId('project-branch-menu')
+    await waitFor(() => expect(onListBranches).toHaveBeenCalledTimes(1))
+    await userEvent.click(within(menu).getByText('develop'))
+
+    expect(onCheckoutBranch).toHaveBeenCalledWith('develop')
+  })
+
+  test('does not checkout again when selecting the current local branch', async () => {
+    const onCheckoutBranch = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main', 'develop'])}
+        onCheckoutBranch={onCheckoutBranch}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    const menu = await screen.findByTestId('project-branch-menu')
+    await userEvent.click(within(menu).getByText('main'))
+
+    expect(onCheckoutBranch).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByTestId('project-branch-menu')).not.toBeInTheDocument())
+  })
+
+  test('creates and checks out a new branch in local execution mode', async () => {
+    const onCreateBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+        onCreateBranch={onCreateBranch}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    await userEvent.click(await screen.findByTestId('project-open-new-branch-button'))
+    await userEvent.type(screen.getByTestId('project-new-branch-input'), 'feature/local')
+    await userEvent.click(screen.getByTestId('project-confirm-new-branch-button'))
+
+    expect(onCreateBranch).toHaveBeenCalledWith('feature/local')
   })
 
   test('does not invent a worktree branch when the current branch is unavailable', async () => {
@@ -768,6 +972,7 @@ describe('ProjectWorkBar', () => {
         devices={[localDevice]}
         runtimeWork={runtimeLocalWork}
         currentProjectId={projectId}
+        isGitProject
         currentStandaloneDeviceId={null}
         selectedDeviceWorkspaceId={null}
         executionMode="current_workspace"

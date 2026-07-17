@@ -136,6 +136,23 @@ describe('AuthGuard', () => {
       })
     })
 
+    it('should allow access to Wework authorization without authentication', async () => {
+      ;(usePathname as jest.Mock).mockReturnValue(paths.auth.wework_authorize.getHref())
+      ;(userApis.isAuthenticated as jest.Mock).mockReturnValue(false)
+
+      const { getByText } = render(
+        <AuthGuard>
+          <div>Wework Authorization</div>
+        </AuthGuard>
+      )
+
+      await waitFor(() => {
+        expect(userApis.isAuthenticated).not.toHaveBeenCalled()
+        expect(mockRouter.replace).not.toHaveBeenCalled()
+        expect(getByText('Wework Authorization')).toBeInTheDocument()
+      })
+    })
+
     it('should allow access to shared task page without authentication', async () => {
       // Arrange
       ;(usePathname as jest.Mock).mockReturnValue('/shared/task')

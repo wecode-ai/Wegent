@@ -7,6 +7,8 @@ WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 TARGET="local"
 VERSION_OVERRIDE=""
@@ -52,7 +54,7 @@ Environment overrides:
   TAURI_SIGNING_PRIVATE_KEY_PATH, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, TAURI_UPDATER_PUBKEY,
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
-  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS
+  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, VITE_WEGENT_BACKEND_URL
 EOF
 }
 
@@ -590,6 +592,7 @@ elif [ "$TARGET" = "local" ]; then
 fi
 echo "VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"
@@ -601,6 +604,13 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
   TAURI_BUILD_ARGS+=(--features release-devtools)
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
+WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+if [ -n "$app_sign_identity" ]; then
+  wework_sign_prepared_codex_macos_binaries \
+    "$WEWORK_DIR" \
+    "$MACOS_BUILD_TARGET" \
+    "$app_sign_identity"
+fi
 pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
 
 archive_path="$(find_update_archive)"

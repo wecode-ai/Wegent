@@ -2,7 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
 from fastapi.testclient import TestClient
+
+from app.core.config import settings
+
+
+@pytest.fixture(autouse=True)
+def configure_internal_chat_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    test_client: TestClient,
+) -> None:
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+    test_client.headers["Authorization"] = "Bearer test-internal-token"
 
 
 def test_internal_chat_sessions_invalid_offset_negative(test_client: TestClient):

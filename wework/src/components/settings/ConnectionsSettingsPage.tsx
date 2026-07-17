@@ -1,17 +1,17 @@
 import {
+  AppWindow,
   Archive,
   ArrowLeft,
   Palette,
-  BookOpen,
   Check,
   Cloud,
   Code2,
   Copy,
-  ExternalLink,
-  GitBranch,
+  FolderGit2,
   Globe2,
   Info,
   Keyboard,
+  MessageSquareText,
   Loader2,
   LogOut,
   Monitor,
@@ -22,6 +22,8 @@ import {
   Plus,
   RotateCcw,
   Server,
+  ScanLine,
+  SlidersHorizontal,
   Terminal,
   Trash2,
   UserRound,
@@ -29,18 +31,18 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { createModelApi } from '@/api/models'
-import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
@@ -50,29 +52,42 @@ import {
   isRemoteDevice,
   supportsCloudLifecycleActions,
   supportsCloudSessions,
-  supportsDeviceMetrics,
-  supportsLocalTerminalLaunch,
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
-import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
-import type { UnifiedModel } from '@/types/api'
-import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
-import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
-import { SkillSettingsPage } from './SkillSettingsPage'
+import { PluginSettingsPage } from './PluginSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
+import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { ContextSettingsPage } from './ContextSettingsPage'
+import { AboutSettingsPage } from './AboutSettingsPage'
+import { BrowserSettingsPage } from './BrowserSettingsPage'
+import { AppshotsSettingsPage } from './AppshotsSettingsPage'
+import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import {
+  createSettingsDeviceApi,
+  createSettingsModelApi,
+  type CloudSettingsConnection,
+} from './settings-cloud-api'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
   autoOpenAddCloudDeviceDialog?: boolean
+  services?: WorkbenchServices
+  devices?: RuntimeDeviceInfo[]
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onRefreshWorkLists?: () => Promise<void>
 }
 
-type SettingsCategory = 'personal' | 'coding' | 'archived'
+type SettingsCategory = 'personal' | 'integrations' | 'coding' | 'archived'
 
 interface SettingsNavItem {
   key: string
@@ -84,22 +99,38 @@ interface SettingsNavItem {
 
 const settingsNavItems: SettingsNavItem[] = [
   {
+    key: 'general',
+    icon: SlidersHorizontal,
+    label: 'settings_nav_general',
+    fallback: '通用',
+    category: 'personal',
+  },
+  {
     key: 'connections',
     icon: Globe2,
     label: 'settings_nav_connections',
-    fallback: '云端设置',
+    fallback: '云端连接',
+    category: 'personal',
   },
   {
     key: 'appearance',
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+    category: 'personal',
+  },
+  {
+    key: 'context',
+    icon: Terminal,
+    label: 'settings_nav_context',
+    fallback: '上下文',
+    category: 'personal',
   },
   {
     key: 'model-settings',
     icon: UserRound,
     label: 'settings_nav_model_settings',
-    fallback: '模型设置',
+    fallback: '模型',
     category: 'personal',
   },
   {
@@ -113,19 +144,47 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'keyboard-shortcuts',
     icon: Keyboard,
     label: 'settings_nav_keyboard_shortcuts',
-    fallback: '键盘快捷键',
+    fallback: '快捷键',
     category: 'personal',
   },
   {
-    key: 'skills',
+    key: 'quick-phrases',
+    icon: MessageSquareText,
+    label: 'settings_nav_quick_phrases',
+    fallback: '快捷短语',
+    category: 'personal',
+  },
+  {
+    key: 'about',
+    icon: Info,
+    label: 'settings_nav_about',
+    fallback: '关于',
+    category: 'personal',
+  },
+  {
+    key: 'appshots',
+    icon: ScanLine,
+    label: 'settings_nav_appshots',
+    fallback: '应用快照',
+    category: 'integrations',
+  },
+  {
+    key: 'plugins',
     icon: Package,
-    label: 'settings_nav_skills',
-    fallback: '技能',
-    category: 'coding',
+    label: 'settings_nav_plugins',
+    fallback: '插件',
+    category: 'integrations',
+  },
+  {
+    key: 'browser',
+    icon: AppWindow,
+    label: 'settings_nav_browser',
+    fallback: '浏览器',
+    category: 'integrations',
   },
   {
     key: 'worktrees',
-    icon: GitBranch,
+    icon: FolderGit2,
     label: 'settings_nav_worktrees',
     fallback: '工作树',
     category: 'coding',
@@ -144,6 +203,10 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
     label: 'settings_category_personal',
     fallback: '个人',
   },
+  integrations: {
+    label: 'settings_category_integrations',
+    fallback: '集成',
+  },
   coding: {
     label: 'settings_category_coding',
     fallback: '编码',
@@ -156,19 +219,23 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
 
 function getSettingsNavFromPath(path: string): string {
   const normalizedPath = stripAppBasePath(path)
+  if (normalizedPath === '/settings') return 'general'
   if (normalizedPath === '/settings/personal') return 'model-settings'
   const matchedItem = settingsNavItems.find(item => getSettingsNavPath(item.key) === normalizedPath)
   if (matchedItem) return matchedItem.key
   const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
-  if (!match) return 'connections'
-  return settingsNavItems.some(item => item.key === match[1]) ? match[1] : 'connections'
+  if (!match) return 'general'
+  return settingsNavItems.some(item => item.key === match[1]) ? match[1] : 'general'
 }
 
 function getSettingsNavPath(key: string): string {
+  if (key === 'context') return '/settings/personal/context'
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
-  return key === 'connections' ? '/settings' : `/settings/${key}`
+  if (key === 'quick-phrases') return '/settings/personal/quick-phrases'
+  if (key === 'general') return '/settings'
+  return `/settings/${key}`
 }
 
 function StatusPill({ status }: { status: DeviceInfo['status'] }) {
@@ -176,7 +243,7 @@ function StatusPill({ status }: { status: DeviceInfo['status'] }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] ${
+      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs ${
         isOnline ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
       }`}
     >
@@ -244,38 +311,6 @@ function DeviceIconActionButton({
   )
 }
 
-interface CloudSettingsConnection {
-  isConnected: boolean
-  apiBaseUrl?: string
-  token: string | null
-}
-
-function createSettingsDeviceApi(connection: CloudSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createDeviceApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
-  )
-}
-
-function createSettingsModelApi(connection: CloudSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createModelApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
-  )
-}
-
 function cloudHostLabel(value?: string | null): string {
   if (!value) return '-'
   try {
@@ -293,53 +328,18 @@ function modelMeta(model: UnifiedModel): string {
   return [model.provider, model.runtime?.family, model.type].filter(Boolean).join(' · ')
 }
 
-function formatMetricPercent(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '--%'
-  if (value < 1) return '<1%'
-  return `${Math.round(value)}%`
-}
+function deviceDisplayName(device: DeviceInfo): string {
+  const name = device.name?.trim()
+  const defaultNames = [
+    device.device_id,
+    device.cloud_config?.deviceName,
+    device.remote_config?.deviceName,
+  ]
+    .map(value => value?.trim())
+    .filter(Boolean)
 
-function DeviceMetrics({ deviceId }: { deviceId: string }) {
-  const cloudConnection = useOptionalCloudConnection()
-  const [metrics, setMetrics] = useState<CloudDeviceMetricsResponse | null>(null)
-
-  useEffect(() => {
-    if (!cloudConnection.isConnected) return
-    let cancelled = false
-
-    createSettingsDeviceApi(cloudConnection)
-      .getMetrics(deviceId)
-      .then(data => {
-        if (!cancelled) setMetrics(data)
-      })
-      .catch(() => {
-        if (!cancelled) setMetrics(null)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cloudConnection, deviceId])
-
-  return (
-    <div
-      data-testid="device-metrics"
-      className="flex flex-wrap items-center gap-3 text-xs text-text-secondary"
-    >
-      <span className="inline-flex items-center gap-1">
-        <span>CPU</span>
-        <span>{formatMetricPercent(metrics?.cpu_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>MEM</span>
-        <span>{formatMetricPercent(metrics?.memory_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>磁盘</span>
-        <span>{formatMetricPercent(metrics?.disk_usage)}</span>
-      </span>
-    </div>
-  )
+  if (name && !defaultNames.includes(name)) return name
+  return device.client_ip?.trim() || name || device.device_id
 }
 
 function VncDesktopButton({ deviceId }: { deviceId: string }) {
@@ -388,6 +388,7 @@ function ConfirmDeviceActionDialog({
   const isDelete = action === 'delete'
   const isCloud = isCloudDevice(device)
   const isRemote = isRemoteDevice(device)
+  const displayName = deviceDisplayName(device)
   const Icon = isDelete ? Trash2 : RotateCcw
   const title = isDelete
     ? isCloud
@@ -398,11 +399,11 @@ function ConfirmDeviceActionDialog({
     : '重启云设备'
   const description = isDelete
     ? isCloud
-      ? `将删除 ${device.name}，相关云设备资源会被释放。`
+      ? `将删除 ${displayName}，相关云设备资源会被释放。`
       : isRemote
-        ? `将删除 ${device.name} 的远程设备注册记录。Docker 容器需要你自行停止或删除。`
-        : `将删除 ${device.name} 的本地设备注册记录。设备重新连接后会自动重新注册。`
-    : `将重启 ${device.name}，设备会短暂离线，进行中的连接可能中断。`
+        ? `将删除 ${displayName} 的远程设备注册记录。Docker 容器需要你自行停止或删除。`
+        : `将删除 ${displayName} 的设备注册记录。`
+    : `将重启 ${displayName}，设备会短暂离线，进行中的连接可能中断。`
   const confirmLabel = isDelete ? '确认删除' : '确认重启'
   const dialogTestId = isDelete ? 'confirm-delete-device-dialog' : 'confirm-restart-device-dialog'
   const confirmTestId = isDelete ? 'confirm-delete-device-button' : 'confirm-restart-device-button'
@@ -542,7 +543,7 @@ function CloudDeviceConnectionInfoDialog({
           {rows.map(row => (
             <div
               key={row.key}
-              className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
+              className="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-2"
             >
               <div className="w-20 shrink-0 text-xs text-text-secondary">{row.label}</div>
               <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
@@ -592,7 +593,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [saving, setSaving] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [localExecutorDeviceId, setLocalExecutorDeviceId] = useState<string | null>(null)
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
@@ -604,11 +604,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     if (device.status !== 'online') return
     setSessionLoading('terminal')
     try {
-      if (supportsLocalTerminalLaunch(device)) {
-        await createSettingsDeviceApi(cloudConnection).openLocalTerminal(device.device_id)
-        return
-      }
-
       const result = await createSettingsDeviceApi(cloudConnection).startTerminal(device.device_id)
       if (result.url) {
         await openExternalUrl(result.url)
@@ -621,32 +616,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       setSessionLoading(null)
     }
   }, [cloudConnection, device])
-
-  useEffect(() => {
-    if (!supportsLocalTerminalLaunch(device) || !isLocalTerminalAvailable()) {
-      return
-    }
-
-    let cancelled = false
-    if (!cloudConnection.apiBaseUrl) {
-      return
-    }
-    getLocalExecutorDeviceId(cloudConnection.apiBaseUrl)
-      .then(deviceId => {
-        if (!cancelled) {
-          setLocalExecutorDeviceId(deviceId)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLocalExecutorDeviceId(null)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cloudConnection.apiBaseUrl, device])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
@@ -754,25 +723,19 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   }
 
   const isOnline = device.status === 'online'
-  const isCloud = isCloudDevice(device)
   const isRemote = isRemoteDevice(device)
-  const canLaunchLocalTerminal =
-    supportsLocalTerminalLaunch(device) &&
-    isLocalTerminalAvailable() &&
-    isCurrentAppDevice(device, [localExecutorDeviceId])
+  const displayName = deviceDisplayName(device)
   const canUseCloudSessions = supportsCloudSessions(device)
   const canUseRemoteSessions = supportsRemoteSessions(device)
   const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
-  const canUseTerminal = canUseDeviceSessions || canLaunchLocalTerminal
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
-  const canDeleteOfflineLocalDevice = !isCloud && !isRemote && device.status === 'offline'
   const canDeleteOfflineRemoteDevice = isRemote && device.status === 'offline'
 
   return (
     <>
       <div
         data-testid={`connection-device-${device.device_id}`}
-        className="rounded-lg border border-border bg-surface p-3"
+        className="rounded-lg border border-border bg-background p-3"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2">
@@ -784,6 +747,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
                   onKeyDown={e => {
+                    if (isImeEnterEvent(e)) return
                     if (e.key === 'Enter') handleSaveEdit()
                     if (e.key === 'Escape') handleCancelEdit()
                   }}
@@ -813,7 +777,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   onClick={handleStartEdit}
                   title="点击修改名称"
                 >
-                  {device.name}
+                  {displayName}
                 </h3>
                 <button
                   type="button"
@@ -831,7 +795,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           </div>
 
           <div className="flex shrink-0 gap-2">
-            {canUseTerminal && (
+            {canUseDeviceSessions && (
               <DeviceActionButton
                 testId={`connection-terminal-button-${device.device_id}`}
                 icon={Terminal}
@@ -897,15 +861,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 )}
               </div>
             )}
-            {canDeleteOfflineLocalDevice && (
-              <DeviceIconActionButton
-                testId={`connection-delete-button-${device.device_id}`}
-                icon={Trash2}
-                label="删除设备"
-                onClick={() => setConfirmAction('delete')}
-                disabled={deleting}
-              />
-            )}
             {canDeleteOfflineRemoteDevice && (
               <DeviceIconActionButton
                 testId={`connection-delete-button-${device.device_id}`}
@@ -917,8 +872,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             )}
           </div>
         </div>
-
-        {supportsDeviceMetrics(device) && <DeviceMetrics deviceId={device.device_id} />}
       </div>
 
       {terminalSession && (
@@ -929,7 +882,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
             <div className="flex min-w-0 items-center gap-2">
               <Terminal className="h-4 w-4 shrink-0 text-text-secondary" />
-              <span className="truncate text-sm font-medium text-text-primary">{device.name}</span>
+              <span className="truncate text-sm font-medium text-text-primary">{displayName}</span>
               {terminalSession.path && (
                 <span className="truncate text-xs text-text-muted">{terminalSession.path}</span>
               )}
@@ -974,17 +927,12 @@ function DeviceSection({
   devices,
   onChanged,
   icon: Icon,
-  showScaleWiki = false,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
   icon: ComponentType<{ className?: string }>
-  showScaleWiki?: boolean
 }) {
-  const { t } = useTranslation('common')
-  const scaleWikiUrl = getRuntimeConfig().cloudDeviceScalingWikiUrl
-
   return (
     <section className="space-y-2.5">
       <div className="flex items-center justify-between">
@@ -998,39 +946,6 @@ function DeviceSection({
         {devices.map(device => (
           <DeviceCard key={device.device_id} device={device} onChanged={onChanged} />
         ))}
-        {showScaleWiki && (
-          <div
-            data-testid="connection-scale-wiki"
-            className="rounded-lg border border-border bg-surface px-4 py-3"
-          >
-            <div className="flex items-start gap-3">
-              <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.connection_scale_wiki_title', '说明')}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  {t(
-                    'workbench.connection_scale_wiki_desc',
-                    '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。'
-                  )}
-                  {scaleWikiUrl && (
-                    <a
-                      href={scaleWikiUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-testid="connection-scale-wiki-link"
-                      className="ml-2 inline-flex items-center gap-1 align-middle font-medium text-text-secondary transition-colors hover:text-primary hover:underline"
-                    >
-                      {t('workbench.connection_scale_wiki_link', '详细见Wiki')}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </section>
   )
@@ -1114,7 +1029,7 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
           {models.slice(0, 8).map(model => (
             <div
               key={`${model.type}:${model.name}:${model.namespace ?? ''}`}
-              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
             >
               <Code2 className="h-4 w-4 shrink-0 text-text-secondary" />
               <div className="min-w-0 flex-1">
@@ -1181,7 +1096,7 @@ function ConnectionsDeviceSettingsPage({
 
   const cloudDevices = devices.filter(isCloudDevice)
   const remoteDevices = devices.filter(isRemoteDevice)
-  const localDevices = devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device))
+  const connectionDevices = [...cloudDevices, ...remoteDevices]
   const onlineCloudDeviceCount = cloudDevices.filter(device => device.status === 'online').length
 
   useEffect(() => {
@@ -1191,12 +1106,10 @@ function ConnectionsDeviceSettingsPage({
   if (!cloudConnection.isConnected) {
     return (
       <>
-        <div className="mx-auto w-full max-w-[760px]">
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.connections_title', '云端设置')}
-          </h1>
+        <SettingsPage>
+          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
 
-          <section className="mt-6 rounded-lg border border-border bg-background p-5">
+          <section className="rounded-lg border border-border bg-background p-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">
@@ -1215,7 +1128,7 @@ function ConnectionsDeviceSettingsPage({
             </div>
           </section>
 
-          <section className="mt-4 rounded-lg border border-dashed border-border bg-surface p-5">
+          <section className="mt-4 rounded-lg border border-dashed border-border bg-background p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">
@@ -1238,7 +1151,7 @@ function ConnectionsDeviceSettingsPage({
               </button>
             </div>
           </section>
-        </div>
+        </SettingsPage>
 
         {connectDialogOpen && (
           <CloudConnectionDialog
@@ -1254,14 +1167,12 @@ function ConnectionsDeviceSettingsPage({
 
   return (
     <>
-      <div className="mx-auto w-full max-w-[760px]">
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.connections_title', '云端设置')}
-        </h1>
+      <SettingsPage>
+        <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
 
         <section
           data-testid="cloud-connection-status-card"
-          className="mt-6 rounded-lg border border-border bg-background p-5"
+          className="rounded-lg border border-border bg-background p-5"
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -1338,7 +1249,7 @@ function ConnectionsDeviceSettingsPage({
                 <div className="py-8 text-center text-sm text-text-secondary">
                   {t('common.loading', '加载中...')}
                 </div>
-              ) : devices.length === 0 ? (
+              ) : connectionDevices.length === 0 ? (
                 <div className="py-8 text-center text-sm text-text-secondary">
                   {t('workbench.connection_empty_devices')}
                 </div>
@@ -1349,7 +1260,6 @@ function ConnectionsDeviceSettingsPage({
                       title={t('workbench.connection_cloud_devices', '云设备')}
                       devices={cloudDevices}
                       icon={Cloud}
-                      showScaleWiki
                       onChanged={fetchDevices}
                     />
                   )}
@@ -1361,20 +1271,12 @@ function ConnectionsDeviceSettingsPage({
                       onChanged={fetchDevices}
                     />
                   )}
-                  {localDevices.length > 0 && (
-                    <DeviceSection
-                      title={t('workbench.connection_local_devices')}
-                      devices={localDevices}
-                      icon={Monitor}
-                      onChanged={fetchDevices}
-                    />
-                  )}
                 </>
               )}
             </div>
           </div>
         </section>
-      </div>
+      </SettingsPage>
 
       <AddCloudDeviceDialog
         open={addDialogOpen}
@@ -1391,12 +1293,17 @@ function ConnectionsDeviceSettingsPage({
 export function ConnectionsSettingsPage({
   onBack,
   autoOpenAddCloudDeviceDialog = false,
+  services,
+  devices = [],
+  onOpenRuntimeTask,
+  onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
-    item => item.key !== 'keyboard-shortcuts' || usesOverlayTitlebar
+    item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || usesOverlayTitlebar
   )
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
@@ -1416,10 +1323,23 @@ export function ConnectionsSettingsPage({
   return (
     <div
       data-testid="wework-settings-page"
-      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
+      className={cn(
+        'relative flex h-screen min-w-0 flex-1 overflow-hidden text-text-primary',
+        appearance.backgroundImagePath &&
+          (appearance.backgroundInMain ||
+            appearance.backgroundInSidebar ||
+            appearance.backgroundInTopBar)
+          ? 'bg-transparent'
+          : 'bg-background'
+      )}
     >
       <aside
-        className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
+        className={cn(
+          'relative flex shrink-0 flex-col border-r border-border/70 px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))]',
+          appearance.backgroundImagePath && appearance.backgroundInSidebar
+            ? 'bg-background/25'
+            : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150'
+        )}
         style={{ width: sidebarWidth }}
       >
         <DesktopTopBar
@@ -1487,21 +1407,62 @@ export function ConnectionsSettingsPage({
         />
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
-        {activeNav === 'appearance' ? (
+      {usesOverlayTitlebar && (
+        <div
+          data-testid="settings-main-titlebar-drag-region"
+          className="absolute right-0 top-0 z-titlebar h-[52px]"
+          style={{ left: sidebarWidth }}
+        >
+          <MacOSTitleBarDragRegion className="h-full w-full" />
+        </div>
+      )}
+
+      <main
+        className={cn(
+          'min-w-0 flex-1 overflow-auto px-8 pb-8',
+          appearance.backgroundImagePath && appearance.backgroundInMain
+            ? 'bg-background/20'
+            : 'bg-background',
+          usesOverlayTitlebar ? 'pt-16' : 'pt-8'
+        )}
+      >
+        {activeNav === 'general' ? (
+          <GeneralSettingsPage />
+        ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
+        ) : activeNav === 'context' ? (
+          <ContextSettingsPage />
+        ) : activeNav === 'about' ? (
+          <AboutSettingsPage />
         ) : activeNav === 'model-settings' ? (
           <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
         ) : activeNav === 'proxy' ? (
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
-        ) : activeNav === 'skills' ? (
-          <SkillSettingsPage />
+        ) : activeNav === 'quick-phrases' ? (
+          <QuickPhrasesSettingsPage />
+        ) : activeNav === 'appshots' ? (
+          <AppshotsSettingsPage />
+        ) : activeNav === 'plugins' ? (
+          <PluginSettingsPage />
+        ) : activeNav === 'browser' ? (
+          <BrowserSettingsPage />
         ) : activeNav === 'worktrees' ? (
-          <WorktreesSettingsPage />
+          <WorktreesSettingsPage
+            api={services?.runtimeWorkApi}
+            devices={devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         ) : activeNav === 'archived-conversations' ? (
-          <ArchivedConversationsSettingsPage />
+          <ArchivedConversationsSettingsPage
+            api={services?.runtimeWorkApi}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}

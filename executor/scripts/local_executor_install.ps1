@@ -24,8 +24,8 @@ $InstallDir = "$env:LOCALAPPDATA\Wegent\bin"
 $BinaryName = "wegent-executor.exe"
 $MinNodeVersion = 18
 $MinClaudeCodeVersion = "2.1.0"
-$MinCodexCliVersion = "0.137.0"
-$CodexCliPackage = "@openai/codex@0.137.0"
+$MinCodexCliVersion = "0.142.5"
+$CodexCliPackage = "@openai/codex@0.142.5"
 
 # Print colored message
 function Write-ColorOutput {

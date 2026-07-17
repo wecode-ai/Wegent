@@ -9,22 +9,29 @@ import {
   Square,
   Target,
 } from 'lucide-react'
-import type { ChangeEvent, ClipboardEventHandler } from 'react'
+import type { ChangeEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type {
+  Attachment,
+  LocalDeviceApp,
+  LocalDeviceSkill,
+  ModelOptions,
+  UnifiedModel,
+} from '@/types/api'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
-import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
+import { QuickPhraseMenu } from './QuickPhraseMenu'
+import type { QuickPhrase } from '@/tauri/appPreferences'
 
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: (submittedValue?: string) => void
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string
@@ -33,6 +40,9 @@ interface CompactChatComposerProps {
   uploadingFiles?: Map<string, { file: File; progress: number }>
   attachmentErrors?: Map<string, string>
   onFileSelect?: (files: File | File[]) => void
+  onOpenSkillFile?: (path: string) => void
+  workspaceTarget?: WorkspaceTarget | null
+  workspaceFileApi?: WorkspaceFileApi
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -42,6 +52,7 @@ interface CompactChatComposerProps {
   onRemoveAttachment?: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
@@ -64,6 +75,9 @@ export function CompactChatComposer({
   uploadingFiles = new Map(),
   attachmentErrors = new Map(),
   onFileSelect,
+  onOpenSkillFile,
+  workspaceTarget,
+  workspaceFileApi,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -73,6 +87,7 @@ export function CompactChatComposer({
   onRemoveAttachment = () => {},
   onClearCodeComments,
   onListLocalSkills,
+  onListLocalApps,
   models = [],
   selectedModel,
   selectedModelOptions = {},
@@ -86,6 +101,7 @@ export function CompactChatComposer({
   const imageInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useAutoResizeTextarea(value, 128)
+  const fullscreenInputRef = useRef<HTMLElement>(null)
   const [contextSheetOpen, setContextSheetOpen] = useState(false)
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
@@ -98,6 +114,14 @@ export function CompactChatComposer({
 
     onChange(value ? `${value}\n${text}` : text)
     onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const handleQuickPhraseSelect = (phrase: QuickPhrase) => {
+    onClearPlanMode?.()
+    onCancelGoalDraft?.()
+    if (phrase.mode === 'plan') onSetPlanMode?.()
+    if (phrase.mode === 'goal') onSetGoal?.()
+    onChange(value ? `${value}\n${phrase.content}` : phrase.content)
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
@@ -118,22 +142,6 @@ export function CompactChatComposer({
   const handleSetPlanMode = () => {
     setContextSheetOpen(false)
     onSetPlanMode?.()
-  }
-
-  const handlePasteFiles: ClipboardEventHandler<HTMLTextAreaElement> = event => {
-    const files = Array.from(event.clipboardData.files)
-    if (files.length > 0) {
-      event.preventDefault()
-      onFileSelect?.(files)
-      return
-    }
-
-    if (!onFileSelect) return
-    const textAttachment = createLongPastedTextAttachment(event.clipboardData.getData('text/plain'))
-    if (!textAttachment) return
-
-    event.preventDefault()
-    onFileSelect([textAttachment])
   }
 
   useEffect(() => {
@@ -187,6 +195,7 @@ export function CompactChatComposer({
       ) : planModeActive ? (
         <ComposerModePill
           label={t('workbench.plan_mode', '计划模式')}
+          icon={ClipboardList}
           testId="plan-mode-pill"
           cancelTestId="cancel-plan-mode-button"
           cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
@@ -199,16 +208,15 @@ export function CompactChatComposer({
         className="flex w-full items-end gap-2"
         onSubmit={event => {
           event.preventDefault()
-          const submittedValue = event.currentTarget.querySelector('textarea')?.value
           debugComposerEvent('compact-form-submit', {
             canSend,
             propValue: textMetrics(value),
-            submittedValue: textMetrics(submittedValue),
+            submittedValue: textMetrics(value),
             attachmentsCount: attachments.length,
             codeCommentsCount: codeComments.length,
             disabled,
           })
-          if (canSend) onSubmit(submittedValue)
+          if (canSend) onSubmit(value)
         }}
       >
         <button
@@ -222,6 +230,7 @@ export function CompactChatComposer({
         >
           <Plus className="h-6 w-6" />
         </button>
+        <QuickPhraseMenu compact disabled={disabled} onSelect={handleQuickPhraseSelect} />
         <div
           data-testid="compact-input-pill"
           className={[
@@ -239,9 +248,13 @@ export function CompactChatComposer({
             placeholder={placeholder}
             rows={1}
             onPasteFiles={files => onFileSelect?.(files)}
-            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
+            onOpenSkillFile={onOpenSkillFile}
+            workspaceTarget={workspaceTarget}
+            workspaceFileApi={workspaceFileApi}
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-secondary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
+            onListLocalApps={onListLocalApps}
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
@@ -263,7 +276,7 @@ export function CompactChatComposer({
               <Maximize2 className="h-4 w-4" />
             </button>
           )}
-          {isStreaming ? (
+          {isStreaming && !canSend ? (
             <button
               type="button"
               data-testid="pause-response-button"
@@ -356,13 +369,32 @@ export function CompactChatComposer({
             >
               <Minimize2 className="h-5 w-5" />
             </button>
-            <textarea
-              data-testid="fullscreen-message-input"
+            <ComposerTextarea
+              testId="fullscreen-message-input"
+              textareaRef={fullscreenInputRef}
               value={value}
-              onChange={event => onChange(event.target.value)}
-              onPaste={handlePasteFiles}
+              onChange={onChange}
+              onSubmit={onSubmit}
+              canSend={canSend}
               placeholder={placeholder}
-              className="h-full w-full resize-none rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted"
+              rows={8}
+              onPasteFiles={files => onFileSelect?.(files)}
+              onOpenSkillFile={onOpenSkillFile}
+              workspaceTarget={workspaceTarget}
+              workspaceFileApi={workspaceFileApi}
+              className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-chat text-text-secondary outline-none"
+              skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
+              onListLocalSkills={onListLocalSkills}
+              onListLocalApps={onListLocalApps}
+              models={models}
+              selectedModel={selectedModel}
+              selectedModelOptions={selectedModelOptions}
+              planModeActive={planModeActive}
+              onSetPlanMode={onSetPlanMode}
+              onSetGoal={onSetGoal}
+              onSelectModel={onSelectModel}
+              onBlockedModelSelect={onBlockedModelSelect}
+              isModelSelectionReady={isModelSelectionReady}
             />
           </div>
         </div>

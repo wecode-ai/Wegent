@@ -159,6 +159,112 @@ async fn runtime_workspace_open_backfills_saved_roots_into_project_order() {
 }
 
 #[tokio::test]
+async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-sidebar-state-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-sidebar-state-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "unknown-codex-setting": {"keep": true},
+            "local-projects": {
+                "p1": {"id": "p1", "name": "One"},
+                "p2": {"id": "p2", "name": "Two"}
+            },
+            "project-writable-roots": {
+                "p1": [{"kind": "local", "path": "/repo/one"}],
+                "p2": [{"kind": "local", "path": "/repo/two"}]
+            },
+            "project-order": ["p1", "p2"],
+            "pinned-project-ids": ["p1"],
+            "pinned-thread-ids": ["t1"],
+            "sidebar-project-thread-orders": {
+                "p2": {"threadIds": ["t1", "t2"], "sortKey": "manual"}
+            }
+        }),
+    );
+    let fake_codex = write_fake_codex_empty(&temp_path("runtime-sidebar-state-log", "jsonl"));
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    for request in [
+        json!({
+            "method": "runtime.sidebar.projects.reorder",
+            "payload": {"projectKey": "p2", "beforeProjectKey": "p1"}
+        }),
+        json!({
+            "method": "runtime.sidebar.projects.pin",
+            "payload": {"projectKey": "p2", "pinned": true, "beforeProjectKey": "p1"}
+        }),
+        json!({
+            "method": "runtime.sidebar.projects.appearance",
+            "payload": {"projectKey": "p2", "appearance": {"color": "blue"}}
+        }),
+        json!({
+            "method": "runtime.sidebar.projects.sync_remote",
+            "payload": {
+                "projects": [{
+                    "id": "remote-1",
+                    "hostId": "remote-host-1",
+                    "remotePath": "/srv/remote",
+                    "label": "Remote"
+                }]
+            }
+        }),
+        json!({
+            "method": "runtime.sidebar.projects.activate",
+            "payload": {
+                "projectKey": "remote-1",
+                "workspacePath": "/srv/remote",
+                "remoteHostId": "remote-host-1"
+            }
+        }),
+        json!({
+            "method": "runtime.sidebar.tasks.reorder",
+            "payload": {"projectKey": "p2", "threadId": "t2", "beforeThreadId": "t1"}
+        }),
+        json!({
+            "method": "runtime.sidebar.tasks.pin",
+            "payload": {"threadId": "t2", "pinned": true, "beforeThreadId": "t1"}
+        }),
+    ] {
+        let response = handler
+            .handle_runtime_rpc(request)
+            .await
+            .expect("sidebar mutation should succeed");
+        assert_eq!(response["accepted"], true);
+        assert_eq!(response["deviceId"], "device-1");
+    }
+
+    let state = read_json_file(&codex_home.join(".codex-global-state.json"));
+    assert_eq!(state["project-order"], json!(["remote-1", "p2", "p1"]));
+    assert_eq!(state["pinned-project-ids"], json!(["p2", "p1"]));
+    assert_eq!(state["project-appearances"]["p2"], json!({"color": "blue"}));
+    assert_eq!(
+        state["remote-projects"],
+        json!([{
+            "id": "remote-1",
+            "hostId": "remote-host-1",
+            "remotePath": "/srv/remote",
+            "label": "Remote"
+        }])
+    );
+    assert_eq!(state["active-remote-project-id"], "remote-1");
+    assert_eq!(state["selected-remote-host-id"], "remote-host-1");
+    assert_eq!(
+        state["sidebar-project-thread-orders"]["p2"]["threadIds"],
+        json!(["t2", "t1"])
+    );
+    assert_eq!(state["pinned-thread-ids"], json!(["t2", "t1"]));
+    assert_eq!(state["unknown-codex-setting"], json!({"keep": true}));
+}
+
+#[tokio::test]
 async fn runtime_task_list_groups_threads_under_open_workspace_roots() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -261,6 +367,78 @@ async fn runtime_task_list_preserves_chat_workspace_kind_for_opened_chat_roots()
     );
     assert_eq!(listed["workspaces"][0]["workspaceKind"], "chat");
     assert_eq!(listed["workspaces"][0]["tasks"], json!([]));
+}
+
+#[tokio::test]
+async fn runtime_task_list_applies_manual_order_to_projectless_chats() {
+    let _lock = env_lock().await;
+    let home = temp_path("runtime-chat-order-home", "dir");
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-chat-order-executor-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let codex_home = temp_path("runtime-chat-order-codex-home", "dir");
+    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    write_codex_global_state(
+        &codex_home,
+        json!({
+            "projectless-thread-ids": ["thread-newer", "thread-older"],
+            "sidebar-project-thread-orders": {
+                "chats": {"threadIds": ["thread-older", "thread-newer"]}
+            }
+        }),
+    );
+    let chat_workspace = home
+        .join("Documents")
+        .join("Codex")
+        .join("2026-07-12")
+        .join("manual");
+    let threads = json!([
+        {
+            "id": "thread-newer",
+            "cwd": chat_workspace.display().to_string(),
+            "name": "Newer chat",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000200000_i64,
+            "status": "idle",
+            "turns": []
+        },
+        {
+            "id": "thread-older",
+            "cwd": chat_workspace.display().to_string(),
+            "name": "Older chat",
+            "createdAt": 1780000000000_i64,
+            "updatedAt": 1780000100000_i64,
+            "status": "idle",
+            "turns": []
+        }
+    ])
+    .to_string();
+    let fake_codex =
+        write_fake_codex_with_threads(&temp_path("runtime-chat-order-log", "jsonl"), &threads);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("chat task list should succeed");
+
+    assert_eq!(listed["workspaces"][0]["workspaceKind"], "chat");
+    assert_eq!(
+        listed["workspaces"][0]["tasks"]
+            .as_array()
+            .expect("chat tasks")
+            .iter()
+            .map(|task| task["taskId"].as_str().expect("task id"))
+            .collect::<Vec<_>>(),
+        vec!["thread-older", "thread-newer"]
+    );
 }
 
 #[tokio::test]
@@ -1069,7 +1247,7 @@ async fn runtime_workspace_oplog_overlays_project_changes_while_codex_is_running
 }
 
 #[tokio::test]
-async fn runtime_task_list_ignores_stale_cached_codex_store_entries() {
+async fn runtime_task_list_keeps_cached_codex_store_entries_until_provider_discovers_thread() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-stale-store-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1124,7 +1302,13 @@ async fn runtime_task_list_ignores_stale_cached_codex_store_entries() {
         .await
         .expect("task list should succeed");
 
-    assert_eq!(listed, json!({"success": true, "workspaces": []}));
+    let workspaces = listed["workspaces"].as_array().unwrap();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0]["workspacePath"], "/repo/Wegent");
+    let tasks = workspaces[0]["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["taskId"], "stale-thread");
+    assert_eq!(tasks[0]["runtimeHandle"]["threadId"], "stale-thread");
 }
 
 #[tokio::test]

@@ -144,6 +144,8 @@ pub struct DeviceConfig {
     #[serde(default)]
     pub device_id: String,
     #[serde(default)]
+    pub runtime_instance_id: String,
+    #[serde(default)]
     pub device_name: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
@@ -169,6 +171,7 @@ impl Default for DeviceConfig {
             device_type: default_device_type(),
             bind_shell: default_bind_shell(),
             device_id: String::new(),
+            runtime_instance_id: String::new(),
             device_name: String::new(),
             capabilities: Vec::new(),
             max_concurrent_tasks: default_max_concurrent_tasks(),
@@ -194,6 +197,7 @@ impl DeviceConfig {
         set_from_env(&mut self.connection.backend_url, "WEGENT_BACKEND_URL");
         set_from_env(&mut self.connection.auth_token, "WEGENT_AUTH_TOKEN");
         set_from_env(&mut self.device_id, "DEVICE_ID");
+        set_from_env(&mut self.runtime_instance_id, "WEGENT_RUNTIME_INSTANCE_ID");
         set_from_env(&mut self.device_name, "DEVICE_NAME");
         set_from_env(&mut self.device_type, "DEVICE_TYPE");
         set_from_env(&mut self.bind_shell, "BIND_SHELL");
@@ -267,7 +271,11 @@ fn set_from_env(target: &mut String, name: &str) {
 fn ensure_stable_identity(config: &mut DeviceConfig) -> bool {
     let mut changed = false;
     if config.device_id.trim().is_empty() {
-        config.device_id = generate_device_id();
+        config.device_id = generate_prefixed_id("device");
+        changed = true;
+    }
+    if config.runtime_instance_id.trim().is_empty() {
+        config.runtime_instance_id = generate_prefixed_id("runtime");
         changed = true;
     }
     if config.device_name.trim().is_empty() {
@@ -294,7 +302,7 @@ fn save_config_path(path: &Path, config: &DeviceConfig) -> Result<(), ConfigErro
     })
 }
 
-fn generate_device_id() -> String {
+fn generate_prefixed_id(prefix: &str) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -311,7 +319,7 @@ fn generate_device_id() -> String {
     for byte in digest.iter().take(12) {
         suffix.push_str(&format!("{byte:02x}"));
     }
-    format!("device-{suffix}")
+    format!("{prefix}-{suffix}")
 }
 
 fn default_device_name(device_id: &str) -> String {
@@ -354,10 +362,7 @@ fn default_executor_home() -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn default_mode() -> String {

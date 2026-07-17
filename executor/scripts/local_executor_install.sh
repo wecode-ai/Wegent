@@ -31,9 +31,9 @@ VERSION=""
 # Claude Code minimum version requirement
 # Claude Code defer requires 2.1.89+.
 MIN_CLAUDE_CODE_VERSION="2.1.89"
-MIN_CODEX_CLI_VERSION="0.137.0"
+MIN_CODEX_CLI_VERSION="0.142.5"
 MIN_NODE_VERSION="18"
-CODEX_CLI_PACKAGE="@openai/codex@0.137.0"
+CODEX_CLI_PACKAGE="@openai/codex@0.142.5"
 
 # Feature flags
 # Claude Code is bundled for Linux and Windows, but not for macOS
@@ -43,8 +43,7 @@ bundle_claude_code() {
 }
 
 # Browser plugin configuration
-BROWSER_PLUGIN_PACKAGE="@wegent/cdp-relay-server"
-BROWSER_PLUGIN_CHROME_EXT_PATH="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/chrome-extension"
+BROWSER_PLUGIN_PACKAGE="@wegent/cdp-relay-server@0.1.17"
 
 # Print colored message
 print_info() {
@@ -321,20 +320,6 @@ install_claude_code() {
     fi
 }
 
-# Print Chrome extension installation instructions
-print_chrome_extension_instructions() {
-    local ext_path="${BROWSER_PLUGIN_CHROME_EXT_PATH/${HOME}/\~}"
-    echo ""
-    echo -e "${BLUE}📋 Manual step required - Install Chrome extension:${NC}"
-    echo ""
-    echo "   1. Open Chrome and navigate to: chrome://extensions"
-    echo "   2. Enable \"Developer mode\" (toggle in top-right corner)"
-    echo "   3. Click \"Load unpacked\""
-    echo "   4. Select folder: ${ext_path}"
-    echo "   5. Open any webpage and wait for the extension icon to show \"ON\""
-    echo ""
-}
-
 # Install browser plugin
 install_browser_plugin() {
     print_info "Installing browser plugin (${BROWSER_PLUGIN_PACKAGE})..."
@@ -359,6 +344,7 @@ install_browser_plugin() {
     # Remove existing links if they exist
     rm -f "${INSTALL_DIR}/browser-tool" 2>/dev/null || true
     rm -f "${INSTALL_DIR}/cdp-relay-server" 2>/dev/null || true
+    rm -f "${INSTALL_DIR}/browser-mcp-server" 2>/dev/null || true
 
     # Create new symlinks
     ln -s "${node_modules_base}/tool-cli.js" "${INSTALL_DIR}/browser-tool"
@@ -367,15 +353,28 @@ install_browser_plugin() {
     ln -s "${node_modules_base}/cli.js" "${INSTALL_DIR}/cdp-relay-server"
     print_info "   Created: cdp-relay-server -> cli.js"
 
+    ln -s "${node_modules_base}/mcp-server.js" "${INSTALL_DIR}/browser-mcp-server"
+    print_info "   Created: browser-mcp-server -> mcp-server.js"
+
     # Step 4: Make files executable
     local tool_cli_path="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/tool-cli.js"
     local cli_path="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/cli.js"
+    local mcp_server_path="${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/mcp-server.js"
+
+    if [[ ! -f "$mcp_server_path" ]]; then
+        print_error "browser-mcp-server is missing from ${BROWSER_PLUGIN_PACKAGE}"
+        print_error "Publish/install a cdp-relay-server package that includes dist/mcp-server.js"
+        return 1
+    fi
 
     if [[ -f "$tool_cli_path" ]]; then
         chmod +x "$tool_cli_path"
     fi
     if [[ -f "$cli_path" ]]; then
         chmod +x "$cli_path"
+    fi
+    if [[ -f "$mcp_server_path" ]]; then
+        chmod +x "$mcp_server_path"
     fi
 
     # Step 5: Start/restart cdp-relay-server
@@ -387,25 +386,22 @@ install_browser_plugin() {
         print_warning "You can manually run: cdp-relay-server --restart"
     fi
 
-    print_success "Browser plugin installed successfully!"
-    print_chrome_extension_instructions
-
-    # Step 6: Try to open Chrome extensions page using browser-tool
-    print_info "Opening Chrome extensions page..."
+    # Step 6: Warm up the controlled Chrome profile used by the embedded browser.
+    print_info "Checking CDP-backed browser session..."
     local browser_tool_path="${INSTALL_DIR}/browser-tool"
 
-    # Use browser-tool to navigate to chrome://extensions
     if [[ -f "${EXECUTOR_HOME_DIR}/node_modules/@wegent/cdp-relay-server/dist/tool-cli.js" ]]; then
-        node "${browser_tool_path}" '{"action":"navigate","url":"chrome://extensions"}' 2>/dev/null &
-        sleep 1
+        if node "${browser_tool_path}" '{"action":"status","ensure":true,"url":"about:blank"}' >/dev/null 2>&1; then
+            print_success "CDP-backed browser session is ready"
+        else
+            print_warning "CDP-backed browser session was installed but did not become ready yet."
+            print_warning "It will be started automatically when Wework opens the Browser tab."
+        fi
     else
-        print_warning "browser-tool not found, please manually open chrome://extensions"
+        print_warning "browser-tool not found; browser sessions will be unavailable until installation is repaired."
     fi
 
-    echo ""
-    print_warning "重要提醒: 请务必在弹出的浏览器窗口中安装插件!"
-    print_warning "Important: Please install the extension in the browser window!"
-    echo ""
+    print_success "Browser plugin installed successfully!"
 }
 
 # Ask user if they want to install browser plugin

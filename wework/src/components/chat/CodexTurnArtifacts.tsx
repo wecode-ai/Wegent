@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Box, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodexMemoryCitation, CodexMemoryCitationEntry, CodexReference } from '@/types/api'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { basename, fileExtension, getDisplayCodexReferences } from './codexReferences'
 
 const DEFAULT_VISIBLE_REFERENCE_COUNT = 3
@@ -11,7 +12,7 @@ export function CodexMemoryCitations({
   onOpenFile,
 }: {
   citations: CodexMemoryCitation[]
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -19,7 +20,7 @@ export function CodexMemoryCitations({
   if (entries.length === 0) return null
 
   return (
-    <section className="mt-3 min-w-0 text-[13px]" data-testid="codex-memory-citations">
+    <section className="mt-3 min-w-0 text-sm" data-testid="codex-memory-citations">
       <button
         type="button"
         data-testid="codex-memory-citations-toggle"
@@ -55,7 +56,7 @@ export function CodexReferenceList({
   onOpenFile,
 }: {
   references: CodexReference[]
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -78,7 +79,14 @@ export function CodexReferenceList({
             type="button"
             key={reference.path}
             data-testid="codex-reference-card"
-            onClick={() => onOpenFile(reference.path)}
+            onClick={() =>
+              openFileWithOptionalLocation(
+                onOpenFile,
+                reference.path,
+                reference.lineStart,
+                reference.lineEnd
+              )
+            }
             className="group/reference-card flex w-full min-w-0 items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted"
             aria-label={t('codex_references.open_label', { path: reference.path })}
           >
@@ -86,7 +94,7 @@ export function CodexReferenceList({
               <ReferenceFileIcon path={reference.path} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold text-text-primary">
+              <span className="block truncate text-sm font-semibold text-text-primary">
                 {basename(reference.path)}
               </span>
               <span className="relative block h-5 truncate text-xs leading-5 text-text-secondary">
@@ -158,7 +166,7 @@ function MemoryCitationEntryRow({
   onOpenFile,
 }: {
   entry: CodexMemoryCitationEntry
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const lineStart = entry.lineStart ?? entry.line_start
@@ -174,9 +182,9 @@ function MemoryCitationEntryRow({
   return (
     <button
       type="button"
-      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-[13px] leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
+      className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-sm leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
       data-testid="codex-memory-citation-entry"
-      onClick={() => onOpenFile?.(entry.path)}
+      onClick={() => openFileWithOptionalLocation(onOpenFile, entry.path, lineStart, lineEnd)}
       disabled={!onOpenFile}
       aria-label={t('memory_citations.open_label', { path: entry.path })}
     >
@@ -191,10 +199,26 @@ function MemoryCitationEntryRow({
       {entry.note ? <span className="block break-words text-text-muted">{entry.note}</span> : null}
       <span
         data-testid="codex-memory-citation-tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden max-w-[min(28rem,calc(100vw-3rem))] -translate-x-1/2 whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-[13px] font-normal leading-5 text-white shadow-lg group-hover/memory-entry:block group-focus-visible/memory-entry:block"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden max-w-[min(28rem,calc(100vw-3rem))] -translate-x-1/2 whitespace-normal break-all rounded-xl border border-white/10 bg-[#2f2f2f] px-3 py-2 text-sm font-normal leading-5 text-white shadow-lg group-hover/memory-entry:block group-focus-visible/memory-entry:block"
       >
         {filename}
       </span>
     </button>
   )
+}
+
+function openFileWithOptionalLocation(
+  onOpenFile: ((path: string, options?: WorkspaceFileOpenOptions) => void) | undefined,
+  path: string,
+  lineStart?: number | null,
+  lineEnd?: number | null
+) {
+  if (typeof lineStart === 'number') {
+    onOpenFile?.(path, {
+      lineStart,
+      lineEnd: typeof lineEnd === 'number' ? lineEnd : undefined,
+    })
+    return
+  }
+  onOpenFile?.(path)
 }

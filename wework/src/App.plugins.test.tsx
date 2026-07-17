@@ -2,13 +2,33 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
+import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
 import App from './App'
+
+const localCodexPluginMocks = vi.hoisted(() => ({
+  listInstalledPlugins: vi.fn(),
+  listSkills: vi.fn(),
+}))
+
+const localPathMocks = vi.hoisted(() => ({
+  exists: vi.fn(),
+}))
+
+vi.mock('@/lib/local-terminal', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/local-terminal')>()
+  return {
+    ...actual,
+    localPathExists: localPathMocks.exists,
+  }
+})
 
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  requestLocalExecutor: vi.fn().mockResolvedValue({}),
+  subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
   connectLocalExecutorToBackend: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
@@ -16,6 +36,33 @@ vi.mock('@/tauri/localExecutor', () => ({
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
+
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/api/local/codexPlugins', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/local/codexPlugins')>()
+  return {
+    ...actual,
+    createLocalCodexPluginApi: () => ({
+      ...actual.createLocalCodexPluginApi(),
+      codexHomeMigrationStatus: vi.fn().mockResolvedValue({
+        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        nativeCodexHome: '/Users/test/.codex',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: true,
+        shouldPromptMigration: false,
+      }),
+      listInstalledPlugins: localCodexPluginMocks.listInstalledPlugins,
+      listSkills: localCodexPluginMocks.listSkills,
+    }),
+  }
+})
 
 const mockViewport = vi.hoisted(() => ({
   isMobile: false,
@@ -81,6 +128,7 @@ const workbenchValue: WorkbenchContextValue = {
   selectStandaloneDevice: vi.fn(),
   openStandaloneWorkspace: vi.fn(),
   startNewChat: vi.fn(),
+  startNewSkillChat: vi.fn(),
   startStandaloneChat: vi.fn(),
   startNewProjectChat: vi.fn(),
   openRuntimeTask: vi.fn(),
@@ -92,6 +140,8 @@ const workbenchValue: WorkbenchContextValue = {
   archiveProjectsConversations: vi.fn(),
   archiveChatConversations: vi.fn(),
   forkCurrentRuntimeTask: vi.fn(),
+  markRuntimeTaskStarted: vi.fn(),
+  markRuntimeTaskSettled: vi.fn(),
   listImPrivateSessions: vi.fn(),
   bindRuntimeTaskToImSessions: vi.fn(),
   getImNotificationSettings: vi.fn(),
@@ -118,6 +168,8 @@ const workbenchValue: WorkbenchContextValue = {
   loadEnvironmentInfo: vi.fn(),
   loadEnvironmentDiff: vi.fn(),
   commitEnvironmentChanges: vi.fn(),
+  commitAndPushEnvironmentChanges: vi.fn(),
+  pushEnvironmentChanges: vi.fn(),
   listEnvironmentBranches: vi.fn(),
   checkoutEnvironmentBranch: vi.fn(),
   createEnvironmentBranch: vi.fn(),
@@ -187,6 +239,51 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
   return new File([localHeader, contentBytes, centralHeader, endHeader], `${name}.zip`, {
     type: 'application/zip',
   })
+}
+
+function installedCodexSitesPlugin(): InstalledPlugin {
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'sites',
+      namespace: 'openai-bundled',
+      labels: { id: 'sites' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'openai-bundled',
+        pluginKey: 'sites',
+      },
+      displayName: 'Sites',
+      description: 'Build and deploy websites with Sites',
+      version: '0.1.27',
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: { name: 'sites' },
+      components: {
+        skills: [],
+        commands: [],
+        templates: [],
+        apps: [],
+        agents: [],
+        mcps: [],
+        hooks: [],
+        lsps: [],
+        monitors: [],
+        bins: [],
+      },
+      interface: null,
+      packageRef: null,
+      sourcePayload: {
+        pluginName: 'sites',
+        marketplaceName: 'openai-bundled',
+      },
+    },
+    status: { state: 'enabled' },
+  }
 }
 
 vi.mock('@/features/auth/AuthProvider', () => ({
@@ -552,8 +649,16 @@ describe('App plugins route', () => {
   beforeEach(() => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    sessionStorage.clear()
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
+    workbenchValue.state.runtimeWork = null
+    workbenchValue.state.currentRuntimeTask = null
+    vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
+    vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
+    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
+    localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
+    localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
 
@@ -561,13 +666,304 @@ describe('App plugins route', () => {
     vi.unstubAllEnvs()
   })
 
-  test('does not expose the plugins page from the desktop sidebar', async () => {
+  test('opens the plugins page from the desktop sidebar', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
-    expect(window.location.pathname).toBe('/')
+    await userEvent.click(screen.getByTestId('plugins-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
+    expect(
+      await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
+  })
+
+  test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal server error'),
+    } as Response)
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
+      '站点功能尚未推出'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
+  })
+
+  test('loads Sites from the authenticated cloud Backend in local mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    localStorage.setItem(
+      'wework.cloudConnection',
+      JSON.stringify({
+        backendUrl: 'http://127.0.0.1:9100',
+        apiBaseUrl: 'http://127.0.0.1:9100/api',
+        socketBaseUrl: 'http://127.0.0.1:9100',
+        socketPath: '/socket.io',
+        token: 'cloud-secret',
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-15T00:00:00.000Z',
+      })
+    )
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.endsWith('/users/me')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' }),
+        } as Response
+      }
+      if (url.includes('/v1/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [
+                {
+                  siteid: 'site-cloud-1',
+                  name: '云端站点',
+                  internal_url: 'http://sites.internal/cloud',
+                  external_url: null,
+                  publish_status: 'unpublished',
+                  thumbnail_url: null,
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    expect(await screen.findByText('云端站点')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+      })
+    )
+  })
+
+  test('renders Sites and starts a chat with the installed Codex Sites plugin', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          items: [
+            {
+              siteid: 'site-1',
+              name: '产品发布页',
+              internal_url: 'http://sites.internal/product',
+              external_url: null,
+              publish_status: 'unpublished',
+              thumbnail_url: null,
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 20,
+        }),
+    } as Response)
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [installedCodexSitesPlugin()],
+    })
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
+    expect(await screen.findByText('产品发布页')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/sites?offset=0&limit=20',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
+    )
+    expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localCodexPluginMocks.listInstalledPlugins).toHaveBeenCalledTimes(1)
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('falls back to the Wegent Backend Sites skill when Codex Sites is unavailable', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites:sites-building'], {
+      allowLocalSkills: false,
+    })
+  })
+
+  test('uses the Codex Sites plugin reference when the native bundled Sites skill is available', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    localCodexPluginMocks.listSkills.mockResolvedValue([
+      {
+        name: 'sites:sites-building',
+        description: 'Build websites with Sites',
+        path: '/Users/alice/.codex/plugins/cache/openai-bundled/sites/0.1.27/skills/sites-building/SKILL.md',
+        source: 'codex',
+        origin: 'local',
+        plugin_name: 'sites',
+        plugin_provider: 'openai-bundled',
+      } satisfies LocalDeviceSkill,
+    ])
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localCodexPluginMocks.listSkills).toHaveBeenCalledWith({ forceReload: true })
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('uses the Codex Sites plugin reference when its native plugin cache exists', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    localPathMocks.exists.mockImplementation(path =>
+      Promise.resolve(path === '/Users/test/.codex/plugins/cache/openai-bundled/sites')
+    )
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localPathMocks.exists).toHaveBeenCalledWith(
+      '/Users/test/.codex/plugins/cache/openai-bundled/sites'
+    )
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {
+    const workspacePath = '/Users/alice/Documents/Codex/plugin-task'
+    workbenchValue.state.runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath,
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'plugin-task',
+              workspacePath,
+              workspaceKind: 'chat',
+              title: 'Return to task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    window.history.pushState({}, '', '/plugins')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('runtime-local-task-row-plugin-task'))
+
+    await waitFor(() => {
+      expect(workbenchValue.openRuntimeTask).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        workspacePath,
+        taskId: 'plugin-task',
+      })
+      expect(window.location.pathname).toBe('/runtime-tasks')
+    })
+    expect(window.location.search).toBe('?deviceId=local-device&taskId=plugin-task')
+    expect(screen.queryByTestId('plugins-workspace')).not.toBeInTheDocument()
+  })
+
+  test('preserves the workbench composer while visiting plugins', async () => {
+    window.history.pushState({}, '', '/')
+
+    render(<App />)
+
+    const composer = await screen.findByTestId('chat-message-input')
+    fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
+    await userEvent.click(screen.getByTestId('plugins-button'))
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+
+    window.history.pushState({}, '', '/')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(screen.getByTestId('chat-message-input')).toBe(composer)
   })
 
   test('renders the plugins page on direct /plugins visit', async () => {
@@ -581,14 +977,14 @@ describe('App plugins route', () => {
 
     expect(pluginsDragRegion).toHaveAttribute('data-tauri-drag-region')
     expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(pluginsDragRegion)
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: '技能' }))
-    expect(await screen.findByText('wehot')).toBeInTheDocument()
-    expect(screen.queryByText('找不到技能')).not.toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills?category=system&page=1&pageSize=20',
-      expect.objectContaining({ method: 'GET' })
-    )
+    expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
   })
 
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
@@ -596,15 +992,14 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
   test('does not reserve traffic light space on collapsed plugin routes in Tauri', async () => {
@@ -612,13 +1007,14 @@ describe('App plugins route', () => {
       configurable: true,
       value: {},
     })
+    localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
     window.history.pushState({}, '', '/plugins')
 
     render(<App />)
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
+    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
     expect(screen.getByTestId('plugins-topbar').style.paddingLeft).toBe('')
   })
@@ -631,11 +1027,10 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
   test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
@@ -646,23 +1041,25 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11', 'w-11')
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-create-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-selector')).not.toBeInTheDocument()
   })
 
-  test('hides plugins from the mobile settings menu', async () => {
+  test('opens plugins from the mobile settings menu', async () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
     render(<App />)
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
     await userEvent.click(screen.getByTestId('mobile-settings-button'))
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-settings-plugins-button')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/plugins')
   })
 
@@ -677,27 +1074,6 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
   })
 
-  test('switches to the MCP catalog from the plugins page', async () => {
-    window.history.pushState({}, '', '/plugins')
-
-    render(<App />)
-
-    await userEvent.click(screen.getByRole('tab', { name: 'MCP' }))
-
-    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByPlaceholderText('搜索 MCP')).toBeInTheDocument()
-    expect(await screen.findByText('MCP Router')).toBeInTheDocument()
-    expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcp-providers/mcp_router/servers',
-      expect.objectContaining({ method: 'POST' })
-    )
-    expect(
-      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/mcps/installed'))
-    ).toBe(false)
-  })
-
   test('navigates to plugin management from the manage button', async () => {
     window.history.pushState({}, '', '/plugins')
 
@@ -706,7 +1082,7 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugins-manage-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByText('管理')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'MCP 1' })).toBeInTheDocument()
@@ -720,15 +1096,13 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/installed',
-        expect.objectContaining({ method: 'GET' })
-      )
-    )
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
+    ).toBe(false)
   })
 
   test('keeps installed plugin switch knobs anchored inside the track', async () => {

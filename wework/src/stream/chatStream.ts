@@ -6,6 +6,9 @@ import type {
   ChatErrorPayload,
   ChatStartPayload,
   RuntimeGoalEventPayload,
+  RuntimeGoalContinuationPayload,
+  RuntimePlanEventPayload,
+  RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
 } from '@/types/api'
 import type { DeviceSlotUpdatePayload, DeviceUpgradeStatusPayload } from '@/types/device-events'
@@ -18,7 +21,18 @@ import {
 
 export type WorkbenchSocket = SocketClientSocket
 
+export interface ChatStreamScope {
+  deviceId?: string
+  taskId?: string
+}
+
+export interface RuntimeTransportReplacedPayload {
+  previousRuntimeInstanceId: string
+  runtimeInstanceId: string
+}
+
 export interface ChatStreamHandlers {
+  scope?: ChatStreamScope
   onChatStart?: (payload: ChatStartPayload) => void
   onChatChunk?: (payload: ChatChunkPayload) => void
   onChatDone?: (payload: ChatDonePayload) => void
@@ -28,6 +42,10 @@ export interface ChatStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
+  onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
+  onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void

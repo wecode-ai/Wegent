@@ -226,7 +226,12 @@ export const SUPPORTED_MIME_TYPES = [
 ]
 
 /**
- * Maximum file size (100 MB)
+ * Maximum file size (100 MB).
+ *
+ * KB video uploads do NOT use this generic path — they go through the
+ * two-phase video-upload contract (VideoUploadProvider), whose size limit is
+ * governed by the configured object-storage provider. This cap only applies
+ * to generic attachment uploads (text/image/chat).
  */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 
@@ -241,7 +246,8 @@ export function isSupportedExtension(_filename: string): boolean {
 }
 
 /**
- * Check if file size is within limits
+ * Check if file size is within the generic 100 MB limit. KB video uploads
+ * bypass this (routed to the VideoUploadProvider contract).
  */
 export function isValidFileSize(size: number): boolean {
   return size <= MAX_FILE_SIZE
@@ -320,6 +326,13 @@ export function getFileIcon(extension: string): string {
 export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
+ * Video file extensions supported for attachments / media analysis.
+ * Kept in sync with the backend ``_MULTIMODAL_VIDEO_EXTENSIONS`` so that
+ * isVideoFileName / upload gating / reanalyze all agree with the pipeline.
+ */
+export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv', '.webm', '.m4v']
+
+/**
  * HTML file extensions
  */
 export const HTML_EXTENSIONS = ['.html', '.htm', '.html5']
@@ -330,6 +343,23 @@ export const HTML_EXTENSIONS = ['.html', '.htm', '.html5']
 export function isImageExtension(extension: string): boolean {
   const ext = extension.toLowerCase()
   return IMAGE_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a file extension is a video type
+ */
+export function isVideoExtension(extension: string): boolean {
+  const ext = extension.startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+  return VIDEO_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a filename is a supported video file.
+ */
+export function isVideoFileName(filename: string): boolean {
+  const dotIndex = filename.lastIndexOf('.')
+  if (dotIndex < 0) return false
+  return isVideoExtension(filename.slice(dotIndex))
 }
 
 /**
@@ -368,7 +398,8 @@ export async function uploadAttachment(
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
-  // Validate file size before upload
+  // Validate file size before upload (generic 100 MB cap; KB video uploads
+  // go through the separate VideoUploadProvider contract, not this path).
   if (!isValidFileSize(file.size)) {
     throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
   }
@@ -519,6 +550,66 @@ export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: stri
   return baseUrl
 }
 
+interface FetchAttachmentFileOptions {
+  filename?: string
+  shareToken?: string
+  signal?: AbortSignal
+}
+
+function getAttachmentFilename(
+  response: Response,
+  attachmentId: number,
+  providedFilename?: string
+): string {
+  if (providedFilename) return providedFilename
+
+  const contentDisposition = response.headers.get('Content-Disposition')
+  if (contentDisposition) {
+    const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+    if (rfc5987Match?.[1]) {
+      try {
+        return decodeURIComponent(rfc5987Match[1])
+      } catch {
+        return rfc5987Match[1]
+      }
+    }
+
+    const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i)
+    if (standardMatch?.[1]) {
+      return standardMatch[1].replace(/['"]/g, '')
+    }
+  }
+
+  return `attachment-${attachmentId}.file`
+}
+
+/**
+ * Fetch an attachment as a named File without triggering a browser download.
+ */
+export async function fetchAttachmentFile(
+  attachmentId: number,
+  options: FetchAttachmentFileOptions = {}
+): Promise<File> {
+  const token = getToken()
+  const response = await fetch(getAttachmentDownloadUrl(attachmentId, options.shareToken), {
+    method: 'GET',
+    headers: {
+      ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
+    },
+    signal: options.signal,
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch attachment (${response.status})`)
+  }
+
+  const filename = getAttachmentFilename(response, attachmentId, options.filename)
+  const blob = await response.blob()
+  return new File([blob], filename, {
+    type: blob.type || response.headers.get('Content-Type') || 'application/octet-stream',
+  })
+}
+
 /**
  * Download attachment file
  *
@@ -531,62 +622,15 @@ export async function downloadAttachment(
   filename?: string,
   shareToken?: string
 ): Promise<void> {
-  const token = getToken()
-  const downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
-
-  const response = await fetch(downloadUrl, {
-    method: 'GET',
-    headers: {
-      // Only include Authorization header if we have a token and no shareToken
-      // shareToken-based access doesn't require JWT authentication
-      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to download attachment')
-  }
-
-  // Extract filename from Content-Disposition header if not provided
-  let downloadFilename = filename
-  if (!downloadFilename) {
-    const contentDisposition = response.headers.get('Content-Disposition')
-    if (contentDisposition) {
-      // Parse filename from Content-Disposition header
-      // Format: attachment; filename="example.pdf" or attachment; filename*=UTF-8''example.pdf
-      // Try RFC 5987 format first (filename*=UTF-8''encoded_filename)
-      const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
-      if (rfc5987Match && rfc5987Match[1]) {
-        downloadFilename = rfc5987Match[1]
-        // Decode URI component if it's encoded
-        try {
-          downloadFilename = decodeURIComponent(downloadFilename)
-        } catch {
-          // Keep original if decode fails
-        }
-      } else {
-        // Fallback to standard format (filename="example.pdf")
-        const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-        if (standardMatch && standardMatch[1]) {
-          downloadFilename = standardMatch[1].replace(/['"]/g, '')
-        }
-      }
-    }
-    // Fallback filename if extraction fails
-    if (!downloadFilename) {
-      downloadFilename = `attachment-${attachmentId}.file`
-    }
-  }
-
-  const blob = await response.blob()
-  const url = URL.createObjectURL(blob)
+  const file = await fetchAttachmentFile(attachmentId, { filename, shareToken })
+  const url = URL.createObjectURL(file)
   const a = document.createElement('a')
   a.href = url
-  a.download = downloadFilename
+  a.download = file.name
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 /**

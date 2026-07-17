@@ -11,12 +11,17 @@ ENV_FILE="$PROJECT_DIR/.env"
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-branding.sh
+source "$SCRIPT_DIR/lib/wework-branding.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
 TAURI_BUNDLES="${WEWORK_TAURI_BUNDLES:-}"
 NO_SIGN="${WEWORK_NO_SIGN:-}"
 RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 
 usage() {
   cat <<'EOF'
@@ -27,6 +32,7 @@ Options:
   --target <target>        macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
   --bundles <bundles>      Tauri bundles to package, e.g. app or app,dmg.
   --devtools               Enable Web Inspector support in release builds.
+  --brand-config <path>    Brand identity JSON used for this app bundle.
   --sign                   Allow signing in dev profile.
   --no-sign                Skip code signing.
   -h, --help               Show this help message.
@@ -36,7 +42,9 @@ Environment:
   MACOS_BUILD_TARGET       Default macOS Rust/Tauri target.
   WEWORK_TAURI_BUNDLES     Default bundle list when --bundles is not provided.
   WEWORK_RELEASE_DEVTOOLS  Set to 1 to compile Tauri devtools into release builds.
+  WEWORK_BRAND_CONFIG      Default brand identity JSON.
   WEWORK_NO_SIGN           Set to 1 to pass --no-sign.
+  VITE_WEGENT_BACKEND_URL  Default Backend URL shown in Connect cloud.
 
 Examples:
   bash wework/scripts/build-mac-app.sh --profile dev --target aarch64-apple-darwin
@@ -97,6 +105,19 @@ while [ "$#" -gt 0 ]; do
       RELEASE_DEVTOOLS="1"
       shift
       ;;
+    --brand-config)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a config path." >&2
+        usage
+        exit 1
+      fi
+      BRAND_CONFIG="$2"
+      shift 2
+      ;;
+    --brand-config=*)
+      BRAND_CONFIG="${1#*=}"
+      shift
+      ;;
     --sign)
       NO_SIGN="0"
       shift
@@ -122,6 +143,14 @@ if [ "$BUILD_PROFILE" != "dev" ] && [ "$BUILD_PROFILE" != "release" ]; then
   exit 1
 fi
 
+if [ -n "$BRAND_CONFIG" ]; then
+  if [ ! -f "$BRAND_CONFIG" ]; then
+    echo "Error: brand config not found: $BRAND_CONFIG" >&2
+    exit 1
+  fi
+  BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
+fi
+
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_BUNDLES="${TAURI_BUNDLES:-app}"
   NO_SIGN="${NO_SIGN:-1}"
@@ -141,20 +170,47 @@ echo "  BACKEND_PORT=$BACKEND_PORT"
 echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
 echo "  TAURI_BUNDLES=${TAURI_BUNDLES:-<default>}"
 echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
+echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  NO_SIGN=${NO_SIGN:-0}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "  VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
   exit 0
 fi
 
+EXECUTOR_DIR="$PROJECT_DIR/executor"
+EXECUTOR_PROFILE_DIR="debug"
+EXECUTOR_BINARY_DIR="$(cargo_target_dir_for "$EXECUTOR_DIR")"
+
+if [ "$BUILD_PROFILE" = "release" ]; then
+  EXECUTOR_PROFILE_DIR="release"
+fi
+if [ -n "$MACOS_BUILD_TARGET" ]; then
+  EXECUTOR_BINARY_DIR="$EXECUTOR_BINARY_DIR/$MACOS_BUILD_TARGET"
+fi
+
+echo "Building local executor sidecar"
+cd "$EXECUTOR_DIR"
+if [ -n "$MACOS_BUILD_TARGET" ]; then
+  cargo build --profile "$BUILD_PROFILE" --locked --target "$MACOS_BUILD_TARGET"
+else
+  cargo build --profile "$BUILD_PROFILE" --locked
+fi
+mkdir -p "$EXECUTOR_DIR/dist"
+cp "$EXECUTOR_BINARY_DIR/$EXECUTOR_PROFILE_DIR/wegent-executor" \
+  "$EXECUTOR_DIR/dist/wegent-executor"
+chmod 0755 "$EXECUTOR_DIR/dist/wegent-executor"
+"$EXECUTOR_DIR/dist/wegent-executor" --version
+
 cd "$WEWORK_DIR"
 CONFIG_OVERRIDE=""
 cleanup() {
   if [ -n "$CONFIG_OVERRIDE" ]; then
     rm -f "$CONFIG_OVERRIDE"
+    rm -f "$CONFIG_OVERRIDE.namespace"
   fi
 }
 trap cleanup EXIT
@@ -163,33 +219,16 @@ TAURI_ARGS=(build)
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
-if [ "$RELEASE_DEVTOOLS" = "1" ]; then
-  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.devtools.XXXXXX.json")"
-  CONFIG_OVERRIDE="$CONFIG_OVERRIDE" python3 - <<'PY'
-import json
-import os
-
-with open("src-tauri/tauri.conf.json", "r", encoding="utf-8") as handle:
-    base_config = json.load(handle)
-
-windows = base_config.get("app", {}).get("windows", [])
-config = {
-    "app": {
-        "windows": [
-            {
-                **window,
-                "devtools": True,
-            }
-            for window in windows
-        ],
-    },
-}
-
-with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2)
-    handle.write("\n")
-PY
-  TAURI_ARGS+=(--features release-devtools)
+if [ -n "$BRAND_CONFIG" ] || [ "$RELEASE_DEVTOOLS" = "1" ]; then
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.XXXXXX.json")"
+  wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "${RELEASE_DEVTOOLS:-0}" "$CONFIG_OVERRIDE"
+  if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
+    export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"
+    rm -f "$CONFIG_OVERRIDE.namespace"
+  fi
+  if [ "$RELEASE_DEVTOOLS" = "1" ]; then
+    TAURI_ARGS+=(--features release-devtools)
+  fi
   TAURI_ARGS+=(--config "$CONFIG_OVERRIDE")
 fi
 if [ -n "$MACOS_BUILD_TARGET" ]; then
@@ -202,4 +241,10 @@ if [ "$NO_SIGN" = "1" ]; then
   TAURI_ARGS+=(--no-sign)
 fi
 
+WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+wework_sign_prepared_codex_macos_binaries \
+  "$WEWORK_DIR" \
+  "$MACOS_BUILD_TARGET" \
+  "${APPLE_SIGNING_IDENTITY:-}" \
+  "$NO_SIGN"
 exec pnpm exec tauri "${TAURI_ARGS[@]}"

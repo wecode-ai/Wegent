@@ -164,6 +164,7 @@ async def _build_subscription_execution_request(
         team=objects.team,
         user=objects.user,
         message=execution_data.prompt,
+        device_id=execution_data.device_id,
         payload=None,
         user_subtask_id=execution_data.user_subtask_id,
         history_limit=(

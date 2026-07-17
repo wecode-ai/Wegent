@@ -12,6 +12,7 @@ import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import {
@@ -26,6 +27,7 @@ import { MobileDrawer } from './MobileDrawer'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import {
+  isImplementationPlanConfirmationResponse,
   isImplementationPlanRequestUserInput,
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
@@ -42,9 +44,17 @@ import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
+import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import {
+  defaultAppearance,
+  useOptionalAppearance,
+  WorkbenchBackground,
+} from '@/features/appearance'
+import { cn } from '@/lib/utils'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
@@ -56,13 +66,20 @@ export function MobileWorkbenchLayout() {
   )
 
   return (
-    <CachedWorkbenchPaneStack
-      activePane={activePane}
-      maxPanes={1}
-      pinnedKeys={pinnedPaneKeys}
-      className="h-dvh"
-      renderPane={renderMobileWorkbenchPane}
-    />
+    <div className="relative h-dvh overflow-hidden bg-background">
+      <WorkbenchBackground />
+      <CachedWorkbenchPaneStack
+        activePane={activePane}
+        maxPanes={1}
+        pinnedKeys={pinnedPaneKeys}
+        className={
+          appearance.backgroundImagePath && appearance.backgroundInMain
+            ? 'h-dvh bg-background/20'
+            : 'h-dvh'
+        }
+        renderPane={renderMobileWorkbenchPane}
+      />
+    </div>
   )
 }
 
@@ -75,16 +92,17 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
 }: {
   pane: WorkbenchPaneIdentity
 }) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const {
     state,
     upgradingDevices,
     projectChat,
     upgradeDevice,
-    retryFailedMessage,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
     startNewChat: onNewChat,
+    runtimeTaskReminders,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
     openRuntimeTask: onOpenRuntimeTask,
@@ -101,9 +119,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     listDeviceDirectories: onListDeviceDirectories,
     createDeviceDirectory: onCreateDeviceDirectory,
     refreshWorkLists: onRefreshWorkLists,
+    services,
+    workspaceFileApi,
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
   const activeItem = 'chat'
+  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(() =>
@@ -148,7 +169,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
       })
     : t('workbench.empty_title', '我们该做什么？')
   const baseProjectWork = useWorkbenchProjectWorkControls({ pane })
-  const { projectWork: effectiveProjectWork } = useWorkbenchPaneEnvironment({
+  const { projectWork: effectiveProjectWork, workspaceTarget } = useWorkbenchPaneEnvironment({
     pane,
     projectWork: baseProjectWork,
   })
@@ -182,7 +203,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -207,6 +230,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   if (settingsOpen) {
     return (
       <MobileSettingsPage
+        services={services}
+        devices={state.devices}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+        onRefreshWorkLists={onRefreshWorkLists}
         onBack={() => {
           setSettingsOpen(false)
           navigateTo('/')
@@ -228,13 +255,25 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-text-primary">
+    <div
+      className={cn(
+        'flex h-full overflow-hidden text-text-primary',
+        appearance.backgroundImagePath && appearance.backgroundInMain
+          ? 'bg-background/20'
+          : 'bg-background'
+      )}
+    >
       <main className="flex h-full min-h-0 w-full flex-col overflow-hidden">
         {hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
               data-testid="mobile-conversation-header"
-              className="pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+              className={cn(
+                'pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
+                appearance.backgroundImagePath && appearance.backgroundInTopBar
+                  ? 'bg-background/20'
+                  : 'bg-background/95 backdrop-blur'
+              )}
             >
               <button
                 type="button"
@@ -302,6 +341,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
               turnNavigation={paneSession.turnNavigation}
               onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+              onLoadFullTranscript={paneSession.loadFullTranscript}
+              loadingFullTranscript={paneSession.transcriptLoadingFullContent}
               onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
               onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
@@ -313,11 +354,15 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               scrollerClassName="pb-28 pt-16"
               devices={state.devices}
               onRetryFailedMessage={message => {
-                void retryFailedMessage(message.id, paneMessages)
+                void paneSession.retryFailedMessage(message)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
-              onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+              onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+              }
+              onRevertFileChanges={(subtaskId, fileChanges) =>
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+              }
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
@@ -341,7 +386,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     devices={state.devices}
                     upgradingDevices={upgradingDevices}
                     onUpgradeDevice={upgradeDevice}
-                    onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                    onOpenCloudDeviceSettings={() => navigateTo('/settings/connections')}
                     activeDeviceId={activeDeviceId}
                     requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                     compact
@@ -355,10 +400,13 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     }
                     payload={pendingRequestUserInput}
                     onSubmit={response => {
-                      const shouldImplementPlan =
+                      const isImplementationPlanRequest =
                         isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                      const shouldImplementPlan =
+                        isImplementationPlanRequest &&
+                        isImplementationPlanConfirmationResponse(response)
                       return paneSession.sendRequestUserInputResponse(response, {
-                        appendUserMessage: shouldImplementPlan,
+                        appendUserMessage: isImplementationPlanRequest,
                         forceDefaultCollaborationMode: shouldImplementPlan,
                       })
                     }}
@@ -375,12 +423,21 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                     projectChat={projectChatWithModelSelectorSignal}
                     projectWork={effectiveProjectWork}
+                    workspaceTarget={workspaceTarget}
+                    workspaceFileApi={workspaceFileApi}
                     queuedMessages={paneQueuedMessages}
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
                     onPause={() => void paneSession.pauseCurrentResponse()}
+                    onCompactContext={() => void paneSession.compactContext()}
+                    taskPlan={paneSession.taskPlan}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                    queuePaused={paneSession.queuedMessagesPaused}
+                    onResumeQueue={paneSession.resumeQueuedMessages}
+                    onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                    onClearQueue={paneSession.clearQueuedMessages}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
                     onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
@@ -394,7 +451,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
           <div className="flex h-full min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
             <header
               data-testid="mobile-empty-header"
-              className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"
+              className={cn(
+                'flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
+                appearance.backgroundImagePath && appearance.backgroundInTopBar
+                  ? 'bg-background/20'
+                  : 'bg-background/95'
+              )}
             >
               <button
                 type="button"
@@ -433,7 +495,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 className="flex w-full max-w-[360px] flex-col items-center gap-6"
               >
                 <Bot className="h-8 w-8 text-text-muted" />
-                <h1 className="text-center text-2xl font-semibold tracking-normal">{emptyTitle}</h1>
+                <h1 className="heading-lg text-center tracking-normal">{emptyTitle}</h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
                   className="min-h-0 flex-col justify-center gap-1 px-0"
@@ -448,7 +510,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 devices={state.devices}
                 upgradingDevices={upgradingDevices}
                 onUpgradeDevice={upgradeDevice}
-                onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                onOpenCloudDeviceSettings={() => navigateTo('/settings/connections')}
                 activeDeviceId={activeDeviceId}
                 requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                 compact
@@ -464,12 +526,21 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={effectiveProjectWork}
+                workspaceTarget={workspaceTarget}
+                workspaceFileApi={workspaceFileApi}
                 queuedMessages={paneQueuedMessages}
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
+                onCompactContext={() => void paneSession.compactContext()}
+                taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                queuePaused={paneSession.queuedMessagesPaused}
+                onResumeQueue={paneSession.resumeQueuedMessages}
+                onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                onClearQueue={paneSession.clearQueuedMessages}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
                 onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
@@ -488,6 +559,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         runtimeWork={state.runtimeWork}
         currentProjectId={activeConversationProject?.id}
         currentRuntimeTask={currentRuntimeTask}
+        unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
         activeItem={activeItem}
         onClose={() => setDrawerOpen(false)}
         onNewChat={onNewChat}

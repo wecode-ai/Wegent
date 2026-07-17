@@ -95,6 +95,7 @@ services:
       SECRET_KEY: ${BACKEND_SECRET_KEY:-your-secret-key-here}
       ALGORITHM: ${BACKEND_ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${BACKEND_ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
+      SITES_API_BASE_URL: ${SITES_API_BASE_URL:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       APPEND_CHAT_TASK_EXPIRE_HOURS: ${BACKEND_APPEND_CHAT_TASK_EXPIRE_HOURS:-2}
       APPEND_CODE_TASK_EXPIRE_HOURS: ${BACKEND_APPEND_CODE_TASK_EXPIRE_HOURS:-2}
@@ -340,6 +341,12 @@ services:
       PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-false}
       PROMETHEUS_PORT: ${PROMETHEUS_PORT:-9090}
       PROMETHEUS_PATH: ${PROMETHEUS_PATH:-/metrics}
+      # Multimodal analysis (video/image → Gemini → Markdown). Off by default;
+      # set MULTIMODAL_ENABLED=true to opt the worker into the multimodal queue.
+      KNOWLEDGE_CONVERSION_QUEUE: ${KNOWLEDGE_CONVERSION_QUEUE:-knowledge_conversion}
+      CELERY_QUEUE: ${CELERY_QUEUE:-knowledge_conversion,knowledge_multimodal_conversion}
+      MULTIMODAL_ENABLED: ${MULTIMODAL_ENABLED:-false}
+      MULTIMODAL_QUEUE: ${MULTIMODAL_QUEUE:-knowledge_multimodal_conversion}
     ports:
       - "${PROMETHEUS_PORT:-9090}:${PROMETHEUS_PORT:-9090}"
     volumes:

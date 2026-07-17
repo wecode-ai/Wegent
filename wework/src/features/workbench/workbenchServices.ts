@@ -16,10 +16,10 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
-import { getRuntimeConfig } from '@/config/runtime'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import { createChatStream } from '@/stream/chatStream'
 import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 
 export interface WorkbenchServices {
@@ -46,7 +46,9 @@ export interface WorkbenchServices {
     | 'listSkills'
     | 'listWorkspaceEntries'
     | 'readWorkspaceTextFile'
+    | 'readWorkspaceFileChunk'
   > & {
+    writeWorkspaceTextFile?: NonNullable<WorkspaceFileApi['writeWorkspaceTextFile']>
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi
     >['createDockerRemoteDeviceCommand']
@@ -54,11 +56,7 @@ export interface WorkbenchServices {
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   attachmentApi?: {
-    uploadAttachment: (
-      file: File,
-      onProgress?: (progress: number) => void,
-      context?: { workspacePath?: string | null }
-    ) => Promise<Attachment>
+    uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>
   }
   executorClient?: ExecutorClient
@@ -86,9 +84,9 @@ export function createExecutorClientForWorkbenchServices(
   services: WorkbenchServices
 ): ExecutorClient {
   if (services.executorClient) return services.executorClient
-  const { runtimeMode } = getRuntimeConfig()
-  const transportKind: ExecutorTransportKind =
-    runtimeMode === 'local-first' && isTauriRuntime() ? 'local-ipc' : 'backend-relay'
+  const transportKind: ExecutorTransportKind = isLocalFirstAppRuntime()
+    ? 'local-ipc'
+    : 'backend-relay'
   if (!services.runtimeWorkApi) {
     throw new Error('Runtime work API is unavailable')
   }
@@ -105,8 +103,7 @@ export function createExecutorClientForWorkbenchServices(
 export function createDefaultWorkbenchServices(
   cloudConnection?: CloudConnectionServicesSnapshot
 ): WorkbenchServices {
-  const { runtimeMode } = getRuntimeConfig()
-  if (runtimeMode === 'local-first' && isTauriRuntime()) {
+  if (isLocalFirstAppRuntime()) {
     if (
       cloudConnection?.isConnected &&
       cloudConnection.backendUrl &&
@@ -116,7 +113,6 @@ export function createDefaultWorkbenchServices(
       cloudConnection.token
     ) {
       return createHybridWorkbenchServices({
-        backendUrl: cloudConnection.backendUrl,
         apiBaseUrl: cloudConnection.apiBaseUrl,
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,

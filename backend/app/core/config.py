@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
     # Workspace archive configuration
-    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 2048
     WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
@@ -219,6 +219,11 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Optional Web URL used to build Wework desktop cloud authorization pages.
+    # Defaults to FRONTEND_URL when empty.
+    WEWORK_AUTHORIZE_BASE_URL: str = ""
+    # Optional upstream for the Sites service. Wework accesses it through Backend.
+    SITES_API_BASE_URL: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"
@@ -421,6 +426,26 @@ class Settings(BaseSettings):
     # WORKER_CONVERSION_S3_BUCKET_NAME -> converter config
     # WORKER_CONVERSION_S3_REGION_NAME -> converter config
     # --- End Document Conversion Configuration ---
+
+    # --- Knowledge Multimodal Analysis Configuration ---
+    # Master switch for multimodal (video/image) Gemini analysis in knowledge
+    # bases. When False the orchestrator never classifies a file as multimodal,
+    # so no dispatch/Gemini runs anywhere; already-converted documents keep
+    # re-indexing normally. The open-source build ships image analysis fully
+    # wired; video analysis requires a configured media staging provider.
+    KNOWLEDGE_MULTIMODAL_ENABLED: bool = False
+    # Dedicated Celery queue for multimodal conversion tasks. The converter
+    # worker consumes both this and the MinerU queue by default.
+    KNOWLEDGE_MULTIMODAL_CONVERSION_QUEUE: str = "knowledge_multimodal_conversion"
+    # Internal endpoint the converter calls at execution time to resolve the
+    # KB's multimodalAnalysisModelRef into a decrypted runtime config (api_key
+    # + resolved default_headers). Keeps the Celery broker free of secrets.
+    MULTIMODAL_MODEL_CONFIG_RESOLVE_PATH: str = "/api/internal/model-config/resolve"
+    # When False, video multimodal analysis is rejected up-front (the
+    # open-source default ships no media staging provider). Enable after
+    # configuring a concrete MediaStagingProvider implementation.
+    KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED: bool = False
+    # --- End Knowledge Multimodal Analysis Configuration ---
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures

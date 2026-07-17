@@ -28,15 +28,21 @@ export interface AppearanceConfig {
   accentColor: string
   uiFont: string
   codeFont: string
+  uiFontSize: number
+  codeFontSize: number
   sidebarTranslucent: boolean
   contrast: number
+  backgroundImagePath: string | null
+  backgroundVisibility: number
+  backgroundBlur: number
+  backgroundInMain: boolean
+  backgroundInSidebar: boolean
+  backgroundInTopBar: boolean
   light: ThemePalette
   dark: ThemePalette
 }
 
-export type AppearanceUpdate = Partial<
-  Omit<AppearanceConfig, 'light' | 'dark'>
-> & {
+export type AppearanceUpdate = Partial<Omit<AppearanceConfig, 'light' | 'dark'>> & {
   light?: Partial<ThemePalette>
   dark?: Partial<ThemePalette>
 }

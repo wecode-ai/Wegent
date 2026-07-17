@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, future::Future, pin::Pin};
+use std::{env, future::Future, path::PathBuf, pin::Pin};
 
 mod agno;
 mod backend_url;
 mod claude_code;
 mod claude_options;
 mod codex;
+mod codex_log_db;
 mod dify;
 mod git_auth;
 mod git_workspace;
@@ -34,16 +35,29 @@ use claude_code::{
     restore_claude_plugin_cache, run_pre_execute_hook,
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
+pub(crate) use codex::{
+    combined_codex_developer_instructions, mcp_server_elicitation_request_user_input_params,
+    strip_wework_browser_instructions,
+};
 pub use codex::{
-    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexAppServerClient,
-    CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState,
-    CodexNotificationSender, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
+    CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
+    CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexNotificationSender,
+    CodexRequestUserInputReceiver, CodexThreadStartedCallback, CodexTurnInterrupter,
+    CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
 
-const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
+const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
+const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+];
+const CLAUDE_USER_BINARY_SUFFIX: &str = ".local/bin/claude";
+
+#[cfg(target_os = "windows")]
+const WINDOWS_EXECUTABLE_EXTENSIONS: [&str; 4] = [".exe", ".cmd", ".bat", ".com"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
@@ -76,12 +90,91 @@ pub fn resolve_codex_binary() -> String {
     read_binary("CODEX_BINARY_PATH", "CODEX_BIN", "codex")
 }
 
+/// Resolve a codex binary name/path to an absolute executable path.
+///
+/// Explicit paths are returned unchanged. A bare `codex` name prefers the
+/// macOS app bundle when present, otherwise it is looked up on `PATH`.
+pub fn resolve_codex_binary_path(value: &str) -> String {
+    let app_candidates = if cfg!(target_os = "macos") {
+        MACOS_CODEX_APP_BINARIES
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let mut search_paths = env::var_os("PATH")
+        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+    search_paths.extend(windows_fallback_search_paths());
+
+    resolve_codex_binary_path_from_candidates(value, &app_candidates, &search_paths)
+}
+
+fn resolve_codex_binary_path_from_candidates(
+    value: &str,
+    app_candidates: &[PathBuf],
+    search_paths: &[PathBuf],
+) -> String {
+    let trimmed = value.trim();
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return trimmed.to_owned();
+    }
+
+    if trimmed == "codex" {
+        if let Some(path) = app_candidates.iter().find(|path| path.is_file()) {
+            return path.display().to_string();
+        }
+    }
+
+    find_executable_in_paths(trimmed, search_paths)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| trimmed.to_owned())
+}
+
 pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
-    CommandSpec::new(binary).arg("app-server").arg("--stdio")
+    CommandSpec::new(binary).arg("app-server")
 }
 
 fn resolve_claude_binary() -> String {
-    read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude")
+    let binary = read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude");
+    resolve_claude_binary_path(&binary)
+}
+
+/// Resolve a Claude Code binary name/path to an executable path.
+///
+/// GUI-launched local executors may not inherit a user's shell PATH.
+/// `~/.local/bin` is a common user-level Claude Code installation location,
+/// so check it before falling back to PATH lookup.
+pub fn resolve_claude_binary_path(value: &str) -> String {
+    let user_binary = dirs::home_dir().map(|home| home.join(CLAUDE_USER_BINARY_SUFFIX));
+    let mut search_paths = env::var_os("PATH")
+        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+    search_paths.extend(windows_fallback_search_paths());
+
+    resolve_claude_binary_path_from_candidates(value, user_binary.as_ref(), &search_paths)
+}
+
+fn resolve_claude_binary_path_from_candidates(
+    value: &str,
+    user_binary: Option<&PathBuf>,
+    search_paths: &[PathBuf],
+) -> String {
+    let trimmed = value.trim();
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return trimmed.to_owned();
+    }
+
+    if trimmed == "claude" {
+        if let Some(path) = user_binary.filter(|path| path.is_file()) {
+            return path.display().to_string();
+        }
+    }
+
+    find_executable_in_paths(trimmed, search_paths)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| trimmed.to_owned())
 }
 
 fn read_binary(primary: &str, secondary: &str, default: &str) -> String {
@@ -91,6 +184,51 @@ fn read_binary(primary: &str, secondary: &str, default: &str) -> String {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_owned())
+}
+
+/// Returns common user-level binary directories that GUI-launched processes may
+/// not have on PATH.
+#[cfg(target_os = "windows")]
+fn windows_fallback_search_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join("AppData").join("Roaming").join("npm"));
+        paths.push(home.join(".cargo").join("bin"));
+    }
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        paths.push(PathBuf::from(local_app_data).join("npm"));
+    }
+    paths
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_fallback_search_paths() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// Looks for `name` in `search_paths`, respecting Windows executable
+/// extensions when no extension is provided.
+fn find_executable_in_paths(name: &str, search_paths: &[PathBuf]) -> Option<PathBuf> {
+    search_paths
+        .iter()
+        .flat_map(|path| executable_candidates(path.join(name)))
+        .find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
+    if path.extension().is_some() {
+        return vec![path];
+    }
+    WINDOWS_EXECUTABLE_EXTENSIONS
+        .iter()
+        .map(|ext| path.with_extension(&ext[1..]))
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
+    vec![path]
 }
 
 fn claude_code_process_timeout_seconds() -> u64 {
@@ -298,6 +436,7 @@ impl AgentEngine for AgentProcessEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;
@@ -353,6 +492,44 @@ mod tests {
         let _old_timeout = EnvGuard::set("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS", "1");
         let _timeout = EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS");
 
-        assert_eq!(claude_code_process_timeout_seconds(), 3600);
+        assert_eq!(claude_code_process_timeout_seconds(), 86_400);
+    }
+
+    #[test]
+    fn codex_binary_resolver_prefers_available_macos_app_candidate() {
+        let available_binary = std::env::current_exe().expect("current test binary should exist");
+        let app_candidates = vec![
+            PathBuf::from("/missing/Codex.app/Contents/Resources/codex"),
+            available_binary.clone(),
+        ];
+
+        let resolved = resolve_codex_binary_path_from_candidates("codex", &app_candidates, &[]);
+
+        assert_eq!(resolved, available_binary.display().to_string());
+    }
+
+    #[test]
+    fn claude_binary_resolver_prefers_available_user_binary() {
+        let available_binary = std::env::current_exe().expect("current test binary should exist");
+
+        let resolved =
+            resolve_claude_binary_path_from_candidates("claude", Some(&available_binary), &[]);
+
+        assert_eq!(resolved, available_binary.display().to_string());
+    }
+
+    #[test]
+    fn claude_binary_resolver_keeps_explicit_path() {
+        let explicit_path = "/custom/bin/claude";
+
+        let resolved = resolve_claude_binary_path_from_candidates(explicit_path, None, &[]);
+
+        assert_eq!(resolved, explicit_path);
+    }
+
+    #[test]
+    fn macos_codex_app_candidates_include_current_chatgpt_bundle() {
+        assert!(MACOS_CODEX_APP_BINARIES
+            .contains(&"/Applications/ChatGPT.app/Contents/Resources/codex"));
     }
 }

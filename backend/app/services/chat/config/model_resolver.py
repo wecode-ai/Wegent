@@ -8,6 +8,7 @@ Model resolver for Chat Shell.
 Resolves model configuration from Bot's bound model or task-level override.
 """
 
+import base64
 import json
 import logging
 import os
@@ -224,20 +225,21 @@ def build_default_headers_with_placeholders(
     return result_headers
 
 
-# Prefix identifying the agent/team identity header group forwarded to the model
-# backend (e.g. wegent-agent-namespace, wegent-agent-name). New identity fields
-# should reuse this prefix so they share the empty-strip behavior.
-WEGENT_IDENTITY_HEADER_PREFIX = "wegent-agent-"
+# Substring marker identifying the agent/team identity header group forwarded to the
+# model backend (e.g. wegent-agent-namespace, wegent-agent-name). Any header whose
+# name *contains* this substring shares the empty-strip and encoding behaviors.
+WEGENT_IDENTITY_HEADER_MARKER = "wegent-agent-"
 
 
 def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop wegent-agent-* headers whose value is empty.
+    """Drop headers whose name contains 'wegent-agent-' and whose value is empty.
 
     Placeholder resolution yields "" when a data source is missing (e.g.
     non-Team execution paths such as wizard/correction that carry no team
-    context). Emitting blank identity headers is undesirable, so only the
-    wegent-agent-* group is removed when empty; all other headers (including
-    the legacy ``user`` header) keep their existing behavior.
+    context). Emitting blank identity headers is undesirable, so any header
+    whose name contains WEGENT_IDENTITY_HEADER_MARKER is removed when its
+    value is empty; all other headers (including the legacy ``user`` header)
+    keep their existing behavior.
 
     Args:
         headers: Default headers after placeholder replacement.
@@ -249,9 +251,53 @@ def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
         key: value
         for key, value in headers.items()
         if not (
-            key.lower().startswith(WEGENT_IDENTITY_HEADER_PREFIX)
+            WEGENT_IDENTITY_HEADER_MARKER in key.lower()
             and (value is None or (isinstance(value, str) and not value.strip()))
         )
+    }
+
+
+def _encode_wegent_header_value(value: str) -> str:
+    """Encode a header value that may contain non-ASCII characters.
+
+    HTTP headers must be ASCII (RFC 7230). Team names may contain non-ASCII
+    characters (e.g. Chinese). If the value is already ASCII-safe it is
+    returned unchanged; otherwise it is base64-encoded and prefixed with
+    'b64:' so the receiver can detect and decode it.
+
+    Args:
+        value: The resolved header value string.
+
+    Returns:
+        The original string if ASCII-safe, otherwise 'b64:<base64>'.
+    """
+    try:
+        value.encode("ascii")
+        return value
+    except UnicodeEncodeError:
+        return "b64:" + base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def encode_wegent_header_values(headers: Dict[str, Any]) -> Dict[str, Any]:
+    """Base64-encode non-ASCII values in wegent-agent-* headers.
+
+    Applies _encode_wegent_header_value to every header whose name contains
+    WEGENT_IDENTITY_HEADER_MARKER so non-ASCII team names (e.g. Chinese)
+    are transmitted as ASCII-safe 'b64:<base64>' strings.
+
+    Args:
+        headers: Resolved headers after placeholder replacement and empty-strip.
+
+    Returns:
+        Headers with non-ASCII wegent-agent-* values base64-encoded.
+    """
+    return {
+        key: (
+            _encode_wegent_header_value(value)
+            if WEGENT_IDENTITY_HEADER_MARKER in key.lower() and isinstance(value, str)
+            else value
+        )
+        for key, value in headers.items()
     }
 
 
@@ -341,6 +387,8 @@ def _process_model_config_placeholders(
         # Drop wegent-agent-* identity headers that resolved to empty (e.g. paths
         # without Team context), so we never emit blank identity headers.
         processed_headers = strip_empty_wegent_headers(processed_headers)
+        # Encode non-ASCII values (e.g. Chinese team names) to ASCII-safe base64.
+        processed_headers = encode_wegent_header_values(processed_headers)
         model_config["default_headers"] = processed_headers
         logger.info(f"[model_resolver] Processed default_headers with placeholders")
 
@@ -481,8 +529,13 @@ def _resolve_model_for_bot(
                 f"Model '{model_name}' passed allowed_models whitelist check for bot '{bot.name}'"
             )
 
-    # Find the model Kind object
+    # Find the model Kind object, following any bind_model pointer chain
+    # (e.g. a Bot's private Model that only carries an allowed_models
+    # whitelist and points onward to the model with the real env config).
     model_kind, model_spec = _find_model_with_namespace(db, model_name, user_id)
+    model_kind, model_spec = _resolve_bind_model_pointer(
+        db, user_id, model_kind, model_spec
+    )
     return model_kind, model_spec, model_name, raw_agent_config
 
 
@@ -691,6 +744,79 @@ def _find_model_with_namespace(
     return None, None
 
 
+# Maximum number of bind_model pointer hops to follow before giving up.
+# Guards against misconfigured or accidentally-cyclic pointer chains.
+_MAX_BIND_MODEL_POINTER_DEPTH = 5
+
+
+def _resolve_bind_model_pointer(
+    db: Session,
+    user_id: int,
+    model_kind: Optional[Kind],
+    model_spec: Optional[Dict[str, Any]],
+) -> tuple[Optional[Kind], Optional[Dict[str, Any]]]:
+    """
+    Follow a Model's modelConfig.bind_model pointer to the Model it references.
+
+    Some Models (e.g. a Bot's private Model created to carry a restricted
+    allowed_models whitelist) only store {"bind_model": ..., "allowed_models": [...]}
+    without their own "env" section - the actual provider config lives on the
+    Model named by bind_model. Without this resolution, callers would silently
+    fall back to placeholder defaults (gpt-4 / empty api_key) instead of the
+    real credentials.
+
+    Args:
+        db: Database session
+        user_id: User ID for querying user-specific models
+        model_kind: The Model Kind object to start from (may be None for
+            runtime-only models)
+        model_spec: The Model spec dict to start from
+
+    Returns:
+        Tuple of (model_kind, model_spec) once a Model with a real "env"
+        section is reached, or the last unresolved (model_kind, model_spec)
+        if there was no bind_model to follow.
+
+    Raises:
+        ValueError: If a bind_model pointer target cannot be found, or the
+            pointer chain is too deep or cyclic.
+    """
+    visited: set[str] = set()
+    while model_spec:
+        model_config = model_spec.get("modelConfig") or {}
+        if model_config.get("env"):
+            return model_kind, model_spec
+
+        bind_model = model_config.get("bind_model")
+        if not isinstance(bind_model, str) or not bind_model.strip():
+            return model_kind, model_spec
+        bind_model = bind_model.strip()
+
+        if bind_model in visited or len(visited) >= _MAX_BIND_MODEL_POINTER_DEPTH:
+            raise ValueError(
+                f"Model bind_model pointer chain is too deep or cyclic "
+                f"while resolving '{bind_model}'"
+            )
+        visited.add(bind_model)
+
+        current_name = model_kind.name if model_kind else bind_model
+        logger.info(
+            "[model_resolver] Model '%s' has no env, following bind_model "
+            "pointer to '%s'",
+            current_name,
+            bind_model,
+        )
+        next_kind, next_spec = _find_model_with_namespace(db, bind_model, user_id)
+        if not next_spec:
+            raise ValueError(
+                f"Model '{current_name}' binds to model '{bind_model}', "
+                f"which was not found"
+            )
+        model_kind, model_spec = next_kind, next_spec
+
+    return model_kind, model_spec
+
+
 def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract API configuration from model spec.
@@ -700,6 +826,14 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns:
         Dict with api_key, base_url, model_id, model type, and default_headers
+
+    Raises:
+        ValueError: If modelConfig has no usable "env" section. This can happen
+            when a Model is a bind_model pointer wrapper that was never resolved
+            to its target (see _resolve_bind_model_pointer), or when modelConfig
+            is entirely empty. We raise instead of silently falling back to
+            placeholder defaults (gpt-4 / openai / empty api_key), which look
+            like a valid config but produce authentication failures downstream.
     """
     logger.info(
         f"[model_resolver] _extract_model_config: model_spec keys = {list(model_spec.keys())}"
@@ -710,7 +844,15 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         f"[model_resolver] _extract_model_config: modelConfig keys = {list(model_config.keys()) if model_config else 'empty'}"
     )
 
-    env = model_config.get("env", {})
+    env = model_config.get("env")
+    if not env:
+        bind_model = model_config.get("bind_model")
+        if bind_model:
+            raise ValueError(
+                f"Model config has an unresolved bind_model pointer to "
+                f"'{bind_model}' with no env configuration"
+            )
+        raise ValueError("Model config has no env configuration")
     logger.info(
         f"[model_resolver] _extract_model_config: env keys = {list(env.keys()) if env else 'empty'}"
     )
@@ -816,6 +958,11 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     # Video generation config (when modelType='video')
     video_config = model_spec.get("videoConfig")
+    model_capabilities = model_spec.get("modelCapabilities") or None
+    if model_capabilities:
+        logger.info(
+            f"[model_resolver] _extract_model_config: modelCapabilities={model_capabilities}"
+        )
 
     # Thinking/reasoning config (provider-native passthrough)
     # Only read from env - this is the single source of truth
@@ -832,7 +979,7 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: temperature={temperature}"
         )
 
-    return {
+    result = {
         "api_key": api_key,
         "base_url": base_url,
         "model_id": model_id,
@@ -853,6 +1000,9 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         # User-configured temperature override
         "temperature": temperature,
     }
+    if model_capabilities:
+        result["modelCapabilities"] = model_capabilities
+    return result
 
 
 def get_bot_system_prompt(

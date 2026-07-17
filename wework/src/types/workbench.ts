@@ -4,6 +4,7 @@ import type {
   CodexReference,
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeContextUsage,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
@@ -24,6 +25,7 @@ import type {
   WorkbenchToolBlock,
   WorkbenchToolBlockStatus,
 } from '@wegent/chat-core'
+import type { CodeCommentContext } from './workspace-files'
 
 export type MessageRole = WorkbenchMessageRole
 export type MessageStatus = WorkbenchMessageStatus
@@ -70,6 +72,10 @@ export type WorkbenchMessage = Omit<
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
   runtimeGoalRequest?: boolean | null
+  runtimeGuidance?: boolean | null
+  runtimeGuidanceSplitBefore?: boolean | null
+  runtimeGuidanceContinuation?: boolean | null
+  codeComments?: CodeCommentContext[] | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
 }
@@ -96,7 +102,10 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  running?: boolean
+  contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
+  fullContent?: boolean
   rangeStart?: number | null
   rangeEnd?: number | null
   hasMoreBefore?: boolean
@@ -110,6 +119,7 @@ export interface RuntimePaneTranscriptLoadOptions {
   beforeCursor?: string | null
   afterCursor?: string | null
   refresh?: boolean
+  includeFullContent?: boolean
 }
 
 export type RuntimeTranscriptLoader = (
@@ -120,6 +130,45 @@ export type RuntimeTranscriptLoader = (
 export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
 export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
 export type CloudWorkAvailability = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+export type CloudSyncTrigger =
+  | 'bootstrap'
+  | 'manual-refresh'
+  | 'cloud-connection'
+  | 'device-event'
+  | 'runtime-event'
+  | 'poll'
+export type CloudRuntimeAvailability =
+  | 'idle'
+  | 'syncing'
+  | 'ready'
+  | 'partial'
+  | 'stale'
+  | 'unavailable'
+export type SyncCheckStateStatus = 'idle' | 'syncing' | 'success' | 'empty' | 'failed' | 'stale'
+
+export interface SyncCheckState {
+  status: SyncCheckStateStatus
+  updatedAt: string | null
+  error: string | null
+}
+
+export interface CloudRuntimeSnapshot {
+  revision: number
+  devices: DeviceInfo[]
+  runtimeWork: RuntimeWorkListResponse
+  teams: Team[]
+  fetchedAt: string | null
+  checks: Record<CloudWorkCheckKey, SyncCheckState>
+}
+
+export interface CloudRuntimeState {
+  availability: CloudRuntimeAvailability
+  current: CloudRuntimeSnapshot | null
+  lastGood: CloudRuntimeSnapshot | null
+  inFlightRevision: number | null
+  lastTrigger: CloudSyncTrigger | null
+  nextRevision: number
+}
 
 export interface CloudWorkStatus {
   availability: CloudWorkAvailability
@@ -136,6 +185,7 @@ export interface WorkbenchState {
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  activeRuntimeTasks: RuntimeTaskAddress[]
   standaloneChatKey: number
   selectedDeviceWorkspaceId: number | null
   pendingProjectWorkspaceProjectId: number | null

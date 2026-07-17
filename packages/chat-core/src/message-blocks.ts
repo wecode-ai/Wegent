@@ -6,6 +6,7 @@ export type MessageBlockStatus =
   | 'pending'
   | 'generating_arguments'
   | 'streaming'
+  | 'invoking'
   | 'done'
   | 'error'
   | 'queued'
@@ -16,6 +17,7 @@ export type MessageBlockStatus =
 
 interface BaseBlock {
   id: string
+  parent_tool_use_id?: string
   status?: MessageBlockStatus
   timestamp?: number
 }
@@ -34,6 +36,20 @@ export interface ToolBlock extends BaseBlock {
   tool_output?: unknown
   render_payload?: unknown
   argument_status?: 'streaming' | 'done'
+  metadata?: Record<string, unknown>
+}
+
+export interface SubagentBlock extends BaseBlock {
+  type: 'subagent'
+  tool_use_id: string
+  tool_name?: string
+  display_name?: string
+  agent_type?: string
+  title?: string
+  description?: string
+  output?: string
+  summary?: string
+  children?: MessageBlock[]
   metadata?: Record<string, unknown>
 }
 
@@ -134,6 +150,7 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
 export type MessageBlock =
   | TextBlock
   | ToolBlock
+  | SubagentBlock
   | ThinkingBlock
   | GuidanceBlock
   | ErrorBlock
@@ -141,3 +158,66 @@ export type MessageBlock =
   | ImageBlock
   | PromptOptimizationBlock
   | SubscriptionPreviewBlockType
+
+/** Build the display tree encoded by parent_tool_use_id. */
+export function nestMessageBlocks(blocks: MessageBlock[]): MessageBlock[] {
+  const blockMap = new Map<string, MessageBlock>()
+  const blockOrder: string[] = []
+  const parentIds = new Map<string, string>()
+
+  const collectBlock = (block: MessageBlock, nestedParentId?: string) => {
+    const existing = blockMap.get(block.id)
+    const blockWithoutChildren: MessageBlock =
+      block.type === 'subagent' ? { ...block, children: undefined } : { ...block }
+
+    if (!existing) {
+      blockOrder.push(block.id)
+    }
+    blockMap.set(
+      block.id,
+      existing ? ({ ...existing, ...blockWithoutChildren } as MessageBlock) : blockWithoutChildren
+    )
+
+    const parentId = block.parent_tool_use_id || nestedParentId
+    if (parentId && parentId !== block.id) {
+      parentIds.set(block.id, parentId)
+    }
+
+    if (block.type === 'subagent') {
+      block.children?.forEach(child => collectBlock(child, block.id))
+    }
+  }
+
+  blocks.forEach(block => collectBlock(block))
+
+  const childIdsByParent = new Map<string, string[]>()
+  parentIds.forEach((parentId, childId) => {
+    if (blockMap.get(parentId)?.type !== 'subagent') return
+    const childIds = childIdsByParent.get(parentId) || []
+    childIds.push(childId)
+    childIdsByParent.set(parentId, childIds)
+  })
+
+  const buildBlock = (blockId: string, ancestors: Set<string>): MessageBlock => {
+    const block = blockMap.get(blockId)!
+    if (block.type !== 'subagent' || ancestors.has(blockId)) {
+      return block
+    }
+
+    const nextAncestors = new Set(ancestors)
+    nextAncestors.add(blockId)
+    return {
+      ...block,
+      children: (childIdsByParent.get(blockId) || []).map(childId =>
+        buildBlock(childId, nextAncestors)
+      ),
+    }
+  }
+
+  return blockOrder
+    .filter(blockId => {
+      const parentId = parentIds.get(blockId)
+      return !parentId || blockMap.get(parentId)?.type !== 'subagent'
+    })
+    .map(blockId => buildBlock(blockId, new Set()))
+}

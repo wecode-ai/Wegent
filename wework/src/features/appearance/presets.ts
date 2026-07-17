@@ -1,4 +1,5 @@
 import type { AppearanceConfig, ThemePalette } from './types'
+import { DEFAULT_CODE_FONT_SIZE, DEFAULT_UI_FONT_SIZE } from './typography'
 
 export const DEFAULT_ACCENT_COLOR = '#2563eb'
 
@@ -52,8 +53,16 @@ export const defaultAppearance: AppearanceConfig = {
   uiFont:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
   codeFont: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+  uiFontSize: DEFAULT_UI_FONT_SIZE,
+  codeFontSize: DEFAULT_CODE_FONT_SIZE,
   sidebarTranslucent: true,
   contrast: 50,
+  backgroundImagePath: null,
+  backgroundVisibility: 24,
+  backgroundBlur: 0,
+  backgroundInMain: true,
+  backgroundInSidebar: true,
+  backgroundInTopBar: true,
   light: lightPalette,
   dark: darkPalette,
 }
