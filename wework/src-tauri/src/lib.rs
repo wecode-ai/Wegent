@@ -3765,7 +3765,6 @@ pub fn run() {
             appshots::get_appshots_status,
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
-            appshots::take_pending_appshots_permission,
             desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,

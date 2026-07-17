@@ -49,7 +49,7 @@ When no conversation is open, the newly created main window keeps the task launc
 
 On macOS desktop, **Settings → Integrations → Appshots** shows the Appshots status and sound preference. The default shortcut is `⌘⇧2`. When pressed, Wework captures the frontmost application window and uses macOS Accessibility to read text exposed by that window, which can include text outside the visible scroll area. It then adds both the PNG and text context to the current composer attachments.
 
-On first use, macOS requests Screen & System Audio Recording and Accessibility access. The former captures the image; the latter reads available window text. Allow both, restart Wework, and press the shortcut again. If access was previously denied, Wework shows recovery guidance with a direct link to the relevant System Settings page.
+On first use, macOS requests Screen & System Audio Recording and Accessibility access. The former captures the image; the latter reads available window text. Allow both, restart Wework, and press the shortcut again. Wework does not show an additional in-app permission dialog. If access was previously denied, check its status under Appshots settings and select the corresponding **Open System Settings** action to grant it.
 
 Text extraction depends on the accessibility information exposed by the target application. Some apps and websites expose only visible content, so complete off-screen text is not guaranteed for every window.
 
