@@ -703,6 +703,10 @@ function mergeRuntimeWorkspaces(
       workspace: {
         ...canonicalWorkspace,
         ...(existing ?? {}),
+        deviceName:
+          existing?.workspaceSource === 'remote' && canonicalWorkspace.workspaceSource === 'remote'
+            ? (canonicalWorkspace.deviceName ?? existing.deviceName)
+            : (existing?.deviceName ?? canonicalWorkspace.deviceName),
         available: (existing?.available ?? false) || canonicalWorkspace.available,
         tasks,
       },

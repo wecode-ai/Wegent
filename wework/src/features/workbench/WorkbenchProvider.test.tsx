@@ -552,6 +552,9 @@ function RemoteRuntimeCacheProbe() {
       <span data-testid="cached-runtime-workspace-availability">
         {workspaces.map(workspace => String(workspace.available)).join('|')}
       </span>
+      <span data-testid="cached-runtime-device-names">
+        {workspaces.map(workspace => workspace.deviceName).join('|')}
+      </span>
     </div>
   )
 }
@@ -1913,7 +1916,7 @@ describe('WorkbenchProvider runtime tasks', () => {
               deviceWorkspaces: [
                 {
                   deviceId: 'remote-device',
-                  deviceName: '10.201.3.200',
+                  deviceName: '127.0.0.1',
                   deviceStatus: 'offline',
                   available: false,
                   workspacePath: '/srv/Wegent',
@@ -1957,6 +1960,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(screen.getByTestId('cached-runtime-workspace-availability')).toHaveTextContent('false')
+    expect(screen.getByTestId('cached-runtime-device-names')).toHaveTextContent('10.201.3.200')
   })
 
   test('applies device online events immediately when refresh falls back would be stale', async () => {
