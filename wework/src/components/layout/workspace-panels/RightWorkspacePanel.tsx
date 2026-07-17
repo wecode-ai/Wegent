@@ -73,6 +73,7 @@ interface RightWorkspaceReviewState {
 }
 
 interface RightWorkspacePanelProps {
+  showWorkbenchBackground?: boolean
   visible: boolean
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
@@ -108,6 +109,7 @@ interface RightWorkspacePanelProps {
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
+  showWorkbenchBackground = false,
   visible,
   activeView,
   openTabs,
@@ -270,7 +272,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         'relative z-chrome flex shrink-0 items-center gap-1.5 pointer-events-auto',
         renderTabsInTitlebar
           ? 'h-[38px] w-full bg-transparent pl-4 pr-2'
-          : 'h-10 border-b border-border bg-background px-3'
+          : cn(
+              'h-10 border-b border-border px-3',
+              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+            )
       )}
     >
       {visibleTabs.map(tab => (
@@ -321,7 +326,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   return (
     <section
       data-testid="right-workspace-panel"
-      className="relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col bg-background opacity-100 transition-[opacity,transform] duration-300 ease-out"
+      className={cn(
+        'relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col opacity-100 transition-[opacity,transform] duration-300 ease-out',
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+      )}
     >
       {renderTabsInTitlebar ? <TitlebarRightPanelPortal>{tabBar}</TitlebarRightPanelPortal> : null}
       {renderTabsInTitlebar ? null : tabBar}
@@ -351,6 +359,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'terminal' ? (
           <WorkspacePanelCards
+            showWorkbenchBackground={showWorkbenchBackground}
             currentProject={currentProject}
             devices={devices}
             workspaceTarget={workspaceTarget}
