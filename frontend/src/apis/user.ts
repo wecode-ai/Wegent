@@ -240,6 +240,12 @@ export const userApis = {
     return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`)
   },
 
+  async getUsersByIds(userIds: number[]): Promise<SearchUsersResponse> {
+    const params = new URLSearchParams()
+    userIds.forEach(userId => params.append('ids', String(userId)))
+    return apiClient.get(`/users/by-ids?${params.toString()}`)
+  },
+
   async getMcpProviderServices(providerId: string): Promise<McpProviderServiceConfig[]> {
     return apiClient.get(`/users/me/mcps/providers/${encodeURIComponent(providerId)}/services`)
   },
