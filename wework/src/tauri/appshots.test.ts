@@ -6,11 +6,7 @@ const listenMock = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }))
 
-import {
-  APPSHOT_CAPTURED_EVENT,
-  APPSHOT_PERMISSION_REQUIRED_EVENT,
-  subscribeToAppshots,
-} from './appshots'
+import { APPSHOT_CAPTURED_EVENT, subscribeToAppshots } from './appshots'
 
 describe('appshots', () => {
   beforeEach(() => {
@@ -20,8 +16,7 @@ describe('appshots', () => {
 
   test('delivers pending native captures as existing attachments and acknowledges them', async () => {
     const unlistenCaptured = vi.fn()
-    const unlistenPermission = vi.fn()
-    listenMock.mockResolvedValueOnce(unlistenCaptured).mockResolvedValueOnce(unlistenPermission)
+    listenMock.mockResolvedValueOnce(unlistenCaptured)
     invokeMock.mockImplementation(command => {
       if (command === 'take_pending_appshots') {
         return Promise.resolve([
@@ -44,12 +39,11 @@ describe('appshots', () => {
       return Promise.resolve()
     })
     const onAttachments = vi.fn()
-    const onPermissionRequired = vi.fn()
+    const dispose = await subscribeToAppshots(onAttachments)
 
-    const dispose = await subscribeToAppshots(onAttachments, onPermissionRequired)
-
+    expect(listenMock).toHaveBeenCalledOnce()
     expect(listenMock).toHaveBeenCalledWith(APPSHOT_CAPTURED_EVENT, expect.any(Function))
-    expect(listenMock).toHaveBeenCalledWith(APPSHOT_PERMISSION_REQUIRED_EVENT, expect.any(Function))
+    expect(invokeMock).not.toHaveBeenCalledWith('take_pending_appshots_permission')
     expect(onAttachments).toHaveBeenCalledWith([
       expect.objectContaining({
         filename: 'appshot.png',
@@ -71,14 +65,7 @@ describe('appshots', () => {
     ])
     expect(invokeMock).toHaveBeenCalledWith('acknowledge_appshot', { id: 'capture-1' })
 
-    const permissionListener = listenMock.mock.calls.find(
-      ([event]) => event === APPSHOT_PERMISSION_REQUIRED_EVENT
-    )?.[1]
-    permissionListener({ payload: 'accessibility' })
-    expect(onPermissionRequired).toHaveBeenCalledWith('accessibility')
-
     dispose()
     expect(unlistenCaptured).toHaveBeenCalledOnce()
-    expect(unlistenPermission).toHaveBeenCalledOnce()
   })
 })
