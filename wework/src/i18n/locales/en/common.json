@@ -880,6 +880,8 @@
     "general_settings_startup": "Startup",
     "general_settings_show_main_window_on_launch": "Show main window after launch",
     "general_settings_show_main_window_on_launch_description": "When this is off, Wework starts in the system tray.",
+    "general_settings_experimental_features": "Experimental features",
+    "general_settings_experimental_features_description": "Show features that are still experimental and may change or be unstable.",
     "general_settings_background_title": "Background execution",
     "general_settings_close_to_tray": "Keep running after closing the main window",
     "general_settings_background_description": "Closing the main window does not stop running tasks. Tasks continue in the background, and you can double-click the system tray icon to return to the main window.",
