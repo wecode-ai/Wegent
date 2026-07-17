@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest'
-import { normalizeTurnFileChanges } from './turnFileChanges'
+import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 
 const summary = {
-  version: 1,
-  status: 'active',
+  version: 1 as const,
+  status: 'active' as const,
   artifact_id: 'turn-8-21',
   device_id: 'device-1',
   workspace_path: '/workspace/project',
@@ -13,7 +13,7 @@ const summary = {
   files: [
     {
       path: 'src/main.ts',
-      change_type: 'modified',
+      change_type: 'modified' as const,
       additions: 4,
       deletions: 2,
       binary: false,
@@ -53,5 +53,34 @@ describe('normalizeTurnFileChanges', () => {
         files: [{ ...summary.files[0], additions: -1 }],
       })
     ).toBeUndefined()
+  })
+})
+
+describe('mergeTurnFileChanges', () => {
+  test('combines file change blocks into one turn summary', () => {
+    const second = {
+      ...summary,
+      artifact_id: 'artifact-2',
+      file_count: 1,
+      additions: 2,
+      deletions: 0,
+      files: [
+        {
+          path: 'src/second.ts',
+          change_type: 'created' as const,
+          additions: 2,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+    }
+
+    expect(mergeTurnFileChanges([summary, second])).toMatchObject({
+      artifact_id: summary.artifact_id,
+      file_count: 2,
+      additions: 6,
+      deletions: 2,
+      files: [summary.files[0], second.files[0]],
+    })
   })
 })
