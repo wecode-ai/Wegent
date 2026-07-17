@@ -9,6 +9,8 @@ PROJECT_TAURI_TARGET_DIR="$WEWORK_DIR/src-tauri/target"
 
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-branding.sh
+source "$SCRIPT_DIR/lib/wework-branding.sh"
 # shellcheck source=lib/wework-macos-signing.sh
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 # shellcheck source=lib/wework-macos-sidecar.sh
@@ -30,6 +32,7 @@ APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
 RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 
 usage() {
   cat <<EOF
@@ -48,7 +51,8 @@ Options:
   --macos-build-target <target>
                               macOS Rust/Tauri target. Default: universal-apple-darwin.
   --devtools                  Enable Web Inspector support in the release build.
-  --print-next-version       Only print the next version and exit.
+  --brand-config <path>       Brand identity JSON used for this app bundle.
+  --print-next-version        Only print the next version and exit.
   -h, --help                 Show this help message.
 
 Environment overrides:
@@ -57,7 +61,8 @@ Environment overrides:
   TAURI_SIGNING_PRIVATE_KEY_PATH, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, TAURI_UPDATER_PUBKEY,
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD,
-  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, VITE_WEGENT_BACKEND_URL
+  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, WEWORK_BRAND_CONFIG,
+  VITE_WEGENT_BACKEND_URL
 EOF
 }
 
@@ -473,6 +478,19 @@ while [ $# -gt 0 ]; do
       RELEASE_DEVTOOLS="1"
       shift
       ;;
+    --brand-config)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a config path." >&2
+        usage >&2
+        exit 1
+      fi
+      BRAND_CONFIG="$2"
+      shift 2
+      ;;
+    --brand-config=*)
+      BRAND_CONFIG="${1#*=}"
+      shift
+      ;;
     --print-next-version)
       PRINT_NEXT_VERSION_ONLY="true"
       shift
@@ -492,6 +510,14 @@ done
 if [ "$TARGET" != "local" ] && [ "$TARGET" != "prod" ]; then
   echo "--target must be 'local' or 'prod'" >&2
   exit 1
+fi
+
+if [ -n "$BRAND_CONFIG" ]; then
+  if [ ! -f "$BRAND_CONFIG" ]; then
+    echo "Error: brand config not found: $BRAND_CONFIG" >&2
+    exit 1
+  fi
+  BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
 fi
 
 if [ "$TARGET" = "prod" ] && [ -z "$PROD_UPDATE_BASE_URL" ]; then
@@ -550,9 +576,12 @@ if [ "$TARGET" = "prod" ]; then
 fi
 mkdir -p "$dist_dir"
 
+release_config="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.base.json.XXXXXX")"
 config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.json.XXXXXX")"
 cleanup() {
+  rm -f "$release_config"
   rm -f "$config_override"
+  rm -f "$config_override.namespace"
   detach_stale_bundle_disk_images || true
 }
 trap cleanup EXIT
@@ -561,10 +590,8 @@ VERSION="$next_version" \
 UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
-RELEASE_DEVTOOLS="$RELEASE_DEVTOOLS" \
-BASE_TAURI_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
 ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
-CONFIG_OVERRIDE="$config_override" \
+CONFIG_OVERRIDE="$release_config" \
 python3 - <<'PY'
 import json
 import os
@@ -592,23 +619,21 @@ if identity:
 if os.environ["ENABLE_INSECURE_TRANSPORT"] == "true":
     config["plugins"]["updater"]["dangerousInsecureTransportProtocol"] = True
 
-if os.environ["RELEASE_DEVTOOLS"] == "1":
-    with open(os.environ["BASE_TAURI_CONFIG"], "r", encoding="utf-8") as handle:
-        base_config = json.load(handle)
-    config["app"] = {
-        "windows": [
-            {
-                **window,
-                "devtools": True,
-            }
-            for window in base_config.get("app", {}).get("windows", [])
-        ],
-    }
-
 with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
 PY
+
+wework_prepare_brand_config \
+  "$WEWORK_DIR" \
+  "$BRAND_CONFIG" \
+  "${RELEASE_DEVTOOLS:-0}" \
+  "$config_override" \
+  "$release_config"
+if [ -f "$config_override.namespace" ]; then
+  export WEWORK_EXECUTOR_NAMESPACE="$(<"$config_override.namespace")"
+  rm -f "$config_override.namespace"
+fi
 
 echo "Release target: $TARGET"
 echo "Releasing version: $next_version"
@@ -616,6 +641,7 @@ echo "macOS build target: $MACOS_BUILD_TARGET"
 echo "Cargo target directory: $CARGO_TARGET_DIR"
 echo "Updater platforms: $(updater_platforms)"
 echo "Release devtools: ${RELEASE_DEVTOOLS:-0}"
+echo "Brand config: ${BRAND_CONFIG:-<default>}"
 if [ -n "$app_sign_identity" ]; then
   echo "Signing identity: $app_sign_identity"
 elif [ "$TARGET" = "local" ]; then
