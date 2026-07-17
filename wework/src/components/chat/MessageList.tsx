@@ -1681,7 +1681,12 @@ function AssistantMessage({
                   isStreaming={isStreaming}
                   startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
                   forceExpanded={segment.kind === 'narrative'}
-                  hasFinalContent={hasVisibleContent}
+                  hasFinalContent={
+                    hasVisibleContent ||
+                    processingSegments
+                      .slice(index + 1)
+                      .some(laterSegment => laterSegment.kind === 'narrative')
+                  }
                   showSummary={segment.kind === 'tool'}
                   stateKey={`${getMessageDisplayStateKey(conversationKey, message)}:${index}`}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}

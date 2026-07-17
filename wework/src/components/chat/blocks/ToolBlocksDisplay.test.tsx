@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -693,39 +693,28 @@ describe('ToolBlocksDisplay', () => {
       />
     )
 
-    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
-      'aria-hidden',
-      'false'
-    )
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
     expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('已编辑 env')
     expect(screen.queryByTestId('process-file-change-diff')).not.toBeInTheDocument()
   })
 
-  test('opens completed processing details with a short content transition', () => {
+  test('uses the same tool list for completed and streaming processing', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={false} />)
 
     const toggle = screen.getByRole('button', { name: /已处理/ })
     const collapseContent = screen.getByTestId('processing-collapse-content')
-    expect(toggle).toHaveClass('inline-flex')
-    expect(toggle).not.toHaveClass('w-full')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
-    expect(collapseContent).toHaveClass(
-      'transition-[max-height,opacity]',
-      'duration-[260ms]',
-      'opacity-0',
-      'pointer-events-none'
-    )
-    expect(collapseContent).toHaveStyle({ maxHeight: '0px' })
-    expect(toggle.querySelector('svg')).toHaveClass('-rotate-90')
-
-    fireEvent.click(toggle.parentElement as HTMLElement)
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
 
     fireEvent.click(toggle)
 
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
-    expect(collapseContent).toHaveClass('opacity-100')
-    expect(toggle.querySelector('svg')).not.toHaveClass('-rotate-90')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('processing-live-preview')).toHaveTextContent('已运行 pwd')
+    expect(screen.getByTestId('processing-live-preview-scroll')).toHaveStyle({
+      maxHeight: '7rem',
+      overflowY: 'auto',
+    })
   })
 
   test('keeps live duration when the run finishes', async () => {
@@ -812,16 +801,55 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 5 秒')).toBeInTheDocument()
   })
 
-  test('keeps a compact live preview with full processing details collapsed', () => {
+  test('keeps a compact live preview with full processing details collapsed', async () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
     const collapseContent = screen.getByTestId('processing-collapse-content')
     expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
-    expect(screen.getByRole('button', { name: /已处理/ })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
-    expect(screen.getByText('运行命令')).toBeInTheDocument()
-    expect(screen.queryByText('已运行 pwd')).not.toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: /已处理/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const preview = screen.getByTestId('processing-live-preview')
+    expect(preview).toBeInTheDocument()
+    expect(preview.querySelector('.bg-gradient-to-b')).toBeNull()
+    expect(preview).toHaveClass('ml-2', 'border-l', 'border-border', 'pl-3')
+    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-live-preview-scroll')).toHaveStyle({
+      maxHeight: '7rem',
+      overflowY: 'auto',
+    })
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+    expect(screen.getByText('/workspace/project')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByTestId('processing-live-preview-scroll')).toHaveStyle({
+        maxHeight: 'none',
+        overflowY: 'visible',
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: '收起工具详情' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('processing-live-preview-scroll')).toHaveStyle({
+        maxHeight: '7rem',
+        overflowY: 'auto',
+      })
+    )
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+    const initialRow = preview.querySelector('[data-processing-block-id="call-1"]')
+    expect(initialRow).not.toBeNull()
+
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(initialRow?.isConnected).toBe(false)
+
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const remountedPreview = screen.getByTestId('processing-live-preview')
+    const remountedRow = remountedPreview.querySelector('[data-processing-block-id="call-1"]')
+    expect(remountedRow).not.toBe(initialRow)
+    expect(remountedRow?.isConnected).toBe(true)
   })
 
   test('leaves generic thinking placeholders to the message list', () => {
@@ -842,16 +870,27 @@ describe('ToolBlocksDisplay', () => {
     )
 
     const toggle = screen.getByRole('button', { name: /已处理/ })
-    const collapseContent = screen.getByTestId('processing-collapse-content')
 
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByTestId('processing-collapse-content')).not.toBeInTheDocument()
 
     fireEvent.click(toggle)
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('processing-live-preview')).toHaveTextContent('已运行 pwd')
+  })
+
+  test('keeps active tools expanded when streamed text is visible', () => {
+    const runningBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'streaming',
+    }
+
+    render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} hasFinalContent={true} />)
+
+    expect(screen.getByTestId('processing-live-preview')).toHaveTextContent('正在运行 pwd')
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
   })
 
   test('keeps completed and running tools as flat preview rows', () => {
@@ -882,23 +921,20 @@ describe('ToolBlocksDisplay', () => {
     )
 
     const preview = screen.getByTestId('processing-live-preview')
-    expect(preview).toHaveTextContent('运行命令')
-    expect(preview).toHaveTextContent('搜索代码')
-    expect(preview).toHaveTextContent('运行命令')
+    expect(preview).toHaveTextContent('已运行 pwd')
+    expect(preview).toHaveTextContent('已搜索代码')
+    expect(preview).toHaveTextContent('正在运行 bin/paas-context --help')
     expect(screen.getByLabelText('命令 2')).toBeInTheDocument()
     expect(screen.getByLabelText('搜索 1')).toBeInTheDocument()
     expect(screen.queryByText(/已运行 \/bin\/zsh/)).not.toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /已调用 3 个工具 已处理/ }))
-
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
-    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
-    expect(screen.getByText('已搜索代码')).toBeInTheDocument()
-    expect(screen.getByText('正在运行 bin/paas-context --help')).toBeInTheDocument()
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
   })
 
-  test('limits the collapsed live preview to the latest three processing rows', () => {
+  test('keeps all live rows in a scroll area sized for three rows', () => {
     const runningBlocks: ProcessingBlock[] = Array.from({ length: 4 }, (_, index) => ({
       id: `running-${index + 1}`,
       subtaskId: 1,
@@ -909,13 +945,35 @@ describe('ToolBlocksDisplay', () => {
       createdAt: Date.now() + index,
     }))
 
-    render(<ToolBlocksDisplay blocks={runningBlocks} isStreaming={true} />)
+    const { rerender } = render(<ToolBlocksDisplay blocks={runningBlocks} isStreaming={true} />)
 
     const preview = screen.getByTestId('processing-live-preview')
-    expect(preview.querySelector('[data-processing-block-id="running-1"]')).toBeNull()
+    const scrollArea = screen.getByTestId('processing-live-preview-scroll')
+    expect(scrollArea).toHaveStyle({ maxHeight: '7rem', overflowY: 'auto' })
+    expect(preview.querySelector('[data-processing-block-id="running-1"]')).not.toBeNull()
     expect(preview.querySelector('[data-processing-block-id="running-2"]')).not.toBeNull()
     expect(preview.querySelector('[data-processing-block-id="running-3"]')).not.toBeNull()
     expect(preview.querySelector('[data-processing-block-id="running-4"]')).not.toBeNull()
+    preview.querySelectorAll('[data-processing-block-id]').forEach(row => {
+      expect(row).toHaveClass('overflow-x-clip')
+      expect(row).not.toHaveClass('overflow-x-hidden', 'overflow-y-auto')
+    })
+
+    Object.defineProperty(scrollArea, 'scrollHeight', { configurable: true, value: 160 })
+    rerender(
+      <ToolBlocksDisplay
+        blocks={[
+          ...runningBlocks,
+          {
+            ...runningBlocks[0],
+            id: 'running-5',
+            toolInput: { command: 'command-5' },
+          },
+        ]}
+        isStreaming={true}
+      />
+    )
+    expect(scrollArea.scrollTop).toBe(160)
   })
 
   test('anchors the running duration to the turn start, surviving a refresh', () => {
@@ -944,7 +1002,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('已处理 10 秒')).toBeInTheDocument()
   })
 
-  test('renders the running header as an expandable summary', () => {
+  test('renders the running header as a non-collapsible summary', () => {
     const runningBlock: ProcessingBlock = {
       ...completedCommandBlock,
       status: 'streaming',
@@ -952,10 +1010,7 @@ describe('ToolBlocksDisplay', () => {
 
     render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
 
-    expect(screen.getByRole('button', { name: /已调用 1 个工具 已处理 .* 秒/ })).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
+    expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
     expect(screen.getByText(/已处理 .* 秒/)).toBeInTheDocument()
   })
 

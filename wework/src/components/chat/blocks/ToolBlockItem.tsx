@@ -31,25 +31,35 @@ const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
+  compact?: boolean
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
+  onExpandedChange?: (expanded: boolean) => void
 }
 
 export function ToolBlockItem({
   block,
+  compact = false,
   forceExpanded = false,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
   onLoadFullTranscript,
   loadingFullTranscript = false,
+  onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const hasDetail = block.type === 'tool' && hasBlockDetail(block)
+  const expanded = hasDetail && (forceExpanded || userExpanded)
+
+  useLayoutEffect(() => {
+    if (block.type === 'tool') onExpandedChange?.(expanded)
+  }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
@@ -61,7 +71,7 @@ export function ToolBlockItem({
     return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
   }
   if (block.type === 'file_changes') {
-    return <ProcessFileChangesBlockItem block={block} />
+    return <ProcessFileChangesBlockItem block={block} onExpandedChange={onExpandedChange} />
   }
 
   const { icon, label } = getBlockLabel(block, {
@@ -78,8 +88,6 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
   })
   const workspaceFilePath = getWorkspaceFilePath(block)
-  const hasDetail = hasBlockDetail(block)
-  const expanded = hasDetail && (forceExpanded || userExpanded)
   const labelContent = (
     <>
       {icon}
@@ -89,8 +97,10 @@ export function ToolBlockItem({
   )
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
-      <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
+    <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
+      <div
+        className={`flex max-w-full items-center gap-1.5 text-text-secondary ${compact ? 'min-h-8' : ''}`}
+      >
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
             type="button"
@@ -102,6 +112,8 @@ export function ToolBlockItem({
         ) : hasDetail ? (
           <button
             type="button"
+            data-tool-detail-toggle
+            aria-expanded={expanded}
             onClick={() => setUserExpanded(value => !value)}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
@@ -113,6 +125,7 @@ export function ToolBlockItem({
         {hasDetail ? (
           <button
             type="button"
+            data-tool-detail-toggle
             onClick={() => setUserExpanded(value => !value)}
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={expanded ? '收起工具详情' : '展开工具详情'}
@@ -131,7 +144,7 @@ export function ToolBlockItem({
         ) : null}
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-hidden">
+        <div className="mt-2 min-w-0 overflow-x-clip">
           {renderBlockDetail(block, { onLoadFullTranscript, loadingFullTranscript })}
         </div>
       ) : null}
@@ -166,13 +179,19 @@ function PlanBlockItem({
 
 function ProcessFileChangesBlockItem({
   block,
+  onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
+  onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t } = useTranslation('chat')
   const summary = block.fileChanges
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
+
+  useLayoutEffect(() => {
+    onExpandedChange?.(expandedFilePath !== null)
+  }, [expandedFilePath, onExpandedChange])
 
   if (!summary.files.length) return null
 

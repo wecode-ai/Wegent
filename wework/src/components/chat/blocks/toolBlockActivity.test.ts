@@ -182,6 +182,17 @@ describe('toolBlockActivity', () => {
     ).toBe('已引导对话')
   })
 
+  test('keeps disk usage commands out of file-read activity groups', () => {
+    const rows = buildProcessingDisplayRows([
+      tool('read-1', 'cat package.json'),
+      tool('disk-usage-1', 'du -sh "$HOME/.bun" "$HOME/.cargo"'),
+    ])
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ type: 'activity_group', label: '已读取 1 个文件' })
+    expect(rows[1]).toMatchObject({ type: 'activity_group', label: '已运行 1 条命令' })
+  })
+
   test('hides internal stdin polling tools from activity rows', () => {
     const rows = buildProcessingDisplayRows([
       {

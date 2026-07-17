@@ -82,6 +82,8 @@ wegent-standalone stop
 
 下载并安装 Wework，打开一个本地项目即可开始 AI Coding。Wework 自带本地执行能力，也可以在设置中连接团队部署的 Wegent。
 
+任务执行期间，Wework 会持续展示最新工具调用；工具列表默认显示约 3.5 行并可滚动，命令输出、搜索详情和文件变更可逐项展开。最终回答开始后，处理过程会收起为带分隔线的“已处理”条目，展开后仍使用相同的工具列表。
+
 **[下载 Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
 ### Wegent Web 部署方式
