@@ -141,8 +141,9 @@ function mergeFileChange(
     ...next,
     old_path: next.old_path ?? existing.old_path,
     change_type:
-      existing.change_type === 'created' && next.change_type === 'modified'
-        ? 'created'
+      (existing.change_type === 'created' || existing.change_type === 'renamed') &&
+      next.change_type === 'modified'
+        ? existing.change_type
         : next.change_type,
     additions: existing.additions + next.additions,
     deletions: existing.deletions + next.deletions,
