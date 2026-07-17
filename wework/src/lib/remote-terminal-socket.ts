@@ -30,13 +30,28 @@ export interface RemoteTerminalClient {
   dispose: () => void
 }
 
-export function createRemoteTerminalClient(sessionId: string): RemoteTerminalClient {
-  const config = getRuntimeConfig()
+export interface RemoteTerminalClientOptions {
+  socketBaseUrl: string
+  socketPath: string
+  getToken: () => string | null
+}
+
+export type RemoteTerminalClientFactory = (sessionId: string) => RemoteTerminalClient
+
+export function createRemoteTerminalClient(
+  sessionId: string,
+  options?: RemoteTerminalClientOptions
+): RemoteTerminalClient {
+  const config = options ?? {
+    socketBaseUrl: getRuntimeConfig().socketBaseUrl,
+    socketPath: getRuntimeConfig().socketPath,
+    getToken,
+  }
   const client = createAuthenticatedSocketClient({
     socketBaseUrl: () => config.socketBaseUrl,
     path: config.socketPath,
     namespace: TERMINAL_NAMESPACE,
-    getToken,
+    getToken: config.getToken,
     authErrorEvent: 'auth_error',
     logger: console,
   })

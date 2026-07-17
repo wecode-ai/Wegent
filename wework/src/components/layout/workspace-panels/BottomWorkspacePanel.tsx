@@ -1,6 +1,7 @@
 import { SquareTerminal, X } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -24,6 +25,7 @@ interface BottomWorkspacePanelProps {
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
+  workspaceSessionApi?: WorkspaceSessionApi
   showWorkbenchBackground?: boolean
   onRequestClose: () => void
   onTerminalTabsEmpty?: () => void
@@ -43,6 +45,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   workspaceTarget,
   preferLocalTerminal = false,
   terminalContextTitle,
+  workspaceSessionApi,
   showWorkbenchBackground = false,
   onRequestClose,
   onTerminalTabsEmpty,
@@ -191,6 +194,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
                   hideTerminalChrome
                   preferLocalTerminal={preferLocalTerminal}
                   terminalContextTitle={terminalContextTitle}
+                  workspaceSessionApi={workspaceSessionApi}
                   panelActive={panelActive}
                   testIdsEnabled={contentTestIdsEnabled}
                   onTerminalTitleChange={title => updateTabTitle(tab.id, title)}

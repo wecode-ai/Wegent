@@ -2,7 +2,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
-import { createRemoteTerminalClient, type RemoteTerminalClient } from '@/lib/remote-terminal-socket'
+import type {
+  RemoteTerminalClient,
+  RemoteTerminalClientFactory,
+} from '@/lib/remote-terminal-socket'
 import {
   applyTerminalTheme,
   createTerminalThemeScheduler,
@@ -17,6 +20,7 @@ import { installXtermSelectionGuard } from './xtermSelectionGuard'
 
 interface RemoteTerminalProps {
   sessionId: string
+  clientFactory: RemoteTerminalClientFactory
   active: boolean
   taskId?: string | null
   workspacePath?: string | null
@@ -30,6 +34,7 @@ interface RemoteTerminalProps {
 
 export function RemoteTerminal({
   sessionId,
+  clientFactory,
   active,
   taskId,
   workspacePath,
@@ -102,7 +107,7 @@ export function RemoteTerminal({
     })
     const fitAddon = new FitAddon()
     const webLinksAddon = createXtermWebLinksAddon()
-    const client = createRemoteTerminalClient(sessionId)
+    const client = clientFactory(sessionId)
     let disposed = false
     let scheduleThemeSync: () => void = () => undefined
 
@@ -228,7 +233,7 @@ export function RemoteTerminal({
       fitAddonRef.current = null
       clientRef.current = null
     }
-  }, [sessionId, showWorkbenchBackground])
+  }, [clientFactory, sessionId, showWorkbenchBackground])
 
   useEffect(() => {
     if (!active) return

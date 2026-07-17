@@ -1,9 +1,7 @@
 import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
@@ -25,6 +23,7 @@ import {
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { buildVncPageUrl } from '@/lib/vnc'
+import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -50,6 +49,7 @@ interface WorkspacePanelCardsProps {
   testIdsEnabled?: boolean
   terminalContextTitle?: string | null
   onTerminalTitleChange?: (title: string) => void
+  workspaceSessionApi?: WorkspaceSessionApi
 }
 
 type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
@@ -72,11 +72,19 @@ interface LocalTerminalCheckState {
   pathExists: boolean
 }
 
-type WorkspaceTerminalSession = ProjectDeviceSessionResponse & {
-  terminal_kind?: 'remote' | 'local'
+type WorkspaceTerminalSessionBase = ProjectDeviceSessionResponse & {
   cwd?: string
   title?: string
 }
+
+type WorkspaceTerminalSession =
+  | (WorkspaceTerminalSessionBase & {
+      terminal_kind: 'local'
+    })
+  | (WorkspaceTerminalSessionBase & {
+      terminal_kind: 'remote'
+      remoteClientFactory: RemoteTerminalClientFactory
+    })
 
 function createAvailableTools(): WorkspaceToolAvailability {
   return {
@@ -150,16 +158,6 @@ function buildLocalTerminalEnv({
   return env
 }
 
-function createProjectSessionApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function createDeviceSessionApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
 export function WorkspacePanelCards({
   showWorkbenchBackground = false,
   currentProject,
@@ -177,6 +175,7 @@ export function WorkspacePanelCards({
   testIdsEnabled = true,
   terminalContextTitle,
   onTerminalTitleChange,
+  workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
   const testId = useCallback(
@@ -463,7 +462,10 @@ export function WorkspacePanelCards({
       }
 
       if (workspaceSource === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
-        const session = await createDeviceSessionApi().startTerminal(
+        if (!workspaceSessionApi) {
+          throw new Error('Remote workspace session service is unavailable')
+        }
+        const session = await workspaceSessionApi.startDeviceTerminal(
           activeWorkspaceDeviceId,
           activeWorkspacePath
         )
@@ -476,7 +478,11 @@ export function WorkspacePanelCards({
         }
         setTerminalSessions(sessions => [
           ...sessions,
-          { ...startedSession, terminal_kind: 'remote' },
+          {
+            ...startedSession,
+            terminal_kind: 'remote',
+            remoteClientFactory: workspaceSessionApi.createRemoteTerminalClient,
+          },
         ])
         setActiveTerminalSessionId(startedSession.session_id)
         return
@@ -486,12 +492,21 @@ export function WorkspacePanelCards({
         return
       }
 
-      const projectApi = createProjectSessionApi()
-      const startedSession = await projectApi.startTerminalSession(currentProject.id)
+      if (!workspaceSessionApi) {
+        throw new Error('Remote workspace session service is unavailable')
+      }
+      const startedSession = await workspaceSessionApi.startProjectTerminal(currentProject.id)
       if (startedSession.transport !== 'socketio') {
         throw new Error('Terminal session transport is not supported')
       }
-      setTerminalSessions(sessions => [...sessions, { ...startedSession, terminal_kind: 'remote' }])
+      setTerminalSessions(sessions => [
+        ...sessions,
+        {
+          ...startedSession,
+          terminal_kind: 'remote',
+          remoteClientFactory: workspaceSessionApi.createRemoteTerminalClient,
+        },
+      ])
       setActiveTerminalSessionId(startedSession.session_id)
     } catch (e) {
       console.error('Failed to start project terminal:', e)
@@ -518,6 +533,7 @@ export function WorkspacePanelCards({
     setLocalTerminalCheck,
     setProjectError,
     terminalContextTitle,
+    workspaceSessionApi,
     workspaceSource,
   ])
 
@@ -623,8 +639,10 @@ export function WorkspacePanelCards({
       }
 
       if (!currentProject) return
-      const projectApi = createProjectSessionApi()
-      const session = await projectApi.startCodeServerSession(currentProject.id)
+      if (!workspaceSessionApi) {
+        throw new Error('Remote workspace session service is unavailable')
+      }
+      const session = await workspaceSessionApi.startProjectCodeServer(currentProject.id)
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
@@ -648,7 +666,10 @@ export function WorkspacePanelCards({
     setProjectError(null)
     let shouldClosePanel = false
     try {
-      const config = await createDeviceSessionApi().getVncConfig(activeWorkspaceDeviceId)
+      if (!workspaceSessionApi) {
+        throw new Error('Remote workspace session service is unavailable')
+      }
+      const config = await workspaceSessionApi.getDeviceVncConfig(activeWorkspaceDeviceId)
       if (!config.sandbox_id) {
         throw new Error('Desktop sandbox ID is missing')
       }
@@ -802,6 +823,7 @@ export function WorkspacePanelCards({
           <RemoteTerminal
             key={session.session_id}
             sessionId={session.session_id}
+            clientFactory={session.remoteClientFactory}
             active={panelActive && isActive}
             taskId={workspaceTarget?.taskId}
             workspacePath={activeWorkspacePath}

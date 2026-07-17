@@ -71,7 +71,9 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
     get_session = AsyncMock(return_value={"user_id": 7, "token_exp": 9999999999})
     save_session = AsyncMock()
     enter_room = AsyncMock()
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(namespace, "get_session", get_session)
     monkeypatch.setattr(namespace, "save_session", save_session)
     monkeypatch.setattr(namespace, "enter_room", enter_room)
@@ -90,6 +92,13 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
     }
     service.authorize.assert_awaited_once_with("terminal-1", user_id=7)
     enter_room.assert_awaited_once_with("browser-sid", "terminal:terminal-1")
+    sio.call.assert_awaited_once_with(
+        "terminal:attach",
+        {"session_id": "terminal-1"},
+        to="device-sid",
+        namespace="/local-executor",
+        timeout=5,
+    )
     saved_session = save_session.await_args.args[1]
     assert saved_session["terminal_session_id"] == "terminal-1"
 
@@ -109,7 +118,9 @@ async def test_attach_leaves_previous_terminal_room_when_switching(monkeypatch):
     save_session = AsyncMock()
     enter_room = AsyncMock()
     leave_room = AsyncMock()
+    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(namespace, "get_session", get_session)
     monkeypatch.setattr(namespace, "save_session", save_session)
     monkeypatch.setattr(namespace, "enter_room", enter_room)
@@ -125,6 +136,36 @@ async def test_attach_leaves_previous_terminal_room_when_switching(monkeypatch):
     enter_room.assert_awaited_once_with("browser-sid", "terminal:terminal-1")
     saved_session = save_session.await_args.args[1]
     assert saved_session["terminal_session_id"] == "terminal-1"
+
+
+@pytest.mark.asyncio
+async def test_attach_leaves_room_when_executor_attach_fails(monkeypatch):
+    namespace = TerminalNamespace()
+    service = SimpleNamespace(authorize=AsyncMock(return_value=_record()))
+    sio = SimpleNamespace(call=AsyncMock(side_effect=TimeoutError("timed out")))
+    save_session = AsyncMock()
+    enter_room = AsyncMock()
+    leave_room = AsyncMock()
+    monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
+    monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "token_exp": 9999999999}),
+    )
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
+    monkeypatch.setattr(namespace, "leave_room", leave_room)
+
+    result = await namespace.on_terminal_attach(
+        "browser-sid",
+        {"session_id": "terminal-1"},
+    )
+
+    assert result == {"error": "Failed to attach terminal executor"}
+    enter_room.assert_awaited_once_with("browser-sid", "terminal:terminal-1")
+    leave_room.assert_awaited_once_with("browser-sid", "terminal:terminal-1")
+    save_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio

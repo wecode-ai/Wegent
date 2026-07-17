@@ -723,7 +723,8 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
   })
 
-  test('shows cloud work availability on the sidebar entry', () => {
+  test('shows cloud work availability and opens connection settings from the sidebar entry', async () => {
+    const onOpenSettings = vi.fn()
     renderSidebar({
       devices: [
         localDevice(),
@@ -735,6 +736,7 @@ describe('DesktopSidebar', () => {
         }),
       ],
       cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      onOpenSettings,
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
@@ -757,6 +759,10 @@ describe('DesktopSidebar', () => {
       'group-focus-within/cloud:pointer-events-auto',
       'group-focus-within/cloud:opacity-100'
     )
+
+    await userEvent.click(cloudButton)
+
+    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
   })
 
   test('opens cloud connection settings from the sidebar cloud management button', async () => {

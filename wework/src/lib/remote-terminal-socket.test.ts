@@ -85,6 +85,23 @@ describe('createRemoteTerminalClient', () => {
     )
   })
 
+  test('uses the injected backend for both the socket URL and authentication', async () => {
+    const resolveToken = vi.fn(() => 'connected-backend-token')
+    const client = createRemoteTerminalClient('terminal-1', {
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
+      getToken: resolveToken,
+    })
+
+    await client.attach()
+
+    expect(getRuntimeConfigMock).not.toHaveBeenCalled()
+    const options = createAuthenticatedSocketClientMock.mock.calls[0][0]
+    expect(await options.socketBaseUrl()).toBe('http://10.201.3.200:8000')
+    expect(options.path).toBe('/socket.io')
+    expect(options.getToken).toBe(resolveToken)
+  })
+
   test('relays terminal input, resize, and close over Socket.IO', async () => {
     const client = createRemoteTerminalClient('terminal-1')
 

@@ -3,15 +3,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
+    time::Duration,
 };
 
 use wegent_executor::local::session::{
     CodeServerLoginClient, GatewayRequest, LocalSession, LocalSessionHandler, PtySpawnRequest,
-    SessionGateway, SessionPtyManager, SessionStartRequest, SessionType, TerminalPty,
+    SessionGateway, SessionPtyManager, SessionStartRequest, SessionType, TerminalEvent,
+    TerminalPty,
 };
 
 fn env_lock() -> MutexGuard<'static, ()> {
@@ -261,6 +263,52 @@ fn terminal_input_and_resize_return_errors_when_pty_is_gone() {
 }
 
 #[test]
+fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
+    let root = temp_root("terminal-output");
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"hello ".to_vec(), vec![b'w', b'o', b'r', b'l', b'd', 0xff]]),
+        exit_code: Some(0),
+        ..RecordingTerminal::default()
+    }));
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::clone(&terminal)));
+    let mut handler =
+        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
+    handler.sessions.insert(
+        "terminal-1".to_owned(),
+        LocalSession::terminal(
+            "terminal-1",
+            "secret",
+            123,
+            PathBuf::from("/workspace"),
+            Box::new(SharedTerminal(Arc::clone(&terminal))),
+            9999999999,
+        ),
+    );
+
+    assert!(handler.drain_terminal_events().is_empty());
+    assert_eq!(terminal.lock().unwrap().output.len(), 2);
+    assert!(handler.handle_terminal_attach("terminal-1").success);
+    let events = handler.drain_terminal_events();
+
+    assert_eq!(
+        events,
+        vec![
+            TerminalEvent::Output {
+                session_id: "terminal-1".to_owned(),
+                data: "hello world�".to_owned(),
+            },
+            TerminalEvent::Exit {
+                session_id: "terminal-1".to_owned(),
+                exit_code: Some(0),
+                error: None,
+            },
+        ]
+    );
+    assert!(!handler.sessions.contains_key("terminal-1"));
+    assert!(terminal.lock().unwrap().closed);
+}
+
+#[test]
 fn start_code_server_session_returns_gateway_url() {
     let root = temp_root("code-server");
     let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
@@ -448,6 +496,8 @@ impl SessionPtyManager for RecordingPtyManager {
 
 #[derive(Default)]
 struct RecordingTerminal {
+    output: VecDeque<Vec<u8>>,
+    exit_code: Option<u32>,
     writes: Vec<Vec<u8>>,
     resizes: Vec<(u16, u16)>,
     terminated: bool,
@@ -479,6 +529,10 @@ impl TerminalPty for SharedTerminal {
         Ok(data.len())
     }
 
+    fn read_available(&mut self, _timeout: Duration) -> std::io::Result<Option<Vec<u8>>> {
+        Ok(self.0.lock().unwrap().output.pop_front())
+    }
+
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
         let mut terminal = self.0.lock().unwrap();
         if terminal.fail_resize {
@@ -489,7 +543,7 @@ impl TerminalPty for SharedTerminal {
     }
 
     fn poll(&mut self) -> std::io::Result<Option<u32>> {
-        Ok(None)
+        Ok(self.0.lock().unwrap().exit_code)
     }
 
     fn terminate(&mut self, _force: bool) {

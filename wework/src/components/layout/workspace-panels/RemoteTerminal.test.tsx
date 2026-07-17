@@ -151,7 +151,13 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
     testState.terminalInstances[0].emitData('pwd\r')
 
     await waitFor(() => {
@@ -171,7 +177,14 @@ describe('RemoteTerminal', () => {
     const onExit = vi.fn()
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} onExit={onExit} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+        onExit={onExit}
+      />
+    )
     exitHandler?.({ session_id: 'terminal-1' })
 
     expect(onExit).toHaveBeenCalledTimes(1)
@@ -186,7 +199,13 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
     testState.resizeObserverInstances[0].trigger()
 
     expect(client.resize).not.toHaveBeenCalled()
@@ -198,14 +217,24 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    const { rerender } = render(<RemoteTerminal sessionId="terminal-1" active />)
+    const { rerender } = render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
 
     await waitFor(() => {
       expect(client.resize).toHaveBeenCalledTimes(1)
     })
 
-    rerender(<RemoteTerminal sessionId="terminal-1" active={false} />)
-    rerender(<RemoteTerminal sessionId="terminal-1" active />)
+    rerender(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
+    rerender(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
 
     expect(client.resize).toHaveBeenCalledTimes(1)
   })
@@ -218,7 +247,9 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active />)
+    render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
 
     await waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -235,7 +266,13 @@ describe('RemoteTerminal', () => {
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
-    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
     const terminal = testState.terminalInstances[0]
     const webLinksAddon = testState.webLinksAddonInstances[0]
 
@@ -250,7 +287,12 @@ describe('RemoteTerminal', () => {
     )
 
     const { getByTestId } = render(
-      <RemoteTerminal sessionId="terminal-1" active showWorkbenchBackground />
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active
+        showWorkbenchBackground
+      />
     )
 
     expect(testState.terminalConstructorOptions[0]).toEqual(

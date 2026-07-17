@@ -31,6 +31,13 @@ const mocks = vi.hoisted(() => {
   const cloudArchiveAllConversations = vi.fn()
   const localArchiveProjectConversations = vi.fn()
   const cloudArchiveProjectConversations = vi.fn()
+  const cloudWorkspaceSessionApi = {
+    startProjectTerminal: vi.fn(),
+    startProjectCodeServer: vi.fn(),
+    startDeviceTerminal: vi.fn(),
+    getDeviceVncConfig: vi.fn(),
+    createRemoteTerminalClient: vi.fn(),
+  }
 
   const localServices = {
     teamApi: {
@@ -105,6 +112,7 @@ const mocks = vi.hoisted(() => {
     },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
+    workspaceSessionApi: cloudWorkspaceSessionApi,
   }
 
   return {
@@ -136,6 +144,7 @@ const mocks = vi.hoisted(() => {
     cloudArchiveAllConversations,
     localArchiveProjectConversations,
     cloudArchiveProjectConversations,
+    cloudWorkspaceSessionApi,
     localServices,
     cloudServices,
   }
@@ -506,6 +515,47 @@ describe('createHybridWorkbenchServices', () => {
       'cloud-runtime-device'
     )
     expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
+  })
+
+  it('resolves an uncached cloud executor before running workspace commands', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',
+        socket_device_id: 'cloud-runtime-device',
+        name: 'sifang-executor-0341b231eb06',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    mocks.cloudRuntimeIpcRequest.mockResolvedValueOnce({
+      success: true,
+      exit_code: 0,
+      stdout: 'main',
+      stderr: '',
+    })
+    const services = createServices()
+
+    const response = await services.executorClient?.commands.executeCommand(
+      '9562a3b4-61a3-4217-9655-0341b231eb06',
+      {
+        command_key: 'git_branch',
+        cwd: '/home/ubuntu/workspace/hello',
+      }
+    )
+
+    expect(response?.stdout).toBe('main')
+    expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'device.execute_command',
+      {
+        command_key: 'git_branch',
+        cwd: '/home/ubuntu/workspace/hello',
+      },
+      'cloud-runtime-device'
+    )
   })
 
   it('merges remembered cloud devices into the local device when app_device_id matches', async () => {
@@ -1082,5 +1132,11 @@ describe('createHybridWorkbenchServices', () => {
       client_origin: 'http://localhost:1420',
     })
     expect(response?.commands?.map(command => command.kind)).toEqual(['docker', 'process'])
+  })
+
+  it('keeps remote workspace sessions on the connected cloud backend', () => {
+    const services = createServices()
+
+    expect(services.workspaceSessionApi).toBe(mocks.cloudWorkspaceSessionApi)
   })
 })

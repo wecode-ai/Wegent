@@ -447,6 +447,13 @@ export function createHybridWorkbenchServices(
   }
   const listKnownDevices = async () =>
     mergeDeviceLists(await listLocalDevices(), rememberedCloudDevices)
+  const resolveExecutorDevice = async (deviceId: string): Promise<DeviceInfo | null> => {
+    const knownDevice = (await listKnownDevices()).find(device => device.device_id === deviceId)
+    if (knownDevice) return knownDevice
+
+    const cloudDevices = await listCloudDevices()
+    return cloudDevices.find(device => device.device_id === deviceId) ?? null
+  }
   const listLocalRuntimeWork = async () => {
     const work = await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
@@ -922,6 +929,7 @@ export function createHybridWorkbenchServices(
       reviewApi: {
         loadTurnFileChangesDiff: cloudServices.taskApi.getTurnFileChangesDiff,
       },
+      resolveDevice: resolveExecutorDevice,
     }),
     chatStream: hybridChatStream,
   }

@@ -8,6 +8,7 @@ import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/typ
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   EMPTY_RUNTIME_WORK,
+  filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   nowMs,
   readCachedDeviceList,
@@ -71,14 +72,20 @@ export function useWorkbenchDataRefresh({
     () => readCachedRemoteRuntimeWork(user.id),
     [user.id]
   )
+  const hasCloudBackgroundApi = Boolean(services.cloudBackgroundApi)
   const cachedRemoteRuntimeWorkRef = useRef({
     userId: user.id,
     runtimeWork: initialCachedRemoteRuntimeWork,
   })
   const [cloudRuntimeState, setCloudRuntimeState] = useState<CloudRuntimeState>(() =>
-    createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork)
+    hasCloudBackgroundApi
+      ? createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork)
+      : EMPTY_CLOUD_RUNTIME_STATE
   )
   const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
+  const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
+  const runtimeWorkRef = useRef(state.runtimeWork)
+  const devicesRef = useRef(state.devices)
   const cloudWorkStatus = useMemo(
     () => selectCloudWorkStatus(cloudRuntimeState),
     [cloudRuntimeState]
@@ -90,21 +97,52 @@ export function useWorkbenchDataRefresh({
   }, [])
 
   useEffect(() => {
+    cloudBackgroundApiRef.current = services.cloudBackgroundApi
+    runtimeWorkRef.current = state.runtimeWork
+    devicesRef.current = state.devices
+  }, [services.cloudBackgroundApi, state.devices, state.runtimeWork])
+
+  useEffect(() => {
     cachedRemoteRuntimeWorkRef.current = {
       userId: user.id,
       runtimeWork: initialCachedRemoteRuntimeWork,
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
-    updateCloudRuntimeState(createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork))
-  }, [initialCachedRemoteRuntimeWork, updateCloudRuntimeState, user.id])
+    updateCloudRuntimeState(
+      hasCloudBackgroundApi
+        ? createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork)
+        : EMPTY_CLOUD_RUNTIME_STATE
+    )
+  }, [hasCloudBackgroundApi, initialCachedRemoteRuntimeWork, updateCloudRuntimeState, user.id])
 
   useEffect(() => {
-    if (!services.cloudBackgroundApi) {
-      updateCloudRuntimeState(
-        createCloudRuntimeStateWithCache(cachedRemoteRuntimeWorkRef.current.runtimeWork)
-      )
+    const nextCloudState = hasCloudBackgroundApi
+      ? createCloudRuntimeStateWithCache(cachedRemoteRuntimeWorkRef.current.runtimeWork)
+      : EMPTY_CLOUD_RUNTIME_STATE
+    updateCloudRuntimeState(nextCloudState)
+
+    const currentRuntimeWork = runtimeWorkRef.current
+    if (currentRuntimeWork) {
+      dispatch({
+        type: 'runtime_work_refreshed',
+        runtimeWork: hasCloudBackgroundApi
+          ? selectRuntimeWorkView(currentRuntimeWork, nextCloudState, devicesRef.current)
+          : filterDisconnectedRemoteRuntimeWork(currentRuntimeWork),
+      })
     }
-  }, [services.cloudBackgroundApi, updateCloudRuntimeState])
+  }, [dispatch, hasCloudBackgroundApi, updateCloudRuntimeState])
+
+  const selectVisibleRuntimeWork = useCallback(
+    (
+      localRuntimeWork: RuntimeWorkListResponse,
+      nextCloudState: CloudRuntimeState,
+      devices?: DeviceInfo[]
+    ) => {
+      const runtimeWork = selectRuntimeWorkView(localRuntimeWork, nextCloudState, devices)
+      return hasCloudBackgroundApi ? runtimeWork : filterDisconnectedRemoteRuntimeWork(runtimeWork)
+    },
+    [hasCloudBackgroundApi]
+  )
 
   const refreshCloudBackgroundData = useCallback(
     async (
@@ -146,7 +184,13 @@ export function useWorkbenchDataRefresh({
           : Promise.resolve(undefined),
       ])
 
-      if (options?.isCancelled?.() || revision == null) return
+      if (
+        options?.isCancelled?.() ||
+        revision == null ||
+        cloudBackgroundApiRef.current !== backgroundApi
+      ) {
+        return
+      }
 
       const reconciledRuntimeWorkResult =
         runtimeWorkResult?.status === 'fulfilled'
@@ -178,7 +222,7 @@ export function useWorkbenchDataRefresh({
       updateCloudRuntimeState(nextCloudState)
 
       const devices = resolveDeviceListWithCache(selectVisibleDevices(baseDevices, nextCloudState))
-      const runtimeWork = selectRuntimeWorkView(baseRuntimeWork, nextCloudState, devices)
+      const runtimeWork = selectVisibleRuntimeWork(baseRuntimeWork, nextCloudState, devices)
 
       dispatch({
         type: 'lists_refreshed',
@@ -191,7 +235,13 @@ export function useWorkbenchDataRefresh({
         ),
       })
     },
-    [dispatch, services.cloudBackgroundApi, updateCloudRuntimeState, user.id]
+    [
+      dispatch,
+      selectVisibleRuntimeWork,
+      services.cloudBackgroundApi,
+      updateCloudRuntimeState,
+      user.id,
+    ]
   )
 
   useEffect(() => {
@@ -246,7 +296,11 @@ export function useWorkbenchDataRefresh({
         if (runtimeWorkResult.status === 'fulfilled') {
           dispatch({
             type: 'runtime_work_refreshed',
-            runtimeWork: selectRuntimeWorkView(runtimeWork, cloudRuntimeStateRef.current, devices),
+            runtimeWork: selectVisibleRuntimeWork(
+              runtimeWork,
+              cloudRuntimeStateRef.current,
+              devices
+            ),
           })
         }
         void refreshCloudBackgroundData(devices, runtimeWork, {
@@ -273,7 +327,14 @@ export function useWorkbenchDataRefresh({
       cancelled = true
       window.clearTimeout(slowTimer)
     }
-  }, [dispatch, executorClient, refreshCloudBackgroundData, services.teamApi, user])
+  }, [
+    dispatch,
+    executorClient,
+    refreshCloudBackgroundData,
+    selectVisibleRuntimeWork,
+    services.teamApi,
+    user,
+  ])
 
   const refreshWorkLists = useCallback(async () => {
     const [devicesResult, runtimeWorkResult] = await Promise.all([
@@ -290,8 +351,10 @@ export function useWorkbenchDataRefresh({
     )
     const localRuntimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
     const runtimeWork = runtimeWorkResult
-      ? selectRuntimeWorkView(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
-      : localRuntimeWork
+      ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
+      : hasCloudBackgroundApi
+        ? localRuntimeWork
+        : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
     dispatch({
       type: 'lists_refreshed',
       projects: state.projects,
@@ -308,6 +371,8 @@ export function useWorkbenchDataRefresh({
     dispatch,
     executorClient,
     refreshCloudBackgroundData,
+    hasCloudBackgroundApi,
+    selectVisibleRuntimeWork,
     state.projects,
     state.runtimeWork,
     state.standaloneDeviceId,

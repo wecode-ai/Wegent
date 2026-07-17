@@ -394,6 +394,9 @@ const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
+const startDeviceTerminalSessionMock = vi.fn()
+const getDeviceVncConfigMock = vi.fn()
+const createRemoteTerminalClientMock = vi.fn()
 
 function createDefaultImNotificationSettings() {
   return {
@@ -455,7 +458,7 @@ describe('DesktopWorkbenchLayout', () => {
           disk_usage: 57,
         },
       ]),
-      startTerminal: vi.fn(),
+      startTerminal: startDeviceTerminalSessionMock,
       startCodeServer: vi.fn(),
       createCloudDevice: vi.fn(),
       renameDevice: vi.fn(),
@@ -471,7 +474,7 @@ describe('DesktopWorkbenchLayout', () => {
         memory: [],
         disk: [],
       }),
-      getVncConfig: vi.fn(),
+      getVncConfig: getDeviceVncConfigMock,
       ...overrides,
     }
   }
@@ -891,6 +894,15 @@ describe('DesktopWorkbenchLayout', () => {
       ...props.projectChat,
     }
     const workbenchValue = {
+      services: {
+        workspaceSessionApi: {
+          startProjectTerminal: startTerminalSessionMock,
+          startProjectCodeServer: startCodeServerSessionMock,
+          startDeviceTerminal: startDeviceTerminalSessionMock,
+          getDeviceVncConfig: getDeviceVncConfigMock,
+          createRemoteTerminalClient: createRemoteTerminalClientMock,
+        },
+      },
       state,
       isStartupReady: true,
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
