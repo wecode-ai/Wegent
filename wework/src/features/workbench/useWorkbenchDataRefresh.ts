@@ -124,6 +124,7 @@ export function useWorkbenchDataRefresh({
       if (backgroundApi?.listRuntimeWork) activeChecks.push('runtimeWork')
 
       if (activeChecks.length === 0) return
+      if (cloudRuntimeStateRef.current.inFlightRevision != null) return
 
       const startedState = startCloudRuntimeSync(
         cloudRuntimeStateRef.current,
