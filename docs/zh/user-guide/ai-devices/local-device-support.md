@@ -162,7 +162,7 @@ docker run -d \
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
 
-Terminal 会话适用于本地设备和云设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace，Backend 再通过 `/local-executor` namespace 把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
+Terminal 会话适用于本地设备和云设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
 
 如果项目配置了 `workspace.localPath`、`workspace.devicePath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。`localPath` 用于本机 local executor，`devicePath` 用于绑定到具体 cloud 或 remote 设备的沙箱目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 

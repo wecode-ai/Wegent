@@ -167,10 +167,12 @@ interface ExecutorAccessApis {
     Pick<WorkspaceFileApi, 'writeWorkspaceTextFile'>
   runtimeWorkApi: ExecutorRuntimeClient
   reviewApi?: ExecutorReviewClient
+  resolveDevice?: (deviceId: string) => Promise<DeviceInfo | null>
 }
 
 export function createInMemoryExecutorRegistry(
-  loadEntries: () => Promise<ExecutorRegistryEntry[]>
+  loadEntries: () => Promise<ExecutorRegistryEntry[]>,
+  loadEntry?: (deviceId: string) => Promise<ExecutorRegistryEntry | null>
 ): ExecutorRegistry {
   let entries: ExecutorRegistryEntry[] = []
 
@@ -183,7 +185,13 @@ export function createInMemoryExecutorRegistry(
     if (entries.length === 0) {
       await refresh()
     }
-    const entry = entries.find(item => item.deviceId === deviceId)
+    let entry = entries.find(item => item.deviceId === deviceId)
+    if (!entry && loadEntry) {
+      entry = (await loadEntry(deviceId)) ?? undefined
+      if (entry) {
+        entries = [...entries.filter(item => item.deviceId !== entry.deviceId), entry]
+      }
+    }
     if (!entry) {
       throw new Error(`executor-not-found:${deviceId}`)
     }
@@ -205,19 +213,29 @@ export function createExecutorClientFromApis({
   deviceApi,
   runtimeWorkApi,
   reviewApi,
+  resolveDevice,
 }: ExecutorAccessApis): ExecutorClient {
-  const registry = createInMemoryExecutorRegistry(async () => {
-    const devices = await deviceApi.listDevices()
-    return devices.map(device => ({
-      deviceId: device.device_id,
-      name: device.name,
-      status: device.status,
-      version: device.executor_version,
-      capabilities: device.capabilities ?? [],
-      transportKind,
-      device,
-    }))
+  const createRegistryEntry = (device: DeviceInfo): ExecutorRegistryEntry => ({
+    deviceId: device.device_id,
+    name: device.name,
+    status: device.status,
+    version: device.executor_version,
+    capabilities: device.capabilities ?? [],
+    transportKind,
+    device,
   })
+  const registry = createInMemoryExecutorRegistry(
+    async () => {
+      const devices = await deviceApi.listDevices()
+      return devices.map(createRegistryEntry)
+    },
+    resolveDevice
+      ? async deviceId => {
+          const device = await resolveDevice(deviceId)
+          return device ? createRegistryEntry(device) : null
+        }
+      : undefined
+  )
 
   const resolve = (deviceId: string) => registry.resolve(deviceId)
   const commands: ExecutorCommandClient = {

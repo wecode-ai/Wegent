@@ -19,6 +19,8 @@ const runtimeConfigMock = vi.hoisted(() => ({
   value: {
     appBasePath: '',
     apiBaseUrl: '/api',
+    socketBaseUrl: 'http://10.201.3.200:8000',
+    socketPath: '/socket.io',
     cloudDeviceScalingWikiUrl: '',
   },
 }))
@@ -186,6 +188,8 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/settings/connections')
@@ -1032,6 +1036,8 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
     }
     api.getAllDevices.mockResolvedValue([cloudDevice(), localDevice()])

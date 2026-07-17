@@ -18,6 +18,7 @@ import {
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodeCommentContext,
@@ -84,6 +85,7 @@ interface RightWorkspacePanelProps {
   fileWorkspaceTarget?: WorkspaceTarget | null
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
+  workspaceSessionApi?: WorkspaceSessionApi
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
@@ -119,6 +121,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   fileWorkspaceTarget = workspaceTarget,
   preferLocalTerminal = false,
   terminalContextTitle,
+  workspaceSessionApi,
   workspaceFileApi,
   openFileRequest,
   workspaceTargetError,
@@ -358,6 +361,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             hideTerminalChrome
             preferLocalTerminal={preferLocalTerminal}
             terminalContextTitle={terminalContextTitle}
+            workspaceSessionApi={workspaceSessionApi}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />

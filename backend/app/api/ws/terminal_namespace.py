@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_NAMESPACE = "/terminal"
 DEVICE_NAMESPACE = "/local-executor"
+TERMINAL_ATTACH_TIMEOUT_SECONDS = 5
 
 
 class TerminalNamespace(socketio.AsyncNamespace):
@@ -131,6 +132,33 @@ class TerminalNamespace(socketio.AsyncNamespace):
             await self.leave_room(sid, _terminal_room(previous_session_id))
 
         await self.enter_room(sid, _terminal_room(session_id))
+        try:
+            attach_result = await get_sio().call(
+                "terminal:attach",
+                {"session_id": record.session_id},
+                to=record.socket_id,
+                namespace=DEVICE_NAMESPACE,
+                timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            await self.leave_room(sid, _terminal_room(session_id))
+            logger.warning(
+                "[Terminal WS] Executor attach failed session=%s device=%s: %s",
+                record.session_id,
+                record.device_id,
+                exc,
+            )
+            return {"error": "Failed to attach terminal executor"}
+
+        if not isinstance(attach_result, dict) or not attach_result.get("success"):
+            await self.leave_room(sid, _terminal_room(session_id))
+            error = (
+                attach_result.get("error")
+                if isinstance(attach_result, dict)
+                else "Invalid executor response"
+            )
+            return {"error": str(error or "Failed to attach terminal executor")}
+
         session["terminal_session_id"] = session_id
         await self.save_session(sid, session)
 

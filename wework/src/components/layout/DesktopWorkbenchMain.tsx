@@ -4,7 +4,8 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
@@ -231,6 +232,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   open,
   active,
   context,
+  workspaceSessionApi,
   onRequestClose,
   onTerminalTabsEmpty,
 }: {
@@ -238,6 +240,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   open: boolean
   active: boolean
   context: BottomPanelRenderContext
+  workspaceSessionApi?: WorkspaceSessionApi
   onRequestClose: (key: string) => void
   onTerminalTabsEmpty: () => void
 }) {
@@ -254,6 +257,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
       workspaceTarget={context.workspaceTarget}
       preferLocalTerminal={context.preferLocalTerminal}
       terminalContextTitle={context.terminalContextTitle}
+      workspaceSessionApi={workspaceSessionApi}
       onRequestClose={closePanel}
       onTerminalTabsEmpty={onTerminalTabsEmpty}
     />
@@ -262,6 +266,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const { services } = useWorkbench()
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
@@ -310,6 +315,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
+          workspaceSessionApi={services.workspaceSessionApi}
           environmentInfoPinned={environmentInfoPinned}
           environmentInfoOverlayOpen={environmentInfoOverlayOpen}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
@@ -346,6 +352,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
+  workspaceSessionApi,
   environmentInfoPinned,
   environmentInfoOverlayOpen,
   onSidebarCollapsedChange,
@@ -358,6 +365,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
+  workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoPinned: boolean
   environmentInfoOverlayOpen: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -1885,6 +1893,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               fileWorkspaceTarget={fileWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
               terminalContextTitle={runtimeTaskTitle}
+              workspaceSessionApi={workspaceSessionApi}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
@@ -1919,6 +1928,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             open={active && (bottomPanelOpenByKey[context.key] ?? false)}
             active={active}
             context={context}
+            workspaceSessionApi={workspaceSessionApi}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />

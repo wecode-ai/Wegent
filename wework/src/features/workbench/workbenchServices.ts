@@ -17,10 +17,25 @@ import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { createChatStream } from '@/stream/chatStream'
-import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ProjectDeviceSessionResponse,
+  RuntimeWorkListResponse,
+} from '@/types/api'
+import type { DeviceSessionResponse, VncConfigResponse } from '@/types/devices'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
+
+export interface WorkspaceSessionApi {
+  startProjectTerminal: (projectId: number) => Promise<ProjectDeviceSessionResponse>
+  startProjectCodeServer: (projectId: number) => Promise<ProjectDeviceSessionResponse>
+  startDeviceTerminal: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
+  getDeviceVncConfig: (deviceId: string) => Promise<VncConfigResponse>
+  createRemoteTerminalClient: RemoteTerminalClientFactory
+}
 
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
@@ -62,6 +77,7 @@ export interface WorkbenchServices {
   executorClient?: ExecutorClient
   userApi?: ReturnType<typeof createUserApi>
   socketClient?: Pick<AuthenticatedSocketClient, 'ensureConnected' | 'dispose'>
+  workspaceSessionApi?: WorkspaceSessionApi
   chatStream: ReturnType<typeof createChatStream>
   cloudBackgroundApi?: {
     listTeams?: ReturnType<typeof createTeamApi>['listTeams']

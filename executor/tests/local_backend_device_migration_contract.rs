@@ -63,6 +63,7 @@ async fn local_backend_registers_all_python_local_device_events() {
         "device:sync_capabilities",
         "device:start_terminal_session",
         "device:start_code_server_session",
+        "terminal:attach",
         "terminal:input",
         "terminal:resize",
         "terminal:close",
@@ -283,6 +284,11 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
     assert_eq!(ack["type"], "terminal");
     assert_eq!(ack["transport"], "socketio");
 
+    let attach = transport.handler("terminal:attach").unwrap()(json!({
+        "session_id": "terminal-1"
+    }))
+    .await
+    .unwrap();
     let input = transport.handler("terminal:input").unwrap()(json!({
         "session_id": "terminal-1",
         "data": "pwd\r"
@@ -300,6 +306,7 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
         .await
         .unwrap();
 
+    assert_eq!(attach["success"], true);
     assert_eq!(input["success"], true);
     assert_eq!(resize["success"], true);
     assert_eq!(close["success"], true);
@@ -308,6 +315,67 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
     assert_eq!(terminal.resizes, vec![(24, 100)]);
     assert!(terminal.terminated);
     assert!(terminal.closed);
+}
+
+#[tokio::test]
+async fn connected_runner_relays_terminal_output_and_exit_events() {
+    let transport = RecordingTransport::default();
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"remote prompt$ ".to_vec()]),
+        exit_code: Some(0),
+        ..RecordingTerminal::default()
+    }));
+    let runner = LocalBackendRunner::with_task_runner(
+        local_backend_config(),
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(test_session_handler_with_terminal(Arc::clone(&terminal)));
+    let runner_task = tokio::spawn(runner.run_forever());
+    wait_until(|| transport.handler("device:start_terminal_session").is_some()).await;
+
+    let ack = transport.handler("device:start_terminal_session").unwrap()(json!({
+        "type": "terminal",
+        "session_id": "terminal-relay",
+        "project_id": 123,
+        "path": ".",
+        "access_token": "secret",
+        "rows": 24,
+        "cols": 80,
+        "create_if_missing": true
+    }))
+    .await
+    .unwrap();
+    assert_eq!(ack["success"], true, "{ack}");
+    tokio::time::sleep(Duration::from_millis(75)).await;
+    assert!(
+        transport.emits().is_empty(),
+        "PTY output must remain buffered until the browser attaches"
+    );
+
+    let attach = transport.handler("terminal:attach").unwrap()(json!({
+        "session_id": "terminal-relay"
+    }))
+    .await
+    .unwrap();
+    assert_eq!(attach["success"], true, "{attach}");
+
+    wait_until(|| transport.emits().len() >= 2).await;
+    runner_task.abort();
+    let _ = runner_task.await;
+
+    let emits = transport.emits();
+    assert_eq!(emits[0].event, "terminal:output");
+    assert_eq!(
+        emits[0].payload,
+        json!({"session_id": "terminal-relay", "data": "remote prompt$ "})
+    );
+    assert_eq!(emits[1].event, "terminal:exit");
+    assert_eq!(
+        emits[1].payload,
+        json!({"session_id": "terminal-relay", "exit_code": 0})
+    );
+    assert!(terminal.lock().unwrap().closed);
 }
 
 #[tokio::test]
@@ -1248,6 +1316,8 @@ impl SessionPtyManager for RecordingPtyManager {
 
 #[derive(Default)]
 struct RecordingTerminal {
+    output: VecDeque<Vec<u8>>,
+    exit_code: Option<u32>,
     writes: Vec<Vec<u8>>,
     resizes: Vec<(u16, u16)>,
     terminated: bool,
@@ -1270,13 +1340,17 @@ impl TerminalPty for SharedTerminal {
         Ok(data.len())
     }
 
+    fn read_available(&mut self, _timeout: Duration) -> std::io::Result<Option<Vec<u8>>> {
+        Ok(self.0.lock().unwrap().output.pop_front())
+    }
+
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
         self.0.lock().unwrap().resizes.push((rows, cols));
         Ok(())
     }
 
     fn poll(&mut self) -> std::io::Result<Option<u32>> {
-        Ok(None)
+        Ok(self.0.lock().unwrap().exit_code)
     }
 
     fn terminate(&mut self, _force: bool) {
