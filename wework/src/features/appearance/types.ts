@@ -32,6 +32,12 @@ export interface AppearanceConfig {
   codeFontSize: number
   sidebarTranslucent: boolean
   contrast: number
+  backgroundImagePath: string | null
+  backgroundVisibility: number
+  backgroundBlur: number
+  backgroundInMain: boolean
+  backgroundInSidebar: boolean
+  backgroundInTopBar: boolean
   light: ThemePalette
   dark: ThemePalette
 }

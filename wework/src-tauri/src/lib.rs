@@ -4,6 +4,7 @@ mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
+mod workbench_background;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
@@ -3739,6 +3740,8 @@ pub fn run() {
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
+            workbench_background::import_workbench_background,
+            workbench_background::remove_workbench_background,
             pick_workspace_paths,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,

@@ -12,6 +12,14 @@ The Wework desktop app exposes window and background behavior in **Settings → 
 
 When **System** is selected, Wework automatically uses Chinese or English based on the current system language. When **中文** or **EN** is selected manually, Wework saves the preference and restores it the next time the app starts.
 
+## Workbench Background
+
+Open **Settings → Appearance → Workbench background** to choose a local JPEG, PNG, or WebP image for the interface. Wework copies the image into its local app data directory, so moving or deleting the original file after selection does not remove the background.
+
+**Background visibility** controls how strongly the image appears through the theme surface; at 100, the original image is shown clearly. **Background blur** ranges from 0–20px and defaults to 0. You can independently show the background in the main area, sidebar, and top bar. The corresponding settings-page regions follow the same choices.
+
+The image and these appearance preferences stay on the current device and are not uploaded or synchronized. **Remove** and **Reset** delete the background image managed by Wework.
+
 ## Show the Main Window on Launch
 
 When **Show main window on launch** is enabled, Wework opens the main window when the app starts. When disabled, the app starts in the system tray only, which is useful when you want task capability to stay available in the background.
