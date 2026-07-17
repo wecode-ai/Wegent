@@ -237,6 +237,8 @@ Project-backed creation uses a runtime workspace reference:
 
 Empty projects are runtime-owned as well. After Wework creates or selects a directory, it calls the workspace open/register flow so the executor includes that workspace in the `runtime.tasks.list` project group. The project should be visible even before the directory has any LocalTask or Codex conversation. This flow does not write `TaskResource`, `Subtask`, or Backend `projects` rows.
 
+Backend-initiated private-chat Task creation, such as Weibo DM, also uses non-Project runtime tasks. When the user chooses no Project in the DM flow, Backend resolves the user's selected local device, or automatically uses the only online local device, and creates the task in the internal standalone chat workspace `workspace/chat`. This flow also does not create a `TaskResource` or `Subtask`, and it does not expose `workspacePath` as a frontend input for Project tasks.
+
 ## Fork And Cross-Device Transfer
 
 When Wework forks a runtime task, it only offers target workspaces that belong to the source task's Project:

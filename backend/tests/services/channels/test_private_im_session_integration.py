@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
+from app.models.project import Project
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.channels.callback import BaseCallbackInfo, ChannelType
@@ -114,12 +115,12 @@ def _message(
 
 
 async def _private_session(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, *, channel_type: str = "dingtalk"
 ) -> IMPrivateSession | None:
     return await im_session_service.get_session(
         im_session_service.build_session_key(
             user_id=test_user.id,
-            channel_type="dingtalk",
+            channel_type=channel_type,
             channel_id=77,
             conversation_id="conv-private",
         )
@@ -166,6 +167,32 @@ def _create_wework_task(
     test_db.commit()
     test_db.refresh(task)
     return task
+
+
+def _create_wework_project(
+    test_db: Session,
+    test_user: User,
+    *,
+    name: str = "Wegent",
+) -> Project:
+    project = Project(
+        user_id=test_user.id,
+        name=name,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "local", "deviceId": "device-1"},
+            "workspace": {
+                "source": "local_path",
+                "localPath": "/repo/Wegent",
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    return project
 
 
 def _create_team(test_db: Session, test_user: User) -> Kind:
@@ -970,14 +997,18 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
 
 
 @pytest.mark.asyncio
-async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
+async def test_private_task_creation_creates_runtime_task_and_binds_runtime_address(
     monkeypatch: pytest.MonkeyPatch,
     test_db: Session,
     test_user: User,
     channel_sessionlocal,
 ) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateResponse
+    from app.services import runtime_work_service
+
     team = _create_team(test_db, test_user)
-    handler = FakeChannelHandler(test_user)
+    project = _create_wework_project(test_db, test_user)
+    handler = FakeChannelHandler(test_user, channel_type=ChannelType.WEIBO)
     calls: dict[str, Any] = {}
 
     async def fake_create_chat_task(
@@ -991,30 +1022,21 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
         rag_prompt: str | None = None,
         source: str = "web",
     ):
-        calls["create"] = {
-            "message": message,
-            "params": params,
-            "should_trigger_ai": should_trigger_ai,
-            "source": source,
-        }
-        return SimpleNamespace(
-            task=SimpleNamespace(id=710),
-            user_subtask=SimpleNamespace(id=711),
-            assistant_subtask=SimpleNamespace(id=712),
+        raise AssertionError("private IM task creation must use runtime tasks")
+
+    async def fake_create_runtime_task(**kwargs):
+        calls["runtime_create"] = kwargs
+        request = kwargs["request"]
+        return RuntimeTaskCreateResponse(
+            accepted=True,
+            device_id="device-1",
+            local_task_id="codex-created",
+            workspace_path="/repo/Wegent",
+            runtime=request.runtime,
         )
 
-    async def fake_trigger_ai_response_unified(**kwargs):
-        calls["trigger"] = kwargs
-
-    class FakeStreamingEmitter:
-        async def emit_start(self, **kwargs):
-            calls["emit_start"] = kwargs
-
-        def set_shared_content_key(self, key: str):
-            calls["shared_content_key"] = key
-
-    async def fake_create_streaming_emitter(message_context: MessageContext):
-        return FakeStreamingEmitter()
+    async def fake_private_im_runtime_model(**kwargs):
+        return "claude_code", None, None
 
     monkeypatch.setattr(
         handler,
@@ -1022,34 +1044,129 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
         lambda db, user_id: team,
     )
     monkeypatch.setattr(
+        handler,
+        "_private_im_runtime_model",
+        fake_private_im_runtime_model,
+    )
+    monkeypatch.setattr(
         "app.services.chat.storage.task_manager.create_chat_task",
         fake_create_chat_task,
     )
     monkeypatch.setattr(
-        "app.services.chat.trigger.trigger_ai_response_unified",
-        fake_trigger_ai_response_unified,
-    )
-    monkeypatch.setattr(
-        handler,
-        "create_streaming_emitter",
-        fake_create_streaming_emitter,
+        runtime_work_service,
+        "create_runtime_task",
+        fake_create_runtime_task,
     )
 
-    await handler.handle_message(_message("/task"))
-    await handler.handle_message(_message("new"))
-    await handler.handle_message(_message("0"))
+    await handler.handle_message(_message("/new"))
+    await handler.handle_message(_message("2"))
+    await handler.handle_message(_message("1"))
     handled = await handler.handle_message(_message("创建新的任务需求"))
 
     test_db.expire_all()
-    session = await _private_session(test_db, test_user)
+    session = await _private_session(test_db, test_user, channel_type="weibo")
     assert handled is True
-    assert calls["create"]["message"] == "创建新的任务需求"
-    assert calls["create"]["params"].task_type == "task"
-    assert calls["create"]["params"].client_origin == CLIENT_ORIGIN_WEWORK
-    assert calls["create"]["params"].source == "im"
-    assert calls["create"]["should_trigger_ai"] is True
-    assert calls["create"]["source"] == "im"
+    request = calls["runtime_create"]["request"]
+    assert calls["runtime_create"]["user_id"] == test_user.id
+    assert request.project_id == project.id
+    assert request.team_id == team.id
+    assert request.runtime == "claude_code"
+    assert request.message == "创建新的任务需求"
+    assert request.title == "创建新的任务需求"
     assert session is not None
-    assert session.active_task_id == 710
+    assert session.active_task_id is None
+    assert session.active_runtime_task == {
+        "deviceId": "device-1",
+        "workspacePath": "/repo/Wegent",
+        "localTaskId": "codex-created",
+        "runtime": "claude_code",
+    }
     assert session.state == IMSessionState.IDLE
     assert session.pending_payload == {}
+
+
+@pytest.mark.asyncio
+async def test_private_task_creation_without_project_uses_runtime_chat_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+    test_user: User,
+    channel_sessionlocal,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateResponse
+    from app.services import runtime_work_service
+    from app.services.channels.device_selection import DeviceSelection, DeviceType
+    from app.services.device_service import device_service
+
+    team = _create_team(test_db, test_user)
+    handler = FakeChannelHandler(test_user, channel_type=ChannelType.WEIBO)
+    calls: dict[str, Any] = {}
+
+    async def fake_create_runtime_task(**kwargs):
+        calls["runtime_create"] = kwargs
+        request = kwargs["request"]
+        return RuntimeTaskCreateResponse(
+            accepted=True,
+            device_id=request.device_id,
+            local_task_id="chat-created",
+            workspace_path=request.workspace_path,
+            runtime=request.runtime,
+        )
+
+    async def fake_get_device_selection(user_id: int):
+        return DeviceSelection(device_type=DeviceType.CHAT)
+
+    async def fake_get_online_devices(db: Session, user_id: int):
+        return [
+            {
+                "device_id": "device-1",
+                "device_type": "local",
+                "name": "Mac",
+                "status": "online",
+            }
+        ]
+
+    async def fake_private_im_runtime_model(**kwargs):
+        return "claude_code", None, None
+
+    monkeypatch.setattr(handler, "_get_task_mode_team", lambda db, user_id: team)
+    monkeypatch.setattr(
+        handler,
+        "_private_im_runtime_model",
+        fake_private_im_runtime_model,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.handler.device_selection_manager.get_selection",
+        fake_get_device_selection,
+    )
+    monkeypatch.setattr(
+        device_service,
+        "get_online_devices",
+        fake_get_online_devices,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "create_runtime_task",
+        fake_create_runtime_task,
+    )
+
+    await handler.handle_message(_message("/new"))
+    await handler.handle_message(_message("2"))
+    await handler.handle_message(_message("0"))
+    handled = await handler.handle_message(_message("创建无项目任务"))
+
+    test_db.expire_all()
+    session = await _private_session(test_db, test_user, channel_type="weibo")
+    assert handled is True
+    request = calls["runtime_create"]["request"]
+    assert request.project_id is None
+    assert request.device_id == "device-1"
+    assert request.workspace_path == "workspace/chat"
+    assert request.message == "创建无项目任务"
+    assert session is not None
+    assert session.active_task_id is None
+    assert session.active_runtime_task == {
+        "deviceId": "device-1",
+        "workspacePath": "workspace/chat",
+        "localTaskId": "chat-created",
+        "runtime": "claude_code",
+    }
