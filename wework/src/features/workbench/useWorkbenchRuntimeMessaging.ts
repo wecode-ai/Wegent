@@ -895,7 +895,11 @@ export function useWorkbenchRuntimeMessaging({
   )
 
   const retryFailedMessage = useCallback(
-    async (messageId: string, messagesOverride?: WorkbenchMessage[]) => {
+    async (
+      messageId: string,
+      messagesOverride?: WorkbenchMessage[],
+      retryUserMessageOverride?: WorkbenchMessage
+    ): Promise<boolean> => {
       const messageSource = messagesOverride ?? []
       const failedMessageIndex = messageSource.findIndex(
         message =>
@@ -903,64 +907,55 @@ export function useWorkbenchRuntimeMessaging({
       )
       if (failedMessageIndex === -1) {
         dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
-        return
+        return false
       }
 
-      const previousUserMessage = [...messageSource]
-        .slice(0, failedMessageIndex)
-        .reverse()
-        .find(message => message.role === 'user')
+      const previousUserMessage =
+        retryUserMessageOverride?.role === 'user'
+          ? retryUserMessageOverride
+          : [...messageSource]
+              .slice(0, failedMessageIndex)
+              .reverse()
+              .find(message => message.role === 'user')
       if (!previousUserMessage) {
         dispatch({ type: 'error_set', error: '未找到可重试的用户消息' })
-        return
+        return false
       }
 
       if (state.currentRuntimeTask) {
-        if (authoritativeRuntimeTaskRunning) {
-          reportSendBlocked(i18n.t('workbench.runtime_task_running_message'))
-          return
+        const runtimeSelectedModel =
+          modelSelection.getSelectedModel?.() ??
+          modelSelection.selectedModel ??
+          resolveAutomaticModel(modelSelection.models)
+        const runtimeSelectedModelOptions =
+          modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
+        if (
+          isConfiguredLocalModel(runtimeSelectedModel) &&
+          !isLocalDeviceTarget(state.devices, state.currentRuntimeTask.deviceId)
+        ) {
+          reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
+          return false
         }
-        try {
-          const runtimeSelectedModel =
-            modelSelection.getSelectedModel?.() ??
-            modelSelection.selectedModel ??
-            resolveAutomaticModel(modelSelection.models)
-          const runtimeSelectedModelOptions =
-            modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
-          if (
-            isConfiguredLocalModel(runtimeSelectedModel) &&
-            !isLocalDeviceTarget(state.devices, state.currentRuntimeTask.deviceId)
-          ) {
-            reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'))
-            return
-          }
-          const response = await executorClient.runtime.sendRuntimeMessage({
-            address: state.currentRuntimeTask,
-            message: previousUserMessage.content,
-            ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
-          })
-          if (!response.accepted) {
-            throw new Error(response.error || '发送失败')
-          }
-          await refreshWorkLists()
-        } catch (error) {
-          dispatch({
-            type: 'error_set',
-            error: error instanceof Error ? error.message : '发送失败',
-          })
-        }
-        return
+        const previousAttachments = previousUserMessage.attachments ?? []
+        const attachmentIds = remoteAttachmentIds(previousAttachments)
+        const attachments = localRuntimeAttachments(previousAttachments)
+        return sendRuntimePaneMessage({
+          address: state.currentRuntimeTask,
+          message: previousUserMessage.content,
+          ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
+        })
       }
 
       reportSendBlocked('当前没有可重试的 LocalTask')
+      return false
     },
     [
-      authoritativeRuntimeTaskRunning,
       dispatch,
-      executorClient,
       modelSelection,
-      refreshWorkLists,
       reportSendBlocked,
+      sendRuntimePaneMessage,
       state.currentRuntimeTask,
       state.devices,
     ]

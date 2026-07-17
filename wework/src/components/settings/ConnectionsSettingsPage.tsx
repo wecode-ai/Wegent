@@ -238,7 +238,7 @@ function StatusPill({ status }: { status: DeviceInfo['status'] }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] ${
+      className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs ${
         isOnline ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
       }`}
     >

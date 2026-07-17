@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import MixedContentView from '@/features/tasks/components/message/thinking/MixedContentView'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -85,6 +85,242 @@ const createSuccessfulFormOutput = (form: Record<string, unknown>) =>
   })
 
 describe('MixedContentView', () => {
+  it('renders child agent output inside an expandable subagent block', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            title: 'Inspect backend',
+            agent_type: 'Explore',
+            summary: 'Inspection completed',
+            status: 'done',
+            children: [
+              {
+                id: 'child-text',
+                type: 'text',
+                parent_tool_use_id: 'Agent_0',
+                content: 'Found the parser path',
+                status: 'done',
+              },
+              {
+                id: 'child-tool',
+                type: 'tool',
+                parent_tool_use_id: 'Agent_0',
+                tool_use_id: 'child-tool',
+                tool_name: 'Read',
+                status: 'done',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const subagent = screen.getByTestId('subagent-block')
+    expect(subagent).toHaveTextContent('Inspect backend')
+    expect(screen.queryByText('Found the parser path')).not.toBeInTheDocument()
+
+    fireEvent.click(subagent)
+
+    expect(screen.getByText('Inspection completed')).toBeInTheDocument()
+    expect(screen.getByText('Found the parser path')).toBeInTheDocument()
+    expect(screen.getByTestId('tool-block')).toBeInTheDocument()
+  })
+
+  it('rebuilds subagent children from persisted flat blocks after refresh', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            title: 'Write essays',
+            agent_type: 'Agent',
+            status: 'invoking',
+            children: [],
+          },
+          {
+            id: 'Write_1',
+            type: 'tool',
+            parent_tool_use_id: 'Agent_0',
+            tool_use_id: 'Write_1',
+            tool_name: 'Write',
+            status: 'done',
+          },
+          {
+            id: 'Write_2',
+            type: 'tool',
+            parent_tool_use_id: 'Agent_0',
+            tool_use_id: 'Write_2',
+            tool_name: 'Write',
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    const subagent = screen.getByTestId('subagent-block')
+    expect(screen.queryAllByTestId('tool-block')).toHaveLength(0)
+
+    fireEvent.click(subagent)
+
+    expect(screen.getAllByTestId('tool-block')).toHaveLength(2)
+  })
+
+  it('groups consecutive parallel subagents into one native execution block', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_0',
+            type: 'subagent',
+            tool_use_id: 'Agent_0',
+            title: 'Two Sum solution',
+            status: 'done',
+            children: [
+              {
+                id: 'Write_0',
+                type: 'tool',
+                parent_tool_use_id: 'Agent_0',
+                tool_use_id: 'Write_0',
+                tool_name: 'Write',
+                status: 'done',
+              },
+            ],
+          },
+          {
+            id: 'Agent_1',
+            type: 'subagent',
+            tool_use_id: 'Agent_1',
+            title: 'Reverse linked list',
+            status: 'done',
+            children: [
+              {
+                id: 'Write_1',
+                type: 'tool',
+                parent_tool_use_id: 'Agent_1',
+                tool_use_id: 'Write_1',
+                tool_name: 'Write',
+                status: 'done',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-group-block')).toBeInTheDocument()
+    expect(screen.queryByTestId('subagent-block')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('subagent-tree-item')).toHaveLength(2)
+    expect(screen.getAllByTestId('tool-block')).toHaveLength(1)
+
+    fireEvent.click(screen.getByTestId('subagent-tree-toggle-Agent_1'))
+    expect(screen.getAllByTestId('tool-block')).toHaveLength(1)
+
+    fireEvent.click(screen.getByTestId('subagent-group-toggle'))
+    expect(screen.queryByTestId('subagent-tree-item')).not.toBeInTheDocument()
+  })
+
+  it('renders queued, running, and completed subagent lifecycle states explicitly', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_queued',
+            type: 'subagent',
+            tool_use_id: 'Agent_queued',
+            title: 'Waiting task',
+            status: 'queued',
+          },
+          {
+            id: 'Agent_running',
+            type: 'subagent',
+            tool_use_id: 'Agent_running',
+            title: 'Running task',
+            status: 'invoking',
+          },
+          {
+            id: 'Agent_done',
+            type: 'subagent',
+            tool_use_id: 'Agent_done',
+            title: 'Completed task',
+            status: 'done',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-tree-status-Agent_queued')).toHaveTextContent(
+      'thinking.subagent.status_queued'
+    )
+    expect(screen.getByTestId('subagent-tree-status-Agent_running')).toHaveTextContent(
+      'thinking.subagent.status_running'
+    )
+    expect(screen.getByTestId('subagent-tree-status-Agent_done')).toHaveTextContent(
+      'thinking.subagent.status_completed'
+    )
+  })
+
+  it('does not treat a queued standalone subagent as completed', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'Agent_queued',
+            type: 'subagent',
+            tool_use_id: 'Agent_queued',
+            title: 'Waiting task',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('subagent-status')).toHaveTextContent(
+      'thinking.subagent.status_queued'
+    )
+  })
+
+  it('collapses additional subagents behind a show-all action', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={Array.from({ length: 7 }, (_, index) => ({
+          id: `Agent_${index}`,
+          type: 'subagent' as const,
+          tool_use_id: `Agent_${index}`,
+          title: `Task ${index + 1}`,
+          status: 'done' as const,
+        }))}
+      />
+    )
+
+    expect(screen.getAllByTestId('subagent-tree-item')).toHaveLength(5)
+    fireEvent.click(screen.getByTestId('subagent-group-show-all'))
+    expect(screen.getAllByTestId('subagent-tree-item')).toHaveLength(7)
+  })
+
   it('renders interactive forms from render_payload', () => {
     const renderPayload = {
       type: 'interactive_form_question',

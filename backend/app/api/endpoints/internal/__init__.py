@@ -6,6 +6,7 @@
 
 from app.core.config import settings
 
+from .api_keys import router as api_keys_internal_router
 from .attachments import router as attachments_router
 from .bots import router as bots_router
 from .callback import router as callback_router
@@ -27,6 +28,7 @@ if not settings.STANDALONE_MODE:
     from .rag import router as rag_router
 
 __all__ = [
+    "api_keys_internal_router",
     "attachments_router",
     "bots_router",
     "callback_router",

@@ -323,7 +323,7 @@ function ContinueInImDialogContent({
                           {session.display_name}
                         </span>
                         {session.channel_label && (
-                          <span className="shrink-0 rounded border border-border/70 bg-base px-1.5 py-0.5 text-[10px] font-medium leading-none text-text-muted">
+                          <span className="shrink-0 rounded border border-border/70 bg-base px-1.5 py-0.5 text-xs font-medium leading-none text-text-muted">
                             {session.channel_label}
                           </span>
                         )}

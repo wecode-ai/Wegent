@@ -212,18 +212,83 @@ impl ResponsesEventBuilder {
         tool_use_id: &str,
         name: &str,
         input: &Value,
+        parent_tool_use_id: Option<&str>,
+    ) -> EventEnvelope {
+        let mut block = json!({
+            "id": tool_use_id,
+            "type": "tool",
+            "tool_use_id": tool_use_id,
+            "tool_name": name,
+            "tool_input": input,
+            "status": "pending",
+            "timestamp": current_epoch_millis()
+        });
+        if let Some(parent_tool_use_id) = parent_tool_use_id {
+            block["parent_tool_use_id"] = json!(parent_tool_use_id);
+        }
+        self.envelope(
+            "response.block.created",
+            json!({
+                "type": "response.block.created",
+                "block": block
+            }),
+        )
+    }
+
+    pub fn response_subagent_block_created(
+        &self,
+        tool_use_id: &str,
+        name: &str,
+        input: &Value,
+        parent_tool_use_id: Option<&str>,
+    ) -> EventEnvelope {
+        let title = input.get("description").and_then(Value::as_str);
+        let agent_type = input
+            .get("subagent_type")
+            .or_else(|| input.get("agent_type"))
+            .and_then(Value::as_str);
+        let mut block = json!({
+            "id": tool_use_id,
+            "type": "subagent",
+            "tool_use_id": tool_use_id,
+            "tool_name": name,
+            "tool_input": input,
+            "title": title,
+            "description": input.get("description").and_then(Value::as_str),
+            "agent_type": agent_type,
+            "status": "queued",
+            "timestamp": current_epoch_millis(),
+            "children": []
+        });
+        if let Some(parent_tool_use_id) = parent_tool_use_id {
+            block["parent_tool_use_id"] = json!(parent_tool_use_id);
+        }
+        self.envelope(
+            "response.block.created",
+            json!({
+                "type": "response.block.created",
+                "block": block
+            }),
+        )
+    }
+
+    pub fn response_child_block_created(
+        &self,
+        block_id: &str,
+        block_type: &str,
+        parent_tool_use_id: &str,
+        content: &str,
     ) -> EventEnvelope {
         self.envelope(
             "response.block.created",
             json!({
                 "type": "response.block.created",
                 "block": {
-                    "id": tool_use_id,
-                    "type": "tool",
-                    "tool_use_id": tool_use_id,
-                    "tool_name": name,
-                    "tool_input": input,
-                    "status": "pending",
+                    "id": block_id,
+                    "type": block_type,
+                    "parent_tool_use_id": parent_tool_use_id,
+                    "content": content,
+                    "status": "done",
                     "timestamp": current_epoch_millis()
                 }
             }),
@@ -236,17 +301,53 @@ impl ResponsesEventBuilder {
         input: &Value,
         output: Option<&str>,
         is_error: bool,
+        parent_tool_use_id: Option<&str>,
     ) -> EventEnvelope {
+        let mut updates = json!({
+            "tool_input": input,
+            "tool_output": output,
+            "status": if is_error { "error" } else { "done" }
+        });
+        if let Some(parent_tool_use_id) = parent_tool_use_id {
+            updates["parent_tool_use_id"] = json!(parent_tool_use_id);
+        }
         self.envelope(
             "response.block.updated",
             json!({
                 "type": "response.block.updated",
                 "block_id": tool_use_id,
-                "updates": {
-                    "tool_input": input,
-                    "tool_output": output,
-                    "status": if is_error { "error" } else { "done" }
-                }
+                "updates": updates
+            }),
+        )
+    }
+
+    pub fn response_subagent_block_updated(
+        &self,
+        tool_use_id: &str,
+        status: Option<&str>,
+        output: Option<&str>,
+        summary: Option<&str>,
+        parent_tool_use_id: Option<&str>,
+    ) -> EventEnvelope {
+        let mut updates = json!({});
+        if let Some(status) = status {
+            updates["status"] = json!(status);
+        }
+        if let Some(output) = output {
+            updates["output"] = json!(output);
+        }
+        if let Some(summary) = summary {
+            updates["summary"] = json!(summary);
+        }
+        if let Some(parent_tool_use_id) = parent_tool_use_id {
+            updates["parent_tool_use_id"] = json!(parent_tool_use_id);
+        }
+        self.envelope(
+            "response.block.updated",
+            json!({
+                "type": "response.block.updated",
+                "block_id": tool_use_id,
+                "updates": updates
             }),
         )
     }

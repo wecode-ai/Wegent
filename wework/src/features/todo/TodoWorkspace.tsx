@@ -555,7 +555,7 @@ export function TodoWorkspace({
                 setSelectedItemId(null)
                 setProjectMenuOpen(value => !value)
               }}
-              className="flex h-8 max-w-[220px] items-center gap-2 rounded-md px-2 text-[13px] font-medium text-[#30353A] hover:bg-[#F1F2F4] dark:text-text-primary dark:hover:bg-muted"
+              className="flex h-8 max-w-[220px] items-center gap-2 rounded-md px-2 text-sm font-medium text-[#30353A] hover:bg-[#F1F2F4] dark:text-text-primary dark:hover:bg-muted"
             >
               <span
                 className="h-[18px] w-[18px] shrink-0 rounded-[5px]"
@@ -576,10 +576,10 @@ export function TodoWorkspace({
             ) : (
               <ListTodo className="h-4 w-4 text-[#777F87]" />
             )}
-            <span className="text-[13px] font-semibold text-[#30353A] dark:text-text-primary">
+            <span className="text-sm font-semibold text-[#30353A] dark:text-text-primary">
               {projectView === 'overview' ? t('todo.overview', '总览') : 'Work items'}
             </span>
-            <span className="rounded-md bg-[#EEF0F2] px-2 py-1 font-mono text-[10px] text-[#707981] dark:bg-muted dark:text-text-muted">
+            <span className="rounded-md bg-[#EEF0F2] px-2 py-1 font-mono text-xs text-[#707981] dark:bg-muted dark:text-text-muted">
               {items.length}
             </span>
           </div>
@@ -627,7 +627,7 @@ export function TodoWorkspace({
               type="button"
               data-testid="todo-create-button"
               onClick={() => setCreateDialogState('backlog')}
-              className="flex h-8 items-center gap-1.5 rounded-md bg-[#14B8A6] px-3 text-[12px] font-semibold text-white hover:bg-[#0FA797]"
+              className="flex h-8 items-center gap-1.5 rounded-md bg-[#14B8A6] px-3 text-xs font-semibold text-white hover:bg-[#0FA797]"
             >
               <Plus className="h-3.5 w-3.5" />
               {t('todo.create_action', '新建 TODO')}
@@ -767,7 +767,7 @@ function ToolbarButton({
       data-testid={testId}
       onClick={onClick}
       className={cn(
-        'relative flex h-8 items-center gap-1.5 rounded-md border border-[#DDE1E4] bg-white px-2.5 text-[11px] font-medium text-[#596169] hover:bg-[#F7F8F9] dark:border-border dark:bg-background dark:text-text-secondary dark:hover:bg-muted',
+        'relative flex h-8 items-center gap-1.5 rounded-md border border-[#DDE1E4] bg-white px-2.5 text-xs font-medium text-[#596169] hover:bg-[#F7F8F9] dark:border-border dark:bg-background dark:text-text-secondary dark:hover:bg-muted',
         active &&
           'border-[#A9DAD3] bg-[#EFF9F7] text-[#0F766E] dark:border-primary/30 dark:bg-primary/10 dark:text-primary'
       )}
@@ -775,7 +775,7 @@ function ToolbarButton({
       <Icon className="h-3.5 w-3.5" />
       {label}
       {badge > 0 && (
-        <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#14B8A6] px-1 font-mono text-[8px] font-bold text-white">
+        <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-[#14B8A6] px-1 font-mono text-xs font-bold text-white">
           {badge}
         </span>
       )}

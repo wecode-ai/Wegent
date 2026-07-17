@@ -20,6 +20,10 @@ EXECUTOR_OLD_TASK_IDS_URL = os.getenv(
     "EXECUTOR_OLD_TASK_IDS_URL",
     f"{_EXECUTOR_MANAGER_BASE}/executor-manager/executor/old-task-ids",
 )
+EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL = os.getenv(
+    "EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL",
+    f"{_EXECUTOR_MANAGER_BASE}/executor-manager/sandboxes/cleanup-by-task",
+)
 ORPHAN_POD_CLEANUP_ENABLED = (
     os.getenv("ORPHAN_POD_CLEANUP_ENABLED", "true").lower() == "true"
 )
@@ -28,6 +32,11 @@ ORPHAN_POD_CLEANUP_INTERVAL_SECONDS = int(
 )
 ORPHAN_POD_MIN_AGE_HOURS = int(os.getenv("ORPHAN_POD_MIN_AGE_HOURS", "48"))
 ORPHAN_POD_CLEANUP_STALE_HOURS = int(os.getenv("ORPHAN_POD_CLEANUP_STALE_HOURS", "24"))
+# Once a pod has been idle longer than this, force-delete it even when the normal
+# archive-then-delete path failed, to prevent archive failures from leaking pods.
+ORPHAN_POD_FORCE_CLEANUP_IDLE_HOURS = int(
+    os.getenv("ORPHAN_POD_FORCE_CLEANUP_IDLE_HOURS", "120")
+)
 # Mirrors the awk '$1+0 > 1000' guard in delete_notfound_pods.sh: skip pods whose
 # task_id label is missing or not a valid integer above this threshold.
 ORPHAN_POD_MIN_TASK_ID = int(os.getenv("ORPHAN_POD_MIN_TASK_ID", "1000"))

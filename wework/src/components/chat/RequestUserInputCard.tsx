@@ -143,7 +143,7 @@ export function RequestUserInputCard({
         className="inline-flex h-9 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
       >
         {t('request_user_input.ignore')}
-        <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary">
+        <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 text-xs font-semibold text-text-secondary">
           ESC
         </kbd>
       </button>
@@ -179,12 +179,12 @@ export function RequestUserInputCard({
           {questions.map(question => (
             <div key={question.id} className="min-w-0">
               {question.header ? (
-                <div className="mb-1 text-[13px] font-semibold leading-5 text-text-primary">
+                <div className="mb-1 text-sm font-semibold leading-5 text-text-primary">
                   {question.header}
                 </div>
               ) : null}
               {!customQuestionIds.has(question.id) ? (
-                <div className="mb-1.5 text-[13px] font-semibold leading-5 text-text-primary">
+                <div className="mb-1.5 text-sm font-semibold leading-5 text-text-primary">
                   {question.question}
                 </div>
               ) : null}
@@ -218,11 +218,11 @@ export function RequestUserInputCard({
                           {index + 1}
                         </span>
                         <span className="min-w-0 flex-1 whitespace-normal break-words">
-                          <span className="text-[13px] font-semibold leading-5 text-text-primary">
+                          <span className="text-sm font-semibold leading-5 text-text-primary">
                             {option.label}
                           </span>
                           {option.description ? (
-                            <span className="ml-2 text-[13px] leading-5 text-text-muted">
+                            <span className="ml-2 text-sm leading-5 text-text-muted">
                               {option.description}
                             </span>
                           ) : null}
@@ -248,7 +248,7 @@ export function RequestUserInputCard({
                         [question.id]: event.target.value,
                       }))
                     }}
-                    className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-[13px] font-semibold leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm font-semibold leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
                     placeholder={question.question || t('request_user_input.custom_placeholder')}
                   />
                 </div>
@@ -278,7 +278,7 @@ export function RequestUserInputSummary({ payload }: { payload: RequestUserInput
   return (
     <div
       data-testid="request-user-input-summary"
-      className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-sm leading-6 text-text-secondary"
     >
       <div className="mb-1.5 inline-flex max-w-full items-center gap-1.5 text-text-muted">
         <MessageCircleQuestion className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />

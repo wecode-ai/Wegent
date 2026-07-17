@@ -61,7 +61,7 @@ export function TodoOverview({
       <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4">
         <section className="flex min-h-[72px] items-center justify-between gap-6">
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold text-text-primary">{projectName}</h1>
+            <h1 className="heading-base truncate text-text-primary">{projectName}</h1>
             <p className="mt-1 text-xs text-text-muted">
               {t('todo.overview_description', '汇总当前项目的工作项状态，不改变原任务执行流程')}
             </p>
@@ -97,8 +97,8 @@ export function TodoOverview({
                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
                   {t(entry.labelKey, entry.fallback)}
                 </div>
-                <div className="mt-2 text-xl font-semibold text-text-primary">{count}</div>
-                <div className="mt-1 text-[11px] text-text-muted">
+                <div className="mt-2 text-heading-md font-medium text-text-primary">{count}</div>
+                <div className="mt-1 text-xs text-text-muted">
                   {t('todo.work_item_count', { defaultValue: '{{count}} 个工作项', count })}
                 </div>
               </article>
@@ -150,7 +150,7 @@ export function TodoOverview({
                       className="flex h-[52px] w-full items-center justify-between gap-4 border-b border-border px-3.5 text-left last:border-b-0 hover:bg-muted/60"
                     >
                       <span className="flex min-w-0 items-center gap-3">
-                        <span className="shrink-0 font-mono text-[11px] text-text-muted">
+                        <span className="shrink-0 font-mono text-xs text-text-muted">
                           {item.code}
                         </span>
                         <span className="truncate text-xs font-medium text-text-primary">
@@ -159,7 +159,7 @@ export function TodoOverview({
                       </span>
                       <span className="flex shrink-0 items-center gap-3">
                         <span
-                          className="flex items-center gap-1.5 text-[11px] font-medium"
+                          className="flex items-center gap-1.5 text-xs font-medium"
                           style={{ color: state.color }}
                         >
                           <span
@@ -168,7 +168,7 @@ export function TodoOverview({
                           />
                           {t(state.labelKey, state.fallback)}
                         </span>
-                        <span className="w-12 text-right text-[11px] text-text-muted">
+                        <span className="w-12 text-right text-xs text-text-muted">
                           {formatOverviewDate(item.updatedAt ?? item.createdAt)}
                         </span>
                       </span>
@@ -211,17 +211,17 @@ export function TodoOverview({
                   <div key={item.id} className="flex gap-2.5">
                     <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
                     <div className="min-w-0">
-                      <p className="truncate text-[11px] font-medium text-text-secondary">
+                      <p className="truncate text-xs font-medium text-text-secondary">
                         {item.title}
                       </p>
-                      <p className="mt-0.5 text-[10px] text-text-muted">
+                      <p className="mt-0.5 text-xs text-text-muted">
                         {formatOverviewDate(item.updatedAt ?? item.createdAt)}
                       </p>
                     </div>
                   </div>
                 ))}
                 {recentItems.length === 0 && (
-                  <p className="text-[11px] text-text-muted">
+                  <p className="text-xs text-text-muted">
                     {t('todo.no_recent_activity', '暂无运行动态')}
                   </p>
                 )}
@@ -256,7 +256,7 @@ function PersonRow({
       </span>
       <span className="min-w-0">
         <span className="block truncate text-xs font-medium text-text-primary">{name}</span>
-        <span className="block truncate text-[10px] text-text-muted">{detail}</span>
+        <span className="block truncate text-xs text-text-muted">{detail}</span>
       </span>
     </div>
   )

@@ -130,10 +130,32 @@ function annotateHybridModel(
 function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.map(model => {
     if (!isRuntimeCodexModel(model)) {
+      return withModelExecutionOverride(model, {
+        source: 'local',
+        modelName: model.name,
+        modelType: model.type,
+        modelNamespace: model.namespace,
+        resourceUserId: model.resourceUserId,
+      })
+    }
+
+    return annotateHybridModel(
+      model,
+      'local',
+      model.name,
+      model.displayName || model.modelId || model.name,
+      model.displayName || model.modelId || model.name
+    )
+  })
+}
+
+function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
+  return models.filter(supportsResponsesApi).map(model => {
+    if (!isRuntimeCodexModel(model)) {
       return withModelExecutionOverride(
-        { ...model, name: `local:${model.type}:${model.name}` },
+        { ...model, name: `cloud:${model.type}:${model.name}` },
         {
-          source: 'local',
+          source: 'cloud',
           modelName: model.name,
           modelType: model.type,
           modelNamespace: model.namespace,
@@ -144,32 +166,10 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 
     return annotateHybridModel(
       model,
-      'local',
-      `local:${model.type}:${model.name}`,
-      `${model.displayName || model.modelId || model.name} (本机)`,
-      `${model.displayName || model.modelId || model.name} 本机`
-    )
-  })
-}
-
-function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.filter(supportsResponsesApi).map(model => {
-    if (!isRuntimeCodexModel(model)) {
-      return withModelExecutionOverride(model, {
-        source: 'cloud',
-        modelName: model.name,
-        modelType: model.type,
-        modelNamespace: model.namespace,
-        resourceUserId: model.resourceUserId,
-      })
-    }
-
-    return annotateHybridModel(
-      model,
       'cloud',
       `cloud:${model.type}:${model.name}`,
-      `${model.displayName || model.modelId || model.name} (云端)`,
-      `${model.displayName || model.modelId || model.name} 云端`
+      model.displayName || model.modelId || model.name,
+      model.displayName || model.modelId || model.name
     )
   })
 }

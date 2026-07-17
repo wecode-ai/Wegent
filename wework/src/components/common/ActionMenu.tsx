@@ -206,7 +206,7 @@ export function ActionMenu({
                   void handleItemSelect(item)
                 }}
                 className={[
-                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] leading-[18px]',
+                  'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm leading-[18px]',
                   item.danger ? 'text-red-500 hover:bg-red-50' : 'text-text-primary hover:bg-muted',
                   item.disabled ? 'cursor-not-allowed opacity-45 hover:bg-transparent' : '',
                 ].join(' ')}

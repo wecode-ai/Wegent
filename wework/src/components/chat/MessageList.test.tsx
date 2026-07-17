@@ -3799,6 +3799,35 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
+  test('keeps the retry card visible while waiting for the retried response', () => {
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: 'hi',
+            status: 'done',
+            createdAt: '2026-05-25T18:45:00.000+08:00',
+          },
+          {
+            id: '2',
+            role: 'assistant',
+            content: '',
+            status: 'failed',
+            error: 'temporary failure',
+            createdAt: '2026-05-25T18:45:01.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant-waiting')).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+  })
+
   test('shows thinking from the message list after completed processing activity', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',

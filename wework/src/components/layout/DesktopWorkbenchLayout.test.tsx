@@ -979,7 +979,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
       cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
-      retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
       loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
       revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -1022,6 +1022,7 @@ describe('DesktopWorkbenchLayout', () => {
       loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
       loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
       send: props.onSend ?? baseProps.onSend,
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
       ignoreRequestUserInput: vi.fn(),
@@ -1659,7 +1660,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-empty-composer-frame')).not.toBeInTheDocument()
     const paneTitle = screen.getByTestId('workbench-pane-task-title')
     expect(paneTitle).toHaveTextContent('Fix pane title')
-    expect(paneTitle).toHaveClass('truncate', 'text-[13px]', 'text-text-primary')
+    expect(paneTitle).toHaveClass('truncate', 'text-sm', 'text-text-primary')
     expect(screen.getByTestId('workbench-topbar')).toHaveClass(
       'h-11',
       'border-b',
@@ -2222,6 +2223,8 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerEnter(screen.getByTestId('desktop-sidebar-hover-edge'))
 
     expect(preview).toHaveClass('pointer-events-auto', 'translate-x-0', 'opacity-100')
+    expect(preview).toHaveClass('h-full')
+    expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveClass('h-full')
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
     expect(main).not.toHaveClass('ml-1.5')
 
@@ -6728,10 +6731,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
+    expect(panel).toHaveClass('transition-none')
+    expect(panel).not.toHaveClass('transition-[height,opacity,transform]')
     fireEvent.pointerMove(document, { clientY: 620 })
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+    expect(panel).toHaveClass('transition-[height,opacity,transform]', 'duration-300')
   })
 
   test('opens the terminal by default when the bottom workspace panel opens', async () => {

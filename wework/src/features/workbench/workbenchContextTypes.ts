@@ -299,7 +299,11 @@ export interface WorkbenchContextValue {
     input: string,
     options: CreateProjectRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
-  retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
+  retryFailedMessage: (
+    messageId: string,
+    messagesOverride?: WorkbenchMessage[],
+    retryUserMessageOverride?: WorkbenchMessage
+  ) => Promise<boolean>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,

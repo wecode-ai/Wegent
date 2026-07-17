@@ -531,7 +531,7 @@ function PlanWorkspacePanel({ content }: { content: string }) {
       data-testid="workspace-plan-panel"
       className="min-h-0 flex-1 overflow-y-auto bg-background px-8 py-6"
     >
-      <div className="mx-auto max-w-4xl text-[15px] leading-7 text-text-primary">
+      <div className="mx-auto max-w-4xl text-base leading-7 text-text-primary">
         {content.trim() ? (
           <AssistantMarkdown content={content} />
         ) : (
@@ -628,11 +628,11 @@ function RightWorkspaceLauncherItem({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-[13px] font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+      className="flex h-11 w-full items-center gap-2 rounded-xl bg-surface px-3 text-left text-sm font-light leading-[18px] text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-4 w-4 shrink-0 text-text-secondary" />
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-[11px] font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
+      <span className="shrink-0 rounded-lg bg-background/80 px-1.5 py-0.5 text-xs font-light leading-4 text-text-muted shadow-[inset_0_0_0_1px_rgba(0,0,0,0.04)]">
         {shortcut}
       </span>
     </button>

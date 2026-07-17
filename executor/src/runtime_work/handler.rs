@@ -1185,7 +1185,16 @@ impl RuntimeWorkRpcHandler {
         } else {
             transcript_messages(&thread, &self.device_id)
         };
-        let messages = transcript_messages;
+        let mut messages = transcript_messages;
+        if local_link
+            .as_ref()
+            .is_some_and(|link| link.running || link.status.eq_ignore_ascii_case("failed"))
+        {
+            append_missing_cached_user_messages(
+                &mut messages,
+                local_link.as_ref().map(cached_messages).unwrap_or_default(),
+            );
+        }
         let running = codex_thread_has_active_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -4444,6 +4453,33 @@ fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {
         .collect()
 }
 
+fn append_missing_cached_user_messages(messages: &mut Vec<Value>, cached_messages: Vec<Value>) {
+    let mut provider_user_message_counts = HashMap::<String, usize>::new();
+    for message in messages.iter() {
+        if let Some(signature) = cached_user_message_signature(message) {
+            *provider_user_message_counts.entry(signature).or_default() += 1;
+        }
+    }
+
+    for message in cached_messages {
+        let Some(signature) = cached_user_message_signature(&message) else {
+            continue;
+        };
+        let remaining = provider_user_message_counts.entry(signature).or_default();
+        if *remaining > 0 {
+            *remaining -= 1;
+        } else {
+            messages.push(message);
+        }
+    }
+}
+
+fn cached_user_message_signature(message: &Value) -> Option<String> {
+    string_field(message, "role")
+        .filter(|role| role.eq_ignore_ascii_case("user"))
+        .and_then(|_| string_field(message, "content"))
+}
+
 fn cached_user_message(
     local_task_id: &str,
     request: &ExecutionRequest,
@@ -5549,6 +5585,40 @@ mod tests {
         };
 
         assert!(cached_user_message("local-task", &request, &json!({})).is_none());
+    }
+
+    #[test]
+    fn transcript_appends_cached_user_message_missing_from_failed_provider_turn() {
+        let mut provider_messages = vec![
+            json!({"id": "user-1", "role": "user", "content": "first"}),
+            json!({"id": "assistant-1", "role": "assistant", "content": "done"}),
+        ];
+        let cached_messages = vec![
+            json!({"id": "cached-user-1", "role": "user", "content": "first"}),
+            json!({"id": "cached-user-2", "role": "user", "content": "retry this"}),
+        ];
+
+        append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+        assert_eq!(provider_messages.len(), 3);
+        assert_eq!(provider_messages[2]["id"], "cached-user-2");
+        assert_eq!(provider_messages[2]["content"], "retry this");
+    }
+
+    #[test]
+    fn transcript_does_not_duplicate_cached_user_messages_already_from_provider() {
+        let mut provider_messages = vec![
+            json!({"id": "user-1", "role": "user", "content": "same"}),
+            json!({"id": "user-2", "role": "user", "content": "same"}),
+        ];
+        let cached_messages = vec![
+            json!({"id": "cached-user-1", "role": "user", "content": "same"}),
+            json!({"id": "cached-user-2", "role": "user", "content": "same"}),
+        ];
+
+        append_missing_cached_user_messages(&mut provider_messages, cached_messages);
+
+        assert_eq!(provider_messages.len(), 2);
     }
 
     #[tokio::test]

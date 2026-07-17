@@ -330,14 +330,11 @@ describe('createHybridWorkbenchServices', () => {
     })
   })
 
-  it('gives local and cloud Codex models unique UI names', async () => {
+  it('keeps local model identity while giving cloud Codex models unique UI names', async () => {
     const services = createServices()
     const response = await services.modelApi.listModels()
 
-    expect(response.data.map(model => model.name)).toEqual([
-      'local:runtime:gpt-5.5',
-      'cloud:runtime:gpt-5.5',
-    ])
+    expect(response.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
     expect(response.data.map(model => getModelExecutionOverride(model)?.modelName)).toEqual([
       'gpt-5.5',
       'gpt-5.5',
@@ -354,8 +351,8 @@ describe('createHybridWorkbenchServices', () => {
     const response = await services.modelApi.listModels()
 
     expect(response.data.map(model => model.name)).toEqual([
-      'local:public:chat-completions-model',
-      'responses-model',
+      'chat-completions-model',
+      'cloud:public:responses-model',
     ])
     expect(getModelExecutionOverride(response.data[1])?.source).toBe('cloud')
   })

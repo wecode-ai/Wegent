@@ -309,9 +309,11 @@ wegent-web:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - frontend/**/*
+        - packages/**/*
         - wecode/docker/frontend/**/*
     - changes:
       - frontend/**/*
+      - packages/**/*
       - wecode/docker/frontend/**/*
 
 trigger_update_front_web:
@@ -333,6 +335,7 @@ trigger_update_front_web:
       - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - frontend/**/*
+          - packages/**/*
           - wecode/docker/frontend/**/*
 
 trigger_update_simulation_web:
@@ -355,6 +358,7 @@ trigger_update_simulation_web:
       - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
         changes:
           - frontend/**/*
+          - packages/**/*
           - wecode/docker/frontend/**/*
 
 wework-web:
@@ -371,9 +375,11 @@ wework-web:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - wework/**/*
+        - packages/**/*
         - wecode/docker/wework/**/*
     - changes:
       - wework/**/*
+      - packages/**/*
       - wecode/docker/wework/**/*
 
 trigger_update_wework_web:
@@ -395,6 +401,7 @@ trigger_update_wework_web:
       - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - wework/**/*
+          - packages/**/*
           - wecode/docker/wework/**/*
 
 trigger_update_simulation_wework_web:
@@ -417,6 +424,7 @@ trigger_update_simulation_wework_web:
       - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME == "develop" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"'
         changes:
           - wework/**/*
+          - packages/**/*
           - wecode/docker/wework/**/*
 
 trigger_update_simulation_backend_web:
@@ -455,9 +463,11 @@ wegent-outer-web:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - frontend/**/*
+        - packages/**/*
         - wecode/docker/frontend_outer/**/*
     - changes:
       - frontend/**/*
+      - packages/**/*
       - wecode/docker/frontend_outer/**/*
 
 trigger_update_outer_front_web:
@@ -479,6 +489,7 @@ trigger_update_outer_front_web:
       - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - frontend/**/*
+          - packages/**/*
           - wecode/docker/frontend/**/*
 
 wegent-ops-web:
@@ -496,6 +507,7 @@ wegent-ops-web:
       when: never
     - changes:
       - frontend/**/*
+      - packages/**/*
       - wecode/docker/frontend_ops/**/*
       when: manual
 # Auto create MR from develop to main when branch merged to develop
