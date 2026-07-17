@@ -1,4 +1,4 @@
-import type { ChatStreamHandlers } from '@/stream/chatStream'
+import type { ChatStreamHandlers, RuntimeTransportReplacedPayload } from '@/stream/chatStream'
 import type {
   Attachment,
   ChatBlock,
@@ -37,6 +37,7 @@ export interface RuntimeTaskStreamHandlers {
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
 }
 
 export function createRuntimeTaskStreamHandlers(
@@ -280,6 +281,9 @@ export function createRuntimeTaskStreamHandlers(
     onGuidanceApplied: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onGuidanceApplied?.(payload)
+    },
+    onRuntimeTransportReplaced: payload => {
+      handlers.onRuntimeTransportReplaced?.(payload)
     },
   }
 }

@@ -9,6 +9,7 @@ mod backend_url;
 mod claude_code;
 mod claude_options;
 mod codex;
+mod codex_log_db;
 mod dify;
 mod git_auth;
 mod git_workspace;
@@ -34,7 +35,10 @@ use claude_code::{
     restore_claude_plugin_cache, run_pre_execute_hook,
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
-pub(crate) use codex::{combined_codex_developer_instructions, strip_wework_browser_instructions};
+pub(crate) use codex::{
+    combined_codex_developer_instructions, mcp_server_elicitation_request_user_input_params,
+    strip_wework_browser_instructions,
+};
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,

@@ -91,6 +91,21 @@ fn verify_bundled_codex_binary() {
             binary_path.display()
         );
     }
+    let code_mode_host_path = binary_path
+        .parent()
+        .expect("Codex binary path must have a parent")
+        .join(if target.contains("windows") {
+            "codex-code-mode-host.exe"
+        } else {
+            "codex-code-mode-host"
+        });
+    println!("cargo:rerun-if-changed={}", code_mode_host_path.display());
+    if !code_mode_host_path.is_file() {
+        panic!(
+            "Missing bundled Codex code-mode host for {target}: {}. Run `pnpm --filter wework run prepare:codex` with WEWORK_CODEX_TARGET={target} before creating a release app bundle.",
+            code_mode_host_path.display()
+        );
+    }
 }
 
 fn codex_binary_relative_path(target: &str) -> Option<&'static str> {

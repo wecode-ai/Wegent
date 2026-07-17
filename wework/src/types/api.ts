@@ -411,6 +411,7 @@ export interface DeviceWorkspacePrepareResponse {
 
 export interface RuntimeProjectRef {
   key: string
+  sidebarStateKey?: string | null
   id?: number
   name: string
   description?: string | null
@@ -420,6 +421,8 @@ export interface RuntimeProjectRef {
   stateDeviceId?: string | null
   roots?: RuntimeProjectRoot[]
   pinned?: boolean
+  pinnedOrder?: number | null
+  active?: boolean
   appearance?: RuntimeProjectAppearance | null
 }
 
@@ -474,6 +477,7 @@ export interface RuntimeWorkSearchRequest {
   limit?: number
   includeArchived?: boolean
   projectId?: number
+  source?: 'all' | 'local' | 'cloud'
 }
 
 export interface RuntimeWorkSearchProjectRef {
@@ -731,6 +735,25 @@ export interface RuntimeProjectAppearanceRequest {
   deviceId: string
   projectKey: string
   appearance?: RuntimeProjectAppearance | null
+}
+
+export interface RuntimeRemoteProjectRegistration {
+  id: string
+  hostId: string
+  remotePath: string
+  label?: string | null
+}
+
+export interface RuntimeRemoteProjectsSyncRequest {
+  deviceId: string
+  projects: RuntimeRemoteProjectRegistration[]
+}
+
+export interface RuntimeProjectActivateRequest {
+  deviceId: string
+  projectKey: string
+  workspacePath: string
+  remoteHostId?: string | null
 }
 
 export interface RuntimeProjectTaskReorderRequest {
@@ -991,6 +1014,7 @@ export interface RuntimeTaskCreateRequest {
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: Record<string, string>
+  modelSelection?: ModelSelectionConfig | null
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]

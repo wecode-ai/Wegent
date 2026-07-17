@@ -11,7 +11,6 @@ import {
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import { openExternalUrl } from '@/lib/external-links'
-import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -75,11 +74,6 @@ vi.mock('@/api/users', () => ({
   createUserApi: vi.fn(),
 }))
 
-vi.mock('@/lib/local-terminal', () => ({
-  getLocalExecutorDeviceId: vi.fn(),
-  isLocalTerminalAvailable: vi.fn(),
-}))
-
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
@@ -101,22 +95,22 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
-const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
-const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
     id: 1,
     device_id: 'device-1',
-    name: 'yunpeng7-executor-device-1',
+    name: 'device-1',
     status: 'online',
     is_default: false,
     device_type: 'cloud',
     bind_shell: 'claudecode',
     executor_version: '1.712',
+    client_ip: '10.201.3.200',
     cloud_config: {
       sandboxId: 'sandbox-1',
       deviceId: 'cloud-runtime-device-1',
+      deviceName: 'device-1',
       ubuntuInitialPassword: 'initial-password-1',
     },
     ...overrides,
@@ -142,6 +136,7 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     name: 'Docker Remote Device',
     device_type: 'remote',
     bind_shell: 'claudecode',
+    client_ip: '10.201.3.201',
     cloud_config: undefined,
     remote_config: {
       provider: 'docker',
@@ -158,7 +153,6 @@ describe('ConnectionsSettingsPage', () => {
     getAllDevices: vi.fn(),
     startTerminal: vi.fn(),
     startCodeServer: vi.fn(),
-    openLocalTerminal: vi.fn(),
     createCloudDevice: vi.fn(),
     createDockerRemoteDeviceCommand: vi.fn(),
     renameDevice: vi.fn(),
@@ -195,10 +189,7 @@ describe('ConnectionsSettingsPage', () => {
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/settings/connections')
-    isLocalTerminalAvailableMock.mockReturnValue(true)
-    getLocalExecutorDeviceIdMock.mockResolvedValue('local-claude')
     openExternalUrlMock.mockResolvedValue(true)
-    api.openLocalTerminal.mockResolvedValue(undefined)
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -841,7 +832,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('ubuntu')
   })
 
-  test('lists local and cloud Claude Code devices while excluding unsupported shells', async () => {
+  test('lists cloud Claude Code devices while excluding local and unsupported devices', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
         device_id: 'cloud-claude',
@@ -864,27 +855,28 @@ describe('ConnectionsSettingsPage', () => {
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
-    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
+    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-device-local-claude')).not.toBeInTheDocument()
     expect(screen.queryByText('Cloud OpenClaw Device')).not.toBeInTheDocument()
   })
 
   test('lists remote Claude Code devices in a separate section', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
-      remoteDevice({ device_id: 'remote-docker', name: 'Docker Remote Device' }),
+      remoteDevice({ device_id: 'remote-docker', name: 'Remote Alias' }),
       localDevice({ device_id: 'local-claude', name: 'Local Claude Device' }),
     ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
-    expect(screen.getByText('Docker Remote Device')).toBeInTheDocument()
-    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
+    expect(screen.getByText('Remote Alias')).toBeInTheDocument()
+    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
   })
 
-  test('groups the current app backend registration with local devices', async () => {
+  test('does not show the current app backend registration in cloud connections', async () => {
     api.getAllDevices.mockResolvedValue([
       localDevice({
         device_id: 'local-claude',
@@ -897,19 +889,47 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    const localSection = screen.getByText('本地设备').closest('section')
-    expect(localSection).not.toBeNull()
-    expect(
-      within(localSection as HTMLElement).getByText('Current App Backend Registration')
-    ).toBeInTheDocument()
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('connection-device-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByText('Current App Backend Registration')).not.toBeInTheDocument()
+    expect(screen.queryByText('本地设备')).not.toBeInTheDocument()
     expect(screen.queryByText('远程设备')).not.toBeInTheDocument()
     expect(screen.getByTestId('cloud-connection-status-card')).toHaveTextContent(/在线云设备.*0/)
+  })
 
-    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
+  test('shows device IP until the user assigns an alias', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice(),
+      remoteDevice(),
+      cloudDevice({
+        id: 4,
+        device_id: 'aliased-device',
+        name: 'Build Box',
+        client_ip: '10.201.3.202',
+      }),
+      cloudDevice({
+        id: 5,
+        device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',
+        name: 'sifang-executor-0341b231eb06',
+        client_ip: '10.201.3.203',
+        cloud_config: {
+          sandboxId: 'sandbox-generated-name',
+          deviceId: 'runtime-generated-name',
+          deviceName: 'sifang-executor-0341b231eb06',
+        },
+      }),
+    ])
 
-    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
-    expect(api.startTerminal).not.toHaveBeenCalled()
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByText('10.201.3.200')).toBeInTheDocument()
+    expect(screen.getByText('10.201.3.201')).toBeInTheDocument()
+    expect(screen.getByText('Build Box')).toBeInTheDocument()
+    expect(screen.getByText('10.201.3.203')).toBeInTheDocument()
+    expect(screen.queryByText('device-1')).not.toBeInTheDocument()
+    expect(screen.queryByText('Docker Remote Device')).not.toBeInTheDocument()
+    expect(screen.queryByText('sifang-executor-0341b231eb06')).not.toBeInTheDocument()
+    expect(screen.queryByText('10.201.3.202')).not.toBeInTheDocument()
   })
 
   test('generates and copies a remote Docker device command from the add device dialog', async () => {
@@ -989,33 +1009,21 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
   })
 
-  test('launches a native terminal for online local devices without exposing cloud-only actions', async () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-    api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'local-claude',
-        name: 'Local Claude Device',
-      }),
-    ])
+  test('omits local devices, metrics, and scaling guidance from cloud connections', async () => {
+    runtimeConfigMock.value = {
+      appBasePath: '',
+      apiBaseUrl: '/api',
+      cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
+    }
+    api.getAllDevices.mockResolvedValue([cloudDevice(), localDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    await waitFor(() => expect(getLocalExecutorDeviceIdMock).toHaveBeenCalledWith('/api'))
-    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
-    await userEvent.click(await screen.findByTestId('connection-terminal-button-local-claude'))
-
-    await waitFor(() => expect(api.openLocalTerminal).toHaveBeenCalledWith('local-claude'))
-    expect(api.startTerminal).not.toHaveBeenCalled()
-    expect(openSpy).not.toHaveBeenCalled()
-    expect(
-      screen.queryByTestId('connection-code-server-button-local-claude')
-    ).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-vnc-button-local-claude')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-more-button-local-claude')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('connection-delete-button-local-claude')).not.toBeInTheDocument()
+    await screen.findByTestId('connection-device-device-1')
+    expect(screen.queryByTestId('connection-device-local-device')).not.toBeInTheDocument()
     expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-scale-wiki-link')).not.toBeInTheDocument()
     expect(api.getMetrics).not.toHaveBeenCalled()
   })
 
@@ -1065,69 +1073,11 @@ describe('ConnectionsSettingsPage', () => {
     expect(openSpy).not.toHaveBeenCalled()
   })
 
-  test('keeps local device terminal hidden outside the WeWork macOS app', async () => {
-    isLocalTerminalAvailableMock.mockReturnValue(false)
+  test('allows deleting offline remote device registrations', async () => {
     api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'local-claude',
-        name: 'Local Claude Device',
-      }),
-    ])
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    expect(screen.queryByTestId('connection-terminal-button-local-claude')).not.toBeInTheDocument()
-    expect(
-      screen.queryByTestId('connection-code-server-button-local-claude')
-    ).not.toBeInTheDocument()
-  })
-
-  test('keeps local device terminal hidden when the executor is on another device', async () => {
-    getLocalExecutorDeviceIdMock.mockResolvedValue('another-local-device')
-    api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'local-claude',
-        name: 'Local Claude Device',
-      }),
-    ])
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(
-        screen.queryByTestId('connection-terminal-button-local-claude')
-      ).not.toBeInTheDocument()
-    )
-    expect(api.openLocalTerminal).not.toHaveBeenCalled()
-  })
-
-  test('shows configured cloud device scaling wiki link in the cloud section guidance', async () => {
-    runtimeConfigMock.value = {
-      appBasePath: '',
-      apiBaseUrl: '/api',
-      cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
-    }
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    await screen.findByTestId('connection-device-device-1')
-    const link = screen.getByTestId('connection-scale-wiki-link')
-
-    expect(link).toHaveTextContent('详细见Wiki')
-    expect(link).toHaveAttribute('href', 'https://wiki.example.com/cloud-device-scaling')
-    expect(link).toHaveClass('text-text-secondary', 'hover:text-primary')
-    expect(link).toHaveClass('ml-2')
-    expect(link.closest('p')).toHaveTextContent('持续超过 80%')
-  })
-
-  test('allows deleting offline local device registrations', async () => {
-    api.getAllDevices.mockResolvedValue([
-      localDevice({
-        device_id: 'offline-local',
-        name: 'Offline Local Device',
+      remoteDevice({
+        device_id: 'offline-remote',
+        name: 'Offline Remote Device',
         status: 'offline',
       }),
     ])
@@ -1135,15 +1085,15 @@ describe('ConnectionsSettingsPage', () => {
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    expect(await screen.findByTestId('connection-device-offline-local')).toBeInTheDocument()
-    expect(screen.queryByTestId('connection-more-button-offline-local')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('connection-device-offline-remote')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-more-button-offline-remote')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByTestId('connection-delete-button-offline-local'))
-    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('删除本地设备')
-    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('本地设备注册记录')
+    await userEvent.click(screen.getByTestId('connection-delete-button-offline-remote'))
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('删除远程设备')
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('远程设备注册记录')
     await userEvent.click(screen.getByTestId('confirm-delete-device-button'))
 
-    await waitFor(() => expect(api.deleteDevice).toHaveBeenCalledWith('offline-local'))
+    await waitFor(() => expect(api.deleteDevice).toHaveBeenCalledWith('offline-remote'))
     expect(api.deleteCloudDevice).not.toHaveBeenCalled()
   })
 })

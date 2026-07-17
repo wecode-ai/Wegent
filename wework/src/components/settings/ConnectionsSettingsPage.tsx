@@ -3,12 +3,10 @@ import {
   Archive,
   ArrowLeft,
   Palette,
-  BookOpen,
   Check,
   Cloud,
   Code2,
   Copy,
-  ExternalLink,
   FolderGit2,
   Globe2,
   Info,
@@ -32,7 +30,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
+import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -53,15 +51,11 @@ import {
   isRemoteDevice,
   supportsCloudLifecycleActions,
   supportsCloudSessions,
-  supportsDeviceMetrics,
-  supportsLocalTerminalLaunch,
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
-import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
 import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
-import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
@@ -323,53 +317,18 @@ function modelMeta(model: UnifiedModel): string {
   return [model.provider, model.runtime?.family, model.type].filter(Boolean).join(' · ')
 }
 
-function formatMetricPercent(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '--%'
-  if (value < 1) return '<1%'
-  return `${Math.round(value)}%`
-}
+function deviceDisplayName(device: DeviceInfo): string {
+  const name = device.name?.trim()
+  const defaultNames = [
+    device.device_id,
+    device.cloud_config?.deviceName,
+    device.remote_config?.deviceName,
+  ]
+    .map(value => value?.trim())
+    .filter(Boolean)
 
-function DeviceMetrics({ deviceId }: { deviceId: string }) {
-  const cloudConnection = useOptionalCloudConnection()
-  const [metrics, setMetrics] = useState<CloudDeviceMetricsResponse | null>(null)
-
-  useEffect(() => {
-    if (!cloudConnection.isConnected) return
-    let cancelled = false
-
-    createSettingsDeviceApi(cloudConnection)
-      .getMetrics(deviceId)
-      .then(data => {
-        if (!cancelled) setMetrics(data)
-      })
-      .catch(() => {
-        if (!cancelled) setMetrics(null)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cloudConnection, deviceId])
-
-  return (
-    <div
-      data-testid="device-metrics"
-      className="flex flex-wrap items-center gap-3 text-xs text-text-secondary"
-    >
-      <span className="inline-flex items-center gap-1">
-        <span>CPU</span>
-        <span>{formatMetricPercent(metrics?.cpu_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>MEM</span>
-        <span>{formatMetricPercent(metrics?.memory_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>磁盘</span>
-        <span>{formatMetricPercent(metrics?.disk_usage)}</span>
-      </span>
-    </div>
-  )
+  if (name && !defaultNames.includes(name)) return name
+  return device.client_ip?.trim() || name || device.device_id
 }
 
 function VncDesktopButton({ deviceId }: { deviceId: string }) {
@@ -418,6 +377,7 @@ function ConfirmDeviceActionDialog({
   const isDelete = action === 'delete'
   const isCloud = isCloudDevice(device)
   const isRemote = isRemoteDevice(device)
+  const displayName = deviceDisplayName(device)
   const Icon = isDelete ? Trash2 : RotateCcw
   const title = isDelete
     ? isCloud
@@ -428,11 +388,11 @@ function ConfirmDeviceActionDialog({
     : '重启云设备'
   const description = isDelete
     ? isCloud
-      ? `将删除 ${device.name}，相关云设备资源会被释放。`
+      ? `将删除 ${displayName}，相关云设备资源会被释放。`
       : isRemote
-        ? `将删除 ${device.name} 的远程设备注册记录。Docker 容器需要你自行停止或删除。`
-        : `将删除 ${device.name} 的本地设备注册记录。设备重新连接后会自动重新注册。`
-    : `将重启 ${device.name}，设备会短暂离线，进行中的连接可能中断。`
+        ? `将删除 ${displayName} 的远程设备注册记录。Docker 容器需要你自行停止或删除。`
+        : `将删除 ${displayName} 的设备注册记录。`
+    : `将重启 ${displayName}，设备会短暂离线，进行中的连接可能中断。`
   const confirmLabel = isDelete ? '确认删除' : '确认重启'
   const dialogTestId = isDelete ? 'confirm-delete-device-dialog' : 'confirm-restart-device-dialog'
   const confirmTestId = isDelete ? 'confirm-delete-device-button' : 'confirm-restart-device-button'
@@ -622,7 +582,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const [saving, setSaving] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [localExecutorDeviceId, setLocalExecutorDeviceId] = useState<string | null>(null)
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [confirmAction, setConfirmAction] = useState<ConfirmDeviceAction | null>(null)
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false)
@@ -634,11 +593,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     if (device.status !== 'online') return
     setSessionLoading('terminal')
     try {
-      if (supportsLocalTerminalLaunch(device)) {
-        await createSettingsDeviceApi(cloudConnection).openLocalTerminal(device.device_id)
-        return
-      }
-
       const result = await createSettingsDeviceApi(cloudConnection).startTerminal(device.device_id)
       if (result.url) {
         await openExternalUrl(result.url)
@@ -651,32 +605,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       setSessionLoading(null)
     }
   }, [cloudConnection, device])
-
-  useEffect(() => {
-    if (!supportsLocalTerminalLaunch(device) || !isLocalTerminalAvailable()) {
-      return
-    }
-
-    let cancelled = false
-    if (!cloudConnection.apiBaseUrl) {
-      return
-    }
-    getLocalExecutorDeviceId(cloudConnection.apiBaseUrl)
-      .then(deviceId => {
-        if (!cancelled) {
-          setLocalExecutorDeviceId(deviceId)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLocalExecutorDeviceId(null)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [cloudConnection.apiBaseUrl, device])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
@@ -784,18 +712,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   }
 
   const isOnline = device.status === 'online'
-  const isCloud = isCloudDevice(device)
   const isRemote = isRemoteDevice(device)
-  const canLaunchLocalTerminal =
-    supportsLocalTerminalLaunch(device) &&
-    isLocalTerminalAvailable() &&
-    isCurrentAppDevice(device, [localExecutorDeviceId])
+  const displayName = deviceDisplayName(device)
   const canUseCloudSessions = supportsCloudSessions(device)
   const canUseRemoteSessions = supportsRemoteSessions(device)
   const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
-  const canUseTerminal = canUseDeviceSessions || canLaunchLocalTerminal
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
-  const canDeleteOfflineLocalDevice = !isCloud && !isRemote && device.status === 'offline'
   const canDeleteOfflineRemoteDevice = isRemote && device.status === 'offline'
 
   return (
@@ -844,7 +766,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   onClick={handleStartEdit}
                   title="点击修改名称"
                 >
-                  {device.name}
+                  {displayName}
                 </h3>
                 <button
                   type="button"
@@ -862,7 +784,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           </div>
 
           <div className="flex shrink-0 gap-2">
-            {canUseTerminal && (
+            {canUseDeviceSessions && (
               <DeviceActionButton
                 testId={`connection-terminal-button-${device.device_id}`}
                 icon={Terminal}
@@ -928,15 +850,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 )}
               </div>
             )}
-            {canDeleteOfflineLocalDevice && (
-              <DeviceIconActionButton
-                testId={`connection-delete-button-${device.device_id}`}
-                icon={Trash2}
-                label="删除设备"
-                onClick={() => setConfirmAction('delete')}
-                disabled={deleting}
-              />
-            )}
             {canDeleteOfflineRemoteDevice && (
               <DeviceIconActionButton
                 testId={`connection-delete-button-${device.device_id}`}
@@ -948,8 +861,6 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             )}
           </div>
         </div>
-
-        {supportsDeviceMetrics(device) && <DeviceMetrics deviceId={device.device_id} />}
       </div>
 
       {terminalSession && (
@@ -960,7 +871,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
             <div className="flex min-w-0 items-center gap-2">
               <Terminal className="h-4 w-4 shrink-0 text-text-secondary" />
-              <span className="truncate text-sm font-medium text-text-primary">{device.name}</span>
+              <span className="truncate text-sm font-medium text-text-primary">{displayName}</span>
               {terminalSession.path && (
                 <span className="truncate text-xs text-text-muted">{terminalSession.path}</span>
               )}
@@ -1005,17 +916,12 @@ function DeviceSection({
   devices,
   onChanged,
   icon: Icon,
-  showScaleWiki = false,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
   icon: ComponentType<{ className?: string }>
-  showScaleWiki?: boolean
 }) {
-  const { t } = useTranslation('common')
-  const scaleWikiUrl = getRuntimeConfig().cloudDeviceScalingWikiUrl
-
   return (
     <section className="space-y-2.5">
       <div className="flex items-center justify-between">
@@ -1029,39 +935,6 @@ function DeviceSection({
         {devices.map(device => (
           <DeviceCard key={device.device_id} device={device} onChanged={onChanged} />
         ))}
-        {showScaleWiki && (
-          <div
-            data-testid="connection-scale-wiki"
-            className="rounded-lg border border-border bg-background px-4 py-3"
-          >
-            <div className="flex items-start gap-3">
-              <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-text-primary">
-                  {t('workbench.connection_scale_wiki_title', '说明')}
-                </h3>
-                <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  {t(
-                    'workbench.connection_scale_wiki_desc',
-                    '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。'
-                  )}
-                  {scaleWikiUrl && (
-                    <a
-                      href={scaleWikiUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-testid="connection-scale-wiki-link"
-                      className="ml-2 inline-flex items-center gap-1 align-middle font-medium text-text-secondary transition-colors hover:text-primary hover:underline"
-                    >
-                      {t('workbench.connection_scale_wiki_link', '详细见Wiki')}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </section>
   )
@@ -1212,7 +1085,7 @@ function ConnectionsDeviceSettingsPage({
 
   const cloudDevices = devices.filter(isCloudDevice)
   const remoteDevices = devices.filter(isRemoteDevice)
-  const localDevices = devices.filter(device => !isCloudDevice(device) && !isRemoteDevice(device))
+  const connectionDevices = [...cloudDevices, ...remoteDevices]
   const onlineCloudDeviceCount = cloudDevices.filter(device => device.status === 'online').length
 
   useEffect(() => {
@@ -1365,7 +1238,7 @@ function ConnectionsDeviceSettingsPage({
                 <div className="py-8 text-center text-sm text-text-secondary">
                   {t('common.loading', '加载中...')}
                 </div>
-              ) : devices.length === 0 ? (
+              ) : connectionDevices.length === 0 ? (
                 <div className="py-8 text-center text-sm text-text-secondary">
                   {t('workbench.connection_empty_devices')}
                 </div>
@@ -1376,7 +1249,6 @@ function ConnectionsDeviceSettingsPage({
                       title={t('workbench.connection_cloud_devices', '云设备')}
                       devices={cloudDevices}
                       icon={Cloud}
-                      showScaleWiki
                       onChanged={fetchDevices}
                     />
                   )}
@@ -1385,14 +1257,6 @@ function ConnectionsDeviceSettingsPage({
                       title={t('workbench.connection_remote_devices', '远程设备')}
                       devices={remoteDevices}
                       icon={Server}
-                      onChanged={fetchDevices}
-                    />
-                  )}
-                  {localDevices.length > 0 && (
-                    <DeviceSection
-                      title={t('workbench.connection_local_devices')}
-                      devices={localDevices}
-                      icon={Monitor}
                       onChanged={fetchDevices}
                     />
                   )}

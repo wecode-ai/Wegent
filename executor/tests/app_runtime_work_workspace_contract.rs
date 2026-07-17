@@ -206,6 +206,25 @@ async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
             "payload": {"projectKey": "p2", "appearance": {"color": "blue"}}
         }),
         json!({
+            "method": "runtime.sidebar.projects.sync_remote",
+            "payload": {
+                "projects": [{
+                    "id": "remote-1",
+                    "hostId": "remote-host-1",
+                    "remotePath": "/srv/remote",
+                    "label": "Remote"
+                }]
+            }
+        }),
+        json!({
+            "method": "runtime.sidebar.projects.activate",
+            "payload": {
+                "projectKey": "remote-1",
+                "workspacePath": "/srv/remote",
+                "remoteHostId": "remote-host-1"
+            }
+        }),
+        json!({
             "method": "runtime.sidebar.tasks.reorder",
             "payload": {"projectKey": "p2", "threadId": "t2", "beforeThreadId": "t1"}
         }),
@@ -223,9 +242,20 @@ async fn runtime_sidebar_semantic_rpcs_update_codex_global_state() {
     }
 
     let state = read_json_file(&codex_home.join(".codex-global-state.json"));
-    assert_eq!(state["project-order"], json!(["p2", "p1"]));
+    assert_eq!(state["project-order"], json!(["remote-1", "p2", "p1"]));
     assert_eq!(state["pinned-project-ids"], json!(["p2", "p1"]));
     assert_eq!(state["project-appearances"]["p2"], json!({"color": "blue"}));
+    assert_eq!(
+        state["remote-projects"],
+        json!([{
+            "id": "remote-1",
+            "hostId": "remote-host-1",
+            "remotePath": "/srv/remote",
+            "label": "Remote"
+        }])
+    );
+    assert_eq!(state["active-remote-project-id"], "remote-1");
+    assert_eq!(state["selected-remote-host-id"], "remote-host-1");
     assert_eq!(
         state["sidebar-project-thread-orders"]["p2"]["threadIds"],
         json!(["t2", "t1"])

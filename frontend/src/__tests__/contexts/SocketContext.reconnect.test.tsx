@@ -389,12 +389,13 @@ describe('SocketProvider reconnect notification', () => {
     expect(mockIo).toHaveBeenCalledTimes(1)
     expect(mockIo.mock.calls[0][1]).toEqual(
       expect.objectContaining({
+        auth: { token: 'token' },
         autoConnect: false,
         reconnection: false,
+        query: { token: 'token' },
         transports: ['websocket'],
       })
     )
-    expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
     await waitFor(() => expect(socketApi?.connectionError?.message).toBe('timeout'))
     expect(socketApi?.socket?.connected).toBe(false)
     await waitFor(() => expect(socketApi?.reconnectAttempts).toBe(1))
@@ -407,10 +408,10 @@ describe('SocketProvider reconnect notification', () => {
         reconnection: false,
         forceNew: true,
         multiplex: false,
+        query: { token: 'token' },
         transports: ['websocket'],
       })
     )
-    expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')
     expect(secondSocket.connect).toHaveBeenCalledTimes(1)
   })
 

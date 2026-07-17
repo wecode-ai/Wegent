@@ -161,6 +161,10 @@ export interface WorkbenchContextValue {
     label?: string
   ) => Promise<void>
   startNewChat: () => void
+  startNewSkillChat: (
+    skillNames: string[],
+    options?: { allowLocalSkills?: boolean }
+  ) => Promise<boolean>
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
@@ -192,6 +196,7 @@ export interface WorkbenchContextValue {
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
   markRuntimeTaskStarted: (address: RuntimeTaskAddress) => void
+  markRuntimeTaskSettled: (address: RuntimeTaskAddress) => void
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
@@ -308,12 +313,14 @@ export interface WorkbenchContextValue {
   loadTurnFileChangesDiff: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<string>
   revertTurnFileChanges: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<TurnFileChangesSummary>
 }
 

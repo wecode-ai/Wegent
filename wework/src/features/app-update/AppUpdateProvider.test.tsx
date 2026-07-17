@@ -106,6 +106,46 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
   })
 
+  test('refreshes a failed update so installation can be retried without restarting', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    const update = {
+      currentVersion: '0.0.18',
+      version: '0.0.19',
+    }
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue(update)
+    vi.mocked(installPendingWeworkUpdate)
+      .mockRejectedValueOnce(new Error('The signature verification failed'))
+      .mockResolvedValueOnce()
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
+    expect(appUpdate?.status).toBe('available')
+    expect(appUpdate?.error).toBe('The signature verification failed')
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(installPendingWeworkUpdate).toHaveBeenCalledTimes(2)
+  })
+
   test('simulates an update download from the developer command menu', async () => {
     let appUpdate: AppUpdateContextValue | null = null
 

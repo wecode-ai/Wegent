@@ -18,6 +18,7 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
+import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
@@ -135,12 +136,21 @@ function keepDevicesOnTransientEmpty(
 function updateRuntimeWorkDeviceStatus(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   deviceId: string,
-  status: WorkbenchDeviceStatus
+  status: WorkbenchDeviceStatus,
+  device?: DeviceInfo
 ): RuntimeWorkListResponse | null {
   if (!runtimeWork) return null
 
   const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
-    if (workspace.deviceId !== deviceId) return workspace
+    const matchesDevice =
+      workspace.deviceId === deviceId ||
+      workspace.remoteHostId === deviceId ||
+      Boolean(
+        device &&
+        (workbenchDeviceMatchesId(device, workspace.deviceId) ||
+          (workspace.remoteHostId && workbenchDeviceMatchesId(device, workspace.remoteHostId)))
+      )
+    if (!matchesDevice) return workspace
     return {
       ...workspace,
       deviceStatus: status,
@@ -603,6 +613,36 @@ function upsertActiveRuntimeTask(
   ]
 }
 
+function updateRuntimeTaskRunning(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress,
+  running: boolean
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.map(task => {
+      const taskAddress: RuntimeTaskAddress = {
+        deviceId: workspace.deviceId,
+        taskId: task.taskId,
+        workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
+      }
+      if (!sameRuntimeTaskActivity(taskAddress, address) || task.running === running) return task
+      return { ...task, running }
+    }),
+  })
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+    chats: runtimeWork.chats.map(updateWorkspace),
+  }
+}
+
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string
@@ -964,11 +1004,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ),
       }
     }
-    case 'device_status_changed':
+    case 'device_status_changed': {
+      const matchedDevice =
+        state.devices.find(device => workbenchDeviceMatchesId(device, action.deviceId)) ?? undefined
       return {
         ...state,
         devices: state.devices.map(device => {
-          if (device.device_id !== action.deviceId) return device
+          if (!workbenchDeviceMatchesId(device, action.deviceId)) return device
           return {
             ...device,
             name: action.name || device.name,
@@ -978,9 +1020,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         runtimeWork: updateRuntimeWorkDeviceStatus(
           state.runtimeWork,
           action.deviceId,
-          action.status
+          action.status,
+          matchedDevice
         ),
       }
+    }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_created':
@@ -1119,11 +1163,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
     case 'runtime_task_started':
       return {
         ...state,
+        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, true),
         activeRuntimeTasks: upsertActiveRuntimeTask(state.activeRuntimeTasks, action.address),
       }
     case 'runtime_task_settled':
       return {
         ...state,
+        runtimeWork: updateRuntimeTaskRunning(state.runtimeWork, action.address, false),
         activeRuntimeTasks: state.activeRuntimeTasks.filter(
           address => !sameRuntimeTaskActivity(address, action.address)
         ),

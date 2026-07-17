@@ -1,0 +1,20 @@
+import { join } from 'node:path'
+
+export function buildAiVerifyEnvironment(
+  processEnvironment,
+  { controlUrl, token, codexHome, deviceId, socketPath, executorHome, sessionDirectory }
+) {
+  return {
+    ...processEnvironment,
+    VITE_WEWORK_E2E: 'true',
+    VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
+    VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
+    CODEX_HOME: codexHome,
+    WEGENT_CODEX_HOME: codexHome,
+    DEVICE_ID: deviceId,
+    WEGENT_EXECUTOR_APP_IPC_SOCKET: socketPath,
+    WEGENT_EXECUTOR_HOME: executorHome,
+    WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
+    WEGENT_EXECUTOR_LOG_DIR: sessionDirectory,
+  }
+}
