@@ -117,34 +117,6 @@ pub fn write_executor_error_line(line: &str) {
     write_rolling_log_line(line);
 }
 
-pub fn wework_debug_log(message: &str) {
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S.%3f");
-    let line = format!("{timestamp} [executor] {message}");
-    let path = wework_debug_log_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .and_then(|mut file| writeln!(file, "{line}"));
-}
-
-fn wework_debug_log_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("tmp")
-            .join("wework-debug-1.txt")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("/tmp/wework-debug-1")
-    }
-}
-
 pub fn init_executor_logging(config: &DeviceConfig) {
     let log_config = rolling_log_config_from_device(config);
     match create_rolling_log_file(log_config, &config.executor_home) {
