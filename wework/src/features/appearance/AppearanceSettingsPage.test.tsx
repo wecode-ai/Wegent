@@ -22,6 +22,9 @@ describe('AppearanceSettingsPage', () => {
     expect(systemMode).not.toHaveClass('bg-primary', 'text-primary-contrast')
 
     expect(screen.getByTestId('appearance-accent-input')).toHaveValue('#2563eb')
+    expect(screen.getByTestId('appearance-background-select-button')).toBeInTheDocument()
+    expect(screen.getByTestId('appearance-background-visibility-slider')).toBeDisabled()
+    expect(screen.getByTestId('appearance-background-blur-slider')).toBeDisabled()
   })
 
   test('commits UI and code font sizes on Enter or blur', async () => {
@@ -62,5 +65,29 @@ describe('AppearanceSettingsPage', () => {
     fireEvent.change(codeInput, { target: { value: '' } })
     fireEvent.blur(codeInput)
     expect(codeInput.value).toBe('12')
+  })
+
+  test('lets users choose which interface areas show the background', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({ backgroundImagePath: '/app-data/background.png' })
+    )
+    render(
+      <AppearanceProvider>
+        <AppearanceSettingsPage />
+      </AppearanceProvider>
+    )
+
+    const main = screen.getByTestId('appearance-background-area-main')
+    const sidebar = screen.getByTestId('appearance-background-area-sidebar')
+    const topbar = screen.getByTestId('appearance-background-area-topbar')
+    expect(main).toBeChecked()
+    expect(sidebar).toBeChecked()
+    expect(topbar).toBeChecked()
+
+    await userEvent.click(sidebar)
+
+    expect(sidebar).not.toBeChecked()
+    expect(localStorage.getItem('wework.appearance')).toContain('"backgroundInSidebar":false')
   })
 })

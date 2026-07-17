@@ -6,6 +6,20 @@ import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 const STORAGE_KEY = 'wework.appearance'
 const APPEARANCE_MODES = new Set(['light', 'dark', 'system'])
 
+function normalizeBackgroundVisibility(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultAppearance.backgroundVisibility
+  }
+  return Math.round(Math.min(100, Math.max(0, value)))
+}
+
+function normalizeBackgroundBlur(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return defaultAppearance.backgroundBlur
+  }
+  return Math.round(Math.min(20, Math.max(0, value)))
+}
+
 function mergePalette(base: ThemePalette, update: unknown): ThemePalette {
   if (!update || typeof update !== 'object') return base
   const next = { ...base, ...(update as Partial<ThemePalette>) }
@@ -44,6 +58,24 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
         ? update.sidebarTranslucent
         : defaultAppearance.sidebarTranslucent,
     contrast: clampContrast(update.contrast),
+    backgroundImagePath:
+      typeof update.backgroundImagePath === 'string' && update.backgroundImagePath.trim()
+        ? update.backgroundImagePath
+        : null,
+    backgroundVisibility: normalizeBackgroundVisibility(update.backgroundVisibility),
+    backgroundBlur: normalizeBackgroundBlur(update.backgroundBlur),
+    backgroundInMain:
+      typeof update.backgroundInMain === 'boolean'
+        ? update.backgroundInMain
+        : defaultAppearance.backgroundInMain,
+    backgroundInSidebar:
+      typeof update.backgroundInSidebar === 'boolean'
+        ? update.backgroundInSidebar
+        : defaultAppearance.backgroundInSidebar,
+    backgroundInTopBar:
+      typeof update.backgroundInTopBar === 'boolean'
+        ? update.backgroundInTopBar
+        : defaultAppearance.backgroundInTopBar,
     light: mergePalette(defaultAppearance.light, update.light),
     dark: mergePalette(defaultAppearance.dark, update.dark),
   }

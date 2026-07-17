@@ -70,6 +70,7 @@ import {
   getRuntimeProjectSidebarStateKey,
 } from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import type {
   DeviceInfo,
   RuntimeTaskSummary,
@@ -2485,6 +2486,7 @@ export function DesktopSidebar({
   onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
@@ -2962,8 +2964,13 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150 transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
-        !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]',
+        'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
+        appearance.backgroundImagePath && appearance.backgroundInSidebar
+          ? 'bg-background/25'
+          : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+        !windowFocused &&
+          !(appearance.backgroundImagePath && appearance.backgroundInSidebar) &&
+          'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
       )}

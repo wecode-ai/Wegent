@@ -34,6 +34,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { TodoWorkspace } from '@/features/todo/TodoWorkspace'
+import { WorkbenchBackground } from '@/features/appearance'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -548,6 +549,7 @@ export function DesktopWorkbenchLayout() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
+      {!todoOpen && <WorkbenchBackground />}
       {!settingsOpen && !todoOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
       {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
         <>

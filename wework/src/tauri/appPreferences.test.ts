@@ -26,6 +26,26 @@ const mergedDefaultPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  quickPhrases: [
+    {
+      id: 'default-summary-progress',
+      title: '总结当前进展',
+      content: '总结目前完成的工作和下一步建议',
+      mode: 'normal',
+    },
+    {
+      id: 'default-create-plan',
+      title: '制定实施计划',
+      content: '分析需求并制定详细的实施计划',
+      mode: 'plan',
+    },
+    {
+      id: 'default-pursue-goal',
+      title: '持续完成这个目标',
+      content: '持续推进这个目标，直到真正完成',
+      mode: 'goal',
+    },
+  ],
 }
 
 describe('appPreferences', () => {
