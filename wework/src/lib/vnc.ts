@@ -1,13 +1,31 @@
 import { getRuntimeConfig, joinAppPath } from '@/config/runtime'
 
-export function buildVncPageUrl(deviceId: string, sandboxId: string): string {
-  const token = localStorage.getItem('auth_token') || ''
-  const { appBasePath } = getRuntimeConfig()
-  const origin = window.location.origin
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = window.location.host
-  const vncWsUrl = `${protocol}//${host}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-ws?token=${encodeURIComponent(token)}`
-  const vncPagePath = joinAppPath(appBasePath, '/vnc.html')
+interface BuildVncPageUrlOptions {
+  deviceId: string
+  sandboxId: string
+  socketBaseUrl: string
+  token: string
+}
 
-  return `${origin}${vncPagePath}?wsUrl=${encodeURIComponent(vncWsUrl)}&sandboxId=${encodeURIComponent(sandboxId)}`
+function buildVncWebSocketBaseUrl(socketBaseUrl: string): string {
+  const url = new URL(socketBaseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.search = ''
+  url.hash = ''
+  return url.toString().replace(/\/+$/, '')
+}
+
+export function buildVncPageUrl({
+  deviceId,
+  sandboxId,
+  socketBaseUrl,
+  token,
+}: BuildVncPageUrlOptions): string {
+  const { appBasePath } = getRuntimeConfig()
+  const vncWsUrl = `${buildVncWebSocketBaseUrl(socketBaseUrl)}/vnc-proxy/${encodeURIComponent(deviceId)}?token=${encodeURIComponent(token)}`
+  const pageUrl = new URL(joinAppPath(appBasePath, '/vnc.html'), window.location.origin)
+
+  pageUrl.searchParams.set('wsUrl', vncWsUrl)
+  pageUrl.searchParams.set('sandboxId', sandboxId)
+  return pageUrl.toString()
 }
