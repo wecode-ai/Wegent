@@ -1869,7 +1869,8 @@ fn tool_status(item: &Value) -> String {
         return status;
     }
     let status = string_field(item, "status").unwrap_or_else(|| {
-        if is_codex_tool_output_item_type(&item_type)
+        if matches!(item_type.as_str(), "imageview" | "sleep" | "websearch")
+            || is_codex_tool_output_item_type(&item_type)
             || is_likely_codex_tool_output_item_type(&item_type)
             || item.get("output").is_some()
             || item.get("result").is_some()
@@ -2510,6 +2511,56 @@ mod tests {
             assert_eq!(updates["status"], "done");
             assert_eq!(updates["tool_input"], action);
         }
+    }
+
+    #[test]
+    fn completed_statusless_tools_are_done() {
+        for (item_type, id) in [
+            ("imageView", "image-view-1"),
+            ("sleep", "sleep-1"),
+            ("webSearch", "web-search-1"),
+        ] {
+            let params = json!({
+                "item": {
+                    "id": id,
+                    "type": item_type
+                }
+            });
+
+            let (block_id, updates) = tool_update_from_notification(&params)
+                .expect("completed statusless tool should produce a tool update");
+
+            assert_eq!(block_id, id);
+            assert_eq!(updates["status"], "done");
+        }
+    }
+
+    #[test]
+    fn transcript_marks_image_view_without_status_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [{
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "completedAt": 1_780_000_005,
+                "status": "completed",
+                "items": [{
+                    "type": "response_item",
+                    "payload": {
+                        "id": "image-view-1",
+                        "type": "imageView",
+                        "path": "/tmp/image.png"
+                    }
+                }]
+            }]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "view_image");
+        assert_eq!(block["status"], "done");
     }
 
     #[test]

@@ -71,6 +71,8 @@ Codex guidance is sent to the active turn through the shared app-server. If that
 
 Before sending a user message, Wework generates a stable client message ID and renders an optimistic local message. The ID travels through the runtime create/send request to the executor and is mapped to Codex app-server's `turn/start.clientUserMessageId`. When the Codex transcript returns the user message, the executor preserves the corresponding `clientMessageId`, which Wework uses to reconcile it with the optimistic message. The Codex provider item ID remains the provider-event identity, but it cannot replace the client ID; otherwise transcript pagination or refresh can interpret one send as two messages.
 
+Tool state follows app-server lifecycle events: `item/started` creates a running tool block, while `item/completed` must settle the matching block to `done` unless the item explicitly failed. Some standalone tool items, including image view, sleep, and web search, do not carry a `status` field. The executor normalizes these terminal items to `done` in both live event mapping and transcript restoration so Wework does not keep showing a running state or advancing timer after the tool completes.
+
 ### Backend Device Chat Task REST Entrypoint
 
 The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:
