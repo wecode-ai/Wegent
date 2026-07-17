@@ -16,13 +16,15 @@ When **System** is selected, Wework automatically uses Chinese or English based 
 
 Open **Settings → Appearance → Workbench background** to choose a local JPEG, PNG, or WebP image for the interface. Wework copies the image into its local app data directory, so moving or deleting the original file after selection does not remove the background.
 
+By default, one image and one set of controls apply to both light and dark mode. Enable **Use different light and dark backgrounds** to configure the image, visibility, blur, and display areas independently for each mode. The first time this option is enabled, both mode-specific configurations inherit the current default settings. Disabling or re-enabling it later does not clear either the default configuration or previously edited mode-specific configurations.
+
 **Background visibility** controls how strongly the image appears through the theme surface; at 100, the original image is shown clearly. **Background blur** ranges from 0–20px and defaults to 0. You can independently show the background in the main area, sidebar, and top bar. The corresponding settings-page regions follow the same choices.
 
 When the background is enabled in the top bar, the image remains continuous behind the window controls without an additional solid titlebar strip.
 
 When the background is enabled in the main area, it remains continuous across the conversation, right workspace, and bottom panels, including around the composer without an additional opaque bottom gradient.
 
-The image and these appearance preferences stay on the current device and are not uploaded or synchronized. **Remove** and **Reset** delete the background image managed by Wework.
+The images and these appearance preferences stay on the current device and are not uploaded or synchronized. **Remove** deletes the managed image for the current configuration. **Reset** deletes every managed background image and restores all background preferences.
 
 ## Show the Main Window on Launch
 

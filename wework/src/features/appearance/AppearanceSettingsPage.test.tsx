@@ -23,6 +23,7 @@ describe('AppearanceSettingsPage', () => {
 
     expect(screen.getByTestId('appearance-accent-input')).toHaveValue('#2563eb')
     expect(screen.getByTestId('appearance-background-select-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('appearance-background-select-button-dark')).not.toBeInTheDocument()
     expect(screen.getByTestId('appearance-background-visibility-slider')).toBeDisabled()
     expect(screen.getByTestId('appearance-background-blur-slider')).toBeDisabled()
 
@@ -93,5 +94,38 @@ describe('AppearanceSettingsPage', () => {
 
     expect(sidebar).not.toBeChecked()
     expect(localStorage.getItem('wework.appearance')).toContain('"backgroundInSidebar":false')
+  })
+
+  test('preserves common and themed settings when switching modes', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/common.png',
+        backgroundBlur: 6,
+        backgroundVisibility: 40,
+      })
+    )
+    render(
+      <AppearanceProvider>
+        <AppearanceSettingsPage />
+      </AppearanceProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('appearance-background-separate-toggle'))
+
+    expect(screen.getByTestId('appearance-background-editor-light')).toBeInTheDocument()
+    expect(screen.getByTestId('appearance-background-editor-dark')).toBeInTheDocument()
+    expect(screen.getByTestId('appearance-background-blur-slider-light')).toHaveValue('6')
+    expect(screen.getByTestId('appearance-background-visibility-slider-dark')).toHaveValue('40')
+
+    fireEvent.change(screen.getByTestId('appearance-background-blur-slider-dark'), {
+      target: { value: '12' },
+    })
+    await userEvent.click(screen.getByTestId('appearance-background-separate-toggle'))
+
+    expect(screen.getByTestId('appearance-background-blur-slider')).toHaveValue('6')
+
+    await userEvent.click(screen.getByTestId('appearance-background-separate-toggle'))
+    expect(screen.getByTestId('appearance-background-blur-slider-dark')).toHaveValue('12')
   })
 })

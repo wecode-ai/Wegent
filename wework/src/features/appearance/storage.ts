@@ -1,5 +1,11 @@
 import { defaultAppearance } from './presets'
-import type { AppearanceConfig, AppearanceMode, AppearanceUpdate, ThemePalette } from './types'
+import type {
+  AppearanceConfig,
+  AppearanceMode,
+  AppearanceUpdate,
+  ThemePalette,
+  WorkbenchBackgroundConfig,
+} from './types'
 import { clampContrast, isHexColor } from './color'
 import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 
@@ -20,6 +26,23 @@ function normalizeBackgroundBlur(value: unknown): number {
   return Math.round(Math.min(20, Math.max(0, value)))
 }
 
+function mergeBackground(
+  base: WorkbenchBackgroundConfig,
+  update: unknown
+): WorkbenchBackgroundConfig {
+  const value =
+    update && typeof update === 'object' ? (update as Partial<WorkbenchBackgroundConfig>) : {}
+  return {
+    imagePath:
+      typeof value.imagePath === 'string' && value.imagePath.trim() ? value.imagePath : null,
+    visibility: normalizeBackgroundVisibility(value.visibility ?? base.visibility),
+    blur: normalizeBackgroundBlur(value.blur ?? base.blur),
+    inMain: typeof value.inMain === 'boolean' ? value.inMain : base.inMain,
+    inSidebar: typeof value.inSidebar === 'boolean' ? value.inSidebar : base.inSidebar,
+    inTopBar: typeof value.inTopBar === 'boolean' ? value.inTopBar : base.inTopBar,
+  }
+}
+
 function mergePalette(base: ThemePalette, update: unknown): ThemePalette {
   if (!update || typeof update !== 'object') return base
   const next = { ...base, ...(update as Partial<ThemePalette>) }
@@ -32,6 +55,17 @@ function mergePalette(base: ThemePalette, update: unknown): ThemePalette {
 }
 
 export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
+  const legacyUpdate = update as AppearanceUpdate & {
+    lightBackgroundImagePath?: unknown
+    darkBackgroundImagePath?: unknown
+  }
+  const normalizedUpdate = { ...legacyUpdate }
+  delete normalizedUpdate.lightBackgroundImagePath
+  delete normalizedUpdate.darkBackgroundImagePath
+  const normalizedBackgroundImagePath =
+    typeof update.backgroundImagePath === 'string' && update.backgroundImagePath.trim()
+      ? update.backgroundImagePath
+      : null
   const nextMode: AppearanceMode =
     update.mode && APPEARANCE_MODES.has(update.mode) ? update.mode : defaultAppearance.mode
   const accentColor = isHexColor(update.accentColor)
@@ -40,7 +74,7 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
 
   return {
     ...defaultAppearance,
-    ...update,
+    ...normalizedUpdate,
     mode: nextMode,
     accentColor,
     uiFont:
@@ -58,10 +92,15 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
         ? update.sidebarTranslucent
         : defaultAppearance.sidebarTranslucent,
     contrast: clampContrast(update.contrast),
-    backgroundImagePath:
-      typeof update.backgroundImagePath === 'string' && update.backgroundImagePath.trim()
-        ? update.backgroundImagePath
-        : null,
+    backgroundImagePath: normalizedBackgroundImagePath,
+    separateBackgroundsByTheme:
+      typeof update.separateBackgroundsByTheme === 'boolean'
+        ? update.separateBackgroundsByTheme
+        : defaultAppearance.separateBackgroundsByTheme,
+    themeBackgroundsInitialized:
+      typeof update.themeBackgroundsInitialized === 'boolean'
+        ? update.themeBackgroundsInitialized
+        : defaultAppearance.themeBackgroundsInitialized,
     backgroundVisibility: normalizeBackgroundVisibility(update.backgroundVisibility),
     backgroundBlur: normalizeBackgroundBlur(update.backgroundBlur),
     backgroundInMain:
@@ -76,6 +115,14 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
       typeof update.backgroundInTopBar === 'boolean'
         ? update.backgroundInTopBar
         : defaultAppearance.backgroundInTopBar,
+    lightBackground: mergeBackground(defaultAppearance.lightBackground, {
+      ...update.lightBackground,
+      imagePath: update.lightBackground?.imagePath ?? legacyUpdate.lightBackgroundImagePath ?? null,
+    }),
+    darkBackground: mergeBackground(defaultAppearance.darkBackground, {
+      ...update.darkBackground,
+      imagePath: update.darkBackground?.imagePath ?? legacyUpdate.darkBackgroundImagePath ?? null,
+    }),
     light: mergePalette(defaultAppearance.light, update.light),
     dark: mergePalette(defaultAppearance.dark, update.dark),
   }

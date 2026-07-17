@@ -28,7 +28,11 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import {
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
@@ -270,7 +274,9 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const { services } = useWorkbench()
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const isTauri = isTauriRuntime()
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
@@ -340,9 +346,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         data-testid="workbench-main-header"
         className={cn(
           'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
-          appearance.backgroundImagePath && appearance.backgroundInTopBar
-            ? 'bg-background/20'
-            : 'bg-background/95'
+          background.imagePath && background.inTopBar ? 'bg-background/20' : 'bg-background/95'
         )}
       />
       {paneStack}
@@ -377,7 +381,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const {
     state,
     workspaceFileApi,
@@ -814,7 +820,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
-  const hasMainBackground = Boolean(appearance.backgroundImagePath && appearance.backgroundInMain)
+  const hasMainBackground = Boolean(background.imagePath && background.inMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
@@ -1484,9 +1490,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         data-testid="titlebar-right-workspace-zone"
         className={cn(
           'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden',
-          appearance.backgroundImagePath && appearance.backgroundInTopBar
-            ? 'bg-transparent'
-            : 'bg-background/95',
+          background.imagePath && background.inTopBar ? 'bg-transparent' : 'bg-background/95',
           rightPanelOpen ? 'border-l border-border/60' : undefined,
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
@@ -1561,7 +1565,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             testId="workbench-topbar"
             className={cn(
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
-              appearance.backgroundImagePath && appearance.backgroundInTopBar
+              background.imagePath && background.inTopBar
                 ? 'bg-background/20'
                 : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',

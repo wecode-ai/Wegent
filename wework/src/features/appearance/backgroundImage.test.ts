@@ -26,23 +26,24 @@ describe('workbench background image service', () => {
     vi.mocked(open).mockResolvedValue('/tmp/source.png')
     vi.mocked(invoke).mockResolvedValue('/app-data/background.png')
 
-    await expect(selectWorkbenchBackground()).resolves.toBe('/app-data/background.png')
+    await expect(selectWorkbenchBackground('dark')).resolves.toBe('/app-data/background.png')
     expect(invoke).toHaveBeenCalledWith('import_workbench_background', {
       sourcePath: '/tmp/source.png',
+      theme: 'dark',
     })
   })
 
   test('does not import when the picker is cancelled', async () => {
     vi.mocked(open).mockResolvedValue(null)
 
-    await expect(selectWorkbenchBackground()).resolves.toBeNull()
+    await expect(selectWorkbenchBackground('light')).resolves.toBeNull()
     expect(invoke).not.toHaveBeenCalled()
   })
 
   test('removes managed images and converts their display URL', async () => {
-    await removeWorkbenchBackground()
+    await removeWorkbenchBackground('light')
 
-    expect(invoke).toHaveBeenCalledWith('remove_workbench_background')
+    expect(invoke).toHaveBeenCalledWith('remove_workbench_background', { theme: 'light' })
     expect(backgroundImageUrl('/app-data/background.webp')).toBe(
       'asset://localhost//app-data/background.webp'
     )

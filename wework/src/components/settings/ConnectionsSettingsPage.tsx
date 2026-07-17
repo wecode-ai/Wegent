@@ -58,7 +58,11 @@ import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel 
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import {
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
@@ -1317,7 +1321,9 @@ export function ConnectionsSettingsPage({
   onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
@@ -1343,10 +1349,7 @@ export function ConnectionsSettingsPage({
       data-testid="wework-settings-page"
       className={cn(
         'relative flex h-screen min-w-0 flex-1 overflow-hidden text-text-primary',
-        appearance.backgroundImagePath &&
-          (appearance.backgroundInMain ||
-            appearance.backgroundInSidebar ||
-            appearance.backgroundInTopBar)
+        background.imagePath && (background.inMain || background.inSidebar || background.inTopBar)
           ? 'bg-transparent'
           : 'bg-background'
       )}
@@ -1354,7 +1357,7 @@ export function ConnectionsSettingsPage({
       <aside
         className={cn(
           'relative flex shrink-0 flex-col border-r border-border/70 px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))]',
-          appearance.backgroundImagePath && appearance.backgroundInSidebar
+          background.imagePath && background.inSidebar
             ? 'bg-background/25'
             : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150'
         )}
@@ -1438,9 +1441,7 @@ export function ConnectionsSettingsPage({
       <main
         className={cn(
           'min-w-0 flex-1 overflow-auto px-8 pb-8',
-          appearance.backgroundImagePath && appearance.backgroundInMain
-            ? 'bg-background/20'
-            : 'bg-background',
+          background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background',
           usesOverlayTitlebar ? 'pt-16' : 'pt-8'
         )}
       >
