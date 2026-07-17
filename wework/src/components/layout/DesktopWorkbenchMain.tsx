@@ -315,7 +315,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
-          workspaceSessionApi={services.workspaceSessionApi}
+          workspaceSessionApi={services?.workspaceSessionApi}
           environmentInfoPinned={environmentInfoPinned}
           environmentInfoOverlayOpen={environmentInfoOverlayOpen}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
