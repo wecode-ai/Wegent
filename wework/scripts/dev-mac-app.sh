@@ -23,6 +23,7 @@ source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
 WEWORK_RELEASE_UI="false"
+EXECUTOR_ISOLATION_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
@@ -32,6 +33,11 @@ Options:
   -p, --port PORT       Vite/Tauri dev server port. Overrides WEWORK_PORT.
   --target TARGET       macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
   --release-ui          Run a production frontend bundle through tauri dev.
+  --shared-executor-home
+                        Alias for --no-executor-isolation.
+  --executor-isolation  Force an instance-specific Executor Home.
+  --no-executor-isolation
+                        Force direct use of WEGENT_EXECUTOR_HOME.
   -h, --help            Show this help message.
 
 Environment:
@@ -49,12 +55,16 @@ Environment:
                         Executor sidecar path. Defaults to source reload sidecar.
   WEGENT_EXECUTOR_DEV_RELOAD
                         Set to 0 to run executor source once without reload.
+  WEWORK_SHARED_EXECUTOR_HOME
+                        Set to 1 to use the normal executor home in debug builds.
   WEWORK_MALLOC_STACK_LOGGING
                         Set to 1 to enable macOS malloc stack logging for WebKit diagnostics.
   MACOS_BUILD_TARGET    Default macOS Rust/Tauri target when --target is not provided.
 
 Examples:
   bash wework/scripts/dev-mac-app.sh --port 9130
+  bash wework/scripts/dev-mac-app.sh --shared-executor-home
+  bash wework/scripts/dev-mac-app.sh --no-executor-isolation
   bash wework/scripts/dev-mac-app.sh --release-ui --target aarch64-apple-darwin
   WEWORK_PORT=9130 bash wework/scripts/dev-mac-app.sh
 EOF
@@ -91,6 +101,9 @@ REQUESTED_WEWORK_PORT=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --)
+      shift
+      ;;
     -p|--port)
       if [ "$#" -lt 2 ]; then
         echo "Error: $1 requires a port value." >&2
@@ -121,6 +134,25 @@ while [ "$#" -gt 0 ]; do
       WEWORK_RELEASE_UI="true"
       shift
       ;;
+    --executor-isolation)
+      if [ "$EXECUTOR_ISOLATION_OVERRIDE" = "false" ]; then
+        echo "Error: --executor-isolation and shared executor options are mutually exclusive." >&2
+        exit 1
+      fi
+      EXECUTOR_ISOLATION_OVERRIDE="true"
+      shift
+      ;;
+    --shared-executor-home|--no-executor-isolation)
+      if [ "$EXECUTOR_ISOLATION_OVERRIDE" = "true" ]; then
+        echo "Error: --executor-isolation and shared executor options are mutually exclusive." >&2
+        exit 1
+      fi
+      EXECUTOR_ISOLATION_OVERRIDE="false"
+      if [ "$1" = "--shared-executor-home" ]; then
+        export WEWORK_SHARED_EXECUTOR_HOME=1
+      fi
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -132,6 +164,12 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$EXECUTOR_ISOLATION_OVERRIDE" ]; then
+  export WEWORK_EXECUTOR_ISOLATION_OVERRIDE="$EXECUTOR_ISOLATION_OVERRIDE"
+else
+  unset WEWORK_EXECUTOR_ISOLATION_OVERRIDE
+fi
 
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
@@ -300,6 +338,8 @@ echo "  VITE_SOCKET_PATH=$VITE_SOCKET_PATH"
 echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
 echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
+echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
+echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then

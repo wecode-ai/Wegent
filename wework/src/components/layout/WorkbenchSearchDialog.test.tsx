@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import { notifyWorkbenchCloudSearchResults } from '@/features/workbench/workbenchCloudDataEvents'
 import { WorkbenchSearchDialog } from './WorkbenchSearchDialog'
 
 function searchItem(title: string, snippet: string) {
@@ -183,5 +184,34 @@ describe('WorkbenchSearchDialog', () => {
 
     expect(onSearchRuntimeWork).toHaveBeenCalledTimes(2)
     expect(screen.getByText('执行 pwd')).toBeInTheDocument()
+  })
+
+  test('shows local results before merging background cloud results', async () => {
+    const user = userEvent.setup()
+    const onSearchRuntimeWork = vi.fn().mockResolvedValue({
+      items: [searchItem('Local result', 'local')],
+    })
+
+    render(
+      <WorkbenchSearchDialog
+        open
+        onClose={vi.fn()}
+        onSearchRuntimeWork={onSearchRuntimeWork}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await user.type(screen.getByTestId('workbench-search-input'), 'result')
+    expect(await screen.findByText('Local result')).toBeInTheDocument()
+
+    act(() => {
+      notifyWorkbenchCloudSearchResults({
+        request: { query: 'result', limit: 20 },
+        response: { items: [searchItem('Cloud result', 'cloud')] },
+      })
+    })
+
+    expect(screen.getByText('Local result')).toBeInTheDocument()
+    expect(screen.getByText('Cloud result')).toBeInTheDocument()
   })
 })

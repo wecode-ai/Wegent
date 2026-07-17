@@ -38,6 +38,7 @@ AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Default)]
 pub struct EmbeddedBrowserState {
@@ -826,11 +827,17 @@ fn handle_bridge_connection(
     app: &tauri::AppHandle,
     state: &EmbeddedBrowserState,
     mut stream: TcpStream,
+    request_id: u64,
 ) -> Result<(), String> {
+    let started = Instant::now();
     let (headers, body) = read_http_request(&mut stream)?;
     let path = http_path(&headers);
+    log::info!(
+        "Embedded browser bridge request id={request_id} stage=request_read path={path} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     if path == "/status" {
-        let data = handle_bridge_request(
+        let result = handle_bridge_request(
             app,
             state,
             EmbeddedBrowserBridgeRequest {
@@ -845,8 +852,18 @@ fn handle_bridge_connection(
                 timeout_ms: None,
                 label: None,
             },
-        )?;
-        return write_http_response(&mut stream, "200 OK", &bridge_success(data));
+        );
+        let response = match result {
+            Ok(data) => bridge_success(data),
+            Err(error) => bridge_error(error),
+        };
+        write_http_response(&mut stream, "200 OK", &response)?;
+        log::info!(
+            "Embedded browser bridge request id={request_id} stage=response_written action=status ok={} elapsed_ms={}",
+            response.ok,
+            started.elapsed().as_millis()
+        );
+        return Ok(());
     }
     if path != "/browser" {
         return write_http_response(
@@ -857,10 +874,28 @@ fn handle_bridge_connection(
     }
     let request = serde_json::from_str::<EmbeddedBrowserBridgeRequest>(&body)
         .map_err(|error| format!("Invalid embedded browser bridge request: {error}"))?;
-    match handle_bridge_request(app, state, request) {
-        Ok(data) => write_http_response(&mut stream, "200 OK", &bridge_success(data)),
-        Err(error) => write_http_response(&mut stream, "200 OK", &bridge_error(error)),
-    }
+    let action = request.action.clone();
+    let label = browser_label(request.label.clone());
+    log::info!(
+        "Embedded browser bridge request id={request_id} stage=dispatch_start action={action} label={label} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    let response = match handle_bridge_request(app, state, request) {
+        Ok(data) => bridge_success(data),
+        Err(error) => bridge_error(error),
+    };
+    log::info!(
+        "Embedded browser bridge request id={request_id} stage=dispatch_complete action={action} label={label} ok={} elapsed_ms={}",
+        response.ok,
+        started.elapsed().as_millis()
+    );
+    write_http_response(&mut stream, "200 OK", &response)?;
+    log::info!(
+        "Embedded browser bridge request id={request_id} stage=response_written action={action} label={label} ok={} elapsed_ms={}",
+        response.ok,
+        started.elapsed().as_millis()
+    );
+    Ok(())
 }
 
 pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String> {
@@ -879,8 +914,21 @@ pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
-                        if let Err(error) = handle_bridge_connection(&app_handle, &state, stream) {
-                            log::warn!("Embedded browser bridge request failed: {error}");
+                        let request_id = EMBEDDED_BROWSER_BRIDGE_SEQUENCE
+                            .fetch_add(1, Ordering::Relaxed);
+                        let peer = stream
+                            .peer_addr()
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|_| "<unknown>".to_string());
+                        log::info!(
+                            "Embedded browser bridge request id={request_id} stage=accepted peer={peer}"
+                        );
+                        if let Err(error) =
+                            handle_bridge_connection(&app_handle, &state, stream, request_id)
+                        {
+                            log::warn!(
+                                "Embedded browser bridge request id={request_id} stage=failed error={error}"
+                            );
                         }
                     }
                     Err(error) => {

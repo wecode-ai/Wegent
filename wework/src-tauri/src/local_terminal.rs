@@ -368,7 +368,16 @@ pub fn close_local_terminal(
         .lock()
         .map_err(|_| "Failed to lock local terminal state".to_string())?;
     if let Some(mut session) = sessions.remove(&session_id) {
-        let _ = session.child.kill();
+        log::warn!(
+            "Tauri local terminal kill requested: sender_pid={}, session_id={session_id}",
+            std::process::id()
+        );
+        if let Err(error) = session.child.kill() {
+            log::warn!(
+                "Tauri local terminal kill failed: sender_pid={}, session_id={session_id}, error={error}",
+                std::process::id()
+            );
+        }
     }
 
     Ok(())

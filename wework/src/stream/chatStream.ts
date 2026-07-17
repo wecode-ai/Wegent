@@ -26,6 +26,11 @@ export interface ChatStreamScope {
   taskId?: string
 }
 
+export interface RuntimeTransportReplacedPayload {
+  previousRuntimeInstanceId: string
+  runtimeInstanceId: string
+}
+
 export interface ChatStreamHandlers {
   scope?: ChatStreamScope
   onChatStart?: (payload: ChatStartPayload) => void
@@ -40,6 +45,7 @@ export interface ChatStreamHandlers {
   onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
+  onRuntimeTransportReplaced?: (payload: RuntimeTransportReplacedPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void

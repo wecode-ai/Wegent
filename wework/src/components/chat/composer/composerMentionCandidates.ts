@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { localSkillReference } from '@/lib/local-skill-reference'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import { displaySkillNameFromName, localSkillTestId } from './composerMentions'
@@ -163,7 +164,7 @@ function skillSourceRank(skill: LocalDeviceSkill): number {
 }
 
 export function skillReference(skill: LocalDeviceSkill): string {
-  return `[$${skill.name}](${skill.path})`
+  return localSkillReference(skill)
 }
 
 export function appReference(app: LocalDeviceApp): string {

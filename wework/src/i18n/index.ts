@@ -7,14 +7,21 @@ import enChat from './locales/en/chat.json'
 import zhChat from './locales/zh-CN/chat.json'
 import enLocalRuntime from './locales/en/localRuntime.json'
 import zhLocalRuntime from './locales/zh-CN/localRuntime.json'
+import enSites from './locales/en/sites.json'
+import zhSites from './locales/zh-CN/sites.json'
 
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
     resources: {
-      en: { chat: enChat, common: enCommon, localRuntime: enLocalRuntime },
-      'zh-CN': { chat: zhChat, common: zhCommon, localRuntime: zhLocalRuntime },
+      en: { chat: enChat, common: enCommon, localRuntime: enLocalRuntime, sites: enSites },
+      'zh-CN': {
+        chat: zhChat,
+        common: zhCommon,
+        localRuntime: zhLocalRuntime,
+        sites: zhSites,
+      },
     },
     lng: 'zh-CN',
     fallbackLng: 'zh-CN',

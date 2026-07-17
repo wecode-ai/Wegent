@@ -38,6 +38,8 @@ interface WorkspacePanelActionsProps {
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
   environmentInfoDocked?: boolean
+  environmentInfoOpen: boolean
+  onEnvironmentInfoOpenChange: (open: boolean) => void
   environmentInfoFloatingFooter?: ReactNode
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
@@ -62,6 +64,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
   environmentInfoDocked = true,
+  environmentInfoOpen,
+  onEnvironmentInfoOpenChange,
   environmentInfoFloatingFooter,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -170,7 +174,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           info={environmentInfo}
           popoverContainer={environmentInfoPopoverContainer}
           docked={environmentInfoDocked}
-          defaultOpen={Boolean(currentProject)}
+          open={environmentInfoOpen}
+          onOpenChange={onEnvironmentInfoOpenChange}
           floatingFooter={environmentInfoFloatingFooter}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}

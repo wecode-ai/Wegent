@@ -4,7 +4,9 @@ import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import {
+  connectLocalExecutorToBackend,
   copyLocalExecutorDebugInfo,
+  disconnectLocalExecutorFromBackend,
   ensureLocalExecutorStarted,
   readLocalExecutorLog,
 } from '@/tauri/localExecutor'
@@ -13,7 +15,9 @@ import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
 const startDragging = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/tauri/localExecutor', () => ({
+  connectLocalExecutorToBackend: vi.fn(),
   copyLocalExecutorDebugInfo: vi.fn(),
+  disconnectLocalExecutorFromBackend: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   readLocalExecutorLog: vi.fn(),
 }))
@@ -23,6 +27,8 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 const copyDebugMock = vi.mocked(copyLocalExecutorDebugInfo)
+const connectMock = vi.mocked(connectLocalExecutorToBackend)
+const disconnectMock = vi.mocked(disconnectLocalExecutorFromBackend)
 const ensureMock = vi.mocked(ensureLocalExecutorStarted)
 const readLogMock = vi.mocked(readLocalExecutorLog)
 const DEV_STARTUP_HOLD_MS = 4800
@@ -47,7 +53,9 @@ describe('LocalRuntimeInitializer', () => {
   beforeEach(() => {
     enableTauri()
     vi.stubEnv('DEV', false)
+    connectMock.mockReset()
     copyDebugMock.mockReset()
+    disconnectMock.mockReset()
     ensureMock.mockReset()
     readLogMock.mockReset()
     startDragging.mockClear()
@@ -74,6 +82,84 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+  })
+
+  test('applies the initial cloud connection before ensuring the executor is started', async () => {
+    connectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          backendUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    expect(connectMock).toHaveBeenCalledWith({
+      backendUrl: 'https://backend.example.com',
+      authToken: 'token-a',
+    })
+    expect(connectMock.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  test('applies disconnected local mode before ensuring the executor is started', async () => {
+    disconnectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          isConnected: false,
+          token: null,
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    expect(disconnectMock).toHaveBeenCalledTimes(1)
+    expect(disconnectMock.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  test('does not start the executor until initial cloud connection setup succeeds', async () => {
+    connectMock
+      .mockRejectedValueOnce(new Error('backend setup failed'))
+      .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          backendUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent(
+      'backend setup failed'
+    )
+    expect(ensureMock).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(ensureMock).toHaveBeenCalledTimes(1)
   })
 
   test('reveals children once executor is ready even while app startup continues', async () => {

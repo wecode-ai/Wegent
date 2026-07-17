@@ -44,8 +44,10 @@ import type {
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
   RuntimeProjectAppearanceRequest,
+  RuntimeProjectActivateRequest,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
+  RuntimeRemoteProjectsSyncRequest,
   RuntimeProjectTaskReorderRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskPinRequest,
@@ -276,6 +278,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
+  transportLabel?: 'Local' | 'Cloud'
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -1503,22 +1506,26 @@ function adaptRuntimeWorkListResponse(
     const label = workspaceLabel(workspacePath, workspace.label)
     const workspaceSource =
       stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    const remoteHostId =
+      stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id)
+    const workspaceDeviceId =
+      workspaceSource === 'remote' && remoteHostId ? remoteHostId : localDeviceId
     if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
       continue
     }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: null,
       projectId: null,
-      deviceId: localDeviceId,
-      deviceName: 'Local Executor',
-      deviceStatus: 'online',
-      available: true,
+      deviceId: workspaceDeviceId,
+      deviceName: remoteHostId ?? 'Local Executor',
+      deviceStatus: workspaceDeviceId === localDeviceId ? 'online' : 'offline',
+      available: workspaceDeviceId === localDeviceId,
       workspacePath,
       workspaceKind,
       worktreeId,
       label,
       workspaceSource,
-      remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
+      remoteHostId,
       mapped: true,
       tasks,
     }
@@ -1543,22 +1550,30 @@ function adaptRuntimeWorkListResponse(
       : Array.isArray(workspace.project_roots)
         ? workspace.project_roots
         : [workspacePath]
+    const projectKind =
+      stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
+    const projectSource =
+      stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
+    const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
     const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
         key: projectKey,
+        ...(projectSource === 'remote_project' ? { sidebarStateKey: projectKey } : {}),
         id: stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
-        kind: stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local',
-        source:
-          stringValue(workspace.projectSource) ??
-          stringValue(workspace.project_source) ??
-          'legacy_root',
+        kind: projectKind,
+        source: projectSource,
         stateDeviceId: localDeviceId,
         roots: rawRoots
           .map(root => stringValue(root))
           .filter((root): root is string => Boolean(root))
           .map(path => ({ kind: 'local', path })),
         pinned: workspace.projectPinned === true || workspace.project_pinned === true,
+        pinnedOrder:
+          typeof projectPinnedOrder === 'number' && Number.isInteger(projectPinnedOrder)
+            ? projectPinnedOrder
+            : null,
+        active: workspace.projectActive === true || workspace.project_active === true,
         appearance: (workspace.projectAppearance ?? workspace.project_appearance ?? null) as
           | RuntimeWorkListResponse['projects'][number]['project']['appearance']
           | null,
@@ -1578,6 +1593,7 @@ export function createRuntimeWorkApiFromIpc(
   getDefaultDeviceId: () => Promise<string>,
   options: RuntimeWorkIpcOptions = {}
 ) {
+  const transportLabel = options.transportLabel ?? 'Local'
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
@@ -1599,14 +1615,14 @@ export function createRuntimeWorkApiFromIpc(
     const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript request', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript request`, {
           address: runtimeAddressDebug(normalizedData),
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
       const response = await request<TResponse>(method, normalizedData, deviceId)
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript response', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           messageCount: runtimeTranscriptMessageCount(response),
@@ -1615,7 +1631,7 @@ export function createRuntimeWorkApiFromIpc(
       return response
     } catch (error) {
       if (method === 'runtime.tasks.transcript') {
-        console.error('[Wework] Local runtime IPC transcript failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC transcript failed`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
@@ -1634,7 +1650,7 @@ export function createRuntimeWorkApiFromIpc(
         const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
-        console.error('[Wework] Local runtime IPC list failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
         })
@@ -1783,6 +1799,16 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeProjectAppearanceRequest
     ): Promise<RuntimeSidebarMutationResponse> {
       return requestWithLocalDevice('runtime.sidebar.projects.appearance', data)
+    },
+    syncRuntimeRemoteProjects(
+      data: RuntimeRemoteProjectsSyncRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.sync_remote', data)
+    },
+    activateRuntimeProject(
+      data: RuntimeProjectActivateRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.activate', data)
     },
     reorderRuntimeProjectTasks(
       data: RuntimeProjectTaskReorderRequest

@@ -29,6 +29,10 @@ const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
 const MODEL_LABEL = 'GPT 5.4'
+const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
+const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
+const LOCAL_MODEL_ID = 'local-model:desktop-e2e-local'
+const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -153,6 +157,22 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
   throw new Error(message)
 }
 
+async function triggerModelReloadUntilCloudFailure(control) {
+  const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
+  for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
+    await control.command('dispatchLocalModelSettingsChanged', '')
+    await Promise.race([
+      failedCloudModelRequest,
+      new Promise(resolvePromise => setTimeout(resolvePromise, 1_000)),
+    ])
+  }
+  await withTimeout(
+    failedCloudModelRequest,
+    UI_TIMEOUT_MS,
+    'The connected desktop app did not retry models after the cloud endpoint began failing'
+  )
+}
+
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
   let lastError
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -171,7 +191,7 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
   throw lastError
 }
 
-async function selectE2EModel(control) {
+async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -183,12 +203,15 @@ async function selectE2EModel(control) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('waitFor', `[data-testid="model-option-${MODEL_ID}"]`, {
+  await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('click', `[data-testid="model-option-${MODEL_ID}"]`)
+  await control.command('waitFor', `[data-testid="model-option-${LOCAL_MODEL_ID}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="model-option-${modelId}"]`)
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
-    text: MODEL_LABEL,
+    text: modelLabel,
     timeoutMs: UI_TIMEOUT_MS,
   })
 }
@@ -343,6 +366,12 @@ class DesktopE2EServer {
     this.commandResults = new Map()
     this.commandHistory = []
     this.modelRequests = []
+    this.blockedCloudRequests = []
+    this.blockedCloudResponses = new Set()
+    this.blockedCloudWaiters = []
+    this.failCloudModels = false
+    this.failedCloudModelRequests = 0
+    this.failedCloudModelWaiter = null
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.toolLessPrewarmHandled = false
@@ -371,6 +400,9 @@ class DesktopE2EServer {
   }
 
   async close() {
+    for (const response of this.blockedCloudResponses) response.destroy()
+    this.blockedCloudResponses.clear()
+    this.server.closeAllConnections?.()
     await new Promise(resolvePromise => this.server.close(resolvePromise))
   }
 
@@ -378,6 +410,50 @@ class DesktopE2EServer {
     if (this.ready) return Promise.resolve(this.ready)
     return new Promise(resolvePromise => {
       this.readyResolver = resolvePromise
+    })
+  }
+
+  awaitBlockedCloudRequest(pathname) {
+    const request = this.blockedCloudRequests.find(item => item.pathname === pathname)
+    if (request) return Promise.resolve(request)
+    return new Promise(resolvePromise => {
+      this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
+    })
+  }
+
+  blockCloudRequest(request, response, url) {
+    const blockedRequest = {
+      method: request.method,
+      pathname: url.pathname,
+      search: url.search,
+    }
+    this.blockedCloudRequests.push(blockedRequest)
+    this.blockedCloudResponses.add(response)
+    response.once('close', () => this.blockedCloudResponses.delete(response))
+
+    const remainingWaiters = []
+    for (const waiter of this.blockedCloudWaiters) {
+      if (waiter.pathname === url.pathname) {
+        waiter.resolve(blockedRequest)
+      } else {
+        remainingWaiters.push(waiter)
+      }
+    }
+    this.blockedCloudWaiters = remainingWaiters
+  }
+
+  failBlockedCloudModels() {
+    this.failCloudModels = true
+    for (const response of this.blockedCloudResponses) {
+      json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
+    }
+    this.blockedCloudResponses.clear()
+  }
+
+  awaitFailedCloudModelRequest() {
+    if (this.failedCloudModelRequests > 0) return Promise.resolve()
+    return new Promise(resolvePromise => {
+      this.failedCloudModelWaiter = resolvePromise
     })
   }
 
@@ -477,10 +553,34 @@ class DesktopE2EServer {
       return
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/users/me') {
+      json(response, 200, {
+        id: 9001,
+        user_name: 'wework-desktop-e2e-cloud-user',
+        email: 'desktop-e2e@wework.local',
+      })
+      return
+    }
+
+    if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
+      if (this.failCloudModels) {
+        this.failedCloudModelRequests += 1
+        this.failedCloudModelWaiter?.()
+        this.failedCloudModelWaiter = null
+        json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
+        return
+      }
+      this.blockCloudRequest(request, response, url)
+      return
+    }
+
     if (request.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
       json(response, 200, {
         object: 'list',
-        data: [{ id: MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID }],
+        data: [
+          { id: MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID },
+          { id: DEFAULT_MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID },
+        ],
       })
       return
     }
@@ -661,7 +761,7 @@ async function writeCodexConfig(codexHome, modelServerUrl) {
   await mkdir(codexHome, { recursive: true })
   await writeFile(
     join(codexHome, 'config.toml'),
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "workspace-write"\n\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
     'utf8'
   )
 }
@@ -711,6 +811,7 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
       env: {
         ...process.env,
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
+        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: controlUrl,
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
@@ -819,10 +920,20 @@ async function main() {
       'The desktop controller did not connect from a webview'
     )
 
-    phase = 'remote-project-dialog'
+    phase = 'cloud-request-non-blocking'
+    await withTimeout(
+      control.awaitBlockedCloudRequest(BLOCKED_CLOUD_MODEL_PATH),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The connected desktop app did not start the intentionally blocked cloud model request'
+    )
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await selectE2EModel(control)
+    control.failBlockedCloudModels()
+    await triggerModelReloadUntilCloudFailure(control)
+
+    phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-remote-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
@@ -992,6 +1103,28 @@ async function main() {
       control.toolOutput,
       'Codex did not report its real tool execution to the model service'
     )
+
+    phase = 'conversation-model-restore'
+    const taskSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+      'The completed task was not available for model restoration'
+    )
+    const taskRowTestId = taskSnapshot.testIds.find(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+    assert.ok(taskRowTestId, 'The completed task row was not found')
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="model-selector-button"]', {
+      text: MODEL_LABEL,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
     phase = 'follow-up'
     control.setScenario('follow_up')
     await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
@@ -1088,6 +1221,29 @@ async function main() {
       text: FRESH_CHAT_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    phase = 'standalone-new-task-state'
+    await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+    const standaloneTaskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('project-work-button') &&
+        (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
+      'The task-section new-task action selected a project'
+    )
+    assert.ok(
+      standaloneTaskSnapshot.testIds.includes('project-work-button'),
+      'The standalone new task did not render the project selector'
+    )
+
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('project-work-button') &&
+        (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
+      'The global new-task action did not preserve the standalone project state'
+    )
 
     await writeFile(
       join(resultDir, 'model-requests.json'),

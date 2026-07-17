@@ -182,11 +182,26 @@ function getLastProjectStorageKey(userId: number) {
   return `wework.lastProjectId.${userId}`
 }
 
-export function writeLastProjectId(userId: number, projectId: number) {
+export function writeLastProjectId(userId: number, projectId: number | null) {
   try {
-    window.localStorage.setItem(getLastProjectStorageKey(userId), String(projectId))
+    window.localStorage.setItem(
+      getLastProjectStorageKey(userId),
+      projectId === null ? 'none' : String(projectId)
+    )
   } catch {
     // Ignore storage failures; project selection still works for the current session.
+  }
+}
+
+export function readLastProjectId(userId: number): number | null | undefined {
+  try {
+    const storedValue = window.localStorage.getItem(getLastProjectStorageKey(userId))
+    if (storedValue === null) return undefined
+    if (storedValue === 'none') return null
+    const value = Number(storedValue)
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -284,9 +299,16 @@ export function findProjectMetadataDeviceWorkspace(
 }
 
 const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g
+const LEADING_TOOL_MENTION_PATTERN =
+  /^(?:\[(?:\$|@)[^\]]+]\((?:(?:skill|app|plugin):\/\/[^)\n]+|\/[^)\n]*SKILL\.md)\)\s*)+/
 
 function runtimeTitleText(value: string): string {
-  return value
+  const normalizedValue = value.trim()
+  const withoutLeadingToolMentions = normalizedValue
+    .replace(LEADING_TOOL_MENTION_PATTERN, '')
+    .trim()
+
+  return (withoutLeadingToolMentions || normalizedValue)
     .replace(MARKDOWN_MENTION_PATTERN, (_match, label: string) => label)
     .replace(/\s+/g, ' ')
     .trim()

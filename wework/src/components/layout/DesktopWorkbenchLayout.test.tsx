@@ -445,6 +445,10 @@ describe('DesktopWorkbenchLayout', () => {
           device_type: 'cloud',
           bind_shell: 'claudecode',
           executor_version: '1.712',
+          client_ip: '10.201.3.200',
+          cloud_config: {
+            deviceName: 'yunpeng7-executor-372706c30fcd',
+          },
           cpu_usage: 42,
           memory_usage: 68,
           disk_usage: 57,
@@ -3714,6 +3718,7 @@ describe('DesktopWorkbenchLayout', () => {
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
+      client_ip: '10.201.3.200',
     }
     const project = {
       id: 7,
@@ -3757,7 +3762,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveTextContent('hello')
     expect(screen.getByTestId('conversation-device-offline-banner')).toHaveTextContent(
-      'Offline Device 已离线，恢复在线后可继续对话'
+      '10.201.3.200 已离线，恢复在线后可继续对话'
     )
     expect(screen.queryByTestId('composer-disabled-reason')).not.toBeInTheDocument()
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
@@ -4005,16 +4010,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
     expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
     expect(screen.queryByText('桌面 VNC')).not.toBeInTheDocument()
-    expect(screen.getByText('CPU')).toBeInTheDocument()
-    expect(screen.getByText('MEM')).toBeInTheDocument()
-    expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(await screen.findByText('42%')).toBeInTheDocument()
-    expect(screen.getByText('68%')).toBeInTheDocument()
-    expect(screen.getByText('57%')).toBeInTheDocument()
-    expect(screen.getByTestId('connection-scale-wiki')).toBeInTheDocument()
-    expect(screen.getByText('说明')).toBeInTheDocument()
+    expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
+    expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
+    expect(screen.queryByText('CPU')).not.toBeInTheDocument()
+    expect(screen.queryByText('MEM')).not.toBeInTheDocument()
+    expect(screen.queryByText('磁盘')).not.toBeInTheDocument()
+    expect(screen.queryByText('42%')).not.toBeInTheDocument()
+    expect(screen.queryByText('68%')).not.toBeInTheDocument()
+    expect(screen.queryByText('57%')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
+    expect(screen.queryByText('说明')).not.toBeInTheDocument()
     expect(screen.queryByText('扩容 Wiki')).not.toBeInTheDocument()
-    expect(screen.getByText(/持续超过 80%/)).toBeInTheDocument()
+    expect(screen.queryByText(/持续超过 80%/)).not.toBeInTheDocument()
     expect(screen.queryByText('a8791aa3-4e8a-4076-b9a6-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('Nevis')).not.toBeInTheDocument()
     expect(screen.queryByText('Cloud computing powered by Nevis')).not.toBeInTheDocument()
@@ -5807,7 +5814,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).not.toHaveClass(
       'shadow-[0_18px_44px_rgba(0,0,0,0.24)]'
     )
-    expect(screen.getByText('环境信息')).toBeInTheDocument()
+    expect(screen.getByText('环境')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('+173')).toBeInTheDocument())
     const deviceSection = screen.getByTestId('environment-device-section')
@@ -5839,8 +5846,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(gitSection).toHaveTextContent('human/narwhal-20260528-073440')
     expect(gitSection).toHaveTextContent('提交')
     expect(gitSection).toHaveTextContent('创建拉取请求')
-    expect(gitSection).toHaveTextContent('来源')
-    expect(gitSection).toHaveTextContent('暂无来源')
+    expect(gitSection).not.toHaveTextContent('来源')
 
     await userEvent.click(deviceButton)
 
@@ -5861,6 +5867,78 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
     expect(environmentInfoPanel).toHaveClass('overflow-hidden')
+  })
+
+  test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const secondTask = {
+      ...activeProjectRuntimeTask,
+      taskId: 'runtime-project-2',
+    }
+    const renderTask = (task: typeof activeProjectRuntimeTask) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: task,
+        }}
+      />
+    )
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const view = render(renderTask(activeProjectRuntimeTask))
+
+    expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    await userEvent.click(activePane().getByTestId('environment-info-button'))
+    expect(activePane().queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    view.rerender(renderTask(secondTask))
+
+    await waitFor(() =>
+      expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+    )
+    expect(activePane().queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    view.unmount()
+    render(renderTask(secondTask))
+
+    expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
+  test('keeps the overlay summary state separate from the pinned summary state', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
+
+    expect(screen.getByTestId('environment-info-popover')).not.toHaveClass('fixed')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass('fixed')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('environment-info-popover')).not.toHaveClass('fixed')
+    )
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('opens environment changes review in the right workspace panel', async () => {

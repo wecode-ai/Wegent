@@ -167,6 +167,7 @@ describe('createLocalChatStream', () => {
       return vi.fn()
     })
     const onChatDone = vi.fn()
+    const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const stream = createLocalChatStream({ subscribe, request })
 
     stream.subscribe({ onChatDone })
@@ -187,6 +188,15 @@ describe('createLocalChatStream', () => {
       deviceId: 'local-device',
       result: { value: 'complete' },
     })
+    expect(consoleInfo).toHaveBeenCalledWith(
+      '[Wework] Local chat stream terminal event received',
+      expect.objectContaining({
+        event: 'response.completed',
+        taskId: 'task-1',
+        matchedSubscriptionCount: 1,
+      })
+    )
+    consoleInfo.mockRestore()
   })
 
   test('does not open a local executor listener for device-only subscriptions', () => {

@@ -84,6 +84,7 @@ export async function installPendingWeworkUpdate(
     const { relaunch } = await import('@tauri-apps/plugin-process')
     await relaunch()
   } catch (error) {
+    pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })
   }
 }

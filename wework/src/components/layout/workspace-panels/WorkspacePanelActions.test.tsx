@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from '@/api/projects'
 import { openExternalUrl } from '@/lib/external-links'
@@ -49,6 +50,8 @@ const baseProps = {
   },
   environmentInfoPopoverContainer: document.body,
   environmentInfoVisible: true,
+  environmentInfoOpen: false,
+  onEnvironmentInfoOpenChange: vi.fn(),
   onRefreshEnvironmentInfo: vi.fn(),
   onCommitEnvironmentChanges: vi.fn(),
   onCommitAndPushEnvironmentChanges: vi.fn(),
@@ -155,13 +158,14 @@ describe('WorkspacePanelActions', () => {
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
 
-  test('opens environment info by default in a project', () => {
+  test('reflects the shared pinned state in a project', () => {
     setWindowWidth(1280)
 
     render(
       <WorkspacePanelActions
         {...baseProps}
         mode="environment"
+        environmentInfoOpen
         currentProject={{ id: 7, name: 'project38', config: {}, tasks: [] }}
       />
     )
@@ -172,9 +176,19 @@ describe('WorkspacePanelActions', () => {
 
   test('opens environment info as a floating panel when the dock is collapsed', async () => {
     setWindowWidth(1024)
-    render(
-      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoDocked={false} />
-    )
+    function FloatingActions() {
+      const [open, setOpen] = useState(false)
+      return (
+        <WorkspacePanelActions
+          {...baseProps}
+          mode="environment"
+          environmentInfoDocked={false}
+          environmentInfoOpen={open}
+          onEnvironmentInfoOpenChange={setOpen}
+        />
+      )
+    }
+    render(<FloatingActions />)
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
 
@@ -189,13 +203,19 @@ describe('WorkspacePanelActions', () => {
     document.body.append(workspaceContainer)
 
     try {
-      render(
-        <WorkspacePanelActions
-          {...baseProps}
-          mode="environment"
-          environmentInfoPopoverContainer={workspaceContainer}
-        />
-      )
+      function DockedActions() {
+        const [open, setOpen] = useState(false)
+        return (
+          <WorkspacePanelActions
+            {...baseProps}
+            mode="environment"
+            environmentInfoPopoverContainer={workspaceContainer}
+            environmentInfoOpen={open}
+            onEnvironmentInfoOpenChange={setOpen}
+          />
+        )
+      }
+      render(<DockedActions />)
 
       await userEvent.click(screen.getByTestId('environment-info-button'))
 
@@ -217,17 +237,20 @@ describe('WorkspacePanelActions', () => {
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
 
-  test('closes environment info when the dock becomes unavailable', async () => {
-    const { rerender } = render(<WorkspacePanelActions {...baseProps} mode="environment" />)
-
-    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('environment-info-button'))
+  test('uses the supplied overlay state when the dock becomes unavailable', () => {
+    const { rerender } = render(
+      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoOpen />
+    )
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
 
     rerender(
-      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoDocked={false} />
+      <WorkspacePanelActions
+        {...baseProps}
+        mode="environment"
+        environmentInfoDocked={false}
+        environmentInfoOpen={false}
+      />
     )
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()

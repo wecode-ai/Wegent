@@ -1,13 +1,19 @@
-import { describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test } from 'vitest'
 import {
   buildRuntimeTaskTitle,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   projectTaskAddresses,
+  readLastProjectId,
   truncateRuntimeTaskTitle,
+  writeLastProjectId,
 } from './workbenchRuntimeHelpers'
 import type { RuntimeWorkListResponse } from '@/types/api'
 
 describe('workbenchRuntimeHelpers', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   test('builds readable titles from structured plugin mentions', () => {
     expect(buildRuntimeTaskTitle('[$linear](/tmp/linear/SKILL.md) ')).toBe('$linear')
     expect(buildRuntimeTaskTitle('Use [$calendar](app://calendar) today')).toBe(
@@ -16,6 +22,17 @@ describe('workbenchRuntimeHelpers', () => {
     expect(buildRuntimeTaskTitle('Ask [@sample](plugin://sample@local) to help')).toBe(
       'Ask @sample to help'
     )
+  })
+
+  test('removes leading plugin mentions from task titles', () => {
+    expect(buildRuntimeTaskTitle('[$Sites](plugin://sites) 创建一个 OKR 网站')).toBe(
+      '创建一个 OKR 网站'
+    )
+    expect(
+      buildRuntimeTaskTitle(
+        '[$Sites](plugin://sites) [@designer](plugin://designer) Build a portal'
+      )
+    ).toBe('Build a portal')
   })
 
   test('limits runtime task titles for compact display and terminal context', () => {
@@ -72,5 +89,18 @@ describe('workbenchRuntimeHelpers', () => {
         },
       },
     ])
+  })
+
+  test('stores the last project per user and ignores invalid values', () => {
+    writeLastProjectId(7, 42)
+
+    expect(readLastProjectId(7)).toBe(42)
+    expect(readLastProjectId(8)).toBeUndefined()
+
+    writeLastProjectId(7, null)
+    expect(readLastProjectId(7)).toBeNull()
+
+    localStorage.setItem('wework.lastProjectId.7', 'not-a-project')
+    expect(readLastProjectId(7)).toBeUndefined()
   })
 })

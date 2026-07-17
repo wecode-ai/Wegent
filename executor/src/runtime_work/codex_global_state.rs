@@ -36,6 +36,8 @@ const PROJECT_WRITABLE_ROOTS_KEY: &str = "project-writable-roots";
 const PROJECT_APPEARANCES_KEY: &str = "project-appearances";
 const PROJECT_ORDER_KEY: &str = "project-order";
 const ACTIVE_WORKSPACE_ROOTS_KEY: &str = "active-workspace-roots";
+const ACTIVE_REMOTE_PROJECT_ID_KEY: &str = "active-remote-project-id";
+const SELECTED_REMOTE_HOST_ID_KEY: &str = "selected-remote-host-id";
 const PINNED_PROJECT_IDS_KEY: &str = "pinned-project-ids";
 const PINNED_THREAD_IDS_KEY: &str = "pinned-thread-ids";
 const SIDEBAR_PROJECT_THREAD_ORDERS_KEY: &str = "sidebar-project-thread-orders";
@@ -48,6 +50,8 @@ const OPLOG_KIND_RENAME: &str = "rename";
 const OPLOG_KIND_REMOVE: &str = "remove";
 const OPLOG_KIND_REORDER_PROJECT: &str = "reorder_project";
 const OPLOG_KIND_PIN_PROJECT: &str = "pin_project";
+const OPLOG_KIND_UPSERT_REMOTE_PROJECT: &str = "upsert_remote_project";
+const OPLOG_KIND_ACTIVATE_PROJECT: &str = "activate_project";
 const OPLOG_KIND_PROJECT_APPEARANCE: &str = "project_appearance";
 const OPLOG_KIND_REORDER_THREAD: &str = "reorder_thread";
 const OPLOG_KIND_PIN_THREAD: &str = "pin_thread";
@@ -65,7 +69,17 @@ pub(crate) struct CodexGlobalProject {
     pub kind: String,
     pub remote_host_id: Option<String>,
     pub pinned: bool,
+    pub pinned_order: Option<usize>,
+    pub active: bool,
     pub appearance: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexGlobalRemoteProject {
+    pub id: String,
+    pub host_id: String,
+    pub remote_path: String,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -107,6 +121,8 @@ struct CodexGlobalStateOplogRecord {
     project_key: Option<String>,
     #[serde(rename = "threadId", skip_serializing_if = "Option::is_none")]
     thread_id: Option<String>,
+    #[serde(rename = "remoteHostId", skip_serializing_if = "Option::is_none")]
+    remote_host_id: Option<String>,
     #[serde(rename = "beforeId", skip_serializing_if = "Option::is_none")]
     before_id: Option<String>,
     #[serde(rename = "insertAtEnd", skip_serializing_if = "Option::is_none")]
@@ -129,6 +145,7 @@ impl Default for CodexGlobalStateOplogRecord {
             workspace_path: String::new(),
             project_key: None,
             thread_id: None,
+            remote_host_id: None,
             before_id: None,
             insert_at_end: None,
             pinned: None,
@@ -280,6 +297,55 @@ pub(crate) fn set_codex_global_project_appearance(
         kind: OPLOG_KIND_PROJECT_APPEARANCE.to_owned(),
         project_key: clean_text(project_key),
         appearance,
+        updated_at: now_ms(),
+        ..Default::default()
+    })
+}
+
+pub(crate) fn sync_codex_global_remote_projects(
+    projects: &[CodexGlobalRemoteProject],
+) -> Result<(), String> {
+    for project in projects {
+        let Some(project_key) = clean_text(&project.id) else {
+            continue;
+        };
+        let Some(remote_host_id) = clean_text(&project.host_id) else {
+            continue;
+        };
+        let remote_path = normalize_workspace_path(&project.remote_path);
+        if remote_path.is_empty() {
+            continue;
+        }
+        append_codex_global_state_op_record(&CodexGlobalStateOplogRecord {
+            kind: OPLOG_KIND_UPSERT_REMOTE_PROJECT.to_owned(),
+            workspace_path: remote_path,
+            project_key: Some(project_key),
+            remote_host_id: Some(remote_host_id),
+            label: project.label.as_deref().and_then(clean_text),
+            updated_at: now_ms(),
+            ..Default::default()
+        })?;
+    }
+    flush_or_watch_codex_global_state_oplog();
+    refresh_codex_global_project_cache();
+    Ok(())
+}
+
+pub(crate) fn activate_codex_global_project(
+    project_key: &str,
+    workspace_path: &str,
+    remote_host_id: Option<&str>,
+) -> Result<(), String> {
+    let project_key = clean_text(project_key).ok_or_else(|| "projectKey is required".to_owned())?;
+    let workspace_path = normalize_workspace_path(workspace_path);
+    if workspace_path.is_empty() {
+        return Err("workspacePath is required".to_owned());
+    }
+    record_sidebar_op(CodexGlobalStateOplogRecord {
+        kind: OPLOG_KIND_ACTIVATE_PROJECT.to_owned(),
+        workspace_path,
+        project_key: Some(project_key),
+        remote_host_id: remote_host_id.and_then(clean_text),
         updated_at: now_ms(),
         ..Default::default()
     })
@@ -600,7 +666,11 @@ fn read_codex_global_state_oplog_unlocked() -> Vec<CodexGlobalStateOplogRecord> 
             record.workspace_path = normalize_workspace_path(&record.workspace_path);
             if matches!(
                 record.kind.as_str(),
-                OPLOG_KIND_UPSERT | OPLOG_KIND_RENAME | OPLOG_KIND_REMOVE
+                OPLOG_KIND_UPSERT
+                    | OPLOG_KIND_RENAME
+                    | OPLOG_KIND_REMOVE
+                    | OPLOG_KIND_UPSERT_REMOTE_PROJECT
+                    | OPLOG_KIND_ACTIVATE_PROJECT
             ) && record.workspace_path.is_empty()
             {
                 return None;
@@ -626,6 +696,19 @@ fn apply_codex_global_state_ops(
                     &op.workspace_path,
                     op.label.as_deref(),
                 );
+            }
+            OPLOG_KIND_UPSERT_REMOTE_PROJECT => {
+                if let (Some(project_key), Some(remote_host_id)) =
+                    (op.project_key.as_deref(), op.remote_host_id.as_deref())
+                {
+                    upsert_remote_project_payload(
+                        payload,
+                        project_key,
+                        remote_host_id,
+                        &op.workspace_path,
+                        op.label.as_deref(),
+                    );
+                }
             }
             OPLOG_KIND_RENAME => {
                 if let Some(label) = op.label.as_deref() {
@@ -667,6 +750,16 @@ fn apply_codex_global_state_ops(
             OPLOG_KIND_PROJECT_APPEARANCE => {
                 if let Some(project_key) = op.project_key.as_deref() {
                     set_project_appearance_payload(payload, project_key, op.appearance.clone());
+                }
+            }
+            OPLOG_KIND_ACTIVATE_PROJECT => {
+                if let Some(project_key) = op.project_key.as_deref() {
+                    activate_project_payload(
+                        payload,
+                        project_key,
+                        &op.workspace_path,
+                        op.remote_host_id.as_deref(),
+                    );
                 }
             }
             OPLOG_KIND_REORDER_THREAD => {
@@ -819,31 +912,43 @@ fn write_state_payload(path: &Path, payload: &Map<String, Value>) -> Result<(), 
 fn index_from_payload(payload: &Map<String, Value>) -> CodexGlobalProjectIndex {
     let mut candidates = HashMap::<String, CodexGlobalProject>::new();
     let pinned_project_ids = text_list(payload.get(PINNED_PROJECT_IDS_KEY));
-    let pinned_project_set = pinned_project_ids.iter().cloned().collect::<HashSet<_>>();
+    let active_workspace_roots = normalized_text_list(payload.get(ACTIVE_WORKSPACE_ROOTS_KEY));
+    let active_remote_project_id = payload
+        .get(ACTIVE_REMOTE_PROJECT_ID_KEY)
+        .and_then(clean_string);
     let appearances = payload
         .get(PROJECT_APPEARANCES_KEY)
         .and_then(Value::as_object);
 
     for workspace_path in normalized_text_list(payload.get(SAVED_WORKSPACE_ROOTS_KEY)) {
         let mut project = local_project_from_path(&workspace_path, payload);
-        project.pinned = pinned_project_set.contains(&project.key);
-        project.appearance = appearances
-            .and_then(|items| items.get(&project.key))
-            .cloned();
+        apply_project_ui_state(
+            &mut project,
+            &pinned_project_ids,
+            &active_workspace_roots,
+            active_remote_project_id.as_deref(),
+            appearances,
+        );
         candidates.insert(project.key.clone(), project);
     }
     for mut project in local_projects_from_payload(payload) {
-        project.pinned = pinned_project_set.contains(&project.key);
-        project.appearance = appearances
-            .and_then(|items| items.get(&project.key))
-            .cloned();
+        apply_project_ui_state(
+            &mut project,
+            &pinned_project_ids,
+            &active_workspace_roots,
+            active_remote_project_id.as_deref(),
+            appearances,
+        );
         candidates.insert(project.key.clone(), project);
     }
     for mut project in remote_projects_from_payload(payload) {
-        project.pinned = pinned_project_set.contains(&project.key);
-        project.appearance = appearances
-            .and_then(|items| items.get(&project.key))
-            .cloned();
+        apply_project_ui_state(
+            &mut project,
+            &pinned_project_ids,
+            &active_workspace_roots,
+            active_remote_project_id.as_deref(),
+            appearances,
+        );
         candidates.insert(project.key.clone(), project);
     }
 
@@ -898,6 +1003,32 @@ fn index_from_payload(payload: &Map<String, Value>) -> CodexGlobalProjectIndex {
         project_thread_orders,
         project_state_loaded: project_state_loaded_from_payload(payload),
     }
+}
+
+fn apply_project_ui_state(
+    project: &mut CodexGlobalProject,
+    pinned_project_ids: &[String],
+    active_workspace_roots: &[String],
+    active_remote_project_id: Option<&str>,
+    appearances: Option<&Map<String, Value>>,
+) {
+    project.pinned_order = pinned_project_ids
+        .iter()
+        .position(|project_key| project_key == &project.key);
+    project.pinned = project.pinned_order.is_some();
+    project.active = if project.kind == "remote" {
+        active_remote_project_id == Some(project.key.as_str())
+    } else {
+        active_workspace_roots.iter().any(|active_root| {
+            project
+                .roots
+                .iter()
+                .any(|root| normalize_workspace_path(root) == *active_root)
+        })
+    };
+    project.appearance = appearances
+        .and_then(|items| items.get(&project.key))
+        .cloned();
 }
 
 fn reconciled_project_order(payload: &Map<String, Value>) -> Vec<String> {
@@ -961,6 +1092,8 @@ fn local_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobalP
                 kind: "local".to_owned(),
                 remote_host_id: None,
                 pinned: false,
+                pinned_order: None,
+                active: false,
                 appearance: None,
             }
         })
@@ -986,10 +1119,81 @@ fn remote_projects_from_payload(payload: &Map<String, Value>) -> Vec<CodexGlobal
                 kind: "remote".to_owned(),
                 remote_host_id: Some(item.host_id),
                 pinned: false,
+                pinned_order: None,
+                active: false,
                 appearance: None,
             }
         })
         .collect()
+}
+
+fn upsert_remote_project_payload(
+    payload: &mut Map<String, Value>,
+    project_key: &str,
+    remote_host_id: &str,
+    remote_path: &str,
+    label: Option<&str>,
+) {
+    let projects = payload
+        .entry(REMOTE_PROJECTS_KEY.to_owned())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !projects.is_array() {
+        *projects = Value::Array(Vec::new());
+    }
+    let projects = projects
+        .as_array_mut()
+        .expect("remote projects is an array");
+    let index = projects.iter().position(|project| {
+        project.get("id").and_then(clean_string).as_deref() == Some(project_key)
+    });
+    let project = index
+        .and_then(|index| projects.get_mut(index))
+        .and_then(Value::as_object_mut);
+    let mut project = project.cloned().unwrap_or_default();
+    project.insert("id".to_owned(), Value::String(project_key.to_owned()));
+    project.insert(
+        "hostId".to_owned(),
+        Value::String(remote_host_id.to_owned()),
+    );
+    project.insert(
+        "remotePath".to_owned(),
+        Value::String(remote_path.to_owned()),
+    );
+    if let Some(label) = label.and_then(clean_text) {
+        project.insert("label".to_owned(), Value::String(label));
+    }
+    let project = Value::Object(project);
+    if let Some(index) = index {
+        projects[index] = project;
+    } else {
+        projects.push(project);
+    }
+    upsert_project_order(payload, project_key);
+}
+
+fn activate_project_payload(
+    payload: &mut Map<String, Value>,
+    project_key: &str,
+    workspace_path: &str,
+    remote_host_id: Option<&str>,
+) {
+    if let Some(remote_host_id) = remote_host_id.and_then(clean_text) {
+        payload.insert(
+            ACTIVE_REMOTE_PROJECT_ID_KEY.to_owned(),
+            Value::String(project_key.to_owned()),
+        );
+        payload.insert(
+            SELECTED_REMOTE_HOST_ID_KEY.to_owned(),
+            Value::String(remote_host_id),
+        );
+        return;
+    }
+
+    payload.insert(
+        ACTIVE_WORKSPACE_ROOTS_KEY.to_owned(),
+        Value::Array(vec![Value::String(workspace_path.to_owned())]),
+    );
+    payload.remove(ACTIVE_REMOTE_PROJECT_ID_KEY);
 }
 
 struct RemoteProjectItem {
@@ -1057,6 +1261,8 @@ fn local_project_from_label(workspace_path: &str, label: Option<&str>) -> CodexG
         kind: "local".to_owned(),
         remote_host_id: None,
         pinned: false,
+        pinned_order: None,
+        active: false,
         appearance: None,
     }
 }
@@ -1149,6 +1355,13 @@ fn remove_codex_global_project_payload(payload: &mut Map<String, Value>, workspa
     remove_text_list_item(payload, PROJECT_ORDER_KEY, project_ref);
     remove_text_list_item(payload, ACTIVE_WORKSPACE_ROOTS_KEY, &workspace_path);
     remove_text_list_item(payload, PINNED_PROJECT_IDS_KEY, project_ref);
+    if payload
+        .get(ACTIVE_REMOTE_PROJECT_ID_KEY)
+        .and_then(Value::as_str)
+        == Some(project_ref)
+    {
+        payload.remove(ACTIVE_REMOTE_PROJECT_ID_KEY);
+    }
     if let Some(labels) = payload
         .get_mut(WORKSPACE_ROOT_LABELS_KEY)
         .and_then(Value::as_object_mut)
@@ -1423,8 +1636,10 @@ mod tests {
         apply_codex_global_state_ops, codex_app_running_probe_args, index_from_payload,
         is_codex_gui_process_command, remove_codex_global_project_payload,
         rename_codex_global_project_payload, CodexGlobalStateOplogRecord,
-        CODEX_GLOBAL_STATE_OPLOG_FILENAME, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
+        ACTIVE_REMOTE_PROJECT_ID_KEY, CODEX_GLOBAL_STATE_OPLOG_FILENAME,
+        OPLOG_KIND_ACTIVATE_PROJECT, OPLOG_KIND_PIN_PROJECT, OPLOG_KIND_PIN_THREAD,
         OPLOG_KIND_PROJECT_APPEARANCE, OPLOG_KIND_REORDER_PROJECT, OPLOG_KIND_REORDER_THREAD,
+        OPLOG_KIND_UPSERT_REMOTE_PROJECT, SELECTED_REMOTE_HOST_ID_KEY,
     };
     use serde_json::{json, Map, Value};
 
@@ -1497,6 +1712,7 @@ mod tests {
         let multi = index.project_for_key("multi").expect("multi project");
         assert_eq!(multi.roots, vec!["/repo/nested", "/other"]);
         assert!(multi.pinned);
+        assert_eq!(multi.pinned_order, Some(0));
         assert_eq!(multi.appearance, Some(json!({"color": "purple"})));
         assert_eq!(
             index
@@ -1521,6 +1737,44 @@ mod tests {
         );
         assert!(index.is_pinned_thread("assigned"));
         assert_eq!(index.thread_sort_order("multi", "nested", 9), 0);
+    }
+
+    #[test]
+    fn remote_project_ops_register_order_and_active_selection() {
+        let mut payload = payload(json!({
+            "electron-saved-workspace-roots": ["/local"],
+            "project-order": ["/local"]
+        }));
+        apply_codex_global_state_ops(
+            &mut payload,
+            &[
+                CodexGlobalStateOplogRecord {
+                    kind: OPLOG_KIND_UPSERT_REMOTE_PROJECT.to_owned(),
+                    workspace_path: "/srv/app".to_owned(),
+                    project_key: Some("remote-1".to_owned()),
+                    remote_host_id: Some("host-1".to_owned()),
+                    label: Some("Remote app".to_owned()),
+                    ..Default::default()
+                },
+                CodexGlobalStateOplogRecord {
+                    kind: OPLOG_KIND_ACTIVATE_PROJECT.to_owned(),
+                    workspace_path: "/srv/app".to_owned(),
+                    project_key: Some("remote-1".to_owned()),
+                    remote_host_id: Some("host-1".to_owned()),
+                    ..Default::default()
+                },
+            ],
+        );
+
+        assert_eq!(payload["project-order"], json!(["remote-1", "/local"]));
+        assert_eq!(payload["remote-projects"][0]["id"], "remote-1");
+        assert_eq!(payload["remote-projects"][0]["hostId"], "host-1");
+        assert_eq!(payload["remote-projects"][0]["remotePath"], "/srv/app");
+        assert_eq!(payload[ACTIVE_REMOTE_PROJECT_ID_KEY], "remote-1");
+        assert_eq!(payload[SELECTED_REMOTE_HOST_ID_KEY], "host-1");
+
+        let index = index_from_payload(&payload);
+        assert!(index.project_for_key("remote-1").unwrap().active);
     }
 
     #[test]

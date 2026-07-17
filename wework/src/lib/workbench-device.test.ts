@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest'
 import type { DeviceInfo } from '@/types/api'
 import {
+  getExecutorOfflineDeviceId,
   getActiveWorkbenchDeviceId,
   findWorkbenchDevice,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
   resolveLocalWorkbenchDeviceId,
 } from './workbench-device'
@@ -80,5 +82,46 @@ describe('workbench-device', () => {
 
     expect(resolveLocalWorkbenchDeviceId(devices, 'local-device')).toBe('local-device')
     expect(findWorkbenchDevice(devices, 'local-device')?.device_id).toBe('local-device')
+  })
+
+  test('finds a device by its socket and runtime route aliases', () => {
+    const devices = [
+      createDevice({
+        device_id: 'logical-device',
+        socket_device_id: 'socket-device',
+        runtime_routes: [
+          {
+            kind: 'cloud-relay',
+            device_id: 'cloud-device',
+            runtime_device_id: 'runtime-device',
+            status: 'online',
+          },
+        ],
+      }),
+    ]
+
+    expect(findWorkbenchDevice(devices, 'socket-device')?.device_id).toBe('logical-device')
+    expect(findWorkbenchDevice(devices, 'runtime-device')?.device_id).toBe('logical-device')
+  })
+
+  test('uses the device IP for unavailable messages without exposing the device id', () => {
+    const device = createDevice({
+      device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',
+      name: 'sifang-executor-0341b231eb06',
+      client_ip: '10.201.3.200',
+    })
+
+    expect(getWorkbenchDeviceUnavailableDisplayName(device)).toBe('10.201.3.200')
+    expect(
+      getExecutorOfflineDeviceId('executor-offline:9562a3b4-61a3-4217-9655-0341b231eb06')
+    ).toBe('9562a3b4-61a3-4217-9655-0341b231eb06')
+    expect(
+      getWorkbenchDeviceUnavailableDisplayName(
+        createDevice({
+          device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',
+          name: 'sifang-executor-0341b231eb06',
+        })
+      )
+    ).toBe('')
   })
 })

@@ -4,6 +4,7 @@ import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
+import { notifyWorkbenchModelsChanged } from './workbenchCloudDataEvents'
 import type { Attachment, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
@@ -75,6 +76,23 @@ describe('workbench project chat hooks', () => {
 
     await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
+  })
+
+  test('reloads models after a background cloud model refresh', async () => {
+    const localModel: UnifiedModel = { name: 'local-model', type: 'runtime' }
+    const cloudModel: UnifiedModel = { name: 'cloud-model', type: 'public' }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [localModel] })
+        .mockResolvedValueOnce({ data: [localModel, cloudModel] }),
+    }
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() => expect(result.current.models).toEqual([localModel]))
+    act(() => notifyWorkbenchModelsChanged())
+
+    await waitFor(() => expect(result.current.models).toEqual([localModel, cloudModel]))
   })
 
   test('marks incompatible existing task model choices as disabled', async () => {

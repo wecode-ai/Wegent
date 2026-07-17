@@ -65,6 +65,7 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
     assert_eq!(messages[2]["method"], "thread/start");
     assert_eq!(messages[2]["params"]["model"], "gpt-5");
     assert_eq!(messages[2]["params"]["cwd"], "/tmp/wegent/project");
+    assert_eq!(messages[2]["params"]["permissions"], ":danger-full-access");
     assert_eq!(messages[3]["method"], "turn/start");
     assert_eq!(messages[3]["params"]["threadId"], "thread-1");
     assert_eq!(messages[3]["params"]["model"], "gpt-5");
@@ -75,10 +76,8 @@ async fn codex_app_server_engine_drives_thread_and_turn_over_json_rpc() {
         messages[3]["params"]["input"][0],
         json!({"type": "text", "text": "implement feature", "text_elements": []})
     );
-    assert_eq!(
-        messages[3]["params"]["sandboxPolicy"]["type"],
-        "dangerFullAccess"
-    );
+    assert_eq!(messages[3]["params"]["permissions"], ":danger-full-access");
+    assert!(messages[3]["params"].get("sandboxPolicy").is_none());
 }
 
 #[tokio::test]

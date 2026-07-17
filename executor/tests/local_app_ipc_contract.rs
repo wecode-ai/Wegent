@@ -6,15 +6,14 @@ use std::{
     fs,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 use serde_json::{json, Value};
-use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wegent_executor::local::{
     app_ipc::{
-        app_ipc_listening_log_line, local_app_ipc_addr_file_path, read_app_ipc_addr_file,
-        AppIpcError, AppIpcServer, RuntimeWorkHandler,
+        app_ipc_listening_log_line, read_app_ipc_addr_file, AppIpcError, AppIpcServer,
+        RuntimeWorkHandler,
     },
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
@@ -37,9 +36,18 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_COMMON_DIR",
 ];
 
-async fn env_lock() -> AsyncMutexGuard<'static, ()> {
-    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| AsyncMutex::new(())).lock().await
+struct EnvLockGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+async fn env_lock() -> EnvLockGuard {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    EnvLockGuard {
+        _guard: LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment lock should be available"),
+    }
 }
 
 struct EnvGuard {
@@ -850,6 +858,11 @@ async fn app_ipc_unknown_method_returns_protocol_error() {
 async fn app_ipc_addr_can_be_overridden() {
     let _lock = env_lock().await;
     let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:17490");
+    let addr_file = unique_dir("overridden-addr").join("app-ipc.addr");
+    let _addr_file = EnvGuard::set(
+        "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
+        &addr_file.display().to_string(),
+    );
     let server = AppIpcServer::new();
     let task = tokio::spawn(async move { server.serve_forever().await });
 
@@ -863,7 +876,9 @@ async fn app_ipc_addr_can_be_overridden() {
     }
 
     task.abort();
-    let _ = std::fs::remove_file(local_app_ipc_addr_file_path());
+    let _ = task.await;
+    let _ = std::fs::remove_file(&addr_file);
+    let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
 
     assert_eq!(addr, Some("127.0.0.1:17490".parse().unwrap()));
 }
@@ -873,7 +888,9 @@ fn app_ipc_listening_log_line_includes_device_and_addr() {
     let line = app_ipc_listening_log_line("device-1", "127.0.0.1:17490");
 
     assert_log_timestamp(&line);
-    assert!(line.ends_with(" app IPC listening device_id=device-1 addr=127.0.0.1:17490"));
+    assert!(line.contains(" app IPC listening device_id=device-1 addr=127.0.0.1:17490"));
+    assert!(line.contains(" process_id="));
+    assert!(line.contains(" addr_file="));
 }
 
 fn assert_log_timestamp(line: &str) {
@@ -895,6 +912,11 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
 
     let _lock = env_lock().await;
     let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:0");
+    let addr_file = unique_dir("socket-server").join("app-ipc.addr");
+    let _addr_file = EnvGuard::set(
+        "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
+        &addr_file.display().to_string(),
+    );
     let server = AppIpcServer::new().with_device_id("device-1");
     let task = tokio::spawn(async move { server.serve_forever().await });
 
@@ -942,7 +964,9 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 
     task.abort();
-    let _ = std::fs::remove_file(local_app_ipc_addr_file_path());
+    let _ = task.await;
+    let _ = std::fs::remove_file(&addr_file);
+    let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {

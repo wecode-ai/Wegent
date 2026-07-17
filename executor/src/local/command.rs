@@ -5,9 +5,9 @@
 use std::{
     collections::HashMap,
     future::Future,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
-    process::{Command as StdCommand, Stdio},
+    process::Stdio,
     time::{Duration, Instant},
 };
 
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{process::Command, time};
 
-use crate::{logging::log_executor_event, process_environment};
+use crate::process_environment;
 
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const MAX_TIMEOUT_SECONDS: f64 = 600.0;
@@ -176,14 +176,6 @@ impl CommandHandler {
             }
         }
 
-        let git_context = request
-            .cwd
-            .as_deref()
-            .and_then(GitWorktreeCommandContext::from_cwd);
-        if let Some(context) = &git_context {
-            log_worktree_command_event("local device command worktree started", &request, context);
-        }
-
         let mut command = process_command(&request);
         command.env_clear();
         command.envs(build_env(&request.env));
@@ -225,10 +217,6 @@ impl CommandHandler {
             decode_and_truncate(&output.stderr, request.max_output_bytes);
         let exit_code = output.status.code();
 
-        if let Some(context) = &git_context {
-            log_worktree_command_finish(&request, context, output.status.success(), exit_code);
-        }
-
         CommandResult {
             success: output.status.success(),
             exit_code,
@@ -241,142 +229,6 @@ impl CommandHandler {
             error: None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GitWorktreeCommandContext {
-    cwd: String,
-    top_level: String,
-    git_dir: String,
-    common_dir: String,
-    core_bare_before: Option<String>,
-}
-
-impl GitWorktreeCommandContext {
-    fn from_cwd(cwd: &str) -> Option<Self> {
-        let normalized_cwd = normalize_path_string(Path::new(cwd));
-        if !is_managed_worktree_path(&normalized_cwd) {
-            return None;
-        }
-
-        Some(Self {
-            cwd: normalized_cwd,
-            top_level: git_output(cwd, &["rev-parse", "--show-toplevel"])
-                .unwrap_or_else(|| "<unknown>".to_owned()),
-            git_dir: git_output(cwd, &["rev-parse", "--git-dir"])
-                .unwrap_or_else(|| "<unknown>".to_owned()),
-            common_dir: git_output(cwd, &["rev-parse", "--git-common-dir"])
-                .unwrap_or_else(|| "<unknown>".to_owned()),
-            core_bare_before: git_output(cwd, &["config", "--get", "core.bare"]),
-        })
-    }
-}
-
-fn log_worktree_command_finish(
-    request: &CommandRequest,
-    context: &GitWorktreeCommandContext,
-    success: bool,
-    exit_code: Option<i32>,
-) {
-    let core_bare_after = git_output(&context.cwd, &["config", "--get", "core.bare"]);
-    let core_bare_changed = core_bare_after != context.core_bare_before;
-    let core_bare_true = core_bare_after.as_deref() == Some("true");
-    let event = if core_bare_true || core_bare_changed {
-        "local device command worktree git config changed"
-    } else {
-        "local device command worktree finished"
-    };
-
-    let mut fields = worktree_command_fields(request, context);
-    fields.push(("success", success.to_string()));
-    fields.push((
-        "exit_code",
-        exit_code
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "none".to_owned()),
-    ));
-    fields.push((
-        "core_bare_before",
-        context
-            .core_bare_before
-            .clone()
-            .unwrap_or_else(|| "<unset>".to_owned()),
-    ));
-    fields.push((
-        "core_bare_after",
-        core_bare_after.unwrap_or_else(|| "<unset>".to_owned()),
-    ));
-    fields.push(("core_bare_changed", core_bare_changed.to_string()));
-    log_executor_event(event, &fields);
-}
-
-fn log_worktree_command_event(
-    event: &str,
-    request: &CommandRequest,
-    context: &GitWorktreeCommandContext,
-) {
-    let fields = worktree_command_fields(request, context);
-    log_executor_event(event, &fields);
-}
-
-fn worktree_command_fields(
-    request: &CommandRequest,
-    context: &GitWorktreeCommandContext,
-) -> Vec<(&'static str, String)> {
-    vec![
-        ("cwd", context.cwd.clone()),
-        ("git_top_level", context.top_level.clone()),
-        ("git_dir", context.git_dir.clone()),
-        ("git_common_dir", context.common_dir.clone()),
-        ("command_preview", command_preview(request)),
-        ("argv_count", request.argv.len().to_string()),
-    ]
-}
-
-fn command_preview(request: &CommandRequest) -> String {
-    if !request.argv.is_empty() {
-        return request
-            .argv
-            .iter()
-            .take(8)
-            .map(|item| item.replace('\n', "\\n"))
-            .collect::<Vec<_>>()
-            .join(" ");
-    }
-    request
-        .command
-        .replace('\n', "\\n")
-        .chars()
-        .take(240)
-        .collect()
-}
-
-fn git_output(cwd: &str, args: &[&str]) -> Option<String> {
-    let output = StdCommand::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
-        .env_clear()
-        .envs(build_env(&HashMap::new()))
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|value| !value.is_empty())
-}
-
-fn is_managed_worktree_path(path: &str) -> bool {
-    path.contains("/.wecode/wegent-executor/workspace/worktrees/")
-        || path.contains("/.wegent-executor/workspace/worktrees/")
-}
-
-fn normalize_path_string(path: &Path) -> String {
-    path.canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(path))
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String> {
@@ -440,42 +292,4 @@ fn normalized_f64(value: Option<&Value>, default: f64, upper_bound: f64) -> f64 
 fn elapsed_seconds(started_at: Instant) -> f64 {
     let elapsed = started_at.elapsed().as_secs_f64();
     (elapsed * 1_000_000.0).round() / 1_000_000.0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn managed_worktree_detection_accepts_wegent_roots() {
-        assert!(is_managed_worktree_path(
-            "/Users/alice/.wecode/wegent-executor/workspace/worktrees/42/Wegent"
-        ));
-        assert!(is_managed_worktree_path(
-            "/Users/alice/.wegent-executor/workspace/worktrees/runtime-1/Wegent"
-        ));
-        assert!(!is_managed_worktree_path(
-            "/Users/alice/dev/wegent_workspace/Wegent"
-        ));
-    }
-
-    #[test]
-    fn command_preview_prefers_argv_and_limits_shell_text() {
-        let argv_request = CommandRequest {
-            argv: vec![
-                "git".to_owned(),
-                "commit".to_owned(),
-                "-m".to_owned(),
-                "line\nbreak".to_owned(),
-            ],
-            ..CommandRequest::default()
-        };
-        assert_eq!(command_preview(&argv_request), "git commit -m line\\nbreak");
-
-        let shell_request = CommandRequest {
-            command: "x".repeat(300),
-            ..CommandRequest::default()
-        };
-        assert_eq!(command_preview(&shell_request).len(), 240);
-    }
 }
