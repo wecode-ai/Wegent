@@ -214,16 +214,11 @@ class JobService(BaseService[Kind, None, None]):
         deleted even if workspace archiving keeps failing, so a broken archive
         cannot pin pods forever.
         """
-        if inactive_hours <= 0 or max_inactive_hours < inactive_hours * 3:
-            return self._build_cleanup_result(
-                task_id,
-                "invalid_inactive_hours",
-                details={
-                    "inactive_hours": inactive_hours,
-                    "max_inactive_hours": max_inactive_hours,
-                    "dry_run": dry_run,
-                },
-            )
+        if max_inactive_hours < inactive_hours * 3:
+            # Once idle past max_inactive_hours, the executor is force-cleaned even
+            # if archiving fails; keep it at least 3x inactive_hours (or 7 days) so
+            # that force cleanup only kicks in well after the normal stale window.
+            max_inactive_hours = max(24 * 7, inactive_hours * 3)
 
         task = await self._get_task_resource_any_state(db, task_id)
 
