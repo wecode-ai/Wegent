@@ -420,6 +420,27 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.refresh(user)
         return user
 
+    def reorder_git_tokens(
+        self, db: Session, *, user: User, ordered_keys: List[str]
+    ) -> User:
+        """Persist an exact ordering of the current user's Git tokens."""
+        git_info = user.git_info or []
+        keyed_items = {
+            item.get("id") or f"legacy:{index}": item
+            for index, item in enumerate(git_info)
+        }
+
+        if len(ordered_keys) != len(set(ordered_keys)) or set(ordered_keys) != set(
+            keyed_items
+        ):
+            raise ValidationException("Git token order does not match current tokens")
+
+        user.git_info = [keyed_items[key] for key in ordered_keys]
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
     def get_user_by_id(self, db: Session, user_id: int) -> User:
         """
         Get user object by user ID

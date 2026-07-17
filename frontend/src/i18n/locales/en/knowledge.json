@@ -103,6 +103,8 @@
       "collapse": "Collapse",
       "collapseTree": "Collapse list",
       "expandTree": "List",
+      "expandAll": "Expand All",
+      "layeredNav": "Layered Navigation",
       "docCount": "{{count}} docs",
       "loadingKbs": "Loading knowledge bases..."
     },
@@ -240,6 +242,9 @@
       "defaultViewUpdateFailed": "Failed to update default opening view",
       "targetGroup": "Target Group",
       "selectGroup": "Select Group"
+    },
+    "breadcrumb": {
+      "root": "All Documents"
     },
     "folder": {
       "folderType": "Folder",

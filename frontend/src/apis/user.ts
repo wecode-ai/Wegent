@@ -203,6 +203,10 @@ export const userApis = {
     return apiClient.delete(`/users/me/git-token/${encodeURIComponent(gitDomain)}${params}`)
   },
 
+  async reorderGitTokens(orderedKeys: string[]): Promise<User> {
+    return apiClient.put('/users/me/git-token-order', { ordered_keys: orderedKeys })
+  },
+
   async getQuickAccess(): Promise<QuickAccessResponse> {
     if (quickAccessRequest) {
       return quickAccessRequest
