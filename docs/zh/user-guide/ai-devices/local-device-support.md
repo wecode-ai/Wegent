@@ -335,12 +335,13 @@ Web 端 **AI 设备** 页面的云设备卡片同样展示实时 CPU/内存/磁�
 
 在线云设备支持直接打开交互式会话：
 
-| 操作     | 后端接口                                    | 说明                                                                                                                                 |
-| -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **终端** | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话                                                                                                                |
+| 操作     | 后端接口                                        | 说明                                                                                                                                 |
+| -------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **终端** | `POST /api/devices/{device_id}/terminal`        | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
+| **IDE**  | `POST /api/devices/{device_id}/code-server`     | 打开 code-server 会话                                                                                                                |
+| **桌面** | `GET /api/cloud-devices/{device_id}/vnc-config` | 在 Wework 内置浏览器中打开云设备 VNC 桌面                                                                                            |
 
-终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
+终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。桌面会话通过 `/vnc-proxy/{device_id}` 建立 WebSocket；代理地址和登录 token 只保存在 Tauri 与内置 VNC 页的本机内存中，不会写入地址栏或浏览历史。两分钟有效期只用于主 WebView 向 VNC 页交接凭据；VNC 页打开后可使用自己的内存缓存进行断线重试。设备离线时，终端、IDE 和桌面按钮不可用。
 
 更多菜单提供低频管理操作：
 

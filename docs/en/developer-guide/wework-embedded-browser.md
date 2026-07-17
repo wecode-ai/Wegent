@@ -37,6 +37,14 @@ This binding keeps the browser the user sees and the browser the agent controls 
 - Page-load events write the current URL into application state. Do not synchronously read the native WebView URL while handling IPC or custom protocols because macOS WebKit may temporarily have no URL while creating or destroying a WebView.
 - The embedded browser uses a standard Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
 
+## Cloud Device Desktop VNC
+
+The cloud-device Desktop button under **Settings → Connections** and the Desktop entry in a project workspace both reuse Wework's current embedded browser. The frontend first reads `GET /api/cloud-devices/{device_id}/vnc-config`, then establishes a noVNC WebSocket connection through `/vnc-proxy/{device_id}`.
+
+The WebSocket URL and Bearer token must not appear in the browser address, history, or React-visible route. The frontend calls `prepare_vnc_session` to place the connection data in a two-minute in-memory handoff session owned by the Tauri Rust process. The browser opens only `/vnc.html?sessionId=...&sandboxId=...`, and that page retrieves the credentials through the `get_vnc_session_config` IPC command. The two-minute limit applies only to the handoff from the main WebView to the VNC page. After the first read, the VNC page caches the authenticated WebSocket URL for its own lifetime, so disconnect retries do not depend on the handoff TTL. If a full page reload occurs after the handoff expires, the user must reopen the desktop from the cloud-device entry.
+
+The internal VNC page sets its connected marker only after a real noVNC connection succeeds. Disconnect and connection-error paths must clear the marker and expose retry state. To keep credentials and internal pages from escaping the app, VNC pages cannot open in the system browser and do not support web annotation mode.
+
 ## Annotation Flow
 
 The browser address bar includes an annotation icon. In annotation mode:
