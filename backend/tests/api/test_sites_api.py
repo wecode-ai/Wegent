@@ -4,6 +4,7 @@
 
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -179,6 +180,148 @@ def test_list_sites_rejects_invalid_upstream_project(
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_list_sites_redacts_platform_token_from_upstream_error(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    long_context = "x" * 3000 + SITES_API_TOKEN
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        status_code=400,
+        json={
+            "error": {
+                "message": f"invalid credential {SITES_API_TOKEN}",
+                f"key-{SITES_API_TOKEN}": [
+                    {"credential": SITES_API_TOKEN},
+                    long_context,
+                ],
+            }
+        },
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 400
+    assert SITES_API_TOKEN not in response.text
+    detail = response.json()["detail"]
+    assert detail["message"] == "invalid credential [REDACTED]"
+    assert len(detail["key-[REDACTED]"][1]) <= 2048
+
+
+def test_list_sites_maps_upstream_authentication_failure(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        status_code=401,
+        json={"detail": f"Bearer {SITES_API_TOKEN}"},
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_auth_failed"
+    assert SITES_API_TOKEN not in response.text
+
+
+def test_list_sites_maps_network_error_to_upstream_unavailable(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_exception(
+        httpx.ConnectError("connection failed"),
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_list_sites_maps_invalid_json_to_upstream_unavailable(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        content=b"not-json",
+        headers={"Content-Type": "application/json"},
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["not-a-url", "ftp://sites.example.test", "https://"],
+)
+def test_list_sites_rejects_invalid_upstream_base_url(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    base_url: str,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", base_url)
+    monkeypatch.setattr(
+        settings,
+        "SITES_API_TOKEN",
+        SecretStr(SITES_API_TOKEN),
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "sites_not_available"
 
 
 def test_sites_api_token_repr_hides_secret(monkeypatch: pytest.MonkeyPatch) -> None:

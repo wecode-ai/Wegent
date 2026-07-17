@@ -13,6 +13,9 @@ from app.core.config import settings
 from app.schemas.site import SiteListResponse, SiteResponse
 from shared.telemetry.decorators import trace_async
 
+SITES_ERROR_TEXT_MAX_LENGTH = 2048
+SITES_REDACTED_VALUE = "[REDACTED]"
+
 
 class SitesNotAvailableError(RuntimeError):
     """Raised when the Sites integration is not fully configured."""
@@ -47,6 +50,12 @@ class SitesService:
         token = settings.SITES_API_TOKEN.get_secret_value().strip()
         if not base_url or not token:
             raise SitesNotAvailableError("Sites is not configured")
+        try:
+            parsed_url = httpx.URL(base_url)
+        except httpx.InvalidURL:
+            raise SitesNotAvailableError("Sites configuration is invalid") from None
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.host:
+            raise SitesNotAvailableError("Sites configuration is invalid")
         return base_url, token
 
     @trace_async(
@@ -90,7 +99,7 @@ class SitesService:
         if response.is_error:
             raise SitesUpstreamResponseError(
                 response.status_code,
-                self._response_detail(response),
+                self._response_detail(response, token),
             )
         if response.status_code == httpx.codes.NO_CONTENT:
             return None
@@ -102,20 +111,45 @@ class SitesService:
                 "Sites service returned an invalid response"
             ) from exc
 
-    @staticmethod
-    def _response_detail(response: httpx.Response) -> Any:
+    @classmethod
+    def _response_detail(cls, response: httpx.Response, token: str) -> Any:
         try:
             payload = response.json()
         except ValueError:
-            return response.text or f"Sites request failed: HTTP {response.status_code}"
+            detail = response.text or (
+                f"Sites request failed: HTTP {response.status_code}"
+            )
+            return cls._sanitize_error_detail(detail, token)
 
         if isinstance(payload, dict):
             error = payload.get("error")
             if isinstance(error, dict):
-                return error
-            if "detail" in payload:
-                return payload["detail"]
-        return payload if payload is not None else response.text
+                detail = error
+            elif "detail" in payload:
+                detail = payload["detail"]
+            else:
+                detail = payload
+        else:
+            detail = payload if payload is not None else response.text
+        return cls._sanitize_error_detail(detail, token)
+
+    @classmethod
+    def _sanitize_error_detail(cls, detail: Any, token: str) -> Any:
+        if isinstance(detail, str):
+            redacted = detail.replace(token, SITES_REDACTED_VALUE)
+            return redacted[:SITES_ERROR_TEXT_MAX_LENGTH]
+        if isinstance(detail, dict):
+            return {
+                cls._sanitize_error_detail(key, token): cls._sanitize_error_detail(
+                    value, token
+                )
+                for key, value in detail.items()
+            }
+        if isinstance(detail, list):
+            return [cls._sanitize_error_detail(item, token) for item in detail]
+        if isinstance(detail, tuple):
+            return tuple(cls._sanitize_error_detail(item, token) for item in detail)
+        return detail
 
     async def list_sites(
         self,
