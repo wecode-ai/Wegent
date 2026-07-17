@@ -17,6 +17,7 @@ import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
+import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
@@ -538,6 +539,21 @@ function CloudWorkStatusProbe() {
 function DeviceStatusProbe() {
   const workbench = useWorkbench()
   return <span data-testid="device-status">{workbench.state.devices[0]?.status ?? 'missing'}</span>
+}
+
+function RemoteRuntimeCacheProbe() {
+  const runtimeWork = useWorkbench().state.runtimeWork
+  const workspaces = runtimeWork?.projects.flatMap(project => project.deviceWorkspaces) ?? []
+  return (
+    <div>
+      <span data-testid="cached-runtime-task-titles">
+        {workspaces.flatMap(workspace => workspace.tasks.map(task => task.title)).join('|')}
+      </span>
+      <span data-testid="cached-runtime-workspace-availability">
+        {workspaces.map(workspace => String(workspace.available)).join('|')}
+      </span>
+    </div>
+  )
 }
 
 function ProjectSendProbe() {
@@ -1852,6 +1868,95 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('cloud-work-devices-check')).toHaveTextContent('empty')
     expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
+  })
+
+  test('restores cached remote task summaries when the device is offline at startup', async () => {
+    writeCachedRemoteRuntimeWork(1, {
+      projects: [
+        {
+          project: { key: '/srv/Wegent', name: 'Remote Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '10.201.3.200',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/srv/Wegent',
+              tasks: [
+                {
+                  taskId: 'remote-cached-task',
+                  workspacePath: '/srv/Wegent',
+                  title: 'Cached remote task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        listRuntimeWork: vi.fn().mockResolvedValue({
+          projects: [
+            {
+              project: {
+                key: 'remote-project-id',
+                sidebarStateKey: 'remote-project-id',
+                name: 'Remote Wegent',
+                kind: 'remote',
+                source: 'remote_project',
+                stateDeviceId: 'local-device',
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'remote-device',
+                  deviceName: '10.201.3.200',
+                  deviceStatus: 'offline',
+                  available: false,
+                  workspacePath: '/srv/Wegent',
+                  workspaceSource: 'remote',
+                  remoteHostId: 'remote-device',
+                  mapped: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        }),
+      }),
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            id: 2,
+            device_id: 'remote-device',
+            name: '10.201.3.200',
+            status: 'offline',
+            is_default: false,
+            device_type: 'remote',
+          }),
+        ]),
+        listRuntimeWork: vi.fn().mockResolvedValue({
+          projects: [],
+          chats: [],
+          totalTasks: 0,
+        }),
+      },
+    })
+
+    renderWorkbench(<RemoteRuntimeCacheProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cached-runtime-task-titles')).toHaveTextContent(
+        'Cached remote task'
+      )
+    )
+    expect(screen.getByTestId('cached-runtime-workspace-availability')).toHaveTextContent('false')
   })
 
   test('applies device online events immediately when refresh falls back would be stale', async () => {

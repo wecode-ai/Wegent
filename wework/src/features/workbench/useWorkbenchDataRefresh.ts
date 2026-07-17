@@ -21,6 +21,11 @@ import {
 import type { WorkbenchAction } from './workbenchReducer'
 import { getRememberedStandaloneDeviceId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
+import {
+  readCachedRemoteRuntimeWork,
+  reconcileCachedRemoteRuntimeWork,
+  writeCachedRemoteRuntimeWork,
+} from './remoteRuntimeWorkCache'
 
 interface UseWorkbenchDataRefreshOptions {
   user: User
@@ -30,6 +35,31 @@ interface UseWorkbenchDataRefreshOptions {
   services: WorkbenchServices
 }
 
+function createCloudRuntimeStateWithCache(runtimeWork: RuntimeWorkListResponse): CloudRuntimeState {
+  if (runtimeWork.projects.length === 0 && runtimeWork.chats.length === 0) {
+    return EMPTY_CLOUD_RUNTIME_STATE
+  }
+  return {
+    availability: 'stale',
+    current: null,
+    lastGood: {
+      revision: 0,
+      devices: [],
+      runtimeWork,
+      teams: [],
+      fetchedAt: null,
+      checks: {
+        teams: { status: 'idle', updatedAt: null, error: null },
+        devices: { status: 'idle', updatedAt: null, error: null },
+        runtimeWork: { status: 'stale', updatedAt: null, error: null },
+      },
+    },
+    inFlightRevision: null,
+    lastTrigger: null,
+    nextRevision: 1,
+  }
+}
+
 export function useWorkbenchDataRefresh({
   user,
   state,
@@ -37,9 +67,18 @@ export function useWorkbenchDataRefresh({
   executorClient,
   services,
 }: UseWorkbenchDataRefreshOptions) {
-  const [cloudRuntimeState, setCloudRuntimeState] =
-    useState<CloudRuntimeState>(EMPTY_CLOUD_RUNTIME_STATE)
-  const cloudRuntimeStateRef = useRef<CloudRuntimeState>(EMPTY_CLOUD_RUNTIME_STATE)
+  const initialCachedRemoteRuntimeWork = useMemo(
+    () => readCachedRemoteRuntimeWork(user.id),
+    [user.id]
+  )
+  const cachedRemoteRuntimeWorkRef = useRef({
+    userId: user.id,
+    runtimeWork: initialCachedRemoteRuntimeWork,
+  })
+  const [cloudRuntimeState, setCloudRuntimeState] = useState<CloudRuntimeState>(() =>
+    createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork)
+  )
+  const cloudRuntimeStateRef = useRef<CloudRuntimeState>(cloudRuntimeState)
   const cloudWorkStatus = useMemo(
     () => selectCloudWorkStatus(cloudRuntimeState),
     [cloudRuntimeState]
@@ -50,13 +89,22 @@ export function useWorkbenchDataRefresh({
     setCloudRuntimeState(next)
   }, [])
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Cloud work status mirrors service availability and must reset when the service is removed. */
+  useEffect(() => {
+    cachedRemoteRuntimeWorkRef.current = {
+      userId: user.id,
+      runtimeWork: initialCachedRemoteRuntimeWork,
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
+    updateCloudRuntimeState(createCloudRuntimeStateWithCache(initialCachedRemoteRuntimeWork))
+  }, [initialCachedRemoteRuntimeWork, updateCloudRuntimeState, user.id])
+
   useEffect(() => {
     if (!services.cloudBackgroundApi) {
-      updateCloudRuntimeState(EMPTY_CLOUD_RUNTIME_STATE)
+      updateCloudRuntimeState(
+        createCloudRuntimeStateWithCache(cachedRemoteRuntimeWorkRef.current.runtimeWork)
+      )
     }
   }, [services.cloudBackgroundApi, updateCloudRuntimeState])
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const refreshCloudBackgroundData = useCallback(
     async (
@@ -99,10 +147,32 @@ export function useWorkbenchDataRefresh({
 
       if (options?.isCancelled?.() || revision == null) return
 
+      const reconciledRuntimeWorkResult =
+        runtimeWorkResult?.status === 'fulfilled'
+          ? {
+              status: 'fulfilled' as const,
+              value: reconcileCachedRemoteRuntimeWork(
+                cachedRemoteRuntimeWorkRef.current.runtimeWork,
+                runtimeWorkResult.value,
+                devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
+              ),
+            }
+          : runtimeWorkResult
+      if (reconciledRuntimeWorkResult?.status === 'fulfilled') {
+        cachedRemoteRuntimeWorkRef.current = {
+          userId: user.id,
+          runtimeWork: writeCachedRemoteRuntimeWork(
+            user.id,
+            reconciledRuntimeWorkResult.value,
+            devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
+          ),
+        }
+      }
+
       const nextCloudState = finishCloudRuntimeSync(cloudRuntimeStateRef.current, revision, {
         teams: teamsResult,
         devices: devicesResult,
-        runtimeWork: runtimeWorkResult,
+        runtimeWork: reconciledRuntimeWorkResult,
       })
       updateCloudRuntimeState(nextCloudState)
 
@@ -120,7 +190,7 @@ export function useWorkbenchDataRefresh({
         ),
       })
     },
-    [dispatch, services.cloudBackgroundApi, updateCloudRuntimeState]
+    [dispatch, services.cloudBackgroundApi, updateCloudRuntimeState, user.id]
   )
 
   useEffect(() => {
