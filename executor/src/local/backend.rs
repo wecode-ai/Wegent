@@ -23,6 +23,7 @@ use crate::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
         session::{LocalSessionHandler, SessionType, TerminalEvent},
+        session_gateway::start_session_gateway,
         workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     },
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
@@ -122,6 +123,7 @@ pub struct LocalBackendRunner<
     task_controller: Option<Arc<dyn LocalTaskController>>,
     capability_sync_handler: Option<Arc<dyn CapabilitySyncRpcHandler>>,
     session_handler: Option<Arc<Mutex<LocalSessionHandler>>>,
+    start_session_gateway: bool,
     upgrade_handler: Option<Arc<dyn DeviceUpgradeHandler>>,
     upgrade_service: Option<Arc<dyn LocalUpgradeService>>,
     extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
@@ -161,6 +163,7 @@ where
         backend.session_handler = Some(Arc::new(Mutex::new(default_session_handler(Some(
             backend.client.config.local_workspace_root.clone(),
         )))));
+        backend.start_session_gateway = true;
         backend.upgrade_handler = Some(Arc::new(default_upgrade_handler(
             backend.client.clone(),
             backend.task_controller.clone(),
@@ -192,6 +195,7 @@ where
             task_controller: None,
             capability_sync_handler: None,
             session_handler: None,
+            start_session_gateway: false,
             upgrade_handler: None,
             upgrade_service: None,
             extension_handler: None,
@@ -225,6 +229,11 @@ where
 
     pub fn with_session_handler(mut self, handler: LocalSessionHandler) -> Self {
         self.session_handler = Some(Arc::new(Mutex::new(handler)));
+        self
+    }
+
+    pub fn without_session_gateway(mut self) -> Self {
+        self.start_session_gateway = false;
         self
     }
 
@@ -294,6 +303,14 @@ where
 
     pub async fn run_forever(self) -> Result<(), String> {
         self.register_handlers();
+        let _session_gateway = if self.start_session_gateway {
+            match &self.session_handler {
+                Some(handler) => start_session_gateway(Arc::clone(handler)).await?,
+                None => None,
+            }
+        } else {
+            None
+        };
         let mut retry_delay = self.client.config.reconnect_delay;
         write_executor_log_line(&local_backend_starting_log_line(
             &self.client.config.backend_url,

@@ -10,6 +10,7 @@ import {
 import {
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
   supportsRemoteTerminalSessions,
 } from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
@@ -26,6 +27,7 @@ import { buildVncPageUrl } from '@/lib/vnc'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
+import type { DeviceSessionResponse } from '@/types/devices'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
@@ -224,6 +226,9 @@ export function WorkspacePanelCards({
   })
   const localTerminalCheckReady = localTerminalCheck.key === localTerminalCheckKey
   const cloudToolsAvailable = Boolean(projectDevice && supportsCloudSessions(projectDevice))
+  const remoteIdeAvailable = Boolean(
+    projectDevice && (supportsCloudSessions(projectDevice) || supportsRemoteSessions(projectDevice))
+  )
   const remoteTerminalAvailable = Boolean(
     projectDevice && supportsRemoteTerminalSessions(projectDevice)
   )
@@ -255,15 +260,22 @@ export function WorkspacePanelCards({
     localTerminalSupported && localTerminalRuntimeAvailable && !localTerminalCheckReady
   )
   const localTerminalLaunchable = Boolean(localTerminalSupported && localTerminalRuntimeAvailable)
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
+  )
+  const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
   const localIdeLaunchable = Boolean(
-    localTerminalLaunchable && activeWorkspacePath?.trim() && localTerminalSupported
+    !remoteWorkspaceSession &&
+    localTerminalLaunchable &&
+    activeWorkspacePath?.trim() &&
+    localTerminalSupported
   )
   const projectTerminalAvailable =
     localTerminalLaunchable ||
     (!localTerminalSupported &&
       (Boolean(currentProject) || Boolean(workspaceSource === 'runtime' && activeWorkspacePath)) &&
       remoteTerminalAvailable)
-  const projectIdeAvailable = cloudToolsAvailable || localIdeLaunchable
+  const projectIdeAvailable = remoteIdeAvailable || localIdeLaunchable
   const hasLimitedProjectTools = Boolean(
     hasWorkspaceContext &&
     !cloudToolsAvailable &&
@@ -638,11 +650,26 @@ export function WorkspacePanelCards({
         return
       }
 
-      if (!currentProject) return
       if (!workspaceSessionApi) {
         throw new Error('Remote workspace session service is unavailable')
       }
-      const session = await workspaceSessionApi.startProjectCodeServer(currentProject.id)
+      let session: ProjectDeviceSessionResponse | DeviceSessionResponse | null
+      if (useDeviceCodeServerSession) {
+        if (!activeWorkspaceDeviceId || !activeWorkspacePath) {
+          throw new Error('Remote workspace target is missing')
+        }
+        session = await workspaceSessionApi.startDeviceCodeServer(
+          activeWorkspaceDeviceId,
+          activeWorkspacePath
+        )
+      } else {
+        session = currentProject
+          ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
+          : null
+      }
+      if (!session) {
+        throw new Error('IDE session target is missing')
+      }
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }

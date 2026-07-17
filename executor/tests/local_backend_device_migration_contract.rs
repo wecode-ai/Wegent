@@ -133,7 +133,9 @@ async fn capability_sync_event_returns_ack_and_heartbeat_uses_reporter() {
 #[tokio::test]
 async fn default_local_backend_runner_wires_capability_sync_and_code_server_session() {
     let transport = RecordingTransport::default();
-    let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
+    let config = local_backend_config();
+    let session_dir = config.local_workspace_root.join("code-session");
+    let runner = LocalBackendRunner::new(config, transport.clone());
     runner.register_handlers();
 
     let capability_ack = transport.handler("device:sync_capabilities").unwrap()(json!({
@@ -146,10 +148,6 @@ async fn default_local_backend_runner_wires_capability_sync_and_code_server_sess
     .unwrap();
     assert_eq!(capability_ack["success"], true, "{capability_ack}");
 
-    let session_dir = std::env::temp_dir().join(format!(
-        "wegent-default-runner-code-session-{}",
-        std::process::id()
-    ));
     let session_ack = transport
         .handler("device:start_code_server_session")
         .unwrap()(json!({

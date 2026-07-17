@@ -899,6 +899,7 @@ describe('DesktopWorkbenchLayout', () => {
           startProjectTerminal: startTerminalSessionMock,
           startProjectCodeServer: startCodeServerSessionMock,
           startDeviceTerminal: startDeviceTerminalSessionMock,
+          startDeviceCodeServer: vi.fn(),
           getDeviceVncConfig: getDeviceVncConfigMock,
           createRemoteTerminalClient: createRemoteTerminalClientMock,
         },

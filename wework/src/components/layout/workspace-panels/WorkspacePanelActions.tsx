@@ -1,11 +1,13 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
-import { createHttpClient } from '@/api/http'
-import { createProjectApi } from '@/api/projects'
-import { getRuntimeConfig } from '@/config/runtime'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice, supportsLocalTerminalLaunch } from '@/lib/device-capabilities'
+import {
+  supportsCloudSessions,
+  supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
+} from '@/lib/device-capabilities'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
   type LocalWorkspaceOpenerId,
@@ -34,6 +36,7 @@ interface WorkspacePanelActionsProps {
   currentProject?: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
+  workspaceSessionApi?: WorkspaceSessionApi
   environmentInfo: EnvironmentInfo
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
@@ -60,6 +63,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   currentProject = null,
   devices = [],
   workspaceTarget = null,
+  workspaceSessionApi,
   environmentInfo,
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
@@ -90,11 +94,23 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const showRightPanelToggle =
     mode === 'all' || mode === 'panel-toggles' || mode === 'right-panel-toggle'
   const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
-  const canOpenCodeServer = Boolean(currentProject && codeServerProjectDeviceId)
+  const canOpenCodeServer = Boolean(
+    codeServerProjectDeviceId && (currentProject || workspaceTarget)
+  )
   const codeServerDevice = codeServerProjectDeviceId
     ? devices.find(device => device.device_id === codeServerProjectDeviceId)
     : undefined
-  const codeServerEnabled = Boolean(codeServerDevice && isCloudDevice(codeServerDevice))
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' ||
+    (codeServerDevice &&
+      (supportsCloudSessions(codeServerDevice) || supportsRemoteSessions(codeServerDevice)))
+  )
+  const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
+  const codeServerEnabled = Boolean(
+    workspaceSessionApi &&
+    codeServerDevice &&
+    (supportsCloudSessions(codeServerDevice) || supportsRemoteSessions(codeServerDevice))
+  )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
   const projectUsesLocalWorkspace = Boolean(
@@ -103,6 +119,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       currentProject.config?.workspace?.source === 'local_path')
   )
   const localWorkspaceEnabled = Boolean(
+    !remoteWorkspaceSession &&
     localWorkspacePath?.trim() &&
     isLocalTerminalAvailable() &&
     (projectUsesLocalWorkspace ||
@@ -117,10 +134,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       : t('workbench.project_ide_cloud_only_tooltip')
   const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
   const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
-  const projectApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
 
   const getStartFailedMessage = (error: unknown) => {
     if (error instanceof Error && error.message) {
@@ -130,11 +143,27 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   }
 
   const handleOpenCodeServer = async () => {
-    if (!currentProject || ideLoading || !codeServerEnabled) return
+    const workspacePath = localWorkspacePath?.trim()
+    if (
+      !codeServerProjectDeviceId ||
+      !workspaceSessionApi ||
+      ideLoading ||
+      !codeServerEnabled ||
+      (useDeviceCodeServerSession && !workspacePath)
+    ) {
+      return
+    }
     setIdeLoading(true)
     setIdeError(null)
     try {
-      const session = await projectApi.startCodeServerSession(currentProject.id)
+      const session = useDeviceCodeServerSession
+        ? await workspaceSessionApi.startDeviceCodeServer(codeServerProjectDeviceId, workspacePath)
+        : currentProject
+          ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
+          : null
+      if (!session) {
+        throw new Error('IDE session target is missing')
+      }
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }

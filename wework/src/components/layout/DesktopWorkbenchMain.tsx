@@ -1323,6 +1323,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       currentProject={currentProject}
       devices={devices}
       workspaceTarget={workspaceTarget}
+      workspaceSessionApi={workspaceSessionApi}
       environmentInfo={environmentInfo}
       environmentInfoPopoverContainer={environmentInfoPanelElement}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
