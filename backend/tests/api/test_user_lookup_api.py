@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.api.endpoints.users import router
 from app.core import security
+from app.core.security import get_password_hash
 from app.models.user import User
 
 
@@ -32,9 +33,25 @@ def test_get_users_by_ids_preserves_order_and_omits_inactive_users(
     user_lookup_client: TestClient,
     test_db: Session,
 ):
-    first = User(user_name="first", email="first@example.com", is_active=True)
-    second = User(user_name="second", email="second@example.com", is_active=True)
-    inactive = User(user_name="inactive", email="inactive@example.com", is_active=False)
+    password_hash = get_password_hash("password")
+    first = User(
+        user_name="first",
+        password_hash=password_hash,
+        email="first@example.com",
+        is_active=True,
+    )
+    second = User(
+        user_name="second",
+        password_hash=password_hash,
+        email="second@example.com",
+        is_active=True,
+    )
+    inactive = User(
+        user_name="inactive",
+        password_hash=password_hash,
+        email="inactive@example.com",
+        is_active=False,
+    )
     test_db.add_all([first, second, inactive])
     test_db.commit()
 

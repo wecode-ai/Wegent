@@ -209,18 +209,15 @@ def test_rent_subscription_inherits_private_notification_for_renter(
         }
     }
     flag_modified(source, "json")
-    owner_follow = (
-        test_db.query(SubscriptionFollow)
-        .filter(
-            SubscriptionFollow.subscription_id == subscription_id,
-            SubscriptionFollow.follower_user_id == test_user.id,
-        )
-        .one()
+    owner_follow = SubscriptionFollow(
+        subscription_id=subscription_id,
+        follower_user_id=test_user.id,
+        config=SubscriptionFollowConfig(
+            notification_level=NotificationLevel.NOTIFY,
+            notification_channel_ids=[123],
+        ).model_dump_json(),
     )
-    owner_follow.config = SubscriptionFollowConfig(
-        notification_level=NotificationLevel.NOTIFY,
-        notification_channel_ids=[123],
-    ).model_dump_json()
+    test_db.add(owner_follow)
     test_db.commit()
 
     rental = subscription_market_service.rent_subscription(
