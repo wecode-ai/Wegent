@@ -1322,7 +1322,7 @@
     "quick_phrases_empty": "没有匹配的快捷短语",
     "quick_phrases_description": "创建和排序输入框中常用的短语。",
     "quick_phrases_save_error": "无法保存快捷短语，请重试",
-    "quick_phrase_add": "新建短语",
+    "quick_phrase_add": "新增快捷短语",
     "quick_phrase_edit": "编辑快捷短语",
     "quick_phrase_title": "标题",
     "quick_phrase_content": "内容",

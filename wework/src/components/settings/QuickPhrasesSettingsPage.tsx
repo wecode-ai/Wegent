@@ -63,17 +63,6 @@ export function QuickPhrasesSettingsPage() {
       <SettingsPageHeader
         title={t('workbench.quick_phrases', '快捷短语')}
         description={t('workbench.quick_phrases_description', '创建和排序输入框中常用的短语。')}
-        actions={
-          <button
-            type="button"
-            data-testid="add-quick-phrase-button"
-            onClick={() => setEditing(emptyPhrase())}
-            className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-sm text-background"
-          >
-            <Plus className="h-4 w-4" />
-            {t('workbench.quick_phrase_add', '新建短语')}
-          </button>
-        }
       />
       {error && (
         <div
@@ -83,6 +72,15 @@ export function QuickPhrasesSettingsPage() {
           {error}
         </div>
       )}
+      <button
+        type="button"
+        data-testid="add-quick-phrase-button"
+        onClick={() => setEditing(emptyPhrase())}
+        className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border px-4 py-3 text-sm font-medium text-text-primary hover:border-blue-500 hover:bg-blue-500/5"
+      >
+        <Plus className="h-4 w-4" />
+        {t('workbench.quick_phrase_add', '新增快捷短语')}
+      </button>
       <div className="space-y-1">
         {phrases.map((phrase, index) => (
           <div
@@ -221,7 +219,7 @@ export function QuickPhrasesSettingsPage() {
                 type="button"
                 data-testid="quick-phrase-save-button"
                 onClick={commitEditing}
-                className="h-8 rounded-lg bg-foreground px-3 text-sm text-background"
+                className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
               >
                 {t('common.save', '保存')}
               </button>
