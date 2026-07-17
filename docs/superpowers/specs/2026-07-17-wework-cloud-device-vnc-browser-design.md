@@ -16,7 +16,8 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 - 内置浏览器接受请求后，自动退出设置页并回到当前工作台。
 - 展开当前工作台右侧浏览器面板，并在现有浏览器标签中展示 VNC 桌面。
 - 对加载、离线、失败和重试状态提供明确且可访问的反馈。
-- 保持现有 VNC 配置接口、WebSocket 代理、`vnc.html` 和浏览器 WebView 生命周期。
+- 保持现有 VNC 配置接口、后端 `/vnc-proxy/{deviceId}` WebSocket 代理、
+  `vnc.html` 和浏览器 WebView 生命周期。
 
 ## 非目标
 
@@ -39,8 +40,9 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 ## 组件与职责
 
 - `VncDesktopButton`：管理配置请求、加载状态、内置浏览器请求和错误反馈。
-- `buildVncPageUrl`：继续根据设备 ID、sandbox ID、认证令牌和应用 base path 构建
-  VNC 页面 URL。
+- `buildVncPageUrl`：根据设备 ID、sandbox ID、当前云连接的 `socketBaseUrl`、云端
+  token 和应用 base path 构建 VNC 页面 URL。页面仍来自 Wework 本地资源，WebSocket
+  则连接云端 `/vnc-proxy/{deviceId}`。
 - `requestEmbeddedBrowserOpen`：向已挂载的当前工作台浏览器监听器发送明确的打开请求，
   并返回请求是否被接受。
 - `ConnectionsSettingsPage`：向云设备区域传递“成功打开后离开设置页”的回调；该回调
@@ -51,7 +53,8 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 
 1. 在线云设备显示可用的“桌面”按钮；离线设备按钮禁用。
 2. 用户点击后，按钮进入加载和禁用状态，防止重复请求。
-3. Wework 请求该设备的 VNC 配置，并使用返回的 sandbox ID 构建 VNC 页面 URL。
+3. Wework 请求该设备的 VNC 配置，并使用返回的 sandbox ID、当前云连接地址和 token
+   构建 VNC 页面 URL。
 4. Wework 调用 `requestEmbeddedBrowserOpen`，目标为当前工作台默认浏览器标签。
 5. 当前工作台监听器接收 URL，选择浏览器标签并展开右侧面板。
 6. 请求被接受后，设置页执行现有返回操作，路由回工作台；用户看到右侧 VNC 桌面。
@@ -65,6 +68,8 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 - 失败提示使用可访问的警告语义，重试开始时清除，成功后保持清除。
 - 失败路径不调用系统浏览器，也不把失败显示成成功跳转。
 - 日志不得包含带认证令牌的完整 VNC URL。
+- 不再使用不存在的 `/api/cloud-devices/{deviceId}/vnc-ws` 路径，也不使用可能属于
+  本地运行时的 `auth_token` 代替当前云连接 token。
 
 ## 文案与可访问性
 
@@ -119,7 +124,8 @@ invisible to the user.
 
 ## Chosen Design
 
-After loading the VNC configuration and building the page URL,
+After loading the VNC configuration and building the page URL from the active
+cloud connection's `socketBaseUrl` and token,
 `VncDesktopButton` sends an explicit `requestEmbeddedBrowserOpen` request to the
 current workbench. It invokes the existing leave-settings callback only when
 that request is accepted.
@@ -132,8 +138,9 @@ replaces the existing page in that single browser tab.
 
 1. Only an online cloud device has an enabled Desktop action.
 2. A click disables the action while Wework loads the VNC configuration.
-3. Wework builds the authenticated VNC page URL and sends it to the embedded
-   browser request channel.
+3. Wework keeps the page on the local app origin, points its WebSocket URL at
+   the cloud backend's `/vnc-proxy/{deviceId}` endpoint, and sends the page URL
+   to the embedded browser request channel.
 4. Once accepted, Wework closes settings and reveals the current workbench and
    its right browser panel.
 5. If configuration loading fails or no listener accepts the request, Wework
@@ -141,7 +148,9 @@ replaces the existing page in that single browser tab.
    error. It never opens the system browser on this failure path.
 
 The implementation must not log a complete VNC URL because it contains the
-encoded authentication token.
+encoded cloud authentication token. It must not use the obsolete
+`/api/cloud-devices/{deviceId}/vnc-ws` path or substitute the local runtime's
+`auth_token` for the active cloud-connection token.
 
 ## Verification
 
