@@ -2,8 +2,10 @@ import type { ToolBlock } from '@/types/workbench'
 
 const COMMAND_TOOLS = new Set([
   'bash',
+  'exec',
   'exec_command',
   'execute_command',
+  'functions.exec',
   'functions.exec_command',
   'run_terminal_command',
 ])

@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
-import { ChevronDown, Copy, CopyCheck, FileDiff, Search } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
@@ -8,7 +8,11 @@ import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
-import { isWebSearchToolName } from './toolBlockActivity'
+import {
+  getToolActivityFilePaths,
+  getToolActivityKind,
+  isWebSearchToolName,
+} from './toolBlockActivity'
 import {
   getFileInputPath,
   getFileInputPaths,
@@ -43,6 +47,7 @@ export function ToolBlockItem({
   onLoadFullTranscript,
   loadingFullTranscript = false,
 }: ToolBlockItemProps) {
+  const { t } = useTranslation('chat')
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
 
@@ -59,7 +64,19 @@ export function ToolBlockItem({
     return <ProcessFileChangesBlockItem block={block} />
   }
 
-  const { icon, label } = getBlockLabel(block)
+  const { icon, label } = getBlockLabel(block, {
+    waitRunning: t('tool_activity.wait_running'),
+    waitDone: t('tool_activity.wait_done'),
+    waitError: t('tool_activity.wait_error'),
+    callRunning: name => t('tool_activity.call_running', { name }),
+    callDone: name => t('tool_activity.call_done', { name }),
+    callError: name => t('tool_activity.call_error', { name }),
+    fileCount: count => t('tool_activity.file_count', { count }),
+    fileFallback: t('tool_activity.file_fallback'),
+    searchRunning: t('tool_activity.search_running'),
+    searchDone: t('tool_activity.search_done'),
+    searchError: t('tool_activity.search_error'),
+  })
   const workspaceFilePath = getWorkspaceFilePath(block)
   const hasDetail = hasBlockDetail(block)
   const expanded = hasDetail && (forceExpanded || userExpanded)
@@ -155,7 +172,6 @@ function ProcessFileChangesBlockItem({
   const { t } = useTranslation('chat')
   const summary = block.fileChanges
   const isRunning = block.status !== 'done' && block.status !== 'error'
-  const [expanded, setExpanded] = useState(false)
   const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
 
   if (!summary.files.length) return null
@@ -166,265 +182,59 @@ function ProcessFileChangesBlockItem({
       data-processing-block-id={block.id}
       data-testid="process-file-changes-block"
     >
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(value => !value)}
-        className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
-      >
-        <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-        <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t, isRunning)}</span>
-        <FileChangeLineStats summary={summary} isRunning={isRunning} />
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
-          strokeWidth={2}
-        />
-      </button>
-      {expanded ? (
-        <div className="mt-2 min-w-0 space-y-1.5">
-          {summary.files.map(file => {
-            const previewLines = fileDiffPreviewLines(file, summary)
-            const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
-            return (
-              <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
-                <button
-                  type="button"
-                  disabled={previewLines.length === 0}
-                  onClick={() =>
-                    setExpandedFilePath(current => (current === file.path ? null : file.path))
-                  }
-                  className="group flex max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
-                >
-                  <span className="min-w-0 truncate">{fileChangeRowLabel(file, t)}</span>
-                  {!file.binary ? (
-                    <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
-                      <span className="text-green-600">+{file.additions}</span>
-                      <span className="text-red-500">-{file.deletions}</span>
-                    </span>
-                  ) : null}
-                  {previewLines.length > 0 ? (
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform group-hover:text-text-secondary ${
-                        fileExpanded ? '' : '-rotate-90'
-                      }`}
-                      strokeWidth={2}
-                    />
-                  ) : null}
-                </button>
-                {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
-              </div>
-            )
-          })}
-        </div>
-      ) : null}
+      <div className="flex min-w-0 flex-col gap-1.5">
+        {summary.files.map(file => {
+          const previewLines = fileDiffPreviewLines(file, summary)
+          const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
+          return (
+            <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
+              <button
+                type="button"
+                disabled={previewLines.length === 0}
+                aria-expanded={previewLines.length > 0 ? fileExpanded : undefined}
+                onClick={() =>
+                  setExpandedFilePath(current => (current === file.path ? null : file.path))
+                }
+                className="group flex max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+              >
+                <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
+                <span className="min-w-0 truncate">{fileChangeRowLabel(file, t, isRunning)}</span>
+                {!file.binary ? (
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
+                    <span className="text-green-600">+{file.additions}</span>
+                    <span className="text-red-500">-{file.deletions}</span>
+                  </span>
+                ) : null}
+                {previewLines.length > 0 ? (
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform group-hover:text-text-secondary ${
+                      fileExpanded ? '' : '-rotate-90'
+                    }`}
+                    strokeWidth={2}
+                  />
+                ) : null}
+              </button>
+              {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-type FileChangeStatBlock = {
-  id: string
-  additions: number
-  deletions: number
-}
-
-type FileChangeStatBlockStyle = CSSProperties & {
-  '--file-change-stat-addition-height': string
-  '--file-change-stat-deletion-height': string
-  '--file-change-stat-blocks-width': string
-  '--file-change-stat-x': string
-  '--file-change-stat-alpha': string
-}
-
-function FileChangeLineStats({
-  summary,
-  isRunning,
-}: {
-  summary: TurnFileChangesSummary
-  isRunning: boolean
-}) {
-  const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
-  const visibleStatBlocks =
-    isRunning && statBlocks.length > 0 ? statBlocks : buildStaticFileChangeStatBlocks(summary)
-  const previousRef = useRef({
-    artifactId: summary.artifact_id,
-    additions: summary.additions,
-    deletions: summary.deletions,
-  })
-
-  useEffect(() => {
-    const previous = previousRef.current
-    if (previous.artifactId !== summary.artifact_id) {
-      previousRef.current = {
-        artifactId: summary.artifact_id,
-        additions: summary.additions,
-        deletions: summary.deletions,
-      }
-      setStatBlocks([])
-      return
-    }
-
-    const addedDelta = Math.max(0, summary.additions - previous.additions)
-    const deletedDelta = Math.max(0, summary.deletions - previous.deletions)
-    previousRef.current = {
-      artifactId: summary.artifact_id,
-      additions: summary.additions,
-      deletions: summary.deletions,
-    }
-
-    if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
-
-    const now = Date.now()
-    setStatBlocks(current =>
-      [
-        ...current,
-        {
-          id: `${now}-${addedDelta}-${deletedDelta}`,
-          additions: addedDelta,
-          deletions: deletedDelta,
-        },
-      ].slice(-6)
-    )
-  }, [isRunning, summary.additions, summary.artifact_id, summary.deletions])
-
-  return (
-    <span className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums">
-      <span className="inline-flex items-center text-green-600">
-        +<AnimatedChangeNumber value={summary.additions} deltaPrefix="+" />
-      </span>
-      <span className="inline-flex items-center text-red-500">
-        -<AnimatedChangeNumber value={summary.deletions} deltaPrefix="-" />
-      </span>
-      {visibleStatBlocks.length > 0 ? <FileChangeStatBlocks blocks={visibleStatBlocks} /> : null}
-    </span>
-  )
-}
-
-function buildStaticFileChangeStatBlocks(summary: TurnFileChangesSummary): FileChangeStatBlock[] {
-  const changedFiles = summary.files.filter(file => !file.binary)
-  if (changedFiles.length > 0) {
-    return changedFiles.slice(-6).map(file => ({
-      id: `${file.path}:${file.additions}:${file.deletions}`,
-      additions: file.additions,
-      deletions: file.deletions,
-    }))
-  }
-
-  if (summary.additions === 0 && summary.deletions === 0) return []
-  return [
-    {
-      id: `${summary.artifact_id}:${summary.additions}:${summary.deletions}`,
-      additions: summary.additions,
-      deletions: summary.deletions,
-    },
-  ]
-}
-
-function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPrefix: '+' | '-' }) {
-  const previousValueRef = useRef(value)
-  const [delta, setDelta] = useState(0)
-  const [animationId, setAnimationId] = useState(0)
-
-  useEffect(() => {
-    if (previousValueRef.current === value) return
-    const deltaValue = Math.abs(value - previousValueRef.current)
-    previousValueRef.current = value
-    setDelta(0)
-    const frame = requestAnimationFrame(() => {
-      setDelta(deltaValue)
-      setAnimationId(current => current + 1)
-    })
-    const timeout = window.setTimeout(() => setDelta(0), 560)
-    return () => {
-      cancelAnimationFrame(frame)
-      window.clearTimeout(timeout)
-    }
-  }, [value])
-
-  return (
-    <span className="file-change-delta-number">
-      <span className="file-change-rolling-viewport">
-        <span
-          key={`${value}-${animationId}`}
-          className={`file-change-rolling-value ${delta > 0 ? 'is-rolling' : ''}`}
-        >
-          {value}
-        </span>
-      </span>
-      {delta > 0 ? (
-        <span key={`${deltaPrefix}${delta}-${value}`} className="file-change-delta-badge">
-          {deltaPrefix}
-          {delta}
-        </span>
-      ) : null}
-    </span>
-  )
-}
-
-function FileChangeStatBlocks({ blocks }: { blocks: FileChangeStatBlock[] }) {
-  const width = Math.max(6, (blocks.length - 1) * 7 + 6)
-
-  return (
-    <span
-      className="file-change-stat-blocks"
-      aria-hidden="true"
-      style={{ '--file-change-stat-blocks-width': `${width}px` } as FileChangeStatBlockStyle}
-    >
-      {blocks.map((block, index) => {
-        const age = blocks.length - index - 1
-        const additionHeight = block.additions > 0 ? Math.min(10, 3 + block.additions * 1.6) : 0
-        const deletionHeight = block.deletions > 0 ? Math.min(10, 3 + block.deletions * 1.6) : 0
-        return (
-          <span
-            key={block.id}
-            className="file-change-stat-block"
-            style={
-              {
-                '--file-change-stat-addition-height': `${additionHeight}px`,
-                '--file-change-stat-deletion-height': `${deletionHeight}px`,
-                '--file-change-stat-x': `${index * 7}px`,
-                '--file-change-stat-alpha': `${Math.max(0.28, 0.96 - age * 0.11)}`,
-              } as FileChangeStatBlockStyle
-            }
-          >
-            {block.additions > 0 ? <span className="file-change-stat-segment is-addition" /> : null}
-            {block.deletions > 0 ? <span className="file-change-stat-segment is-deletion" /> : null}
-          </span>
-        )
-      })}
-    </span>
-  )
-}
-
-function fileChangesSummaryLabel(
-  summary: TurnFileChangesSummary,
+function fileChangeRowLabel(
+  file: TurnFileChangeItem,
   t: ReturnType<typeof useTranslation>['t'],
   isRunning = false
 ): string {
-  const changeType = uniformChangeType(summary.files)
-  const count = summary.file_count || summary.files.length
-  if (isRunning) {
-    if (changeType === 'created') return t('file_changes.creating_files', { count })
-    if (changeType === 'deleted') return t('file_changes.deleting_files', { count })
-    if (changeType === 'renamed') return t('file_changes.renaming_files', { count })
-    return t('file_changes.editing_files', { count })
-  }
-  if (changeType === 'created') return t('file_changes.created_files', { count })
-  if (changeType === 'deleted') return t('file_changes.deleted_files', { count })
-  if (changeType === 'renamed') return t('file_changes.renamed_files', { count })
-  return t('file_changes.edited_files', { count })
-}
-
-function uniformChangeType(files: TurnFileChangeItem[]): TurnFileChangeItem['change_type'] | null {
-  const first = files[0]?.change_type
-  if (!first) return null
-  return files.every(file => file.change_type === first) ? first : null
-}
-
-function fileChangeRowLabel(
-  file: TurnFileChangeItem,
-  t: ReturnType<typeof useTranslation>['t']
-): string {
   const filename = basename(file.path)
+  if (isRunning) {
+    if (file.change_type === 'created') return t('file_changes.creating_file', { filename })
+    if (file.change_type === 'deleted') return t('file_changes.deleting_file', { filename })
+    if (file.change_type === 'renamed') return t('file_changes.renaming_file', { filename })
+    return t('file_changes.editing_file', { filename })
+  }
   switch (file.change_type) {
     case 'created':
       return t('file_changes.created_file', { filename })
@@ -867,11 +677,51 @@ function reactNodeToText(node: ReactNode): string {
   return ''
 }
 
-function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string } {
+type GenericToolLabels = {
+  waitRunning: string
+  waitDone: string
+  waitError: string
+  callRunning: (name: string) => string
+  callDone: (name: string) => string
+  callError: (name: string) => string
+  fileCount: (count: number) => string
+  fileFallback: string
+  searchRunning: string
+  searchDone: string
+  searchError: string
+}
+
+function getBlockLabel(
+  block: ToolBlock,
+  genericLabels: GenericToolLabels
+): { icon: React.ReactNode; label: string } {
   const name = block.toolName.toLowerCase()
   const prefix = getToolStatusPrefix(block)
 
   if (isCommandToolName(name)) {
+    const activityKind = getToolActivityKind(block)
+    if (activityKind === 'file') {
+      const paths = getToolActivityFilePaths(block)
+      const target =
+        paths.length === 1
+          ? basename(paths[0])
+          : paths.length > 1
+            ? genericLabels.fileCount(paths.length)
+            : genericLabels.fileFallback
+      return { icon: <FileIcon />, label: `${prefix.read} ${target}` }
+    }
+    if (activityKind === 'search') {
+      const action =
+        block.status === 'error'
+          ? genericLabels.searchError
+          : block.status === 'done'
+            ? genericLabels.searchDone
+            : genericLabels.searchRunning
+      return {
+        icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
+        label: action,
+      }
+    }
     const command = getInputField(block, 'command', 'cmd', 'commandLine')
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
     return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
@@ -894,7 +744,46 @@ function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string
   if (isGuidanceToolName(name)) {
     return { icon: <ToolIcon />, label: prefix.guidance }
   }
-  return { icon: <ToolIcon />, label: prefix.generic }
+
+  return getGenericToolLabel(block, genericLabels)
+}
+
+function getGenericToolLabel(
+  block: ToolBlock,
+  labels: GenericToolLabels
+): { icon: React.ReactNode; label: string } {
+  const name = getReadableToolName(block.toolName)
+  const normalizedName = name.toLowerCase()
+
+  if (normalizedName.includes('wait')) {
+    const label =
+      block.status === 'error'
+        ? labels.waitError
+        : block.status === 'done'
+          ? labels.waitDone
+          : labels.waitRunning
+    return {
+      icon: <Clock3 className="h-4 w-4" strokeWidth={1.7} />,
+      label,
+    }
+  }
+
+  const label =
+    block.status === 'error'
+      ? labels.callError(name)
+      : block.status === 'done'
+        ? labels.callDone(name)
+        : labels.callRunning(name)
+  return {
+    icon: <Wrench className="h-4 w-4" strokeWidth={1.7} />,
+    label,
+  }
+}
+
+function getReadableToolName(toolName: string): string {
+  const normalized = toolName.trim()
+  const leaf = normalized.split(/\.|__/).filter(Boolean).at(-1) ?? normalized
+  return leaf.replaceAll('_', ' ')
 }
 
 function getFileToolLabel(prefix: string, block: ToolBlock, action: string): string {
