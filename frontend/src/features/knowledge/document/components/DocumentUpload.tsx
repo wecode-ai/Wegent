@@ -196,6 +196,21 @@ export function DocumentUpload({
   // Track pending files count to auto-start upload
   const pendingCount = state.files.filter(f => f.status === 'pending').length
 
+  // Eagerly load KB extensions on mount so the video upload provider (and any
+  // other side-effect registrations in @wecode/features/knowledge) is wired
+  // before the user picks a video. Without this, getVideoUploader() returns
+  // null on first upload (the module is otherwise only loaded lazily by the
+  // permission panel / download path) and the upload is wrongly rejected as
+  // "video upload unavailable". Open-source builds have no @wecode bundle, so
+  // loadKBExtensions() is a no-op there.
+  useEffect(() => {
+    import('../extension-loader')
+      .then(({ loadKBExtensions }) => loadKBExtensions())
+      .catch(() => {
+        /* swallow: open-source build has no @wecode bundle */
+      })
+  }, [])
+
   // Auto-start upload when there are pending files and not currently uploading
   useEffect(() => {
     if (pendingCount > 0 && !state.isUploading) {

@@ -805,7 +805,7 @@ export interface WeiboChunkUploadResponse {
  * @param file - File to calculate MD5 for
  * @returns MD5 hash string
  */
-async function calculateMD5Chunked(file: File): Promise<string> {
+export async function calculateMD5Chunked(file: File): Promise<string> {
   const chunkSize = 10 * 1024 * 1024 // 10MB chunks
   const spark = new SparkMD5.ArrayBuffer()
 
@@ -985,7 +985,7 @@ export function getWeiboChunkUploadError(response: WeiboChunkUploadResponse): st
   )
 }
 
-function getWeiboChunkTasks(file: File, chunkSize: number): WeiboChunkUploadTask[] {
+export function getWeiboChunkTasks(file: File, chunkSize: number): WeiboChunkUploadTask[] {
   const totalChunks = Math.ceil(file.size / chunkSize)
 
   return Array.from({ length: totalChunks }, (_, index) => {
@@ -1047,7 +1047,7 @@ async function uploadWeiboChunkWithRetry(
   }
 }
 
-async function uploadWeiboChunksConcurrently(
+export async function uploadWeiboChunksConcurrently(
   tasks: WeiboChunkUploadTask[],
   params: {
     auth: string

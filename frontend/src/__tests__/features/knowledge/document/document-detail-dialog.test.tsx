@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 
 const mockRouterPush = jest.fn()
 const mockDownloadAttachment = jest.fn()
+const mockIsVideoFileName = jest.fn(() => false) as jest.Mock
 let mockDocumentSummary: DocumentSummary | null = null
 const mockDialogContent = jest.fn(
   ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
@@ -67,6 +68,7 @@ jest.mock('@/apis/attachments', () => ({
   downloadAttachment: (...args: unknown[]) => mockDownloadAttachment(...args),
   formatFileSize: (bytes: number) => `${bytes} B`,
   isImageExtension: () => false,
+  isVideoFileName: (...args: unknown[]) => mockIsVideoFileName(...args),
 }))
 
 jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
@@ -142,6 +144,8 @@ beforeEach(() => {
   mockRouterPush.mockClear()
   mockDialogContent.mockClear()
   mockDownloadAttachment.mockReset()
+  mockIsVideoFileName.mockReset()
+  mockIsVideoFileName.mockReturnValue(false)
   mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
 })

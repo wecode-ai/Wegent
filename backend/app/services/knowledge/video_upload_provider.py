@@ -74,8 +74,14 @@ class VideoUploadProvider(Protocol):
         file_size: int,
         file_extension: str,
         uploader: User,
+        file_hash: str = "",
     ) -> VideoUploadTarget:
-        """Return the target the frontend uploads the binary to."""
+        """Return the target the frontend uploads the binary to.
+
+        ``file_hash`` is an optional content digest (e.g. md5 hex) some
+        providers require to initialize an upload session; empty when the
+        client did not supply one.
+        """
         ...
 
     def complete_upload(
