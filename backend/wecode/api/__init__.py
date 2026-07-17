@@ -46,6 +46,8 @@ import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_s
 import wecode.service.executor_job_patch  # noqa: F401  patch JobService with K8s orphan pod cleanup capabilities
 import wecode.service.executor_kinds_patch  # noqa: F401  patch executor_kinds_service with K8s orphan pod cleanup methods
 import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
+import wecode.service.knowledge.weibo_dispatch_validator  # noqa: F401  register Weibo dispatch validator (replaces weibo_multimodal_patch monkeypatch)
+import wecode.service.knowledge.weibo_video_upload_provider  # noqa: F401  register Weibo VideoUploadProvider (two-phase KB video upload)
 import wecode.service.llm_proxy_service_patch  # noqa: F401  resolve user API keys for the LLM proxy gateway
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
@@ -55,6 +57,7 @@ from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from app.core.config import settings
 from wecode.api.admin_published_apps import router as admin_published_apps_router
+from wecode.api.agent_usage import router as agent_usage_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
@@ -62,6 +65,13 @@ from wecode.api.department_search import router as department_search_router
 from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
 from wecode.api.evaluation import router as evaluation_router
 from wecode.api.external_knowledge import router as external_knowledge_router
+from wecode.api.internal.attachments_video import (
+    router as internal_attachments_video_router,
+)
+from wecode.api.internal.multimodal_gcs import router as internal_multimodal_gcs_router
+from wecode.api.knowledge_video_download import (
+    router as knowledge_video_download_router,
+)
 from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
@@ -130,7 +140,27 @@ def _register_unavailable_external_knowledge_provider(name: str, reason: str) ->
 _register_ap_external_knowledge_provider()
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
+api_router.include_router(
+    agent_usage_router,
+    prefix="/wecode/agent-usage",
+    tags=["wecode", "agent-usage"],
+)
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
+# Internal multimodal endpoints (converter-facing): GCS proxy + fid→CDN resolver.
+# attachments_video provides GET /attachments/{id}/video-download-url (injected
+# into MultimodalDispatchContext.video_download_url_path by weibo_multimodal_patch).
+api_router.include_router(
+    internal_attachments_video_router, prefix="/internal", tags=["internal"]
+)
+api_router.include_router(
+    internal_multimodal_gcs_router, prefix="/internal", tags=["internal"]
+)
+# User-facing KB video download stream proxy (bridges internal Weibo CDN/OSS).
+api_router.include_router(
+    knowledge_video_download_router,
+    prefix="/knowledge-documents",
+    tags=["knowledge-video-download"],
+)
 api_router.include_router(
     department_search_router,
     prefix="/internal/departments",

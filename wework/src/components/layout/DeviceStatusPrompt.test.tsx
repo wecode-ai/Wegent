@@ -18,16 +18,45 @@ describe('DeviceStatusPrompt', () => {
         upgradingDevices={{}}
         onUpgradeDevice={vi.fn()}
         onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
-      />,
+      />
     )
 
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      '需要连接设备后才能使用 Wework',
+      '需要连接设备后才能使用 Wework'
     )
 
     await userEvent.click(screen.getByTestId('device-status-create-device-button'))
 
     expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
+  })
+
+  test('uses the active device IP in offline notices', () => {
+    render(
+      <DeviceStatusPrompt
+        devices={[
+          {
+            id: 1,
+            device_id: '9562a3b4-61a3-4217-9655-0341b231eb06',
+            socket_device_id: 'socket-device',
+            name: 'sifang-executor-0341b231eb06',
+            status: 'offline',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+            client_ip: '10.201.3.200',
+            executor_version: '1.8.5',
+          },
+        ]}
+        upgradingDevices={{}}
+        onUpgradeDevice={vi.fn()}
+        onOpenCloudDeviceSettings={vi.fn()}
+        activeDeviceId="socket-device"
+      />
+    )
+
+    expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
+      '10.201.3.200 离线，恢复在线后可继续对话'
+    )
   })
 
   test('offers upgrade for an online idle device below the WeWork executor version', async () => {
@@ -51,15 +80,13 @@ describe('DeviceStatusPrompt', () => {
         upgradingDevices={{}}
         onUpgradeDevice={onUpgradeDevice}
         onOpenCloudDeviceSettings={vi.fn()}
-      />,
+      />
     )
 
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续使用',
+      'Old Device 版本低于 1.8.5，升级后可继续使用'
     )
-    expect(screen.getByTestId('device-status-upgrade-button')).toHaveTextContent(
-      '升级该设备',
-    )
+    expect(screen.getByTestId('device-status-upgrade-button')).toHaveTextContent('升级该设备')
 
     await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
 
@@ -98,11 +125,11 @@ describe('DeviceStatusPrompt', () => {
         upgradingDevices={{}}
         onUpgradeDevice={onUpgradeDevice}
         onOpenCloudDeviceSettings={vi.fn()}
-      />,
+      />
     )
 
     expect(screen.getByTestId('device-status-prompt')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续对话',
+      'Old Device 版本低于 1.8.5，升级后可继续对话'
     )
 
     await userEvent.click(screen.getByTestId('device-status-upgrade-button'))
@@ -132,7 +159,7 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={onUpgradeDevice}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
     const action = screen.getByTestId('device-status-sidebar-action-button')
@@ -204,12 +231,10 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={onUpgradeDevice}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
-    expect(
-      screen.queryByTestId('device-status-sidebar-action-button'),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByTestId('device-status-sidebar-action-button')).not.toBeInTheDocument()
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 
@@ -235,7 +260,7 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={onUpgradeDevice}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
     const action = screen.getByTestId('device-status-sidebar-action-button')
@@ -243,7 +268,7 @@ describe('DeviceStatusPrompt', () => {
     expect(action).toHaveClass('text-red-600')
     expect(action).not.toHaveAttribute('title')
     expect(screen.getByTestId('device-status-sidebar-tooltip')).toHaveTextContent(
-      'Old Device 版本低于 1.8.5，升级后可继续使用',
+      'Old Device 版本低于 1.8.5，升级后可继续使用'
     )
 
     await userEvent.click(action)
@@ -271,7 +296,7 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={vi.fn()}
         onOpenCloudDeviceSettings={vi.fn()}
         hideAvailableUpdates
-      />,
+      />
     )
 
     expect(screen.queryByTestId('device-status-prompt')).not.toBeInTheDocument()
@@ -296,12 +321,10 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={vi.fn()}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
-    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent(
-      '更新',
-    )
+    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent('更新')
 
     rerender(
       <DeviceStatusPrompt
@@ -310,12 +333,10 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={vi.fn()}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
-    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent(
-      '更新',
-    )
+    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent('更新')
   })
 
   test('keeps the sidebar action after remounting with transient empty devices', () => {
@@ -337,12 +358,10 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={vi.fn()}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
-    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent(
-      '更新',
-    )
+    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent('更新')
 
     unmount()
 
@@ -353,11 +372,9 @@ describe('DeviceStatusPrompt', () => {
         onUpgradeDevice={vi.fn()}
         onOpenCloudDeviceSettings={vi.fn()}
         presentation="sidebar-action"
-      />,
+      />
     )
 
-    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent(
-      '更新',
-    )
+    expect(screen.getByTestId('device-status-sidebar-action-button')).toHaveTextContent('更新')
   })
 })

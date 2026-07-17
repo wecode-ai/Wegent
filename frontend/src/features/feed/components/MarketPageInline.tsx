@@ -7,7 +7,7 @@
 /**
  * Market page inline component for browsing and renting market subscriptions.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Search, Store, TrendingUp, Clock, Users, Check } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -32,23 +32,32 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
   const [subscriptions, setSubscriptions] = useState<MarketSubscriptionDetail[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [isComposing, setIsComposing] = useState(false)
   const [sortBy, setSortBy] = useState<'rental_count' | 'recent'>('rental_count')
   const [selectedSubscription, setSelectedSubscription] = useState<MarketSubscriptionDetail | null>(
     null
   )
   const [rentDialogOpen, setRentDialogOpen] = useState(false)
+  const latestRequestId = useRef(0)
 
   const loadSubscriptions = useCallback(async () => {
+    const requestId = ++latestRequestId.current
     try {
-      setLoading(true)
+      if (requestId === 1) {
+        setLoading(true)
+      }
       const response = await subscriptionApis.discoverMarketSubscriptions({
         page: 1,
         limit: 50,
         sortBy,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
       })
-      setSubscriptions(response.items)
+      if (requestId === latestRequestId.current) {
+        setSubscriptions(response.items)
+      }
     } catch (error) {
+      if (requestId !== latestRequestId.current) return
       console.error('Failed to load market subscriptions:', error)
       toast({
         title: t('common:error'),
@@ -56,9 +65,19 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
         variant: 'destructive',
       })
     } finally {
-      setLoading(false)
+      if (requestId === latestRequestId.current) {
+        setLoading(false)
+      }
     }
-  }, [sortBy, search, toast, t])
+  }, [sortBy, debouncedSearch, toast, t])
+
+  useEffect(() => {
+    if (isComposing) return
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearch(search)
+    }, 300)
+    return () => window.clearTimeout(timeoutId)
+  }, [isComposing, search])
 
   useEffect(() => {
     loadSubscriptions()
@@ -80,15 +99,6 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
     setSearch(e.target.value)
   }, [])
 
-  const handleSearchKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') {
-        loadSubscriptions()
-      }
-    },
-    [loadSubscriptions]
-  )
-
   return (
     <div className="h-full flex flex-col">
       {/* Header with search and sort */}
@@ -100,7 +110,11 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
               placeholder={t('discover_search_placeholder')}
               value={search}
               onChange={handleSearchChange}
-              onKeyDown={handleSearchKeyDown}
+              onCompositionStart={() => setIsComposing(true)}
+              onCompositionEnd={e => {
+                setSearch(e.currentTarget.value)
+                setIsComposing(false)
+              }}
               className="pl-9"
             />
           </div>
@@ -126,13 +140,7 @@ export function MarketPageInline({ onRentalSuccess }: MarketPageInlineProps) {
 
       {/* Subscription list */}
       <div className="flex-1 overflow-y-auto p-4">
-        {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-28 w-full rounded-lg bg-muted animate-pulse" />
-            ))}
-          </div>
-        ) : subscriptions.length === 0 ? (
+        {loading ? null : subscriptions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-12">
             <Store className="h-12 w-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium text-text-primary mb-2">

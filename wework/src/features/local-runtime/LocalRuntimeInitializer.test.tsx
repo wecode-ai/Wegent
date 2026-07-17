@@ -4,7 +4,9 @@ import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import {
+  connectLocalExecutorToBackend,
   copyLocalExecutorDebugInfo,
+  disconnectLocalExecutorFromBackend,
   ensureLocalExecutorStarted,
   readLocalExecutorLog,
 } from '@/tauri/localExecutor'
@@ -13,7 +15,9 @@ import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
 const startDragging = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/tauri/localExecutor', () => ({
+  connectLocalExecutorToBackend: vi.fn(),
   copyLocalExecutorDebugInfo: vi.fn(),
+  disconnectLocalExecutorFromBackend: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   readLocalExecutorLog: vi.fn(),
 }))
@@ -23,9 +27,10 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 const copyDebugMock = vi.mocked(copyLocalExecutorDebugInfo)
+const connectMock = vi.mocked(connectLocalExecutorToBackend)
+const disconnectMock = vi.mocked(disconnectLocalExecutorFromBackend)
 const ensureMock = vi.mocked(ensureLocalExecutorStarted)
 const readLogMock = vi.mocked(readLocalExecutorLog)
-const DEV_STARTUP_HOLD_MS = 4800
 const SLOW_STARTUP_WARNING_MS = 10000
 
 function enableTauri() {
@@ -47,7 +52,9 @@ describe('LocalRuntimeInitializer', () => {
   beforeEach(() => {
     enableTauri()
     vi.stubEnv('DEV', false)
+    connectMock.mockReset()
     copyDebugMock.mockReset()
+    disconnectMock.mockReset()
     ensureMock.mockReset()
     readLogMock.mockReset()
     startDragging.mockClear()
@@ -74,6 +81,98 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+  })
+
+  test('starts the executor before applying the initial cloud connection', async () => {
+    connectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          backendUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(connectMock).toHaveBeenCalledWith({
+        backendUrl: 'https://backend.example.com',
+        authToken: 'token-a',
+      })
+    )
+    expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      connectMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  test('starts the executor before applying disconnected local mode', async () => {
+    disconnectMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          isConnected: false,
+          token: null,
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    await waitFor(() => expect(disconnectMock).toHaveBeenCalledTimes(1))
+    expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
+      disconnectMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  test('reveals the app without waiting for initial cloud connection setup', async () => {
+    connectMock.mockImplementation(() => new Promise(() => undefined))
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          backendUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
+    expect(connectMock).toHaveBeenCalledTimes(1)
+    expect(ensureMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the app ready when initial cloud connection setup fails', async () => {
+    connectMock.mockRejectedValue(new Error('backend setup failed'))
+    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+
+    render(
+      <LocalRuntimeInitializer
+        initialCloudConnection={{
+          backendUrl: 'https://backend.example.com',
+          isConnected: true,
+          token: 'token-a',
+        }}
+      >
+        <div data-testid="main-app">Main app</div>
+      </LocalRuntimeInitializer>
+    )
+
+    expect(await screen.findByTestId('main-app')).toBeInTheDocument()
+    expect(screen.queryByTestId('local-runtime-error')).not.toBeInTheDocument()
   })
 
   test('reveals children once executor is ready even while app startup continues', async () => {
@@ -311,9 +410,7 @@ describe('LocalRuntimeInitializer', () => {
     expect(onMount).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps the startup animation visible for one cycle in dev mode', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-06-26T00:00:00Z'))
+  test('reveals the app immediately when the executor is ready in dev mode', async () => {
     vi.stubEnv('DEV', true)
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
@@ -323,18 +420,8 @@ describe('LocalRuntimeInitializer', () => {
       </LocalRuntimeInitializer>
     )
 
-    expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
-    expect(screen.queryByTestId('main-app')).not.toBeInTheDocument()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(DEV_STARTUP_HOLD_MS - 1)
-    })
-    expect(screen.getByTestId('main-app')).not.toBeVisible()
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1)
-    })
-    expect(screen.getByTestId('main-app')).toBeInTheDocument()
+    expect(await screen.findByTestId('main-app')).toBeVisible()
+    expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
   test('shows startup error and retries initialization', async () => {

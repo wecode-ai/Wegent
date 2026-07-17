@@ -6,7 +6,6 @@ use std::sync::{
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const CAPTURED_EVENT: &str = "wework-appshot-captured";
-pub const PERMISSION_REQUIRED_EVENT: &str = "wework-appshot-permission-required";
 pub const SHORTCUT: &str = "CommandOrControl+Shift+2";
 const MAX_ACCESSIBILITY_TEXT_BYTES: usize = 200 * 1024;
 const MAX_ACCESSIBILITY_NODES: usize = 5_000;
@@ -43,7 +42,6 @@ pub enum AppshotPermission {
 pub struct AppshotState {
     capturing: AtomicBool,
     pending: Mutex<Vec<AppshotPayload>>,
-    permission_required: Mutex<Option<AppshotPermission>>,
     shortcut_registered: AtomicBool,
 }
 
@@ -87,14 +85,12 @@ pub fn handle_shortcut(app: &AppHandle) {
         if !screen_capture_permission_granted() {
             request_screen_capture_permission();
             state.capturing.store(false, Ordering::SeqCst);
-            show_permission_required(app, AppshotPermission::ScreenCapture);
             return;
         }
 
         if !accessibility_permission_granted() {
             request_accessibility_permission();
             state.capturing.store(false, Ordering::SeqCst);
-            show_permission_required(app, AppshotPermission::Accessibility);
             return;
         }
 
@@ -173,19 +169,6 @@ pub fn open_appshots_permission_settings(permission: AppshotPermission) -> Resul
     Err("Appshots is only supported on macOS".to_string())
 }
 
-fn show_permission_required(app: &AppHandle, permission: AppshotPermission) {
-    if let Ok(mut pending) = app.state::<AppshotState>().permission_required.lock() {
-        *pending = Some(permission);
-    }
-    if let Err(error) = super::ensure_main_window(app, None) {
-        log::warn!("Failed to show Wework for Appshots permission: {error}");
-        return;
-    }
-    if let Err(error) = app.emit(PERMISSION_REQUIRED_EVENT, permission) {
-        log::warn!("Failed to emit Appshots permission event: {error}");
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn screen_capture_permission_granted() -> bool {
     core_graphics::access::ScreenCaptureAccess.preflight()
@@ -230,17 +213,6 @@ pub fn acknowledge_appshot(state: tauri::State<'_, AppshotState>, id: String) {
     if let Ok(mut pending) = state.pending.lock() {
         pending.retain(|payload| payload.id != id);
     }
-}
-
-#[tauri::command]
-pub fn take_pending_appshots_permission(
-    state: tauri::State<'_, AppshotState>,
-) -> Option<AppshotPermission> {
-    state
-        .permission_required
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.take())
 }
 
 #[cfg(target_os = "macos")]

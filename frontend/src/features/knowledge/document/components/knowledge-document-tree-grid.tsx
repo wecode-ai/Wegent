@@ -33,7 +33,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
+import { isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -41,6 +41,7 @@ import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ReanalyzeIconButton } from '@/features/knowledge/multimodal/components/ReanalyzeActions'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
@@ -73,6 +74,7 @@ interface KnowledgeDocumentTreeGridProps {
   selectAllLabel: string
   activeFolderId?: number
   onActivateFolder?: (folderId: number) => void
+  expandAllFolders?: boolean
   onCreateFolder?: (parentId: number) => void
   onRenameFolder?: (folderId: number, currentName: string) => void
   onDeleteFolder?: (folderId: number, folderName: string) => void
@@ -173,6 +175,7 @@ export function KnowledgeDocumentTreeGrid({
   selectAllLabel,
   activeFolderId,
   onActivateFolder,
+  expandAllFolders = false,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
@@ -198,10 +201,16 @@ export function KnowledgeDocumentTreeGrid({
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const downloadDocument = useKnowledgeDocumentDownload()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
 
-  const defaultExpandedKeys = useMemo(() => getDefaultExpandedFolderKeys(folders), [folders])
+  const defaultExpandedKeys = useMemo(() => {
+    if (expandAllFolders) {
+      return new Set(Array.from(treeIndex.knownFolderIds).map(id => `folder:${id}` as const))
+    }
+    return getDefaultExpandedFolderKeys(folders)
+  }, [folders, treeIndex, expandAllFolders])
   const activeFolderKeys = useMemo(
     () => getFolderPathKeys(treeIndex, activeFolderId),
     [treeIndex, activeFolderId]
@@ -258,7 +267,7 @@ export function KnowledgeDocumentTreeGrid({
     async (document: KnowledgeDocument) => {
       if (document.source_type !== 'file' || !document.attachment_id) return
       try {
-        await downloadAttachment(document.attachment_id, document.name)
+        await downloadDocument(document)
       } catch {
         toast({
           title: t('document.document.downloadFailed'),
@@ -266,7 +275,7 @@ export function KnowledgeDocumentTreeGrid({
         })
       }
     },
-    [t]
+    [downloadDocument, t]
   )
 
   const columns = useMemo<ColumnDef<KnowledgeResourceRow>[]>(
@@ -362,6 +371,7 @@ export function KnowledgeDocumentTreeGrid({
                 className="flex items-center gap-2 overflow-hidden min-w-0"
                 style={indent > 0 ? { paddingLeft: `${indent}px` } : undefined}
               >
+                {expandAllFolders && <div className="h-6 w-6 flex-shrink-0" />}
                 {isTable ? (
                   <Table2 className="w-4 h-4 text-primary flex-shrink-0" />
                 ) : isWeb ? (
@@ -400,30 +410,35 @@ export function KnowledgeDocumentTreeGrid({
             )
           }
 
-          const isExpanded = expandedKeys.has(node.key)
+          const hasChildren = node.children.length > 0
+          const isExpanded = hasChildren && expandedKeys.has(node.key)
           return (
             <div
               className="flex items-center gap-2 overflow-hidden min-w-0"
               style={indent > 0 ? { paddingLeft: `${indent}px` } : undefined}
             >
-              <button
-                type="button"
-                className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-primary/10 hover:text-primary"
-                onClick={event => {
-                  event.stopPropagation()
-                  toggleFolder(node.key)
-                }}
-                aria-label={
-                  isExpanded ? t('document.folder.collapse') : t('document.folder.expand')
-                }
-                data-testid={`toggle-folder-${node.folderId}`}
-              >
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-              </button>
+              {hasChildren ? (
+                <button
+                  type="button"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted hover:bg-primary/10 hover:text-primary"
+                  onClick={event => {
+                    event.stopPropagation()
+                    toggleFolder(node.key)
+                  }}
+                  aria-label={
+                    isExpanded ? t('document.folder.collapse') : t('document.folder.expand')
+                  }
+                  data-testid={`toggle-folder-${node.folderId}`}
+                >
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
+              ) : expandAllFolders ? (
+                <div className="h-6 w-6 flex-shrink-0" />
+              ) : null}
               {isExpanded ? (
                 <FolderOpen className="h-4 w-4 flex-shrink-0 text-amber-500" />
               ) : (
@@ -998,8 +1013,9 @@ export function KnowledgeDocumentTreeGrid({
     (row: (typeof tableRows)[number]) => {
       const { node } = row.original
       const canActivateFolder = node.kind === 'folder' && Boolean(onActivateFolder)
+      const canToggleFolder = node.kind === 'folder' && !onActivateFolder
       const canActivateDocument = node.kind === 'document' && Boolean(onViewDetail)
-      const canActivateRow = canActivateFolder || canActivateDocument
+      const canActivateRow = canActivateFolder || canToggleFolder || canActivateDocument
       return (
         <div
           className={`grid items-center gap-4 px-4 py-3 transition-colors border-b border-border min-w-[880px] ${
@@ -1013,6 +1029,8 @@ export function KnowledgeDocumentTreeGrid({
           onClick={() => {
             if (canActivateFolder) {
               onActivateFolder?.(node.folderId)
+            } else if (canToggleFolder) {
+              toggleFolder(node.key)
             } else if (canActivateDocument) {
               onViewDetail?.(node.document)
             }
@@ -1030,6 +1048,8 @@ export function KnowledgeDocumentTreeGrid({
               event.preventDefault()
               if (canActivateFolder) {
                 onActivateFolder?.(node.folderId)
+              } else if (canToggleFolder) {
+                toggleFolder(node.key)
               } else if (canActivateDocument) {
                 onViewDetail?.(node.document)
               }
@@ -1052,7 +1072,14 @@ export function KnowledgeDocumentTreeGrid({
         </div>
       )
     },
-    [activeFolderId, gridTemplateColumns, onActivateFolder, onViewDetail]
+    [
+      activeFolderId,
+      expandAllFolders,
+      gridTemplateColumns,
+      onActivateFolder,
+      onViewDetail,
+      toggleFolder,
+    ]
   )
 
   return (

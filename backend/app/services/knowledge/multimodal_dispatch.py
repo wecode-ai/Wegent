@@ -29,7 +29,7 @@ Billing: the model is resolved against the *uploader* (per-uploader billing).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -113,6 +113,55 @@ class MultimodalDispatchContext:
     # default build; internal deployments inject GCS proxy paths.
     gcs_upload_path: Optional[str] = None
     gcs_delete_path: Optional[str] = None
+
+
+class DispatchValidator(Protocol):
+    """Optional provider hook for vendor-specific video staging.
+
+    Internal deployments register one via :func:`register_dispatch_validator`
+    to handle vendor-backed video (e.g. Weibo fid-backed videos) WITHOUT
+    flipping the global ``KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED`` switch.
+
+    Called AFTER the default preflight (model, attachment ownership/type,
+    capability, Gemini checks all passed) inside :func:`validate_multimodal_dispatch`.
+    The validator receives the already-validated ctx and may return a NEW ctx
+    with vendor-specific fields injected (e.g. ``video_source_ref``, GCS paths),
+    or return the ctx unchanged to defer. It must NOT skip the default
+    validation — that stays the universal flow's responsibility.
+    """
+
+    def __call__(
+        self,
+        ctx: "MultimodalDispatchContext",
+        *,
+        db: Session,
+        knowledge_base: Kind,
+        attachment_id: Optional[int],
+        uploader: User,
+        file_extension: Optional[str] = None,
+    ) -> "MultimodalDispatchContext": ...
+
+
+# Module-level registry; None in the open-source default build (default logic
+# runs unchanged). Internal deployments set this at import time via
+# register_dispatch_validator().
+_dispatch_validator: Optional[DispatchValidator] = None
+
+
+def register_dispatch_validator(validator: DispatchValidator) -> None:
+    """Register a dispatch validator (internal deployments). Idempotent.
+
+    Mirrors the existing ``register_video_upload_provider`` pattern: an internal
+    extension module calls this at import time (side effect of ``import
+    wecode.api``) so vendor-specific video staging is wired without monkeypatch.
+    """
+    global _dispatch_validator
+    _dispatch_validator = validator
+
+
+def build_dispatch_validator() -> Optional[DispatchValidator]:
+    """Return the registered validator, or None (open-source default)."""
+    return _dispatch_validator
 
 
 def validate_multimodal_dispatch(
@@ -223,38 +272,53 @@ def validate_multimodal_dispatch(
     original_filename = attachment.original_filename or attachment.name or ""
 
     if media_type == "video":
-        # Video requires a configured media staging provider (Gemini needs a
-        # gs:///https URI for large media). The open-source default ships none,
-        # so reject up-front when the switch is off. Internal deployments enable
-        # the switch and inject a vendor-specific ``video_source_ref``.
-        if not settings.KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED:
-            raise ModelRefResolutionError(
-                "MULTIMODAL_VIDEO_STAGING_NOT_CONFIGURED",
-                "Video multimodal analysis requires a configured media staging "
-                "provider (KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED is False)",
-            )
-        return MultimodalDispatchContext(
+        # The staging switch historically meant "video is allowed at all" and
+        # raised hard when off. We now defer provider resolution to step 4
+        # (registered validator) or the downstream closed-loop gate in
+        # multimodal_pipeline.py:112-122, which rejects video that has no
+        # staging provider (no video_source_ref / gcs_upload_path). This lets
+        # internal deployments inject a vendor-specific video_source_ref via a
+        # validator WITHOUT flipping the global switch, while open-source
+        # default (no validator, switch off) still gets rejected downstream.
+        ctx = MultimodalDispatchContext(
             media_type="video",
             model_ref=model_ref,
             uploader_id=uploader.id,
             uploader_name=uploader.user_name,
             original_filename=original_filename,
             # Opaque vendor-specific source ref; populated by a staging
-            # provider extension when configured. None in the default build.
+            # provider extension / validator when configured. None in the
+            # default build (downstream gate rejects).
             video_source_ref=None,
         )
+    else:
+        # Image: build content_download_path (image has storage_key). The staging
+        # vs inline-base64 decision is made by the task based on file size, so no
+        # URL resolution is needed here.
+        ctx = MultimodalDispatchContext(
+            media_type="image",
+            model_ref=model_ref,
+            uploader_id=uploader.id,
+            uploader_name=uploader.user_name,
+            original_filename=original_filename,
+            content_download_path=f"/api/internal/attachments/{attachment_id}/download",
+        )
 
-    # Image: build content_download_path (image has storage_key). The staging
-    # vs inline-base64 decision is made by the task based on file size, so no
-    # URL resolution is needed here.
-    return MultimodalDispatchContext(
-        media_type="image",
-        model_ref=model_ref,
-        uploader_id=uploader.id,
-        uploader_name=uploader.user_name,
-        original_filename=original_filename,
-        content_download_path=f"/api/internal/attachments/{attachment_id}/download",
-    )
+    # 4. Post-process: let a registered validator inject vendor-specific fields
+    #    (e.g. Weibo fid, GCS paths) into the already-validated ctx. The
+    #    validator only *adds* fields — it must NOT skip the default validation
+    #    above (model, ownership, type, capability, Gemini checks all ran).
+    #    Open-source default (_dispatch_validator is None) is a no-op.
+    if _dispatch_validator is not None:
+        ctx = _dispatch_validator(
+            ctx,
+            db=db,
+            knowledge_base=knowledge_base,
+            attachment_id=attachment_id,
+            uploader=uploader,
+            file_extension=file_extension,
+        )
+    return ctx
 
 
 def build_multimodal_conversion_kwargs(

@@ -95,7 +95,7 @@ The repository includes `.github/workflows/wework-app.yml` for producing macOS D
 https://github.com/<owner>/<repo>/releases/latest/download/latest.json
 ```
 
-The workflow creates or updates a `wework-v<version>` draft release. After both architecture builds finish, it generates `latest.json`, uploads it to the same release, and then publishes that release as GitHub latest. The client reads this manifest during automatic startup checks and when the titlebar update action is used.
+The workflow can only be started manually from GitHub Actions and does not respond to tag pushes. A formal run creates or updates a `wework-v<version>` draft release. After both architecture builds finish, it generates `latest.json`, uploads it to the same release, and then publishes that release as GitHub latest. The client reads this manifest during automatic startup checks and when the titlebar update action is used. Preventing tag-push triggers ensures that the tag created while publishing the release cannot start a second build of the same version and overwrite signed artifacts.
 
 Configure these repository secrets in GitHub Actions:
 
@@ -119,7 +119,7 @@ When downloaded from GitHub Release assets, the link points directly to the `.dm
 
 For a formal release, the workflow syncs `wework/package.json`, `wework/src-tauri/tauri.conf.json`, `wework/src-tauri/Cargo.toml`, and `wework/src-tauri/Cargo.lock` to the release version before building, then commits those files directly back to the triggering `main` branch. The macOS build jobs and GitHub Release target use that version commit, keeping the About page version, Tauri bundle version, and source version aligned.
 
-Manual workflow runs that do not publish a formal release only produce test artifacts and do not commit version files. For releases triggered by a `wework-vX.Y.Z` tag, the tag already points to an immutable commit, so the workflow does not rewrite source files; if the tagged version files do not match the tag version, the release fails and the version files must be updated before creating the tag again.
+Manual workflow runs that do not publish a formal release only produce test artifacts and do not commit version files. An existing `wework-vX.Y.Z` tag can also be selected explicitly when manually starting the workflow; the tag then points to an immutable commit, so the workflow does not rewrite source files. If the tagged version files do not match the tag version, the release fails and the version files must be updated before creating the tag again. Pushing a tag alone does not start a release.
 
 ## CI DMG Without Apple Developer
 

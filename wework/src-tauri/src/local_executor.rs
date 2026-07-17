@@ -21,8 +21,12 @@ use crate::process_environment;
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
+const LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV: &str = "WEWORK_EXECUTOR_ISOLATION_OVERRIDE";
 const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
+const LOCAL_EXECUTOR_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
+const LOCAL_EXECUTOR_NAMESPACE: Option<&str> = option_env!("WEWORK_EXECUTOR_NAMESPACE");
+const LOCAL_EXECUTOR_SHARED_HOME_ENV: &str = "WEWORK_SHARED_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
@@ -37,6 +41,7 @@ const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_ADDR_FILE_NAME: &str = "app-ipc.addr";
 const LOCAL_EXECUTOR_DEFAULT_ADDR: &str = "127.0.0.1:0";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
+const LOCAL_EXECUTOR_SIGNAL_AUDIT_FILE_NAME: &str = "wework-executor-signal-audit.log";
 const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
@@ -55,6 +60,7 @@ pub struct LocalExecutorState {
     inner: SharedExecutorInner,
     next_id: Arc<AtomicU64>,
     start_lock: Arc<AsyncMutex<()>>,
+    backend_connection_lock: Arc<AsyncMutex<()>>,
     keepalive: Arc<LocalExecutorKeepaliveState>,
 }
 
@@ -69,6 +75,7 @@ impl Clone for LocalExecutorState {
             inner: self.inner.clone(),
             next_id: self.next_id.clone(),
             start_lock: self.start_lock.clone(),
+            backend_connection_lock: self.backend_connection_lock.clone(),
             keepalive: self.keepalive.clone(),
         }
     }
@@ -137,7 +144,17 @@ impl LocalExecutorChild {
     fn kill(self) {
         match self {
             LocalExecutorChild::Tauri(child) => {
-                let _ = child.kill();
+                let child_pid = child.pid();
+                audit_local_executor_signal(format!(
+                    "event=child_kill_requested sender_pid={} target_pid={} child_kind=tauri signal=SIGKILL",
+                    std::process::id(), child_pid
+                ));
+                if let Err(error) = child.kill() {
+                    audit_local_executor_signal(format!(
+                        "event=child_kill_failed sender_pid={} target_pid={} child_kind=tauri error={error}",
+                        std::process::id(), child_pid
+                    ));
+                }
             }
             LocalExecutorChild::Process(child) => child.kill(),
         }
@@ -171,6 +188,12 @@ impl ManagedProcessChild {
     fn kill(mut self) {
         #[cfg(unix)]
         {
+            audit_local_executor_signal(format!(
+                "event=process_group_kill_requested sender_pid={} target_pid={} target_pgid={}",
+                std::process::id(),
+                self.child.id(),
+                self.process_group_id
+            ));
             terminate_process_group(self.process_group_id);
             let _ = self.child.wait();
         }
@@ -201,12 +224,20 @@ fn configure_managed_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_group(process_group_id: u32) {
+    audit_local_executor_signal(format!(
+        "event=process_group_termination_started sender_pid={} target_pgid={process_group_id}",
+        std::process::id()
+    ));
     send_process_group_signal(process_group_id, libc::SIGTERM);
     wait_for_process_group_exit(
         process_group_id,
         Duration::from_millis(LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS),
     );
     send_process_group_signal(process_group_id, libc::SIGKILL);
+    audit_local_executor_signal(format!(
+        "event=process_group_termination_finished sender_pid={} target_pgid={process_group_id}",
+        std::process::id()
+    ));
 }
 
 #[cfg(unix)]
@@ -222,18 +253,30 @@ fn wait_for_process_group_exit(process_group_id: u32, timeout: Duration) {
 
 #[cfg(unix)]
 fn process_group_exists(process_group_id: u32) -> bool {
-    unsafe { libc::kill(-(process_group_id as libc::pid_t), 0) == 0 }
+    let result = unsafe { libc::kill(-(process_group_id as libc::pid_t), 0) };
+    log::debug!(
+        "Tauri process-group signal probe: sender_pid={}, target_pgid={process_group_id}, signal=0, result={result}",
+        std::process::id()
+    );
+    result == 0
 }
 
 #[cfg(unix)]
 fn send_process_group_signal(process_group_id: u32, signal: libc::c_int) {
-    unsafe {
-        let _ = libc::kill(-(process_group_id as libc::pid_t), signal);
-    }
+    let result = unsafe { libc::kill(-(process_group_id as libc::pid_t), signal) };
+    let error = (result != 0).then(std::io::Error::last_os_error);
+    audit_local_executor_signal(format!(
+        "event=process_group_signal_sent sender_pid={} target_pgid={process_group_id} signal={signal} result={result} error={error:?}",
+        std::process::id()
+    ));
 }
 
 #[cfg(unix)]
 fn terminate_process(process_id: u32) -> Result<(), String> {
+    audit_local_executor_signal(format!(
+        "event=stale_process_termination_started sender_pid={} target_pid={process_id}",
+        std::process::id()
+    ));
     terminate_process_group(process_id);
     if !process_exists(process_id) {
         return Ok(());
@@ -247,6 +290,10 @@ fn terminate_process(process_id: u32) -> Result<(), String> {
     if process_exists(process_id) {
         send_process_signal(process_id, libc::SIGKILL)?;
     }
+    audit_local_executor_signal(format!(
+        "event=stale_process_termination_finished sender_pid={} target_pid={process_id}",
+        std::process::id()
+    ));
     Ok(())
 }
 
@@ -263,18 +310,28 @@ fn wait_for_process_exit(process_id: u32, timeout: Duration) {
 
 #[cfg(unix)]
 fn process_exists(process_id: u32) -> bool {
-    unsafe { libc::kill(process_id as libc::pid_t, 0) == 0 }
+    let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
+    log::debug!(
+        "Tauri process signal probe: sender_pid={}, target_pid={process_id}, signal=0, result={result}",
+        std::process::id()
+    );
+    result == 0
 }
 
 #[cfg(unix)]
 fn send_process_signal(process_id: u32, signal: libc::c_int) -> Result<(), String> {
     let result = unsafe { libc::kill(process_id as libc::pid_t, signal) };
-    if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+    let error = (result != 0).then(std::io::Error::last_os_error);
+    audit_local_executor_signal(format!(
+        "event=process_signal_sent sender_pid={} target_pid={process_id} signal={signal} result={result} error={error:?}",
+        std::process::id()
+    ));
+    if result == 0 || error.as_ref().and_then(std::io::Error::raw_os_error) == Some(libc::ESRCH) {
         Ok(())
     } else {
         Err(format!(
             "Failed to signal stale local executor process {process_id}: {}",
-            std::io::Error::last_os_error()
+            error.expect("failed kill should capture errno")
         ))
     }
 }
@@ -285,6 +342,7 @@ impl Default for LocalExecutorState {
             inner: Arc::new(Mutex::new(LocalExecutorInner::default())),
             next_id: Arc::new(AtomicU64::new(1)),
             start_lock: Arc::new(AsyncMutex::new(())),
+            backend_connection_lock: Arc::new(AsyncMutex::new(())),
             keepalive: Arc::new(LocalExecutorKeepaliveState {
                 enabled: AtomicBool::new(false),
                 worker_running: AtomicBool::new(false),
@@ -293,7 +351,11 @@ impl Default for LocalExecutorState {
     }
 }
 
-pub fn shutdown_local_executor(state: &LocalExecutorState) {
+pub fn shutdown_local_executor(state: &LocalExecutorState, reason: &str) {
+    audit_local_executor_signal(format!(
+        "event=executor_shutdown_entered sender_pid={} reason={reason}",
+        std::process::id()
+    ));
     state.keepalive.enabled.store(false, Ordering::SeqCst);
     let child = state.inner.lock().ok().and_then(|mut inner| {
         inner.running = false;
@@ -306,9 +368,18 @@ pub fn shutdown_local_executor(state: &LocalExecutorState) {
 
     if let Some(child) = child {
         child.kill();
+    } else {
+        audit_local_executor_signal(format!(
+            "event=executor_shutdown_no_owned_child sender_pid={} reason={reason}",
+            std::process::id()
+        ));
     }
 
     fail_pending_requests_inner(&state.inner, "Local executor stopped".to_string());
+    audit_local_executor_signal(format!(
+        "event=executor_shutdown_finished sender_pid={} reason={reason}",
+        std::process::id()
+    ));
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,7 +545,7 @@ fn local_executor_instance_name() -> &'static str {
 
 fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     let home = local_executor_home_path()?;
-    if cfg!(debug_assertions) {
+    if local_executor_isolation_enabled()? {
         return Ok(home
             .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
             .join(local_executor_instance_name()));
@@ -484,11 +555,38 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
 }
 
 fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
-        return local_executor_runtime_dir_path();
+    local_executor_runtime_dir_path()
+}
+
+fn local_executor_isolation_enabled() -> Result<bool, String> {
+    if let Ok(value) = std::env::var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV) {
+        return match value.trim() {
+            "" => Ok(cfg!(debug_assertions)),
+            "true" => Ok(true),
+            "false" => Ok(false),
+            value => Err(format!(
+                "{LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV} must be true or false, got {value:?}"
+            )),
+        };
     }
 
-    local_executor_home_path()
+    Ok(cfg!(debug_assertions)
+        && std::env::var(LOCAL_EXECUTOR_SHARED_HOME_ENV)
+            .map(|value| value.trim() != "1")
+            .unwrap_or(true))
+}
+
+fn local_executor_ipc_dir_path() -> Result<PathBuf, String> {
+    let home = local_executor_home_path()?;
+    // Debug instances may share persisted tasks and Codex state, but endpoint discovery
+    // must stay instance-specific so a late sidecar build cannot replace a live executor.
+    if cfg!(debug_assertions) {
+        return Ok(home
+            .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+            .join(local_executor_instance_name()));
+    }
+
+    Ok(home)
 }
 
 fn local_executor_home_path() -> Result<PathBuf, String> {
@@ -500,11 +598,24 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
     }
 
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    Ok(home.join(".wegent-executor"))
+    Ok(default_local_executor_home_path(
+        &home,
+        LOCAL_EXECUTOR_NAMESPACE,
+    ))
+}
+
+fn default_local_executor_home_path(home: &Path, namespace: Option<&str>) -> PathBuf {
+    let root = home.join(".wegent-executor");
+    namespace
+        .filter(|value| !value.is_empty())
+        .map_or(root.clone(), |value| root.join("apps").join(value))
 }
 
 fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
-    Ok(local_executor_runtime_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
+    if let Some(path) = non_empty_env(LOCAL_EXECUTOR_ADDR_FILE_ENV) {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(local_executor_ipc_dir_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
 }
 
 fn resolve_app_ipc_addr() -> Result<SocketAddr, String> {
@@ -577,6 +688,30 @@ pub(crate) fn local_executor_log_dir_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .map(Ok)
         .unwrap_or_else(|| local_executor_runtime_dir_path().map(|path| path.join("logs")))
+}
+
+fn audit_local_executor_signal(message: String) {
+    log::warn!("Tauri local executor signal audit: {message}");
+
+    let Ok(log_dir) = local_executor_log_dir_path() else {
+        return;
+    };
+    if fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let audit_path = log_dir.join(LOCAL_EXECUTOR_SIGNAL_AUDIT_FILE_NAME);
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_path)
+    {
+        let _ = writeln!(file, "timestamp_ms={timestamp_ms} {message}");
+    }
 }
 
 fn read_local_executor_log_tail(
@@ -767,7 +902,12 @@ fn addr_env_assignment(addr: &str) -> String {
 }
 
 fn process_text_uses_addr_file(process_text: &str, addr_file_path: &Path) -> bool {
-    process_text.contains(&addr_env_assignment(&addr_file_path.display().to_string()))
+    let addr_file = addr_file_path.display().to_string();
+    let explicit_assignment = format!("{LOCAL_EXECUTOR_ADDR_FILE_ENV}={addr_file}");
+    if process_text.contains(&format!("{LOCAL_EXECUTOR_ADDR_FILE_ENV}=")) {
+        return process_text.contains(&explicit_assignment);
+    }
+    process_text.contains(&addr_env_assignment(&addr_file))
         || process_text.contains(&format!(
             "{LOCAL_EXECUTOR_HOME_ENV}={}",
             addr_file_path.parent().unwrap_or(Path::new("")).display()
@@ -841,7 +981,7 @@ fn cleanup_stale_local_executor_processes() -> Result<(), String> {
     remove_stale_app_ipc_addr_file_at(&addr_file_path)
 }
 
-fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), String> {
+fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<bool, String> {
     let should_cleanup = {
         let inner = state
             .inner
@@ -850,7 +990,7 @@ fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), S
         !inner.startup_cleanup_done && inner.child.is_none()
     };
     if !should_cleanup {
-        return Ok(());
+        return Ok(false);
     }
 
     cleanup_stale_local_executor_processes()?;
@@ -860,7 +1000,7 @@ fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), S
         .lock()
         .map_err(|_| "Failed to lock local executor state".to_string())?;
     inner.startup_cleanup_done = true;
-    Ok(())
+    Ok(true)
 }
 
 fn sidecar_source_and_path() -> (String, String) {
@@ -962,6 +1102,7 @@ fn configured_file_edit_hook_command() -> String {
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
     let executor_home = path_or_error(local_executor_runtime_home_path());
     let codex_home = path_or_error(wework_codex_home_path(&executor_home));
+    let app_ipc_addr_file = path_or_error(app_ipc_addr_file_path());
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
@@ -970,6 +1111,7 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
             LOCAL_EXECUTOR_ADDR_ENV.to_string(),
             LOCAL_EXECUTOR_DEFAULT_ADDR.to_string(),
         ),
+        (LOCAL_EXECUTOR_ADDR_FILE_ENV.to_string(), app_ipc_addr_file),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
             "PATH".to_string(),
@@ -1588,9 +1730,12 @@ fn mark_child_terminated_inner(inner: &SharedExecutorInner, message: String) {
     }
 }
 
-fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) {
+fn update_ready_event_inner(
+    inner: &SharedExecutorInner,
+    event: &ExecutorEvent,
+) -> Option<(String, String)> {
     if event.event != "executor.ready" {
-        return;
+        return None;
     }
 
     let ready = event
@@ -1617,6 +1762,12 @@ fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) 
         .map(str::to_string);
 
     if let Ok(mut inner) = inner.lock() {
+        let replaced_runtime = inner
+            .runtime_instance_id
+            .as_ref()
+            .zip(runtime_instance_id.as_ref())
+            .filter(|(previous, current)| previous != current)
+            .map(|(previous, current)| (previous.clone(), current.clone()));
         inner.running = true;
         inner.ready = ready;
         if device_id.is_some() {
@@ -1631,7 +1782,10 @@ fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) 
         if ready {
             inner.error = None;
         }
+        return replaced_runtime;
     }
+
+    None
 }
 
 fn handle_executor_line_inner(
@@ -1648,7 +1802,52 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
-            update_ready_event_inner(inner, &event);
+            if let Some((previous_runtime_instance_id, runtime_instance_id)) =
+                update_ready_event_inner(inner, &event)
+            {
+                log::warn!(
+                    "Local executor runtime replaced: previous_runtime_instance_id={}, runtime_instance_id={}",
+                    previous_runtime_instance_id,
+                    runtime_instance_id
+                );
+                app.emit(
+                    LOCAL_EXECUTOR_EVENT,
+                    ExecutorEvent {
+                        event: "executor.runtime_replaced".to_string(),
+                        payload: json!({
+                            "previousRuntimeInstanceId": previous_runtime_instance_id,
+                            "runtimeInstanceId": runtime_instance_id,
+                        }),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            let terminal = is_terminal_response_event(&event.event);
+            let terminal_event = event.event.clone();
+            let terminal_task_id = event
+                .payload
+                .get("taskId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let terminal_subtask_id = event
+                .payload
+                .get("subtaskId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let terminal_device_id = event
+                .payload
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if terminal {
+                log::info!(
+                    "Received runtime terminal event from executor: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}",
+                    terminal_event,
+                    terminal_task_id,
+                    terminal_subtask_id,
+                    terminal_device_id
+                );
+            }
             if event.event == "runtime.plan.updated" {
                 log::info!(
                     "Forwarding runtime task plan event to frontend: task_id={:?}, device_id={:?}",
@@ -1656,12 +1855,39 @@ fn handle_executor_line_inner(
                     event.payload.get("deviceId")
                 );
             }
-            app.emit(LOCAL_EXECUTOR_EVENT, event)
-                .map_err(|error| error.to_string())?;
+            if let Err(error) = app.emit(LOCAL_EXECUTOR_EVENT, event) {
+                if terminal {
+                    log::warn!(
+                        "Failed to forward runtime terminal event to frontend: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}, error={}",
+                        terminal_event,
+                        terminal_task_id,
+                        terminal_subtask_id,
+                        terminal_device_id,
+                        error
+                    );
+                }
+                return Err(error.to_string());
+            }
+            if terminal {
+                log::info!(
+                    "Forwarded runtime terminal event to frontend event bus: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}",
+                    terminal_event,
+                    terminal_task_id,
+                    terminal_subtask_id,
+                    terminal_device_id
+                );
+            }
         }
     }
 
     Ok(())
+}
+
+fn is_terminal_response_event(event: &str) -> bool {
+    matches!(
+        event,
+        "response.completed" | "response.failed" | "response.incomplete"
+    )
 }
 
 fn connect_sidecar_socket() -> Result<TcpStream, String> {
@@ -1980,14 +2206,22 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
-    if let Err(error) = cleanup_stale_local_executor_once(state) {
-        set_executor_error(state, error.clone());
-        return Err(error);
-    }
+    let startup_cleanup_performed = match cleanup_stale_local_executor_once(state) {
+        Ok(performed) => performed,
+        Err(error) => {
+            set_executor_error(state, error.clone());
+            return Err(error);
+        }
+    };
 
-    if connect_and_attach_sidecar_socket(app.clone(), state)
-        .await
-        .is_ok()
+    // A release cold start removes the stale address file and terminates any
+    // executor that owned it. Waiting for that file to reappear can only time
+    // out, so spawn the new executor immediately. Reconnect paths still attach
+    // first because their existing child may already be opening the socket.
+    if !startup_cleanup_performed
+        && connect_and_attach_sidecar_socket(app.clone(), state)
+            .await
+            .is_ok()
     {
         return Ok(());
     }
@@ -2103,33 +2337,6 @@ fn ensure_local_executor_keepalive(app: tauri::AppHandle, state: &LocalExecutorS
             }
         }
     });
-}
-
-async fn restart_executor_unlocked(
-    app: tauri::AppHandle,
-    state: &LocalExecutorState,
-) -> Result<(), String> {
-    let mut old_child = state
-        .inner
-        .lock()
-        .map_err(|_| "Failed to lock local executor state".to_string())?
-        .child
-        .take();
-
-    if let Some(child) = old_child.take() {
-        child.kill();
-    }
-
-    set_executor_error(state, "Local executor restarting".to_string());
-    fail_pending_requests(state, "Local executor restarting".to_string());
-    start_executor_if_needed_unlocked(app, state).await
-}
-
-async fn restart_executor(app: tauri::AppHandle, state: &LocalExecutorState) -> Result<(), String> {
-    let _guard = state.start_lock.lock().await;
-    restart_executor_unlocked(app.clone(), state).await?;
-    ensure_local_executor_keepalive(app, state);
-    Ok(())
 }
 
 async fn send_executor_request(
@@ -2403,15 +2610,6 @@ pub async fn local_executor_ensure_started(
 }
 
 #[tauri::command]
-pub async fn local_executor_restart(
-    app: tauri::AppHandle,
-    state: State<'_, LocalExecutorState>,
-) -> Result<LocalExecutorStatus, String> {
-    restart_executor(app, &state).await?;
-    status_from_state(&state)
-}
-
-#[tauri::command]
 pub async fn local_executor_connect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
@@ -2420,7 +2618,22 @@ pub async fn local_executor_connect_backend(
 ) -> Result<LocalExecutorStatus, String> {
     let backend_url = normalize_command_arg(backend_url, "backend_url")?;
     let auth_token = normalize_command_arg(auth_token, "auth_token")?;
-    let _guard = state.start_lock.lock().await;
+    let _guard = state.backend_connection_lock.lock().await;
+    log::info!(
+        "Local executor backend connection update requested: connected=true, backend_url={backend_url}"
+    );
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "executor.backend.configure".to_string(),
+            params: json!({
+                "backend_url": backend_url.clone(),
+                "auth_token": auth_token.clone(),
+            }),
+        },
+    )
+    .await?;
     let changed = {
         let mut inner = state
             .inner
@@ -2434,11 +2647,9 @@ pub async fn local_executor_connect_backend(
             }),
         )
     };
-    if changed {
-        restart_executor_unlocked(app.clone(), &state).await?;
-    } else {
-        start_executor_if_needed_unlocked(app.clone(), &state).await?;
-    }
+    log::info!(
+        "Local executor backend connection updated in process: connected=true, changed={changed}"
+    );
     ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
@@ -2448,7 +2659,20 @@ pub async fn local_executor_disconnect_backend(
     app: tauri::AppHandle,
     state: State<'_, LocalExecutorState>,
 ) -> Result<LocalExecutorStatus, String> {
-    let _guard = state.start_lock.lock().await;
+    let _guard = state.backend_connection_lock.lock().await;
+    log::info!("Local executor backend connection update requested: connected=false");
+    send_executor_request(
+        app.clone(),
+        &state,
+        LocalExecutorRequest {
+            method: "executor.backend.configure".to_string(),
+            params: json!({
+                "backend_url": Value::Null,
+                "auth_token": Value::Null,
+            }),
+        },
+    )
+    .await?;
     let changed = {
         let mut inner = state
             .inner
@@ -2456,11 +2680,9 @@ pub async fn local_executor_disconnect_backend(
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         replace_backend_connection(&mut inner, None)
     };
-    if changed {
-        restart_executor_unlocked(app.clone(), &state).await?;
-    } else {
-        start_executor_if_needed_unlocked(app.clone(), &state).await?;
-    }
+    log::info!(
+        "Local executor backend connection updated in process: connected=false, changed={changed}"
+    );
     ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
@@ -2498,6 +2720,14 @@ mod tests {
     use std::sync::{Mutex as TestMutex, MutexGuard, OnceLock};
     #[cfg(unix)]
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn startup_cleanup_reports_only_the_first_cold_start_pass() {
+        let state = LocalExecutorState::default();
+
+        assert!(cleanup_stale_local_executor_once(&state).unwrap());
+        assert!(!cleanup_stale_local_executor_once(&state).unwrap());
+    }
 
     fn env_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
@@ -2750,12 +2980,64 @@ command = "example"
     }
 
     #[test]
+    fn executor_isolation_override_controls_runtime_home() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+        let home = PathBuf::from("/tmp/wework-isolation-override");
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &home);
+        std::env::remove_var(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        assert_eq!(
+            local_executor_isolation_enabled().expect("default isolation should resolve"),
+            cfg!(debug_assertions)
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "true");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("isolated home should resolve"),
+            home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                .join(local_executor_instance_name())
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "false");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("shared home should resolve"),
+            home
+        );
+
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
+    }
+
+    #[test]
+    fn executor_isolation_override_rejects_invalid_values() {
+        let _guard = env_lock();
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "sometimes");
+
+        let error = local_executor_isolation_enabled().expect_err("invalid override should fail");
+
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        assert_eq!(
+            error,
+            "WEWORK_EXECUTOR_ISOLATION_OVERRIDE must be true or false, got \"sometimes\""
+        );
+    }
+
+    #[test]
     fn app_ipc_addr_file_path_uses_executor_home() {
         let _guard = env_lock();
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wegent-home");
+        std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         let path = app_ipc_addr_file_path().expect("addr file path should resolve");
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
 
         if cfg!(debug_assertions) {
             assert!(path
@@ -2771,17 +3053,60 @@ command = "example"
         );
     }
 
+    #[test]
+    fn shared_executor_home_keeps_app_ipc_addr_file_instance_specific() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
+        let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wegent-shared-home");
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_SHARED_HOME_ENV, "1");
+        std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
+
+        let addr_file = app_ipc_addr_file_path().expect("addr file path should resolve");
+        let addr_file_string = addr_file.display().to_string();
+        let envs = local_executor_backend_env(&LocalExecutorInner::default())
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
+        restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
+        if cfg!(debug_assertions) {
+            assert!(addr_file.starts_with("/tmp/wegent-shared-home/app-runtime"));
+        } else {
+            assert_eq!(
+                addr_file,
+                PathBuf::from("/tmp/wegent-shared-home/app-ipc.addr")
+            );
+        }
+        assert_eq!(
+            envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
+            Some("/tmp/wegent-shared-home")
+        );
+        assert_eq!(
+            envs.get(LOCAL_EXECUTOR_ADDR_FILE_ENV).map(String::as_str),
+            Some(addr_file_string.as_str())
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn app_ipc_addr_file_path_falls_back_to_home_dir() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         std::env::set_var("HOME", "/tmp/wework-test-home");
         std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         let path = app_ipc_addr_file_path().expect("addr file path should resolve");
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
 
         if cfg!(debug_assertions) {
             assert!(path
@@ -2828,13 +3153,30 @@ command = "example"
 
     #[cfg(unix)]
     #[test]
+    fn branded_executor_home_stays_under_shared_root() {
+        let home = Path::new("/tmp/wework-test-home");
+
+        assert_eq!(
+            default_local_executor_home_path(home, None),
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+        );
+        assert_eq!(
+            default_local_executor_home_path(home, Some("com.example.demo-wework")),
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor/apps/com.example.demo-wework")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn default_runtime_paths_follow_build_mode() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var("HOME", "/tmp/wework-test-home");
         std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
 
         let home = local_executor_home_path().expect("executor home should resolve");
@@ -2843,11 +3185,15 @@ command = "example"
 
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+        restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
         restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         assert_eq!(
             home,
-            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+            default_local_executor_home_path(
+                Path::new("/tmp/wework-test-home"),
+                LOCAL_EXECUTOR_NAMESPACE,
+            )
         );
         if cfg!(debug_assertions) {
             assert_eq!(
@@ -2953,8 +3299,8 @@ command = "example"
     #[test]
     fn process_text_uses_addr_file_matches_only_exact_addr_file_env() {
         let release_addr_file = PathBuf::from("/Users/me/.wegent-executor/app-ipc.addr");
-        let debug_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-runtime/wework-123/app-ipc.addr";
-        let release_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-ipc.addr";
+        let debug_text = "WEGENT_EXECUTOR_HOME=/Users/me/.wegent-executor WEGENT_EXECUTOR_APP_IPC_ADDR_FILE=/Users/me/.wegent-executor/app-runtime/wework-123/app-ipc.addr";
+        let release_text = "WEGENT_EXECUTOR_HOME=/Users/me/.wegent-executor WEGENT_EXECUTOR_APP_IPC_ADDR_FILE=/Users/me/.wegent-executor/app-ipc.addr";
 
         assert!(!process_text_uses_addr_file(debug_text, &release_addr_file));
         assert!(process_text_uses_addr_file(
@@ -2998,7 +3344,7 @@ command = "example"
             }),
         };
 
-        update_ready_event_inner(&inner, &event);
+        let _ = update_ready_event_inner(&inner, &event);
 
         let status = inner.lock().expect("state should lock");
         assert!(status.running);
@@ -3014,10 +3360,16 @@ command = "example"
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
         let previous_codex_home = std::env::var_os(WEGENT_CODEX_HOME_ENV);
         let previous_addr = std::env::var_os(LOCAL_EXECUTOR_ADDR_ENV);
+        let previous_addr_file = std::env::var_os(LOCAL_EXECUTOR_ADDR_FILE_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        let previous_shared_home = std::env::var_os(LOCAL_EXECUTOR_SHARED_HOME_ENV);
         let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wework-instance-executor");
         std::env::remove_var(WEGENT_CODEX_HOME_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_ADDR_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_ADDR_FILE_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_SHARED_HOME_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
         let inner = LocalExecutorInner {
             backend_connection: Some(LocalExecutorBackendConnection {
@@ -3035,6 +3387,9 @@ command = "example"
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
         restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
         restore_env(LOCAL_EXECUTOR_ADDR_ENV, previous_addr);
+        restore_env(LOCAL_EXECUTOR_ADDR_FILE_ENV, previous_addr_file);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        restore_env(LOCAL_EXECUTOR_SHARED_HOME_ENV, previous_shared_home);
         restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         assert_eq!(
@@ -3063,6 +3418,9 @@ command = "example"
         let addr_env = envs
             .get(LOCAL_EXECUTOR_ADDR_ENV)
             .expect("addr env should be passed to sidecar");
+        let addr_file_env = envs
+            .get(LOCAL_EXECUTOR_ADDR_FILE_ENV)
+            .expect("addr file env should be passed to sidecar");
         let log_dir_env = envs
             .get(LOCAL_EXECUTOR_LOG_DIR_ENV)
             .expect("log dir env should be passed to sidecar");
@@ -3073,10 +3431,12 @@ command = "example"
             );
             assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
+            assert!(addr_file_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
             assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
             assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
+            assert_eq!(addr_file_env, "/tmp/wework-instance-executor/app-ipc.addr");
         }
     }
 

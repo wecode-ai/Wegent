@@ -120,6 +120,10 @@ async function prepareTarget(target, entry) {
   const tarballPath = join(cacheRoot, tarballName)
   const targetRoot = join(outputRoot, target)
   const binaryPath = join(targetRoot, entry.binaryPath)
+  const codeModeHostPath = join(
+    dirname(binaryPath),
+    target === 'x86_64-pc-windows-msvc' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+  )
 
   if (!(await pathExists(tarballPath))) {
     console.log(`Downloading Codex ${entry.version} for ${target}`)
@@ -138,8 +142,12 @@ async function prepareTarget(target, entry) {
   if (!(await pathExists(binaryPath))) {
     throw new Error(`Codex binary not found after extraction: ${binaryPath}`)
   }
+  if (!(await pathExists(codeModeHostPath))) {
+    throw new Error(`Codex code-mode host not found after extraction: ${codeModeHostPath}`)
+  }
   if (process.platform !== 'win32') {
     await chmod(binaryPath, 0o755)
+    await chmod(codeModeHostPath, 0o755)
   }
   await writeFile(
     join(targetRoot, 'WEGENT_CODEX_BINARY.json'),

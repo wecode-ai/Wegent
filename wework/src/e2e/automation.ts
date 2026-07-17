@@ -7,6 +7,14 @@ import {
 } from '@/features/model-settings/localModelConnectionTest'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { closeMainWindowToTray } from '@/tauri/runtimeTaskCloseGuard'
+import {
+  normalizeCloudBackendUrl,
+  saveStoredCloudConnection,
+} from '@/features/cloud-connection/cloudConnectionStorage'
+import {
+  LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  saveLocalModelConfig,
+} from '@/features/model-settings/localModelSettings'
 import { invoke } from '@tauri-apps/api/core'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -19,6 +27,7 @@ type DesktopControlAction =
   | 'click'
   | 'clickWhenEnabled'
   | 'closeMainWindowToTray'
+  | 'dispatchLocalModelSettingsChanged'
   | 'fill'
   | 'getText'
   | 'hover'
@@ -187,11 +196,37 @@ function createBridge(): WeworkAutomationBridge {
   }
 }
 
+function seedDesktopE2ECloudConnection() {
+  const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
+  if (!backendUrl) return
+
+  const config = normalizeCloudBackendUrl(backendUrl)
+  saveStoredCloudConnection({
+    ...config,
+    token: 'wework-desktop-e2e-cloud-token',
+    tokenExpiresAt: null,
+    user: {
+      id: 9001,
+      user_name: 'wework-desktop-e2e-cloud-user',
+      email: 'desktop-e2e@wework.local',
+    },
+    connectedAt: new Date().toISOString(),
+  })
+  saveLocalModelConfig({
+    id: 'desktop-e2e-local',
+    displayName: 'Desktop E2E Local',
+    modelId: 'desktop-e2e-local-model',
+    baseUrl: backendUrl,
+    enabled: true,
+  })
+}
+
 export function installWeworkAutomationBridge() {
   if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 
+  seedDesktopE2ECloudConnection()
   window.__WEWORK_E2E__ = createBridge()
   installDesktopControlClient()
 }
@@ -410,6 +445,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           console.error('[Wework] Failed to close the main window during E2E verification:', error)
         })
       }, 100)
+      return ''
+    case 'dispatchLocalModelSettingsChanged':
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
     case 'waitFor':
       return waitForDesktopControlElement(command)

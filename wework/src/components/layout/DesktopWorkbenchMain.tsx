@@ -9,6 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import { createLocalFileWorkspaceTarget } from '@/lib/workspace-target'
@@ -26,6 +27,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
@@ -100,11 +102,10 @@ const DESKTOP_CHAT_CONTENT_BASE_CLASS =
 const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_MESSAGE_LIST_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_6rem))] max-w-[calc(100%_-_6rem)]`
 const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} px-0`
-const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS =
-  'pt-6 pb-2 bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS = 'pt-6 pb-2 bg-gradient-to-t to-transparent'
 const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
 const DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS =
-  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t from-background via-background to-transparent'
+  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-4 z-popover bg-background/95 shadow-md'
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
@@ -261,7 +262,10 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const isTauri = isTauriRuntime()
+  const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
+  const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
   const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
@@ -306,7 +310,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
+          environmentInfoPinned={environmentInfoPinned}
+          environmentInfoOverlayOpen={environmentInfoOverlayOpen}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
+          onEnvironmentInfoPinnedChange={setEnvironmentInfoPinned}
+          onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
           onTerminalPanePinned={pinTerminalPane}
           onTerminalPaneUnpinned={unpinTerminalPane}
         />
@@ -321,7 +329,12 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       <header
         id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
         data-testid="workbench-main-header"
-        className="relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40 bg-background/95"
+        className={cn(
+          'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
+          appearance.backgroundImagePath && appearance.backgroundInTopBar
+            ? 'bg-background/20'
+            : 'bg-background/95'
+        )}
       />
       {paneStack}
     </div>
@@ -333,7 +346,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
+  environmentInfoPinned,
+  environmentInfoOverlayOpen,
   onSidebarCollapsedChange,
+  onEnvironmentInfoPinnedChange,
+  onEnvironmentInfoOverlayOpenChange,
   onTerminalPanePinned,
   onTerminalPaneUnpinned,
 }: {
@@ -341,10 +358,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
+  environmentInfoPinned: boolean
+  environmentInfoOverlayOpen: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
+  onEnvironmentInfoPinnedChange: (open: boolean) => void
+  onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const {
     state,
     workspaceFileApi,
@@ -501,6 +523,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     Boolean(currentRuntimeTask) &&
     availableChatColumnWidth - DOCKED_ENVIRONMENT_INFO_WIDTH >=
       MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO
+  const environmentInfoOpen = environmentInfoDocked
+    ? environmentInfoPinned
+    : environmentInfoOverlayOpen
+  const setEnvironmentInfoOpen = environmentInfoDocked
+    ? onEnvironmentInfoPinnedChange
+    : onEnvironmentInfoOverlayOpenChange
+
+  useEffect(() => {
+    if (!paneActive || (currentRuntimeTask && !environmentInfoDocked)) return
+    onEnvironmentInfoOverlayOpenChange(false)
+  }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, paneActive])
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const rightPanelTitlebarWidth = rightPanelOpen
@@ -770,6 +803,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
     useState<HTMLButtonElement | null>(null)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
+  const hasMainBackground = Boolean(appearance.backgroundImagePath && appearance.backgroundInMain)
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
@@ -799,7 +833,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -1155,7 +1191,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             latestPreviousTurnSubtaskId !== null
               ? {
                   loadDiff: () =>
-                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessagesRef.current),
+                    loadTurnFileChangesDiff(
+                      latestPreviousTurnSubtaskId,
+                      paneMessagesRef.current,
+                      undefined,
+                      currentRuntimeTask
+                    ),
                   defaultFileTreeVisible: false,
                   sourceSubtaskId: latestPreviousTurnSubtaskId,
                 }
@@ -1171,6 +1212,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       },
     ],
     [
+      currentRuntimeTask,
       hasPreviousTurnReview,
       latestPreviousTurnSubtaskId,
       loadEnvironmentDiff,
@@ -1274,6 +1316,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       environmentInfoPopoverContainer={environmentInfoPanelElement}
       environmentInfoVisible={Boolean(currentRuntimeTask)}
       environmentInfoDocked={environmentInfoDocked}
+      environmentInfoOpen={environmentInfoOpen}
+      onEnvironmentInfoOpenChange={setEnvironmentInfoOpen}
       environmentInfoFloatingFooter={
         !environmentInfoDocked && (paneSession.subagentStatuses?.length ?? 0) > 0 ? (
           <div data-testid="workbench-subagent-status-row">
@@ -1477,7 +1521,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     <main
       ref={workbenchMainRef}
       className={cn(
-        'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden bg-background',
+        'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden',
+        hasMainBackground ? 'bg-background/20' : 'bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
@@ -1500,7 +1545,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopTopBar
             testId="workbench-topbar"
             className={cn(
-              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 bg-background/95 pr-7 backdrop-blur supports-[backdrop-filter]:bg-background/80',
+              'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
+              appearance.backgroundImagePath && appearance.backgroundInTopBar
+                ? 'bg-background/20'
+                : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
             )}
@@ -1554,12 +1602,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 )}
                 stickyFooterClassName={cn(
                   DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+                  hasMainBackground
+                    ? 'from-transparent via-transparent'
+                    : 'from-background via-background',
                   chatContentResizing && 'transition-none'
                 )}
                 stickyFooter={
                   <>
                     <div
-                      className={DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS}
+                      className={cn(
+                        DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+                        hasMainBackground
+                          ? 'from-transparent via-transparent'
+                          : 'from-background via-background'
+                      )}
                       data-testid="desktop-floating-composer-backdrop"
                     />
                     <div
@@ -1671,10 +1727,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
                 onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
                 onRevertFileChanges={(subtaskId, fileChanges) =>
-                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
                 }
                 onOpenFileChangesReview={({
                   subtaskId,

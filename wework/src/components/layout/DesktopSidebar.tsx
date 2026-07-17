@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
+  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -34,6 +35,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
@@ -56,13 +58,20 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   runtimeProjectToProject,
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
+import {
+  getLocalRuntimeStateDeviceId,
+  getRuntimeProjectReorderRequest,
+  getRuntimeProjectSidebarStateKey,
+} from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import type {
   DeviceInfo,
   RuntimeTaskSummary,
@@ -126,7 +135,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'todo' | 'plugins' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'sites' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -139,6 +148,7 @@ interface DesktopSidebarProps {
   onOpenTodo?: () => void
   onOpenApps?: () => void
   onNewChat: () => void
+  onStartStandaloneChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -168,6 +178,7 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
+  onOpenSites?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenBlankStandaloneProject?: () => void
   onOpenStandaloneFolderProject?: (
@@ -458,6 +469,7 @@ function SidebarButton({
     <button
       type="button"
       data-testid={testId}
+      aria-current={selected ? 'page' : undefined}
       onClick={onClick}
       className={[
         'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-sm font-normal leading-5',
@@ -724,12 +736,14 @@ function getRuntimeProjectDeviceState(
 ): SidebarDeviceState | null {
   const workspace = runtimeProjectWork?.deviceWorkspaces[0]
   if (!workspace) return null
-  return (
-    getSidebarDeviceState(workspace.deviceId, devices) ?? {
-      deviceId: workspace.deviceId,
-      status: (workspace.deviceStatus ?? 'unavailable') as SidebarDeviceStatus,
-    }
-  )
+  const resolvedDevice = getSidebarDeviceState(workspace.deviceId, devices)
+  if (resolvedDevice?.device) return resolvedDevice
+  return {
+    deviceId: workspace.deviceName || workspace.remoteHostId || workspace.deviceId,
+    status: (workspace.deviceStatus ??
+      resolvedDevice?.status ??
+      'unavailable') as SidebarDeviceStatus,
+  }
 }
 
 function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefined): boolean {
@@ -878,19 +892,13 @@ function getProjectFinderWorkspacePath(
   return null
 }
 
-function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
-  const workspaces = runtimeProjectWork.deviceWorkspaces
-  if (workspaces.length === 0) return true
-  return workspaces.some(
-    workspace => workspace.workspaceSource !== 'remote' || workspace.tasks.length > 0
-  )
-}
-
 function shouldShowProjectDeviceStatus(
   deviceState: SidebarDeviceState | null,
-  devices: DeviceInfo[]
+  devices: DeviceInfo[],
+  remoteProject: boolean
 ): deviceState is SidebarDeviceState {
   if (!deviceState) return false
+  if (remoteProject) return true
   if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type !== 'local') {
     return true
   }
@@ -1493,7 +1501,7 @@ function RuntimeTaskRow({
     void onOpenRuntimeTask?.(taskAddress)
   }
   const toggleTaskPinned = async () => {
-    if (!threadId || !onSetRuntimeTaskPinned) return
+    if (!workspace.available || !threadId || !onSetRuntimeTaskPinned) return
     const nextMarked = !marked
     setOptimisticMarked({ base: persistedMarked, value: nextMarked })
     try {
@@ -1715,7 +1723,7 @@ function RuntimeTaskRow({
                 type="button"
                 data-testid={`runtime-local-task-mark-${task.taskId}`}
                 onClick={handleToggleMark}
-                disabled={!threadId || !onSetRuntimeTaskPinned}
+                disabled={!workspace.available || !threadId || !onSetRuntimeTaskPinned}
                 className={cn(
                   'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
                   marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
@@ -1765,14 +1773,14 @@ function RuntimeTaskRow({
             label: marked ? t('workbench.unmark_runtime_task') : t('workbench.mark_runtime_task'),
             icon: Pin,
             testId: `runtime-local-task-menu-pin-${task.taskId}`,
-            disabled: !threadId || !onSetRuntimeTaskPinned,
+            disabled: !workspace.available || !threadId || !onSetRuntimeTaskPinned,
             onSelect: toggleTaskPinned,
           },
           {
             label: t('workbench.rename_chat', '重命名任务'),
             icon: Edit3,
             testId: `runtime-local-task-menu-rename-${task.taskId}`,
-            disabled: !onRenameRuntimeTask,
+            disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
           {
@@ -1802,7 +1810,9 @@ function RuntimeTaskRow({
         inputTestId={`rename-runtime-local-task-input-${task.taskId}`}
         confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
         onClose={() => setRenameOpen(false)}
-        onSubmit={title => onRenameRuntimeTask?.(taskAddress, title)}
+        onSubmit={title => {
+          if (workspace.available) onRenameRuntimeTask?.(taskAddress, title)
+        }}
       />
       {archiveNoticeOpen &&
         createPortal(
@@ -1859,6 +1869,7 @@ function ProjectItem({
   unreadTaskKeys,
   imNotificationSettings,
   showDeviceMarker,
+  sidebarStateDeviceId,
   onStartNewProjectChat,
   onRemoveProject,
   onSetRuntimeProjectPinned,
@@ -1882,6 +1893,7 @@ function ProjectItem({
   unreadTaskKeys: ReadonlySet<string>
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
+  sidebarStateDeviceId?: string | null
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -1947,7 +1959,11 @@ function ProjectItem({
   const projectDeviceState =
     getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
     getSidebarDeviceState(getProjectDeviceId(project), devices)
-  const showProjectDeviceStatus = shouldShowProjectDeviceStatus(projectDeviceState, devices)
+  const showProjectDeviceStatus = shouldShowProjectDeviceStatus(
+    projectDeviceState,
+    devices,
+    isRuntimeRemoteProject(runtimeProjectWork)
+  )
   const canStartProjectChat = isSidebarDeviceOnline(projectDeviceState)
   const canArchiveProjectConversations =
     Boolean(runtimeProjectWork?.project.key) &&
@@ -1967,7 +1983,13 @@ function ProjectItem({
       ? optimisticProjectPinned.value
       : persistedProjectPinned
   const projectStateDeviceId =
-    runtimeProjectWork?.project.stateDeviceId ?? runtimeWorkspaces?.[0]?.deviceId ?? null
+    sidebarStateDeviceId ??
+    runtimeProjectWork?.project.stateDeviceId ??
+    runtimeWorkspaces?.[0]?.deviceId ??
+    null
+  const projectSidebarStateKey = runtimeProjectWork
+    ? getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)
+    : null
   const projectAppearance = runtimeProjectWork?.project.appearance
   const projectMarker = projectAppearance?.marker
   const projectAppearanceColor = projectAppearance?.color
@@ -1992,7 +2014,7 @@ function ProjectItem({
     unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
   ).length
   const toggleProjectPinned = async () => {
-    const projectKey = runtimeProjectWork?.project.key
+    const projectKey = projectSidebarStateKey
     if (!projectKey || !projectStateDeviceId || !onSetRuntimeProjectPinned) return
     const nextPinned = !projectPinned
     setOptimisticProjectPinned({ base: persistedProjectPinned, value: nextPinned })
@@ -2007,7 +2029,7 @@ function ProjectItem({
     }
   }
   const cycleProjectAppearance = async () => {
-    const projectKey = runtimeProjectWork?.project.key
+    const projectKey = projectSidebarStateKey
     if (!projectKey || !projectStateDeviceId || !onSetRuntimeProjectAppearance) return
     const currentIndex = PROJECT_APPEARANCE_COLORS.indexOf(
       projectAppearance?.color as (typeof PROJECT_APPEARANCE_COLORS)[number]
@@ -2422,6 +2444,7 @@ export function DesktopSidebar({
   preferredDeviceId,
   activeItem = 'chat',
   onNewChat,
+  onStartStandaloneChat,
   onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeTask,
@@ -2435,6 +2458,7 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
+  onOpenSites,
   onRefreshDevices,
   onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
@@ -2465,6 +2489,8 @@ export function DesktopSidebar({
   onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
@@ -2533,6 +2559,7 @@ export function DesktopSidebar({
   const chatTaskPinRequestIdRef = useRef(0)
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
+  const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
   const standaloneProjectWork = useMemo(
     () =>
       standaloneRuntimeProjectWork(
@@ -2543,23 +2570,23 @@ export function DesktopSidebar({
       ),
     [devices, runtimeWork, standaloneDeviceId, standaloneWorkspacePath]
   )
-  const filteredRuntimeProjects = useMemo(() => {
-    const items = (runtimeWork?.projects ?? []).filter(shouldShowRuntimeProject)
+  const sidebarRuntimeProjects = useMemo(() => {
+    const items = runtimeWork?.projects ?? []
     return standaloneProjectWork ? [standaloneProjectWork, ...items] : items
   }, [runtimeWork?.projects, standaloneProjectWork])
   const sidebarProjects = useMemo(() => {
     if (runtimeWork || standaloneProjectWork) {
-      return filteredRuntimeProjects.map(runtimeProjectToProject)
+      return sidebarRuntimeProjects.map(runtimeProjectToProject)
     }
     return projects
-  }, [filteredRuntimeProjects, projects, runtimeWork, standaloneProjectWork])
+  }, [projects, runtimeWork, sidebarRuntimeProjects, standaloneProjectWork])
   const visibleExpandedProjectIds = useMemo(
     () => pruneProjectIdSet(expandedProjectIds, sidebarProjects),
     [expandedProjectIds, sidebarProjects]
   )
   const runtimeWorkByProjectId = useMemo(() => {
-    return new Map(filteredRuntimeProjects.map(item => [runtimeProjectUiId(item.project), item]))
-  }, [filteredRuntimeProjects])
+    return new Map(sidebarRuntimeProjects.map(item => [runtimeProjectUiId(item.project), item]))
+  }, [sidebarRuntimeProjects])
   const sortableProjects = useMemo(
     () =>
       sidebarProjects.map(project => ({
@@ -2569,7 +2596,14 @@ export function DesktopSidebar({
     [runtimeWorkByProjectId, sidebarProjects]
   )
   const pinnedProjects = useMemo(
-    () => sortableProjects.filter(({ runtimeProjectWork }) => runtimeProjectWork?.project.pinned),
+    () =>
+      sortableProjects
+        .filter(({ runtimeProjectWork }) => runtimeProjectWork?.project.pinned)
+        .sort(
+          (left, right) =>
+            (left.runtimeProjectWork?.project.pinnedOrder ?? Number.MAX_SAFE_INTEGER) -
+            (right.runtimeProjectWork?.project.pinnedOrder ?? Number.MAX_SAFE_INTEGER)
+        ),
     [sortableProjects]
   )
   const regularSortableProjects = useMemo(
@@ -2604,7 +2638,7 @@ export function DesktopSidebar({
     [chatTaskItemsWithPinState]
   )
   const pinnedTaskItems = useMemo(() => {
-    const projectTasks = filteredRuntimeProjects.flatMap(projectWork =>
+    const projectTasks = sidebarRuntimeProjects.flatMap(projectWork =>
       getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces)
         .filter(({ task }) => task.pinned)
         .map(item => ({ ...item, projectWork }))
@@ -2617,7 +2651,7 @@ export function DesktopSidebar({
         (left.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER) -
         (right.task.pinnedOrder ?? Number.MAX_SAFE_INTEGER)
     )
-  }, [chatTaskItemsWithPinState, filteredRuntimeProjects])
+  }, [chatTaskItemsWithPinState, sidebarRuntimeProjects])
   const setChatTaskPinned = async (data: RuntimeTaskPinRequest) => {
     if (!onSetRuntimeTaskPinned) return
     const chatTask = chatTaskItems.find(
@@ -2650,13 +2684,13 @@ export function DesktopSidebar({
     }
   }
   const projectSectionArchiveItems = useMemo(() => {
-    return filteredRuntimeProjects
+    return sidebarRuntimeProjects
       .map(projectWork => ({
         key: projectWork.project.key,
         count: getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).length,
       }))
       .filter(item => item.count > 0)
-  }, [filteredRuntimeProjects])
+  }, [sidebarRuntimeProjects])
   const projectSectionArchiveKeys = useMemo(
     () => projectSectionArchiveItems.map(item => item.key),
     [projectSectionArchiveItems]
@@ -2672,7 +2706,7 @@ export function DesktopSidebar({
   const chatSectionArchiveCount = chatSectionArchiveAddresses.length
   const selectedRuntimeProject = useMemo(() => {
     if (currentRuntimeTask) {
-      const projectWork = filteredRuntimeProjects.find(item =>
+      const projectWork = sidebarRuntimeProjects.find(item =>
         item.deviceWorkspaces.some(workspace =>
           workspace.tasks.some(task => isRuntimeTaskSelected(currentRuntimeTask, workspace, task))
         )
@@ -2691,7 +2725,7 @@ export function DesktopSidebar({
       : ''
     if (!normalizedDeviceId || !normalizedWorkspacePath) return null
 
-    const projectWork = filteredRuntimeProjects.find(item =>
+    const projectWork = sidebarRuntimeProjects.find(item =>
       item.deviceWorkspaces.some(
         workspace =>
           workspace.deviceId === normalizedDeviceId &&
@@ -2704,7 +2738,7 @@ export function DesktopSidebar({
           id: runtimeProjectUiId(projectWork.project),
         }
       : null
-  }, [currentRuntimeTask, filteredRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
+  }, [currentRuntimeTask, sidebarRuntimeProjects, standaloneDeviceId, standaloneWorkspacePath])
   const selectedRuntimeProjectId = selectedRuntimeProject?.id ?? null
   const selectedRuntimeProjectAutoExpandKey = selectedRuntimeProject?.autoExpandKey ?? null
   const selectedRuntimeChatVisible = useMemo(() => {
@@ -2934,8 +2968,13 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150 transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
-        !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]',
+        'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
+        appearance.backgroundImagePath && appearance.backgroundInSidebar
+          ? 'bg-background/25'
+          : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+        !windowFocused &&
+          !(appearance.backgroundImagePath && appearance.backgroundInSidebar) &&
+          'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
       )}
@@ -3021,6 +3060,15 @@ export function DesktopSidebar({
                   testId="plugins-button"
                   selected={activeItem === 'plugins'}
                   onClick={onOpenPlugins}
+                />
+              )}
+              {(experimentalFeaturesEnabled || activeItem === 'sites') && (
+                <SidebarButton
+                  icon={Grid3X3}
+                  label={t('workbench.sites', '站点')}
+                  testId="sites-button"
+                  selected={activeItem === 'sites'}
+                  onClick={onOpenSites ?? (() => navigateTo('/sites'))}
                 />
               )}
               {showCloudConnectionEntry && (
@@ -3113,7 +3161,7 @@ export function DesktopSidebar({
                     className="mt-1 space-y-1"
                     items={pinnedProjects}
                     getId={({ runtimeProjectWork }) =>
-                      `${runtimeProjectWork?.project.stateDeviceId || 'device'}:${runtimeProjectWork?.project.key}`
+                      `${sidebarStateDeviceId || runtimeProjectWork?.project.stateDeviceId || 'device'}:${runtimeProjectWork ? getRuntimeProjectSidebarStateKey(runtimeProjectWork.project) : 'project'}`
                     }
                     getLabel={({ project }) => project.name}
                     canDrag={({ runtimeProjectWork }) =>
@@ -3123,24 +3171,19 @@ export function DesktopSidebar({
                       const movedProject = moved.runtimeProjectWork?.project
                       const beforeProject = before?.runtimeProjectWork?.project
                       const deviceId =
+                        sidebarStateDeviceId ||
                         movedProject?.stateDeviceId ||
                         moved.runtimeProjectWork?.deviceWorkspaces[0]?.deviceId
                       if (!movedProject || !deviceId || !onSetRuntimeProjectPinned) {
                         throw new Error('Pinned project ordering is unavailable')
                       }
-                      if (
-                        beforeProject?.stateDeviceId &&
-                        beforeProject.stateDeviceId !== movedProject.stateDeviceId
-                      ) {
-                        throw new Error(
-                          'Pinned projects from different devices cannot be reordered'
-                        )
-                      }
                       await onSetRuntimeProjectPinned({
                         deviceId,
-                        projectKey: movedProject.key,
+                        projectKey: getRuntimeProjectSidebarStateKey(movedProject),
                         pinned: true,
-                        beforeProjectKey: beforeProject?.key ?? null,
+                        beforeProjectKey: beforeProject
+                          ? getRuntimeProjectSidebarStateKey(beforeProject)
+                          : null,
                       })
                     }}
                     renderItem={({ project, runtimeProjectWork }) => (
@@ -3153,6 +3196,7 @@ export function DesktopSidebar({
                         unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                         imNotificationSettings={imNotificationSettings}
                         showDeviceMarker={false}
+                        sidebarStateDeviceId={sidebarStateDeviceId}
                         onToggleProject={handleToggleProject}
                         onStartNewProjectChat={onStartNewProjectChat}
                         onRemoveProject={onRemoveProject}
@@ -3296,7 +3340,7 @@ export function DesktopSidebar({
                   items={regularSortableProjects}
                   getId={({ project, runtimeProjectWork }) =>
                     runtimeProjectWork
-                      ? `${runtimeProjectWork.project.stateDeviceId || 'device'}:${runtimeProjectWork.project.key}`
+                      ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
                       : `project:${project.id}`
                   }
                   getLabel={({ project }) => project.name}
@@ -3304,29 +3348,17 @@ export function DesktopSidebar({
                     Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
                   }
                   onMove={async (moved, before) => {
-                    const movedRuntimeProject = moved.runtimeProjectWork?.project
-                    const beforeRuntimeProject = before?.runtimeProjectWork?.project
-                    const deviceId =
-                      movedRuntimeProject?.stateDeviceId ||
-                      moved.runtimeProjectWork?.deviceWorkspaces[0]?.deviceId
-                    if (!movedRuntimeProject || !deviceId || !onReorderRuntimeProjects) {
+                    const movedRuntimeProject = moved.runtimeProjectWork
+                    if (!movedRuntimeProject || !onReorderRuntimeProjects) {
                       throw new Error('Runtime project ordering is unavailable')
                     }
-                    if (
-                      beforeRuntimeProject &&
-                      beforeRuntimeProject.stateDeviceId &&
-                      beforeRuntimeProject.stateDeviceId !== movedRuntimeProject.stateDeviceId
-                    ) {
-                      throw new Error(
-                        'Projects from different devices cannot be reordered together'
-                      )
-                    }
-                    await onReorderRuntimeProjects({
-                      deviceId,
-                      projectKey: movedRuntimeProject.key,
-                      beforeProjectKey: beforeRuntimeProject?.key ?? null,
-                      insertAtEnd: !beforeRuntimeProject,
-                    })
+                    const request = getRuntimeProjectReorderRequest(
+                      movedRuntimeProject,
+                      before?.runtimeProjectWork,
+                      sidebarStateDeviceId
+                    )
+                    if (!request) throw new Error('Runtime project ordering is unavailable')
+                    await onReorderRuntimeProjects(request)
                   }}
                   renderItem={({ project, runtimeProjectWork }) => (
                     <ProjectItem
@@ -3338,6 +3370,7 @@ export function DesktopSidebar({
                       unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={false}
+                      sidebarStateDeviceId={sidebarStateDeviceId}
                       onToggleProject={handleToggleProject}
                       onStartNewProjectChat={onStartNewProjectChat}
                       onRemoveProject={onRemoveProject}
@@ -3392,7 +3425,7 @@ export function DesktopSidebar({
                     data-testid="runtime-chat-section-new-chat-button"
                     onClick={event => {
                       event.stopPropagation()
-                      onNewChat()
+                      onStartStandaloneChat()
                     }}
                     className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                   >

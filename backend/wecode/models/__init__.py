@@ -6,6 +6,7 @@
 WeCode evaluation module models package.
 """
 
+from wecode.models.agent_task_usage import AgentTaskUsageDetail
 from wecode.models.erp_user import WecodeErpUser
 from wecode.models.evaluation import (
     EvalAnswer,
@@ -30,4 +31,5 @@ __all__ = [
     "EvalExamSession",
     "TransitionPageItem",
     "WecodeErpUser",
+    "AgentTaskUsageDetail",
 ]

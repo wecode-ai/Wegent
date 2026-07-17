@@ -15,6 +15,7 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/appPreferences'
 
 vi.mock('@/lib/local-terminal', () => ({
   openLocalWorkspace: vi.fn(),
@@ -72,6 +73,7 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     projects: [project()],
     devices: [localDevice()],
     onNewChat: vi.fn(),
+    onStartStandaloneChat: vi.fn(),
     onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
@@ -209,6 +211,82 @@ describe('DesktopSidebar', () => {
       projectKey: 'project-7',
       pinned: true,
     })
+  })
+
+  test('exposes a remote project as sortable through its local Codex state identity', () => {
+    const onReorderRuntimeProjects = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: '/repo/local',
+              name: 'Local',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                workspacePath: '/repo/local',
+                available: true,
+                tasks: [],
+              },
+            ],
+          },
+          {
+            project: {
+              id: 8,
+              key: '/srv/remote',
+              sidebarStateKey: 'remote-project-id',
+              name: 'Remote',
+              kind: 'remote',
+              source: 'remote_project',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'remote-device',
+                remoteHostId: 'remote-device',
+                workspacePath: '/srv/remote',
+                workspaceSource: 'remote',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'remote-task',
+                    workspacePath: '/srv/remote',
+                    title: 'Remote task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onReorderRuntimeProjects,
+    })
+
+    const remoteSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:remote-project-id"]'
+    ) as HTMLElement
+    expect(remoteSortable).toHaveAttribute('tabindex', '0')
+    expect(remoteSortable).toHaveAttribute('role', 'button')
+    expect(remoteSortable).toHaveClass('touch-none')
   })
 
   test('shows an interactive Codex-style project hover card', async () => {
@@ -847,6 +925,32 @@ describe('DesktopSidebar', () => {
     expect(onOpenPlugins).toHaveBeenCalledTimes(1)
   })
 
+  test('opens Sites navigation from the desktop sidebar', async () => {
+    const onOpenSites = vi.fn()
+    renderSidebar({ onOpenSites, activeItem: 'sites' })
+
+    expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+    await userEvent.click(screen.getByTestId('sites-button'))
+
+    expect(onOpenSites).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows Sites only while experimental features are enabled', async () => {
+    renderSidebar()
+
+    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
+          detail: { ...defaultAppPreferences, experimentalFeaturesEnabled: true },
+        })
+      )
+    })
+
+    expect(await screen.findByTestId('sites-button')).toBeInTheDocument()
+  })
+
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
@@ -1291,8 +1395,9 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('runtime-local-task-row-codex-1')).toBeInTheDocument()
   })
 
-  test('hides remote-only runtime projects from the project list', () => {
+  test('keeps an unavailable remote-only project visible with its IP and gray status', () => {
     renderSidebar({
+      devices: [localDevice()],
       runtimeWork: {
         projects: [
           {
@@ -1302,8 +1407,8 @@ describe('DesktopSidebar', () => {
                 id: 91,
                 deviceId: 'remote-device',
                 deviceName: '10.201.3.200',
-                deviceStatus: 'online',
-                available: true,
+                deviceStatus: 'offline',
+                available: false,
                 workspacePath: '/home/ubuntu/workspace/Wegent',
                 workspaceSource: 'remote',
                 remoteHostId: 'remote-ssh-discovered:10.201.3.200',
@@ -1332,11 +1437,132 @@ describe('DesktopSidebar', () => {
       },
     })
 
-    expect(screen.queryByText('Remote Wegent')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('project-remote-folder-icon-7')).not.toBeInTheDocument()
+    expect(screen.getByText('Remote Wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('project-remote-folder-icon-7')).toBeInTheDocument()
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7-dot')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-text-muted))]',
+      'opacity-55'
+    )
+    expect(screen.getByTestId('project-device-status-7-dot')).not.toHaveAttribute('style')
     expect(screen.getByText('Local Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('project-folder-icon-8')).toBeInTheDocument()
-    expect(screen.getAllByTestId('project-item')).toHaveLength(1)
+    expect(screen.getAllByTestId('project-item')).toHaveLength(2)
+  })
+
+  test('shows cached tasks for an offline remote project without allowing them to open', async () => {
+    const onOpenRuntimeTask = vi.fn()
+    const onSetRuntimeTaskPinned = vi.fn()
+    const onRenameRuntimeTask = vi.fn()
+    const onArchiveRuntimeTask = vi.fn()
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Remote Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: '10.201.3.200',
+                deviceStatus: 'offline',
+                available: false,
+                workspacePath: '/home/ubuntu/workspace/Wegent',
+                workspaceSource: 'remote',
+                remoteHostId: 'remote-ssh-discovered:10.201.3.200',
+                tasks: [
+                  {
+                    taskId: 'cached-remote-task',
+                    workspacePath: '/home/ubuntu/workspace/Wegent',
+                    title: 'Cached remote task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+      onOpenRuntimeTask,
+      onSetRuntimeTaskPinned,
+      onRenameRuntimeTask,
+      onArchiveRuntimeTask,
+    })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    const taskRow = screen.getByTestId('runtime-local-task-row-cached-remote-task')
+    expect(taskRow).toHaveAttribute('aria-disabled', 'true')
+    expect(taskRow).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByTestId('runtime-local-task-mark-cached-remote-task')).toBeDisabled()
+    expect(screen.getByTestId('runtime-local-task-archive-cached-remote-task')).toBeDisabled()
+    fireEvent.click(taskRow)
+    fireEvent.click(screen.getByTestId('runtime-local-task-mark-cached-remote-task'))
+    fireEvent.doubleClick(taskRow)
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(onSetRuntimeTaskPinned).not.toHaveBeenCalled()
+    expect(onRenameRuntimeTask).not.toHaveBeenCalled()
+    expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
+  })
+
+  test('shows an available remote project IP with green status', () => {
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          is_default: false,
+          device_type: 'remote',
+          client_ip: '10.201.3.200',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Remote Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: '10.201.3.200',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/home/ubuntu/workspace/Wegent',
+                workspaceSource: 'remote',
+                remoteHostId: 'remote-ssh-discovered:10.201.3.200',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(screen.getByTestId('project-device-status-7')).toHaveTextContent('10.201.3.200')
+    expect(screen.getByTestId('project-device-status-7-dot')).toHaveStyle({
+      backgroundColor: '#1FD660',
+    })
+    expect(screen.getByTestId('project-device-status-7-dot')).not.toHaveClass(
+      'bg-[rgb(var(--color-sidebar-text-muted))]'
+    )
   })
 
   test('shows running status on running runtime tasks only', async () => {
@@ -2553,9 +2779,11 @@ describe('DesktopSidebar', () => {
     const onArchiveProjectsConversations = vi.fn().mockResolvedValue(undefined)
     const onArchiveChatConversations = vi.fn().mockResolvedValue(undefined)
     const onNewChat = vi.fn()
+    const onStartStandaloneChat = vi.fn()
 
     renderSidebar({
       onNewChat,
+      onStartStandaloneChat,
       onArchiveProjectsConversations,
       onArchiveChatConversations,
       runtimeWork: {
@@ -2627,7 +2855,8 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
-    expect(onNewChat).toHaveBeenCalledTimes(1)
+    expect(onStartStandaloneChat).toHaveBeenCalledTimes(1)
+    expect(onNewChat).not.toHaveBeenCalled()
 
     await user.click(screen.getByTestId('runtime-chat-section-menu'))
     expect(screen.getByTestId('runtime-chat-section-archive-all-chats')).toHaveTextContent(

@@ -12,6 +12,7 @@ import { execFile, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -202,18 +203,15 @@ async function runServer(sessionPath, token) {
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
-    env: {
-      ...process.env,
-      VITE_WEWORK_E2E: 'true',
-      VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-      VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
-      CODEX_HOME: codexHome,
-      DEVICE_ID: session.deviceId,
-      WEGENT_EXECUTOR_APP_IPC_SOCKET: updated.socketPath,
-      WEGENT_EXECUTOR_HOME: executorHome,
-      WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
-      WEGENT_EXECUTOR_LOG_DIR: session.directory,
-    },
+    env: buildAiVerifyEnvironment(process.env, {
+      controlUrl,
+      token,
+      codexHome,
+      deviceId: session.deviceId,
+      socketPath: updated.socketPath,
+      executorHome,
+      sessionDirectory: session.directory,
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)

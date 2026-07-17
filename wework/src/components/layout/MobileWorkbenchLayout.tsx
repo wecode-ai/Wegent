@@ -12,6 +12,7 @@ import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import {
@@ -44,9 +45,16 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import {
+  defaultAppearance,
+  useOptionalAppearance,
+  WorkbenchBackground,
+} from '@/features/appearance'
+import { cn } from '@/lib/utils'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
@@ -58,13 +66,20 @@ export function MobileWorkbenchLayout() {
   )
 
   return (
-    <CachedWorkbenchPaneStack
-      activePane={activePane}
-      maxPanes={1}
-      pinnedKeys={pinnedPaneKeys}
-      className="h-dvh"
-      renderPane={renderMobileWorkbenchPane}
-    />
+    <div className="relative h-dvh overflow-hidden bg-background">
+      <WorkbenchBackground />
+      <CachedWorkbenchPaneStack
+        activePane={activePane}
+        maxPanes={1}
+        pinnedKeys={pinnedPaneKeys}
+        className={
+          appearance.backgroundImagePath && appearance.backgroundInMain
+            ? 'h-dvh bg-background/20'
+            : 'h-dvh'
+        }
+        renderPane={renderMobileWorkbenchPane}
+      />
+    </div>
   )
 }
 
@@ -77,6 +92,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
 }: {
   pane: WorkbenchPaneIdentity
 }) {
+  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const {
     state,
     upgradingDevices,
@@ -187,7 +203,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -237,13 +255,25 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-background text-text-primary">
+    <div
+      className={cn(
+        'flex h-full overflow-hidden text-text-primary',
+        appearance.backgroundImagePath && appearance.backgroundInMain
+          ? 'bg-background/20'
+          : 'bg-background'
+      )}
+    >
       <main className="flex h-full min-h-0 w-full flex-col overflow-hidden">
         {hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
               data-testid="mobile-conversation-header"
-              className="pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+              className={cn(
+                'pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
+                appearance.backgroundImagePath && appearance.backgroundInTopBar
+                  ? 'bg-background/20'
+                  : 'bg-background/95 backdrop-blur'
+              )}
             >
               <button
                 type="button"
@@ -328,10 +358,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
               onRevertFileChanges={(subtaskId, fileChanges) =>
-                revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}
@@ -421,7 +451,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
           <div className="flex h-full min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
             <header
               data-testid="mobile-empty-header"
-              className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"
+              className={cn(
+                'flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
+                appearance.backgroundImagePath && appearance.backgroundInTopBar
+                  ? 'bg-background/20'
+                  : 'bg-background/95'
+              )}
             >
               <button
                 type="button"

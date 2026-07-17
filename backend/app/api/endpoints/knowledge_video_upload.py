@@ -43,6 +43,10 @@ class VideoUploadInitRequest(BaseModel):
     filename: str
     file_size: int
     file_extension: Optional[str] = None
+    # Optional content digest (e.g. md5 hex) providers may require to initialize
+    # an upload session. Computed client-side; ignored by providers that don't
+    # need it.
+    file_hash: Optional[str] = None
 
 
 class VideoUploadCompleteRequest(BaseModel):
@@ -84,6 +88,7 @@ def init_video_upload(
             file_size=request.file_size,
             file_extension=request.file_extension or "",
             uploader=current_user,
+            file_hash=request.file_hash or "",
         )
     except VideoUploadNotConfiguredError:
         _not_configured()

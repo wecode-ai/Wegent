@@ -5,6 +5,7 @@ mod local_executor;
 mod local_terminal;
 mod process_environment;
 mod wecode;
+mod workbench_background;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
@@ -277,7 +278,11 @@ fn create_log_plugin(
     let webview_log_file_name = format!("{WEBVIEW_LOG_FILE_NAME}-{process_id}");
     Ok(tauri_plugin_log::Builder::default()
         .clear_targets()
-        .level(log::LevelFilter::Debug)
+        .level(if cfg!(debug_assertions) {
+            log::LevelFilter::Trace
+        } else {
+            log::LevelFilter::Info
+        })
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory.clone(),
@@ -381,6 +386,8 @@ struct AppPreferences {
     #[serde(default = "default_true")]
     terminal_context_injection_enabled: bool,
     #[serde(default)]
+    experimental_features_enabled: bool,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -398,6 +405,40 @@ struct AppPreferences {
     browser_ask_before_download: bool,
     #[serde(default = "default_true")]
     appshots_play_sound: bool,
+    #[serde(default = "default_quick_phrases")]
+    quick_phrases: Vec<QuickPhrase>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickPhrase {
+    id: String,
+    title: String,
+    content: String,
+    mode: String,
+}
+
+fn default_quick_phrases() -> Vec<QuickPhrase> {
+    vec![
+        QuickPhrase {
+            id: "default-summary-progress".into(),
+            title: "总结当前进展".into(),
+            content: "总结目前完成的工作和下一步建议".into(),
+            mode: "normal".into(),
+        },
+        QuickPhrase {
+            id: "default-create-plan".into(),
+            title: "制定实施计划".into(),
+            content: "分析需求并制定详细的实施计划".into(),
+            mode: "plan".into(),
+        },
+        QuickPhrase {
+            id: "default-pursue-goal".into(),
+            title: "持续完成这个目标".into(),
+            content: "持续推进这个目标，直到真正完成".into(),
+            mode: "goal".into(),
+        },
+    ]
 }
 
 #[cfg(desktop)]
@@ -429,6 +470,7 @@ impl Default for AppPreferences {
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
+            experimental_features_enabled: false,
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -438,6 +480,7 @@ impl Default for AppPreferences {
             browser_download_directory: None,
             browser_ask_before_download: false,
             appshots_play_sound: true,
+            quick_phrases: default_quick_phrases(),
         }
     }
 }
@@ -451,6 +494,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    experimental_features_enabled: Option<bool>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -460,6 +504,7 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
 #[cfg(desktop)]
@@ -840,6 +885,9 @@ fn update_app_preferences(
     if let Some(value) = patch.terminal_context_injection_enabled {
         preferences.terminal_context_injection_enabled = value;
     }
+    if let Some(value) = patch.experimental_features_enabled {
+        preferences.experimental_features_enabled = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -868,6 +916,9 @@ fn update_app_preferences(
     if let Some(value) = patch.appshots_play_sound {
         preferences.appshots_play_sound = value;
     }
+    if let Some(value) = patch.quick_phrases {
+        preferences.quick_phrases = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -881,6 +932,7 @@ struct AppPreferences {
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
+    experimental_features_enabled: bool,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -890,6 +942,7 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
     appshots_play_sound: bool,
+    quick_phrases: Vec<QuickPhrase>,
 }
 
 #[cfg(not(desktop))]
@@ -901,6 +954,7 @@ struct AppPreferencesPatch {
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
+    experimental_features_enabled: Option<bool>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -910,6 +964,7 @@ struct AppPreferencesPatch {
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
     appshots_play_sound: Option<bool>,
+    quick_phrases: Option<Vec<QuickPhrase>>,
 }
 
 #[cfg(not(desktop))]
@@ -921,6 +976,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
+        experimental_features_enabled: false,
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -930,6 +986,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_download_directory: None,
         browser_ask_before_download: false,
         appshots_play_sound: true,
+        quick_phrases: default_quick_phrases(),
     })
 }
 
@@ -947,6 +1004,7 @@ fn update_app_preferences(
         terminal_context_injection_enabled: patch
             .terminal_context_injection_enabled
             .unwrap_or(true),
+        experimental_features_enabled: patch.experimental_features_enabled.unwrap_or(false),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),
@@ -966,6 +1024,7 @@ fn update_app_preferences(
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
         appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
+        quick_phrases: patch.quick_phrases.unwrap_or_else(default_quick_phrases),
     })
 }
 
@@ -2198,7 +2257,7 @@ fn hide_main_window_on_close<R: tauri::Runtime>(
         let preferences = read_app_preferences_impl(window.app_handle());
         if !preferences.close_to_tray_enabled {
             api.prevent_close();
-            shutdown_local_executor_for_app(window.app_handle());
+            shutdown_local_executor_for_app(window.app_handle(), "main_window_close_without_tray");
             window.app_handle().exit(0);
             return true;
         }
@@ -2273,20 +2332,20 @@ fn open_task_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &s
 
 #[cfg(desktop)]
 fn quit_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    shutdown_local_executor_for_app(app);
+    shutdown_local_executor_for_app(app, "tray_quit");
     app.exit(0);
 }
 
 #[cfg(desktop)]
-fn shutdown_local_executor_for_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+fn shutdown_local_executor_for_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
     let state = app.state::<local_executor::LocalExecutorState>();
-    local_executor::shutdown_local_executor(&state);
+    local_executor::shutdown_local_executor(&state, reason);
 }
 
 #[cfg(desktop)]
 fn install_shutdown_signal_handler(app: tauri::AppHandle) -> Result<(), String> {
     ctrlc::set_handler(move || {
-        shutdown_local_executor_for_app(&app);
+        shutdown_local_executor_for_app(&app, "app_shutdown_signal");
         app.exit(130);
     })
     .map_err(|error| format!("Failed to install shutdown signal handler: {error}"))
@@ -3644,21 +3703,6 @@ pub fn run() {
             if hide_main_window_on_close(window, event) {
                 return;
             }
-
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                #[cfg(desktop)]
-                if window.label() == MAIN_WINDOW_LABEL {
-                    let lifecycle = window.app_handle().state::<MainWindowLifecycleState>();
-                    if lifecycle.destroy_to_tray_in_progress.load(Ordering::SeqCst) {
-                        return;
-                    }
-                }
-
-                let state = window
-                    .app_handle()
-                    .state::<local_executor::LocalExecutorState>();
-                local_executor::shutdown_local_executor(&state);
-            }
         })
         .setup(|app| {
             #[cfg(desktop)]
@@ -3739,7 +3783,6 @@ pub fn run() {
             appshots::get_appshots_status,
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
-            appshots::take_pending_appshots_permission,
             desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
@@ -3757,6 +3800,8 @@ pub fn run() {
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
+            workbench_background::import_workbench_background,
+            workbench_background::remove_workbench_background,
             pick_workspace_paths,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
@@ -3770,7 +3815,6 @@ pub fn run() {
             local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
             local_executor::local_executor_request,
-            local_executor::local_executor_restart,
             local_executor::local_executor_status,
             local_executor::local_executor_update_codex_local_config,
             get_app_log_directory,
@@ -3826,10 +3870,10 @@ pub fn run() {
                         .store(false, Ordering::SeqCst);
                     return;
                 }
-                shutdown_local_executor_for_app(app_handle);
+                shutdown_local_executor_for_app(app_handle, "run_event_exit_requested");
             }
             tauri::RunEvent::Exit => {
-                shutdown_local_executor_for_app(app_handle);
+                shutdown_local_executor_for_app(app_handle, "run_event_exit");
             }
             _ => {}
         }
