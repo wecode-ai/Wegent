@@ -69,6 +69,8 @@ Goals have an independent lifecycle. An `active` goal means that its objective c
 
 Codex guidance is sent to the active turn through the shared app-server. If that turn finishes or changes while guidance is being sent, the executor reports the race as `no_active_turn`; Wework then sends the same content as a normal follow-up message so user input is preserved without a misleading send failure.
 
+Before sending a user message, Wework generates a stable client message ID and renders an optimistic local message. The ID travels through the runtime create/send request to the executor and is mapped to Codex app-server's `turn/start.clientUserMessageId`. When the Codex transcript returns the user message, the executor preserves the corresponding `clientMessageId`, which Wework uses to reconcile it with the optimistic message. The Codex provider item ID remains the provider-event identity, but it cannot replace the client ID; otherwise transcript pagination or refresh can interpret one send as two messages.
+
 ### Backend Device Chat Task REST Entrypoint
 
 The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:

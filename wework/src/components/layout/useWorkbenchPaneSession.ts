@@ -1026,6 +1026,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message: message.content,
+        clientMessageId: message.id,
         ...(message.modelId
           ? {
               modelId: message.modelId,
@@ -1126,8 +1127,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (options.forceDefaultCollaborationMode) {
         projectChat.setSelectedModelOption('collaborationMode', 'default')
       }
-      if (options.appendUserMessage) {
-        appendLocalUserMessage(message)
+      const appendedUserMessage = options.appendUserMessage ? createLocalUserMessage(message) : null
+      if (appendedUserMessage) {
+        dispatchMessages({ type: 'user_added', message: appendedUserMessage })
       }
       if (requestUserInputKey) {
         setAnsweredRequestUserInputIds(current => {
@@ -1145,6 +1147,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message,
+        ...(appendedUserMessage ? { clientMessageId: appendedUserMessage.id } : {}),
         ...runtimeModelFields,
         ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
         ...(additionalContext ? { additionalContext } : {}),
@@ -1166,9 +1169,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       return sent
     },
     [
-      appendLocalUserMessage,
       applyLocalRequestUserInputResponse,
       currentRuntimeTask,
+      dispatchMessages,
       getRuntimeModelFields,
       projectChat,
       sendRuntimePaneMessage,
@@ -1549,6 +1552,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             })
             let seededGoalAddress: RuntimeTaskAddress | null = null
             const sent = await sendCurrentInput(submittedInput, {
+              clientMessageId: optimisticMessage.id,
               initialGoal,
               onRuntimeTaskOptimisticOpen: (address, context) => {
                 setPendingGoalState(current =>
@@ -1658,6 +1662,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               }
             )
             const sent = await sendCurrentInput(visibleSubmittedInput, {
+              clientMessageId: optimisticMessage.id,
               codeCommentContexts,
               initialGoal: pendingInitialGoal,
               onError: setError,

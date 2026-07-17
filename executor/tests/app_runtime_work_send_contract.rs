@@ -167,6 +167,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "taskId": "local-task-1"
                 },
                 "content": "continue from content",
+                "clientMessageId": "runtime-local-pane-1",
                 "collaborationMode": "default",
                 "executionRequest": execution_request_with_model_config(
                     "continue from content",
@@ -226,6 +227,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
     assert_eq!(last_turn_start["params"]["effort"], "xhigh");
     assert_eq!(last_turn_start["params"]["summary"], "concise");
+    assert_eq!(
+        last_turn_start["params"]["clientUserMessageId"],
+        "runtime-local-pane-1"
+    );
     assert_eq!(
         last_turn_start["params"]["collaborationMode"]["mode"],
         "default"

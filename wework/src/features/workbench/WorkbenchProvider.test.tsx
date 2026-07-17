@@ -3128,6 +3128,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientMessageId: expect.stringMatching(/^runtime-local-pane-/),
+      })
+    )
     await waitFor(() =>
       expect(screen.getByTestId('goal-draft-active')).toHaveTextContent('inactive')
     )
@@ -5692,6 +5697,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -6001,6 +6007,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -7105,6 +7112,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -7247,6 +7255,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -7922,6 +7931,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
     })
@@ -8257,6 +8267,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
       attachmentIds: [45],
@@ -8306,6 +8317,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
       },
+      clientMessageId: expect.any(String),
       message: '继续修',
       modelOptions: { collaborationMode: 'default' },
       attachments: [
