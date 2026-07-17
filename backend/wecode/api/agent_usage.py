@@ -184,6 +184,7 @@ def query_usage(
             if row.owner_user_id == 0
             else (author_names.get(row.owner_user_id) or "")
         )
+        values.pop("owner_user_id")
         if not is_admin:
             values.pop("ai_rounds")
             values.pop("completed_ai_rounds")

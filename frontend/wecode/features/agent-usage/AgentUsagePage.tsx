@@ -215,7 +215,7 @@ export function AgentUsagePage() {
 
   const downloadCsv = () => {
     if (!result) return
-    const header = ['agent_name', 'group_name', 'author', 'owner_user_id', 'PV', 'UV']
+    const header = ['agent_name', 'group_name', 'author', 'PV', 'UV']
     if (showAiMetrics) {
       header.push('ai_rounds', 'completed_ai_rounds')
     }
@@ -224,7 +224,6 @@ export function AgentUsagePage() {
         row.agent_name,
         row.agent_namespace,
         row.author_name,
-        row.owner_user_id,
         row.pv,
         row.uv,
         ...(showAiMetrics ? [row.ai_rounds ?? 0, row.completed_ai_rounds ?? 0] : []),
@@ -384,22 +383,28 @@ export function AgentUsagePage() {
                   </Button>
                 </div>
                 <div className="overflow-x-auto">
-                  <Table>
+                  <Table className="text-left">
                     <TableHeader>
                       <TableRow>
-                        <TableHead>{t('agent_usage.agent')}</TableHead>
-                        <TableHead>{t('agent_usage.group_name')}</TableHead>
-                        <TableHead>{t('agent_usage.author')}</TableHead>
-                        <TableHead>
+                        <TableHead className="px-4 text-left">{t('agent_usage.agent')}</TableHead>
+                        <TableHead className="px-4 text-left">
+                          {t('agent_usage.group_name')}
+                        </TableHead>
+                        <TableHead className="px-4 text-left">{t('agent_usage.author')}</TableHead>
+                        <TableHead className="px-4 text-left">
                           <MetricLabel label="PV" tip={t('agent_usage.pv_tip')} />
                         </TableHead>
-                        <TableHead>
+                        <TableHead className="px-4 text-left">
                           <MetricLabel label="UV" tip={t('agent_usage.uv_tip')} />
                         </TableHead>
                         {showAiMetrics && (
                           <>
-                            <TableHead>{t('agent_usage.ai_rounds')}</TableHead>
-                            <TableHead>{t('agent_usage.completed_ai_rounds')}</TableHead>
+                            <TableHead className="px-4 text-left">
+                              {t('agent_usage.ai_rounds')}
+                            </TableHead>
+                            <TableHead className="px-4 text-left">
+                              {t('agent_usage.completed_ai_rounds')}
+                            </TableHead>
                           </>
                         )}
                       </TableRow>
@@ -417,17 +422,21 @@ export function AgentUsagePage() {
                       ) : (
                         result.rows.map(row => (
                           <TableRow
-                            key={`${row.owner_user_id}-${row.agent_namespace}-${row.agent_name}`}
+                            key={`${row.author_name}-${row.agent_namespace}-${row.agent_name}`}
                           >
-                            <TableCell>{row.agent_name}</TableCell>
-                            <TableCell>{row.agent_namespace}</TableCell>
-                            <TableCell>{row.author_name}</TableCell>
-                            <TableCell>{row.pv}</TableCell>
-                            <TableCell>{row.uv}</TableCell>
+                            <TableCell className="text-left">{row.agent_name}</TableCell>
+                            <TableCell className="text-left">{row.agent_namespace}</TableCell>
+                            <TableCell className="text-left">{row.author_name}</TableCell>
+                            <TableCell className="text-left tabular-nums">{row.pv}</TableCell>
+                            <TableCell className="text-left tabular-nums">{row.uv}</TableCell>
                             {showAiMetrics && (
                               <>
-                                <TableCell>{row.ai_rounds}</TableCell>
-                                <TableCell>{row.completed_ai_rounds}</TableCell>
+                                <TableCell className="text-left tabular-nums">
+                                  {row.ai_rounds}
+                                </TableCell>
+                                <TableCell className="text-left tabular-nums">
+                                  {row.completed_ai_rounds}
+                                </TableCell>
                               </>
                             )}
                           </TableRow>

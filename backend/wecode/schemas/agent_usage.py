@@ -30,7 +30,6 @@ class AgentUsageQuery(BaseModel):
 class AgentUsageRow(BaseModel):
     agent_name: str
     agent_namespace: str
-    owner_user_id: int
     author_name: str
     pv: int
     uv: int

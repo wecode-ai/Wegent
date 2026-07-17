@@ -21,7 +21,6 @@ export interface UsageAgentPage {
 export interface UsageRow {
   agent_name: string
   agent_namespace: string
-  owner_user_id: number
   author_name: string
   pv: number
   uv: number
