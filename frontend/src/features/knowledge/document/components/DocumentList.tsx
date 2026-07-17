@@ -400,14 +400,12 @@ export function DocumentList({
 
   // Toggle expand-all view
   const handleToggleExpandAll = useCallback(() => {
-    setIsExpandAllView(prev => {
-      if (!prev) {
-        setCurrentFolderId(0)
-      }
-      resetSelection()
-      return !prev
-    })
-  }, [resetSelection])
+    if (!isExpandAllView) {
+      setCurrentFolderId(0)
+    }
+    resetSelection()
+    setIsExpandAllView(prev => !prev)
+  }, [isExpandAllView, resetSelection])
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initialDocPath has been handled
@@ -1437,11 +1435,16 @@ export function DocumentList({
             </div>
           )}
         </>
-      ) : searchQuery || currentFolderId !== 0 ? (
+      ) : searchQuery ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
           <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
+        </div>
+      ) : currentFolderId !== 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+          <FileText className="w-12 h-12 mb-4 opacity-50" />
+          <p>{t('document.document.empty')}</p>
         </div>
       ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
