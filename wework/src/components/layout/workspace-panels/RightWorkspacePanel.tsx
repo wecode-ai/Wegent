@@ -73,6 +73,7 @@ interface RightWorkspaceReviewState {
 }
 
 interface RightWorkspacePanelProps {
+  showWorkbenchBackground?: boolean
   visible: boolean
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
@@ -108,6 +109,7 @@ interface RightWorkspacePanelProps {
 }
 
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
+  showWorkbenchBackground = false,
   visible,
   activeView,
   openTabs,
@@ -321,7 +323,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   return (
     <section
       data-testid="right-workspace-panel"
-      className="relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col bg-background opacity-100 transition-[opacity,transform] duration-300 ease-out"
+      className={cn(
+        'relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col opacity-100 transition-[opacity,transform] duration-300 ease-out',
+        showWorkbenchBackground ? 'bg-background/20' : 'bg-background'
+      )}
     >
       {renderTabsInTitlebar ? <TitlebarRightPanelPortal>{tabBar}</TitlebarRightPanelPortal> : null}
       {renderTabsInTitlebar ? null : tabBar}
@@ -351,6 +356,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'terminal' ? (
           <WorkspacePanelCards
+            showWorkbenchBackground={showWorkbenchBackground}
             currentProject={currentProject}
             devices={devices}
             workspaceTarget={workspaceTarget}

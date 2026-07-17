@@ -231,6 +231,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   open,
   active,
   context,
+  showWorkbenchBackground,
   onRequestClose,
   onTerminalTabsEmpty,
 }: {
@@ -238,6 +239,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
   open: boolean
   active: boolean
   context: BottomPanelRenderContext
+  showWorkbenchBackground: boolean
   onRequestClose: (key: string) => void
   onTerminalTabsEmpty: () => void
 }) {
@@ -254,6 +256,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
       workspaceTarget={context.workspaceTarget}
       preferLocalTerminal={context.preferLocalTerminal}
       terminalContextTitle={context.terminalContextTitle}
+      showWorkbenchBackground={showWorkbenchBackground}
       onRequestClose={closePanel}
       onTerminalTabsEmpty={onTerminalTabsEmpty}
     />
@@ -1863,7 +1866,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
+            'relative z-popover min-w-0 shrink-0 overflow-hidden',
+            appearance.backgroundImagePath && appearance.backgroundInMain
+              ? 'bg-background/20'
+              : 'bg-background',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
             rightPanelOpen
               ? 'pointer-events-auto border-l border-border/60 opacity-100'
@@ -1874,6 +1880,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
+              showWorkbenchBackground={Boolean(
+                appearance.backgroundImagePath && appearance.backgroundInMain
+              )}
               visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
@@ -1919,6 +1928,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             open={active && (bottomPanelOpenByKey[context.key] ?? false)}
             active={active}
             context={context}
+            showWorkbenchBackground={Boolean(
+              appearance.backgroundImagePath && appearance.backgroundInMain
+            )}
             onRequestClose={closeBottomPanelContext}
             onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />

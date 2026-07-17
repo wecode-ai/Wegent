@@ -7,6 +7,7 @@ import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
 import { AuthContext } from '@/features/auth/useAuth'
+import { AppearanceProvider } from '@/features/appearance'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type {
   WorkbenchContextValue,
@@ -1101,13 +1102,16 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  function renderWorkspacePanelLayout({ mainWidth }: { mainWidth?: number } = {}) {
+  function renderWorkspacePanelLayout({
+    mainWidth,
+    withAppearance = false,
+  }: { mainWidth?: number; withAppearance?: boolean } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
     }
 
     const workspacePanelState = createCloudWorkspacePanelState()
-    return render(
+    const layout = (
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
@@ -1122,6 +1126,7 @@ describe('DesktopWorkbenchLayout', () => {
         }}
       />
     )
+    return render(withAppearance ? <AppearanceProvider>{layout}</AppearanceProvider> : layout)
   }
 
   function createLocalRuntimeTaskPanelFixture() {
@@ -4075,6 +4080,25 @@ describe('DesktopWorkbenchLayout', () => {
     expect(content).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
+  })
+
+  test('shows the workbench background through the right and bottom panels', async () => {
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInMain: true,
+      })
+    )
+    renderWorkspacePanelLayout({ withAppearance: true })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-background/20')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
