@@ -98,3 +98,53 @@ export function normalizeTurnFileChanges(value: unknown): TurnFileChangesSummary
     revertible: typeof value.revertible === 'boolean' ? value.revertible : undefined,
   }
 }
+
+export function mergeTurnFileChanges(
+  summaries: TurnFileChangesSummary[]
+): TurnFileChangesSummary | undefined {
+  const first = summaries[0]
+  if (!first) return undefined
+
+  const files = new Map<string, TurnFileChangeItem>()
+  const diffs: string[] = []
+  summaries.forEach(summary => {
+    summary.files.forEach(file => {
+      const existing = files.get(file.path)
+      files.set(file.path, existing ? mergeFileChange(existing, file) : file)
+    })
+    if (summary.diff?.trim()) diffs.push(summary.diff)
+  })
+
+  const mergedFiles = [...files.values()]
+  const latest = summaries[summaries.length - 1]
+  return {
+    ...first,
+    status: latest.status,
+    device_id: latest.device_id,
+    workspace_path: latest.workspace_path,
+    file_count: mergedFiles.length,
+    additions: mergedFiles.reduce((total, file) => total + file.additions, 0),
+    deletions: mergedFiles.reduce((total, file) => total + file.deletions, 0),
+    files: mergedFiles,
+    reverted_at: latest.reverted_at,
+    revertible: latest.revertible,
+    ...(diffs.length > 0 ? { diff: diffs.join('\n') } : {}),
+  }
+}
+
+function mergeFileChange(
+  existing: TurnFileChangeItem,
+  next: TurnFileChangeItem
+): TurnFileChangeItem {
+  return {
+    ...existing,
+    ...next,
+    old_path: next.old_path ?? existing.old_path,
+    change_type:
+      existing.change_type === 'created' && next.change_type === 'modified'
+        ? 'created'
+        : next.change_type,
+    additions: existing.additions + next.additions,
+    deletions: existing.deletions + next.deletions,
+  }
+}
