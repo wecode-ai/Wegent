@@ -25,6 +25,10 @@ describe('AppearanceSettingsPage', () => {
     expect(screen.getByTestId('appearance-background-select-button')).toBeInTheDocument()
     expect(screen.getByTestId('appearance-background-visibility-slider')).toBeDisabled()
     expect(screen.getByTestId('appearance-background-blur-slider')).toBeDisabled()
+
+    const blurSlider = screen.getByTestId('appearance-background-blur-slider')
+    const areaSelector = screen.getByTestId('appearance-background-area-main')
+    expect(blurSlider.compareDocumentPosition(areaSelector)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   test('commits UI and code font sizes on Enter or blur', async () => {
