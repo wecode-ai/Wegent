@@ -25,6 +25,7 @@ const LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV: &str = "WEWORK_EXECUTOR_ISOLATION_O
 const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
 const LOCAL_EXECUTOR_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
+const LOCAL_EXECUTOR_NAMESPACE: Option<&str> = option_env!("WEWORK_EXECUTOR_NAMESPACE");
 const LOCAL_EXECUTOR_SHARED_HOME_ENV: &str = "WEWORK_SHARED_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
@@ -597,7 +598,17 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
     }
 
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
-    Ok(home.join(".wegent-executor"))
+    Ok(default_local_executor_home_path(
+        &home,
+        LOCAL_EXECUTOR_NAMESPACE,
+    ))
+}
+
+fn default_local_executor_home_path(home: &Path, namespace: Option<&str>) -> PathBuf {
+    let root = home.join(".wegent-executor");
+    namespace
+        .filter(|value| !value.is_empty())
+        .map_or(root.clone(), |value| root.join("apps").join(value))
 }
 
 fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
@@ -3126,6 +3137,21 @@ command = "example"
 
     #[cfg(unix)]
     #[test]
+    fn branded_executor_home_stays_under_shared_root() {
+        let home = Path::new("/tmp/wework-test-home");
+
+        assert_eq!(
+            default_local_executor_home_path(home, None),
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+        );
+        assert_eq!(
+            default_local_executor_home_path(home, Some("com.example.demo-wework")),
+            PathBuf::from("/tmp/wework-test-home/.wegent-executor/apps/com.example.demo-wework")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn default_runtime_paths_follow_build_mode() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("HOME");
@@ -3148,7 +3174,10 @@ command = "example"
 
         assert_eq!(
             home,
-            PathBuf::from("/tmp/wework-test-home/.wegent-executor")
+            default_local_executor_home_path(
+                Path::new("/tmp/wework-test-home"),
+                LOCAL_EXECUTOR_NAMESPACE,
+            )
         );
         if cfg!(debug_assertions) {
             assert_eq!(
