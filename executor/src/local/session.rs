@@ -4,8 +4,8 @@
 
 use std::{
     collections::HashMap,
-    fs,
-    path::PathBuf,
+    env, fs,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -230,6 +230,15 @@ pub struct GatewayResponse {
     pub body: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewaySessionSnapshot {
+    pub session_id: String,
+    pub session_type: SessionType,
+    pub access_token: String,
+    pub port: u16,
+    pub expires_at: u64,
+}
+
 pub trait CodeServerLoginClient {
     fn post_login(&mut self, url: &str, password: &str) -> Result<u16, String>;
 }
@@ -260,6 +269,7 @@ impl SessionGateway {
     ) -> HashMap<String, String> {
         let excluded = [
             "connection",
+            "cookie",
             "host",
             "keep-alive",
             "proxy-authenticate",
@@ -305,14 +315,15 @@ impl SessionGateway {
         scheme: &str,
     ) -> String {
         let path = self.upstream_path(request, session);
-        let query = parse_query_items(&request.query_string)
+        let query_items = parse_query_items(&request.query_string)
             .into_iter()
             .filter(|(key, _)| {
                 key != "token" && key != "session_id" && key != SESSION_PROBE_QUERY_KEY
             })
-            .map(|(key, value)| format!("{}={}", form_urlencode(&key), form_urlencode(&value)))
-            .collect::<Vec<_>>()
-            .join("&");
+            .collect::<Vec<_>>();
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(query_items)
+            .finish();
         let suffix = if query.is_empty() {
             path
         } else {
@@ -492,6 +503,21 @@ impl LocalSessionHandler {
             SessionType::CodeServer => self.start_code_server_session(request, path),
             SessionType::Terminal => self.start_terminal_session(request, path),
         }
+    }
+
+    pub(crate) fn gateway_session(
+        &self,
+        request: &GatewayRequest,
+    ) -> Option<GatewaySessionSnapshot> {
+        let session_id = request_session_id(request)?;
+        let session = self.sessions.get(&session_id)?;
+        Some(GatewaySessionSnapshot {
+            session_id: session.session_id.clone(),
+            session_type: session.session_type,
+            access_token: session.access_token.clone(),
+            port: session.port,
+            expires_at: session.expires_at,
+        })
     }
 
     pub fn handle_terminal_input(&mut self, session_id: &str, data: &str) -> SessionResult {
@@ -694,12 +720,15 @@ impl LocalSessionHandler {
     }
 
     fn project_path(&self, path: &str, create_if_missing: bool) -> Result<PathBuf, String> {
-        let project_path = PathBuf::from(path);
-        let project_path = if project_path.is_absolute() {
-            project_path
+        let requested_path = PathBuf::from(path);
+        let project_path = if requested_path.is_absolute() {
+            requested_path
         } else {
-            self.workspace_root.join(project_path)
+            self.workspace_root.join(requested_path)
         };
+        let allowed_roots = self.allowed_workspace_roots(create_if_missing)?;
+        let resolved_path = resolve_path_for_boundary_check(&project_path)?;
+        require_allowed_workspace_path(&resolved_path, &allowed_roots)?;
         if create_if_missing {
             fs::create_dir_all(&project_path).map_err(|error| error.to_string())?;
         }
@@ -709,7 +738,39 @@ impl LocalSessionHandler {
         if !project_path.is_dir() {
             return Err(format!("Project path is not a directory: {path}"));
         }
+        let canonical_path = fs::canonicalize(&project_path).map_err(|error| error.to_string())?;
+        require_allowed_workspace_path(&canonical_path, &allowed_roots)?;
         Ok(project_path)
+    }
+
+    fn allowed_workspace_roots(&self, create_if_missing: bool) -> Result<Vec<PathBuf>, String> {
+        if create_if_missing {
+            fs::create_dir_all(&self.workspace_root).map_err(|error| error.to_string())?;
+        }
+        let mut roots = vec![fs::canonicalize(&self.workspace_root)
+            .map_err(|error| format!("Invalid workspace root: {error}"))?];
+        if let Ok(value) = env::var("WEGENT_WORKSPACE_ROOTS") {
+            for raw_root in value.split(if cfg!(windows) { ';' } else { ':' }) {
+                let raw_root = raw_root.trim();
+                if raw_root.is_empty() {
+                    continue;
+                }
+                let root = fs::canonicalize(raw_root)
+                    .map_err(|error| format!("Invalid workspace root: {error}"))?;
+                if !roots.contains(&root) {
+                    roots.push(root);
+                }
+            }
+        }
+        for raw_root in crate::runtime_work::codex_workspace_roots() {
+            let Ok(root) = fs::canonicalize(raw_root) else {
+                continue;
+            };
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        Ok(roots)
     }
 
     fn terminal_command(&self) -> Vec<String> {
@@ -826,14 +887,8 @@ pub fn form_urlencode(value: &str) -> String {
 }
 
 fn parse_query_items(query_string: &str) -> Vec<(String, String)> {
-    query_string
-        .split('&')
-        .filter(|item| !item.is_empty())
-        .map(|item| {
-            item.split_once('=')
-                .map(|(key, value)| (key.to_owned(), value.to_owned()))
-                .unwrap_or_else(|| (item.to_owned(), String::new()))
-        })
+    url::form_urlencoded::parse(query_string.as_bytes())
+        .into_owned()
         .collect()
 }
 
@@ -867,4 +922,46 @@ fn epoch_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+fn request_session_id(request: &GatewayRequest) -> Option<String> {
+    let path_parts = request
+        .path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if path_parts.len() >= 2 && path_parts[0] == "s" {
+        return Some(path_parts[1].to_owned());
+    }
+    request
+        .query
+        .get("session_id")
+        .or_else(|| request.cookies.get("wegent_active_session"))
+        .cloned()
+}
+
+fn resolve_path_for_boundary_check(path: &Path) -> Result<PathBuf, String> {
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    while !ancestor.exists() {
+        let name = ancestor
+            .file_name()
+            .ok_or_else(|| "Project path has no existing ancestor".to_owned())?;
+        suffix.push(name.to_owned());
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| "Project path has no existing ancestor".to_owned())?;
+    }
+    let mut resolved = fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
+    for component in suffix.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn require_allowed_workspace_path(path: &Path, allowed_roots: &[PathBuf]) -> Result<(), String> {
+    if allowed_roots.iter().any(|root| path.starts_with(root)) {
+        return Ok(());
+    }
+    Err("Project path is outside allowed workspace roots".to_owned())
 }

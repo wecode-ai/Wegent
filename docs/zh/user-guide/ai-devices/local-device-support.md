@@ -157,12 +157,13 @@ docker run -d \
 
 默认镜像由 Backend 环境变量 `REMOTE_DEVICE_DOCKER_IMAGE` 控制，未配置时使用 `ghcr.io/wecode-ai/wegent-device:latest`。如果目标部署需要使用内部镜像仓库，请部署方在 Backend 启动环境中设置 `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>`，用户侧不需要手动填写镜像地址。
 
-设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；IDE/code-server 和桌面 VNC/VPN 入口仍然只对云设备开放。
+设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过 `DEVICE_PUBLIC_BASE_URL` 对应的 session gateway 访问，因此该地址必须能从用户浏览器访问。桌面 VNC/VPN 入口仍然只对云设备开放。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
+- `POST /api/devices/{device_id}/code-server`：打开指定设备上的 code-server。请求 body 可选传入 `path`；传入时打开该远程项目目录，不传时使用设置页的默认工作目录。Executor 只接受默认 workspace、`WEGENT_WORKSPACE_ROOTS` 配置目录和已保存的 Codex 项目根目录，越界路径会被拒绝。
 
-Terminal 会话适用于本地设备和云设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
+Terminal 会话适用于本地设备、云设备和远程 Docker 设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，云设备和远程 Docker 设备通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
 
 如果项目配置了 `workspace.localPath`、`workspace.devicePath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。`localPath` 用于本机 local executor，`devicePath` 用于绑定到具体 cloud 或 remote 设备的沙箱目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 
@@ -317,12 +318,12 @@ wegent-executor
 
 本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、桌面 VNC/VPN、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
-在线云设备支持直接打开交互式会话：
+在线云设备和远程 Docker 设备支持直接打开交互式会话：
 
 | 操作     | 后端接口                                    | 说明                                                                                                                                 |
 | -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **终端** | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话                                                                                                                |
+| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
 
 终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
 

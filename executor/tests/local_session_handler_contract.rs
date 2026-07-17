@@ -10,11 +10,22 @@ use std::{
     time::Duration,
 };
 
+use axum::{
+    extract::ws::{Message as AxumMessage, WebSocketUpgrade},
+    http::{header, HeaderMap, StatusCode, Uri},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Router,
+};
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as TungsteniteMessage};
 use wegent_executor::local::session::{
     CodeServerLoginClient, GatewayRequest, LocalSession, LocalSessionHandler, PtySpawnRequest,
     SessionGateway, SessionPtyManager, SessionStartRequest, SessionType, TerminalEvent,
     TerminalPty,
 };
+use wegent_executor::local::session_gateway::start_session_gateway;
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -168,6 +179,188 @@ fn session_gateway_logs_in_to_code_server_with_configured_password_once() {
             "configured-secret".to_owned()
         )]
     );
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Serializes process-wide gateway environment overrides.
+async fn running_session_gateway_proxies_http_and_websocket_to_code_server() {
+    let _lock = env_lock();
+    let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
+    let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let _password = EnvGuard::set("CODE_SERVER_PASSWORD", "configured-secret");
+    let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = upstream_listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route("/login", post(fake_code_server_login))
+        .route("/health", get(fake_code_server_health))
+        .route("/ws", get(fake_code_server_websocket));
+    let upstream_task = tokio::spawn(async move {
+        axum::serve(upstream_listener, upstream).await.unwrap();
+    });
+
+    let root = temp_root("running-gateway");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler = LocalSessionHandler::new(
+        "http://127.0.0.1:0",
+        true,
+        upstream_addr.port(),
+        root.clone(),
+        pty_manager,
+    );
+    handler.sessions.insert(
+        "code-http".to_owned(),
+        LocalSession::code_server(
+            "code-http",
+            "secret",
+            123,
+            root,
+            upstream_addr.port(),
+            9999999999,
+        ),
+    );
+    let gateway = start_session_gateway(Arc::new(Mutex::new(handler)))
+        .await
+        .unwrap()
+        .unwrap();
+    let http_base = format!("http://{}", gateway.local_addr);
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let unauthorized = client
+        .get(format!("{http_base}/s/code-http/health?token=invalid"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let redirect = client
+        .get(format!(
+            "{http_base}/s/code-http/health?token=secret&folder=%2Fworkspace"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(redirect.status(), StatusCode::FOUND);
+    assert_eq!(
+        redirect.headers().get(header::LOCATION).unwrap(),
+        "/s/code-http/health?folder=%2Fworkspace"
+    );
+    let browser_cookie = redirect
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .map(|value| value.to_str().unwrap().split(';').next().unwrap())
+        .collect::<Vec<_>>()
+        .join("; ");
+    assert!(browser_cookie.contains("wegent_session_code-http=secret"));
+    assert!(browser_cookie.contains("wegent_active_session=code-http"));
+
+    let health = client
+        .get(format!("{http_base}/health?folder=%2Fworkspace"))
+        .header(header::COOKIE, &browser_cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    let health_body = health.text().await.unwrap();
+    assert!(health_body.contains("cookie=code-server-session=fake"));
+    assert!(health_body.contains("uri=/health?folder=%2Fworkspace"));
+
+    let mut websocket_request = format!("ws://{}/ws", gateway.local_addr)
+        .into_client_request()
+        .unwrap();
+    websocket_request.headers_mut().insert(
+        header::COOKIE,
+        browser_cookie.parse::<axum::http::HeaderValue>().unwrap(),
+    );
+    websocket_request.headers_mut().insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        "vscode".parse::<axum::http::HeaderValue>().unwrap(),
+    );
+    let (mut websocket, response) = tokio_tungstenite::connect_async(websocket_request)
+        .await
+        .unwrap();
+    assert_eq!(
+        response
+            .headers()
+            .get(header::SEC_WEBSOCKET_PROTOCOL)
+            .unwrap(),
+        "vscode"
+    );
+    assert_eq!(
+        websocket.next().await.unwrap().unwrap(),
+        TungsteniteMessage::Text("cookie=code-server-session=fake".to_owned())
+    );
+    websocket
+        .send(TungsteniteMessage::Text("ping".to_owned()))
+        .await
+        .unwrap();
+    assert_eq!(
+        websocket.next().await.unwrap().unwrap(),
+        TungsteniteMessage::Text("echo:ping".to_owned())
+    );
+    websocket.close(None).await.unwrap();
+
+    drop(gateway);
+    upstream_task.abort();
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Serializes process-wide gateway environment overrides.
+async fn running_session_gateway_supports_code_server_without_auth_cookie() {
+    let _lock = env_lock();
+    let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
+    let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = upstream_listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route("/login", post(fake_code_server_login_without_cookie))
+        .route("/health", get(fake_code_server_health));
+    let upstream_task = tokio::spawn(async move {
+        axum::serve(upstream_listener, upstream).await.unwrap();
+    });
+
+    let root = temp_root("gateway-auth-none");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler = LocalSessionHandler::new(
+        "http://127.0.0.1:0",
+        true,
+        upstream_addr.port(),
+        root.clone(),
+        pty_manager,
+    );
+    handler.sessions.insert(
+        "code-none".to_owned(),
+        LocalSession::code_server(
+            "code-none",
+            "secret",
+            123,
+            root,
+            upstream_addr.port(),
+            9999999999,
+        ),
+    );
+    let gateway = start_session_gateway(Arc::new(Mutex::new(handler)))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let response = reqwest::get(format!(
+        "http://{}/s/code-none/health?token=secret&embed=1",
+        gateway.local_addr
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    drop(gateway);
+    upstream_task.abort();
 }
 
 #[test]
@@ -413,6 +606,73 @@ fn start_session_rejects_missing_project_path() {
 }
 
 #[test]
+fn start_session_rejects_project_path_outside_allowed_workspace_roots() {
+    let root = temp_root("allowed-project-root");
+    let outside = temp_root("outside-project-root");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler =
+        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::CodeServer,
+        session_id: "code-outside".to_owned(),
+        project_id: 123,
+        path: outside.display().to_string(),
+        access_token: "secret".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: false,
+        ttl_seconds: None,
+    });
+
+    assert!(!result.success);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Project path is outside allowed workspace roots")
+    );
+}
+
+#[test]
+fn start_session_allows_saved_codex_project_roots() {
+    let _lock = env_lock();
+    let root = temp_root("configured-project-root");
+    let saved_project = temp_root("saved-codex-project");
+    let codex_home = temp_root("saved-codex-home");
+    fs::write(
+        codex_home.join(".codex-global-state.json"),
+        serde_json::json!({
+            "electron-saved-workspace-roots": [saved_project.display().to_string()],
+            "project-order": [saved_project.display().to_string()],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let _codex_home = EnvGuard::set("CODEX_HOME", codex_home.to_str().unwrap());
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler =
+        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::CodeServer,
+        session_id: "code-saved-project".to_owned(),
+        project_id: 123,
+        path: saved_project.display().to_string(),
+        access_token: "secret".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: false,
+        ttl_seconds: None,
+    });
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.path.as_deref(), Some(saved_project.as_path()));
+}
+
+#[test]
 fn start_session_resolves_relative_default_path() {
     let _lock = env_lock();
     let root = temp_root("relative-project");
@@ -563,4 +823,56 @@ fn temp_root(label: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+async fn fake_code_server_login() -> impl IntoResponse {
+    (
+        StatusCode::FOUND,
+        [
+            (header::LOCATION, "/"),
+            (
+                header::SET_COOKIE,
+                "code-server-session=fake; Path=/; HttpOnly",
+            ),
+        ],
+        "",
+    )
+}
+
+async fn fake_code_server_login_without_cookie() -> impl IntoResponse {
+    (StatusCode::FOUND, [(header::LOCATION, "/")], "")
+}
+
+async fn fake_code_server_health(headers: HeaderMap, uri: Uri) -> String {
+    format!(
+        "cookie={};uri={uri}",
+        headers
+            .get(header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+    )
+}
+
+async fn fake_code_server_websocket(
+    headers: HeaderMap,
+    websocket_upgrade: WebSocketUpgrade,
+) -> Response {
+    let cookie = headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    websocket_upgrade
+        .protocols(["vscode"])
+        .on_upgrade(move |mut socket| async move {
+            let _ = socket
+                .send(AxumMessage::Text(format!("cookie={cookie}").into()))
+                .await;
+            if let Some(Ok(AxumMessage::Text(message))) = socket.recv().await {
+                let _ = socket
+                    .send(AxumMessage::Text(format!("echo:{message}").into()))
+                    .await;
+            }
+        })
+        .into_response()
 }

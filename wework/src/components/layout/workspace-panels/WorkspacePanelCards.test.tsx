@@ -98,12 +98,14 @@ const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startProjectTerminalMock = vi.fn()
 const startProjectCodeServerMock = vi.fn()
 const startDeviceTerminalMock = vi.fn()
+const startDeviceCodeServerMock = vi.fn()
 const getDeviceVncConfigMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const workspaceSessionApi: WorkspaceSessionApi = {
   startProjectTerminal: startProjectTerminalMock,
   startProjectCodeServer: startProjectCodeServerMock,
   startDeviceTerminal: startDeviceTerminalMock,
+  startDeviceCodeServer: startDeviceCodeServerMock,
   getDeviceVncConfig: getDeviceVncConfigMock,
   createRemoteTerminalClient: createRemoteTerminalClientMock,
 }
@@ -230,6 +232,13 @@ describe('WorkspacePanelCards', () => {
       transport: 'socketio',
       device_id: 'device-2',
       type: 'terminal',
+      path: '/workspace/worktrees/9/project38',
+    })
+    startDeviceCodeServerMock.mockResolvedValue({
+      session_id: 'device-ide-1',
+      url: 'http://localhost/device-ide',
+      device_id: 'device-2',
+      type: 'code_server',
       path: '/workspace/worktrees/9/project38',
     })
     getDeviceVncConfigMock.mockResolvedValue({
@@ -649,6 +658,50 @@ describe('WorkspacePanelCards', () => {
       )
     )
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
+  })
+
+  test('starts remote IDE on the active runtime workspace device and path', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={[
+          ...localDevices,
+          {
+            id: 22,
+            device_id: 'device-2',
+            name: 'Remote Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+          },
+        ]}
+        workspaceTarget={{
+          deviceId: 'device-2',
+          path: '/workspace/worktrees/9/project38',
+          source: 'runtime',
+          workspaceSource: 'remote',
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-ide-card'))
+
+    await waitFor(() =>
+      expect(startDeviceCodeServerMock).toHaveBeenCalledWith(
+        'device-2',
+        '/workspace/worktrees/9/project38'
+      )
+    )
+    expect(startProjectCodeServerMock).not.toHaveBeenCalled()
+    expect(openLocalWorkspaceMock).not.toHaveBeenCalled()
+    expect(window.open).toHaveBeenCalledWith(
+      'http://localhost/device-ide',
+      '_blank',
+      'noopener,noreferrer'
+    )
   })
 
   test('launches the native terminal when the executor id differs but the local path exists', async () => {

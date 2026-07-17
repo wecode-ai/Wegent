@@ -23,7 +23,7 @@ default = []
 dev-reload = ["dep:ctrlc", "dep:notify"]
 
 [dependencies]
-axum = { version = "0.8", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 aes = "0.8"
 base64 = "0.22"
 cbc = "0.1"
@@ -46,7 +46,9 @@ tempfile = "3.23"
 tf-rust-socketio = { version = "0.8.1", features = ["async"] }
 thiserror = "2.0"
 tokio = { version = "1.48", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.21"
 toml_edit = "0.22"
+url = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
