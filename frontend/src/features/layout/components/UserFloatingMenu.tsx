@@ -22,6 +22,7 @@ import {
   LanguageIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline'
+import { AgentUsageMenuItem } from '@wecode/features/agent-usage/AgentUsageMenuItem'
 
 interface UserFloatingMenuProps {
   className?: string
@@ -166,6 +167,9 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
             <UsersIcon className="w-4 h-4 text-text-muted" />
             {t('common:settings.groupManager')}
           </button>
+
+          {/* Docs */}
+          <AgentUsageMenuItem onNavigate={() => setIsExpanded(false)} />
 
           {/* Docs */}
           <DocsButton showLabel className="w-full px-3 py-2" onClick={() => setIsExpanded(false)} />
