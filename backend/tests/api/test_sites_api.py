@@ -300,7 +300,12 @@ def test_list_sites_maps_invalid_json_to_upstream_unavailable(
 
 @pytest.mark.parametrize(
     "base_url",
-    ["not-a-url", "ftp://sites.example.test", "https://"],
+    [
+        "not-a-url",
+        "ftp://sites.example.test",
+        "https://",
+        "http://localhost:notaport",
+    ],
 )
 def test_list_sites_rejects_invalid_upstream_base_url(
     test_client: TestClient,
