@@ -103,6 +103,8 @@
       "collapse": "收起",
       "collapseTree": "收起列表",
       "expandTree": "列表",
+      "expandAll": "展开全部",
+      "layeredNav": "返回逐层导航",
       "docCount": "{{count}} 篇",
       "loadingKbs": "加载知识库中..."
     },
@@ -240,6 +242,9 @@
       "defaultViewUpdateFailed": "默认打开方式更新失败",
       "targetGroup": "归属",
       "selectGroup": "选择分组"
+    },
+    "breadcrumb": {
+      "root": "全部文档"
     },
     "folder": {
       "folderType": "文件夹",
