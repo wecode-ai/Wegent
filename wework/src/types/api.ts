@@ -350,6 +350,7 @@ export interface RuntimeTaskSummary {
   runtime: RuntimeName
   createdAt?: string | number | null
   updatedAt?: string | number | null
+  completedAt?: string | number | null
   running?: boolean
   pinned?: boolean
   pinnedOrder?: number | null

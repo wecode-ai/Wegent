@@ -12,6 +12,12 @@ When `pnpm --filter wework dev:mac` starts a debug app, each Wework process uses
 
 Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
 
+## Diagnosing Startup Time
+
+The desktop startup screen waits only for the local executor to report ready; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Tauri cleans up the previous executor and IPC address file, then starts a new sidecar immediately. It attempts to attach to an existing sidecar only when reconnecting after a live connection is lost.
+
+When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC listening` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
+
 ## Enabling Diagnostics
 
 Press the hidden shortcut in the Wework window:
