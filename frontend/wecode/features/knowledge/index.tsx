@@ -18,6 +18,11 @@ import { registerPermissionTab } from '@/features/knowledge/permission/permissio
 import { DepartmentAuthSearch, AddDepartmentDialog } from '@wecode/components/department-auth'
 import { knowledgePermissionExtensionApi } from '@wecode/apis/knowledge-permission-extension'
 
+// Register Weibo KB video providers (two-phase upload + CDN download proxy).
+// These modules register via the open-source registries as a side effect.
+import './weibo-video-uploader'
+import './weibo-video-download'
+
 // Register department auth section in KB creation dialog
 registerAuthSection({
   type: 'org_department',

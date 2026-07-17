@@ -42,11 +42,12 @@ import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
 import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
-import { downloadAttachment, formatFileSize } from '@/apis/attachments'
+import { formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
@@ -106,6 +107,7 @@ export function DocumentDetailDialog({
   isOrganization = false,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
+  const downloadDocument = useKnowledgeDocumentDownload()
   const [copiedContent, setCopiedContent] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -227,11 +229,11 @@ export function DocumentDetailDialog({
   const handleSourceDownload = useCallback(async () => {
     if (!document?.attachment_id) return
     try {
-      await downloadAttachment(document.attachment_id, document.name)
+      await downloadDocument(document)
     } catch {
       toast.error(t('document.document.detail.sourcePreview.downloadFailed'))
     }
-  }, [document?.attachment_id, document?.name, t])
+  }, [document, downloadDocument, t])
 
   const handleEdit = useCallback(async () => {
     if (!isEditable) return

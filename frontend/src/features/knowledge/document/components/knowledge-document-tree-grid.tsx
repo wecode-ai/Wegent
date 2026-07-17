@@ -33,7 +33,7 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
+import { isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -41,6 +41,7 @@ import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ReanalyzeIconButton } from '@/features/knowledge/multimodal/components/ReanalyzeActions'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
@@ -198,6 +199,7 @@ export function KnowledgeDocumentTreeGrid({
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const downloadDocument = useKnowledgeDocumentDownload()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
 
@@ -258,7 +260,7 @@ export function KnowledgeDocumentTreeGrid({
     async (document: KnowledgeDocument) => {
       if (document.source_type !== 'file' || !document.attachment_id) return
       try {
-        await downloadAttachment(document.attachment_id, document.name)
+        await downloadDocument(document)
       } catch {
         toast({
           title: t('document.document.downloadFailed'),
@@ -266,7 +268,7 @@ export function KnowledgeDocumentTreeGrid({
         })
       }
     },
-    [t]
+    [downloadDocument, t]
   )
 
   const columns = useMemo<ColumnDef<KnowledgeResourceRow>[]>(
