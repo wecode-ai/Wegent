@@ -83,4 +83,42 @@ describe('mergeTurnFileChanges', () => {
       files: [summary.files[0], second.files[0]],
     })
   })
+
+  test('preserves a rename when the renamed file is modified later', () => {
+    const renamed = {
+      ...summary,
+      files: [
+        {
+          ...summary.files[0],
+          old_path: 'src/old.ts',
+          path: 'src/new.ts',
+          change_type: 'renamed' as const,
+        },
+      ],
+    }
+    const modified = {
+      ...summary,
+      additions: 2,
+      deletions: 1,
+      files: [
+        {
+          ...summary.files[0],
+          path: 'src/new.ts',
+          change_type: 'modified' as const,
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+    }
+
+    expect(mergeTurnFileChanges([renamed, modified])?.files).toEqual([
+      expect.objectContaining({
+        old_path: 'src/old.ts',
+        path: 'src/new.ts',
+        change_type: 'renamed',
+        additions: 6,
+        deletions: 3,
+      }),
+    ])
+  })
 })
