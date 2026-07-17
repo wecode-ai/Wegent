@@ -42,6 +42,7 @@ import {
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+import { getDurationText, getWholeSecondsDurationText } from './processingDuration'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 type ProcessingDisplayItem =
@@ -62,7 +63,7 @@ interface ToolBlocksDisplayProps {
   // timer from the refresh moment.
   startedAt?: number
   forceExpanded?: boolean
-  hasFinalContent?: boolean
+  processingPhase?: 'live' | 'intermediate' | 'final'
   showSummary?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
@@ -80,7 +81,7 @@ export function ToolBlocksDisplay({
   isStreaming,
   startedAt,
   forceExpanded = false,
-  hasFinalContent = false,
+  processingPhase = 'live',
   showSummary = true,
   stateKey,
   onOpenWorkspaceFile,
@@ -93,14 +94,12 @@ export function ToolBlocksDisplay({
   hiddenRequestUserInputIds,
 }: ToolBlocksDisplayProps) {
   const { t } = useTranslation('chat')
-  const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
+  const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
+  const isRunning = (isStreaming && processingPhase === 'live') || hasRunningBlock
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
     stateKey ? `${stateKey}:processing` : undefined
   )
   const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
-  const [finalContentExpanded, setFinalContentExpanded] = usePersistentProcessingExpansion(
-    stateKey ? `${stateKey}:final-processing` : undefined
-  )
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -109,7 +108,7 @@ export function ToolBlocksDisplay({
 
   useEffect(() => {
     if (!isRunning) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    const timer = window.setInterval(() => setNow(Date.now()), 100)
     return () => window.clearInterval(timer)
   }, [isRunning])
 
@@ -193,12 +192,13 @@ export function ToolBlocksDisplay({
         row.block.status !== 'done' &&
         row.block.status !== 'error'
   )
+  const hasClosedToolSegment = processingPhase !== 'live'
   const usesUnifiedToolList = showSummary && !isLockedOpen
   const expanded = isLockedOpen || (userExpanded && !usesUnifiedToolList)
   const canToggleSummary =
     showSummary && !isLockedOpen && !hasRunningToolActivity && rows.length > 0
   const hasLivePreview =
-    isRunning && (!hasFinalContent || hasRunningToolActivity) && !expanded && rows.length > 0
+    isRunning && (!hasClosedToolSegment || hasRunningToolActivity) && !expanded && rows.length > 0
   const previewRows = useMemo(
     () =>
       !expanded &&
@@ -243,6 +243,9 @@ export function ToolBlocksDisplay({
       ? t('tool_activity.edit_summary', { count: activityStats.edit })
       : t('tool_activity.summary', { count: countProcessingActivities(rows) })
     : t('thinking.completed')
+  const summaryDuration = hasToolActivity
+    ? getWholeSecondsDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
+    : duration.replace(/^已处理\s*/, '')
   const processingContent = useMemo(
     () =>
       expanded ? (
@@ -304,9 +307,10 @@ export function ToolBlocksDisplay({
       {showSummary ? (
         <ProcessingSummaryHeader
           canToggle={canToggleSummary}
-          duration={duration}
+          duration={summaryDuration}
+          durationAriaLabel={duration}
           expanded={summaryExpanded}
-          isRunning={isRunning && !hasFinalContent}
+          isRunning={isRunning && !hasClosedToolSegment}
           rows={rows}
           onToggle={toggleSummary}
           title={summaryTitle}
@@ -323,40 +327,18 @@ export function ToolBlocksDisplay({
         {processingContent}
       </CollapsibleProcessingContent>
       {previewRows.length > 0 ? (
-        <LiveProcessingPreview rows={previewRows} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+        <LiveProcessingPreview
+          rows={previewRows}
+          highlightLatest={processingPhase === 'live'}
+          startedAt={turnStartedAt}
+          completedAt={completedAt}
+          now={now}
+          running={isRunning}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
       ) : null}
     </>
   )
-  const usesFinalContentShell =
-    showSummary && hasFinalContent && !hasRunningToolActivity && rows.length > 0
-
-  if (usesFinalContentShell) {
-    return (
-      <div className="mb-3 min-w-0 w-full border-b border-border pb-2">
-        <button
-          type="button"
-          data-testid="final-processing-toggle"
-          aria-expanded={finalContentExpanded}
-          aria-label={duration ? `${summaryTitle} ${duration}` : `${summaryTitle} 已处理`}
-          className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
-          onClick={() => {
-            const nextExpanded = !finalContentExpanded
-            setFinalContentExpanded(nextExpanded)
-            if (nextExpanded) setUserExpanded(true)
-          }}
-        >
-          <span>{duration || '已处理'}</span>
-          <ChevronDown
-            className={`h-4 w-4 transition-transform ${finalContentExpanded ? '' : '-rotate-90'}`}
-            strokeWidth={2}
-            aria-hidden="true"
-          />
-        </button>
-        {finalContentExpanded ? <div className="mt-1">{processingBody}</div> : null}
-      </div>
-    )
-  }
-
   return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
 }
 
@@ -371,6 +353,7 @@ type ToolActivityLabels = {
 function ProcessingSummaryHeader({
   canToggle,
   duration,
+  durationAriaLabel,
   expanded,
   isRunning,
   rows,
@@ -380,6 +363,7 @@ function ProcessingSummaryHeader({
 }: {
   canToggle: boolean
   duration: string
+  durationAriaLabel: string
   expanded: boolean
   isRunning: boolean
   rows: ProcessingDisplayRow[]
@@ -389,8 +373,9 @@ function ProcessingSummaryHeader({
 }) {
   const titleContent = (
     <>
-      {canToggle ? (
+      {rows.length > 0 ? (
         <ChevronDown
+          data-testid="processing-summary-chevron"
           className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={2}
           aria-hidden="true"
@@ -412,7 +397,7 @@ function ProcessingSummaryHeader({
           className="inline-flex shrink-0 items-center gap-1 hover:text-text-primary"
           onClick={onToggle}
           aria-expanded={expanded}
-          aria-label={duration ? `${title} ${duration}` : `${title} 已处理`}
+          aria-label={durationAriaLabel ? `${title} ${durationAriaLabel}` : `${title} 已处理`}
         >
           {titleContent}
         </button>
@@ -476,9 +461,19 @@ function ToolActivityStats({
 
 function LiveProcessingPreview({
   rows,
+  highlightLatest,
+  startedAt,
+  completedAt,
+  now,
+  running,
   onOpenWorkspaceFile,
 }: {
   rows: ProcessingDisplayRow[]
+  highlightLatest: boolean
+  startedAt: number
+  completedAt: number | null
+  now: number
+  running: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -518,10 +513,18 @@ function LiveProcessingPreview({
           overflowY: hasExpandedDetail ? 'visible' : 'auto',
         }}
       >
-        {rows.map(row => (
+        {rows.map((row, index) => (
           <LiveProcessingPreviewRow
             key={row.id}
             row={row}
+            shimmer={highlightLatest && index === rows.length - 1}
+            durationStartedAt={index === 0 ? startedAt : getProcessingRowStartedAt(row)}
+            durationEndAt={
+              getProcessingRowStartedAt(rows[index + 1]) ??
+              (running ? now : row.type === 'block' ? row.block.completedAt : undefined) ??
+              completedAt ??
+              getProcessingRowStartedAt(row)
+            }
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             onExpandedChange={updateExpandedRow}
           />
@@ -533,10 +536,16 @@ function LiveProcessingPreview({
 
 function LiveProcessingPreviewRow({
   row,
+  shimmer,
+  durationStartedAt,
+  durationEndAt,
   onOpenWorkspaceFile,
   onExpandedChange,
 }: {
   row: ProcessingDisplayRow
+  shimmer: boolean
+  durationStartedAt?: number
+  durationEndAt?: number
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
 }) {
@@ -566,13 +575,29 @@ function LiveProcessingPreviewRow({
       <ToolBlockItem
         block={row.block}
         compact
+        shimmer={shimmer}
+        durationStartedAt={durationStartedAt}
+        durationEndAt={durationEndAt}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         onExpandedChange={handleExpandedChange}
       />
     )
   }
 
-  return <ToolBlockItem block={row.block} onExpandedChange={handleExpandedChange} />
+  return (
+    <ToolBlockItem
+      block={row.block}
+      shimmer={shimmer}
+      durationStartedAt={durationStartedAt}
+      durationEndAt={durationEndAt}
+      onExpandedChange={handleExpandedChange}
+    />
+  )
+}
+
+function getProcessingRowStartedAt(row: ProcessingDisplayRow | undefined): number | undefined {
+  if (!row) return undefined
+  return row.type === 'activity_group' ? row.blocks[0]?.createdAt : row.block.createdAt
 }
 
 function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {
@@ -922,45 +947,4 @@ function renderActivityGroupIcon(blocks: ToolBlock[]) {
     )
   }
   return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-}
-
-function getDurationText(
-  blocks: ProcessingBlock[],
-  turnStartedAt: number,
-  now: number,
-  completedAt: number | null,
-  isRunning: boolean
-): string {
-  // Anchor the elapsed time to the turn's wall-clock start rather than the
-  // first block. After a page refresh the in-progress blocks are re-streamed
-  // with fresh client timestamps, so anchoring to blocks[0] would restart the
-  // timer from the refresh moment.
-  const first = turnStartedAt
-  const last = blocks[blocks.length - 1]?.createdAt ?? first
-  // While running, keep counting against the live clock so the timer advances
-  // every second even during pure thinking phases with no new tool output.
-  // Once finished, lock to the completion time (or the last block timestamp
-  // when the turn was restored from history after a refresh).
-  const endTime = isRunning ? now : (completedAt ?? last)
-  const durationMs = isRunning ? Math.max(1000, endTime - first) : Math.max(0, endTime - first)
-  if (durationMs < 1000) return ''
-  const duration = formatDuration(durationMs)
-
-  return `已处理 ${duration}`
-}
-
-function formatDuration(durationMs: number): string {
-  const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 60) return `${seconds} 秒`
-
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  if (minutes < 60) {
-    return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`
-  }
-
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  if (remainingMinutes === 0) return `${hours} 小时`
-  return `${hours} 小时 ${remainingMinutes} 分钟`
 }

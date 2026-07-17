@@ -358,7 +358,7 @@ describe('MessageList', () => {
       expect(article.className).toContain('[content-visibility:auto]')
 
       fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-      fireEvent.click(screen.getByRole('button', { name: /已编辑 config\.ts/ }))
+      fireEvent.click(screen.getByRole('button', { name: /编辑 config\.ts/ }))
 
       const diff = screen.getByTestId('process-file-change-diff')
       expect(diff).toHaveAttribute('data-message-content-visibility-lock', 'true')
@@ -706,10 +706,10 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByText('interrupted')).not.toBeInTheDocument()
-    const summary = screen.getByRole('button', { name: /已调用 1 个工具 已处理/ })
+    const summary = screen.getByRole('button', { name: /调用 1 个工具 已处理/ })
     expect(summary).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(summary)
-    expect(screen.getByText('已运行 pnpm test')).toBeInTheDocument()
+    expect(screen.getByText('运行 pnpm test')).toBeInTheDocument()
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('已编辑 main.ts')
     const stoppedNotice = screen.getByTestId('assistant-stopped-notice')
@@ -1048,7 +1048,7 @@ describe('MessageList', () => {
     )
   })
 
-  test('shows trailing thinking after partial content when processing blocks are still running', () => {
+  test('shows only the running block after partial content', () => {
     const runningSearchBlock: ProcessingBlock = {
       id: 'search-running',
       subtaskId: 1,
@@ -1074,14 +1074,9 @@ describe('MessageList', () => {
       />
     )
 
-    const content = screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')
-    const thinking = screen.getByTestId('thinking-indicator')
-
-    expect(thinking).toHaveTextContent('正在思考')
-    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
-    expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    )
+    expect(screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')).toBeInTheDocument()
+    expect(screen.getByText('正在搜索代码')).toHaveClass('tool-activity-shimmer')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('renders tagged markdown documents as regular assistant markdown instead of a plan card', () => {
@@ -1209,7 +1204,7 @@ describe('MessageList', () => {
     )
 
     const firstText = screen.getByText('我先看你提到的 package.json。')
-    const summary = screen.getByRole('button', { name: /已调用 1 个工具 已处理/ })
+    const summary = screen.getByRole('button', { name: /调用 1 个工具 已处理/ })
     const secondText = screen.getByText('从常用目录看，可能的前端仓库很多。')
 
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 2m 12s 后停止了')
@@ -1221,7 +1216,7 @@ describe('MessageList', () => {
       Node.DOCUMENT_POSITION_FOLLOWING
     )
     fireEvent.click(summary)
-    expect(screen.getByText('已读取 package.json')).toBeInTheDocument()
+    expect(screen.getByText('读取 package.json')).toBeInTheDocument()
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
@@ -1271,7 +1266,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByRole('button', { name: /已编辑 4 个文件 已处理/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /编辑 4 个文件 已处理/ })).toHaveAttribute(
       'aria-expanded',
       'false'
     )
@@ -1345,7 +1340,7 @@ describe('MessageList', () => {
     expect(screen.getAllByTestId('assistant-stopped-notice')).toHaveLength(1)
     expect(screen.getByText('我先看 package.json。')).toBeInTheDocument()
     expect(screen.getByText('pnpm-lock.yaml')).toBeInTheDocument()
-    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    expect(screen.getByText('引导对话')).toBeInTheDocument()
     expect(screen.getByText('我会继续看 lockfile。')).toBeInTheDocument()
     expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
   })
@@ -1581,7 +1576,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在执行 pwd')).toBeInTheDocument()
   })
 
-  test('keeps completed process text outside the collapsed tool group', () => {
+  test('keeps completed process text inside the message-level processing group', () => {
     const blocks: ProcessingBlock[] = [
       {
         id: 'process-1',
@@ -1619,13 +1614,16 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('最终建议放在 PR flow 里。')).toBeInTheDocument()
+    const finalProcessingToggle = screen.getByTestId('final-processing-toggle')
+    expect(finalProcessingToggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(finalProcessingToggle)
     expect(screen.getByText('我会先看这个 skill 当前的流程结构和相关记忆。')).toBeInTheDocument()
-    const processStatus = screen.getByRole('button', { name: /已调用 1 个工具 已处理/ })
+    const processStatus = screen.getByRole('button', { name: /调用 1 个工具/ })
     expect(
       processStatus.compareDocumentPosition(screen.getByText('最终建议放在 PR flow 里。')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(screen.getAllByTestId('processing-collapse-content')).toHaveLength(1)
+    expect(screen.getAllByTestId('processing-collapse-content')).toHaveLength(2)
 
     fireEvent.click(processStatus)
     expect(screen.getAllByTestId('processing-collapse-content')[1]).toHaveAttribute(
@@ -1633,7 +1631,7 @@ describe('MessageList', () => {
       'true'
     )
     expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
-    expect(screen.getByText('已搜索代码')).toBeInTheDocument()
+    expect(screen.getByText('搜索代码')).toBeInTheDocument()
     expect(screen.queryByTestId('processing-activity-group-toggle')).not.toBeInTheDocument()
   })
 
@@ -1724,10 +1722,12 @@ describe('MessageList', () => {
     )
 
     const collapseContents = screen.getAllByTestId('processing-collapse-content')
-    expect(collapseContents).toHaveLength(1)
-    expect(collapseContents[0]).toHaveAttribute('aria-hidden', 'false')
+    expect(collapseContents).toHaveLength(2)
+    expect(collapseContents.some(content => content.getAttribute('aria-hidden') === 'false')).toBe(
+      true
+    )
     expect(screen.getByText('我正在检查项目结构。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /已调用 1 个工具 已处理/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /调用 1 个工具 已处理/ })).toHaveAttribute(
       'aria-expanded',
       'false'
     )
@@ -1764,7 +1764,7 @@ describe('MessageList', () => {
       'aria-hidden',
       'false'
     )
-    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    expect(screen.getByText('引导对话')).toBeInTheDocument()
   })
 
   test('renders final answer web search sources as a Codex-style source chip', async () => {
@@ -1866,19 +1866,19 @@ describe('MessageList', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
 
     rerender(
       <MessageList conversationKey="conversation-b" messages={[buildMessage('assistant-b')]} />
     )
 
-    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
 
     rerender(
       <MessageList conversationKey="conversation-a" messages={[buildMessage('assistant-a')]} />
     )
 
-    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('reserves enough marker gutter for multi-digit ordered lists', () => {
@@ -3800,7 +3800,7 @@ describe('MessageList', () => {
       />
     )
 
-    const status = screen.getByText('已处理 1 秒')
+    const status = screen.getByText('1 秒')
 
     expect(screen.getByText('正在思考')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
@@ -3828,8 +3828,8 @@ describe('MessageList', () => {
         />
       )
 
-      expect(screen.getByText('已处理 1 秒')).toBeInTheDocument()
-      expect(screen.queryByText('已处理 8 秒')).not.toBeInTheDocument()
+      expect(screen.getByText('1 秒')).toBeInTheDocument()
+      expect(screen.queryByText('8 秒')).not.toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -3887,7 +3887,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('shows thinking from the message list after completed processing activity', () => {
+  test('does not show thinking while completed processing activity is visible', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -3914,8 +3914,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText('已运行 pwd')).toBeInTheDocument()
-    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
+    expect(screen.getByText('运行 pwd')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('does not duplicate thinking when live process text is visible', () => {
@@ -3947,7 +3947,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('collapses tool rows once final text and trailing thinking are visible', () => {
+  test('collapses tool rows once final text is visible without trailing thinking', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -3973,12 +3973,9 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText('正在思考')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /已调用 1 个工具 已处理/ })).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
   })
 
   test('renders process text inside the processing timeline before the following tool', () => {
@@ -4098,8 +4095,8 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('上下文已自动压缩')).toBeInTheDocument()
-    expect(screen.getAllByTestId('processing-summary-toggle')).toHaveLength(1)
-    expect(screen.getAllByRole('button', { name: /已调用 1 个工具 已处理/ })).toHaveLength(2)
+    expect(screen.getAllByTestId('processing-summary-toggle')).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /调用 1 个工具 已处理/ })).toHaveLength(2)
   })
 
   test('preserves tool summaries between narrative blocks in runtime guidance turns', () => {
@@ -4196,11 +4193,14 @@ describe('MessageList', () => {
     )
 
     const before = screen.getByText('我先核对读取记录。')
-    const toolSummary = screen.getByRole('button', { name: /已调用 4 个工具 已处理/ })
+    const toolSummary = screen.getByRole('button', { name: /调用 4 个工具 已处理/ })
     const after = screen.getByText('读取记录确认存在。')
-    const editSummary = screen.getByRole('button', { name: /已编辑 3 个文件 已处理/ })
+    const editSummary = screen.getByRole('button', { name: /编辑 3 个文件 已处理/ })
 
-    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+    expect(toolSummary).toHaveAttribute('data-testid', 'processing-summary-toggle')
+    expect(editSummary).toHaveAttribute('data-testid', 'processing-summary-toggle')
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByText('引导对话')).toBeInTheDocument()
     fireEvent.click(toolSummary)
     expect(screen.getByLabelText('搜索 1')).toBeInTheDocument()
     expect(screen.getByLabelText('读取 3')).toBeInTheDocument()
@@ -4215,9 +4215,9 @@ describe('MessageList', () => {
       Node.DOCUMENT_POSITION_FOLLOWING
     )
 
-    expect(screen.getByText('已读取 file-1.ts')).toBeInTheDocument()
-    expect(screen.getByText('已读取 file-2.ts')).toBeInTheDocument()
-    expect(screen.getByText('已读取 file-3.ts')).toBeInTheDocument()
+    expect(screen.getByText('读取 file-1.ts')).toBeInTheDocument()
+    expect(screen.getByText('读取 file-2.ts')).toBeInTheDocument()
+    expect(screen.getByText('读取 file-3.ts')).toBeInTheDocument()
   })
 
   test('keeps process text even when it matches the final assistant content', () => {
@@ -4245,6 +4245,7 @@ describe('MessageList', () => {
       />
     )
 
+    fireEvent.click(screen.getByTestId('final-processing-toggle'))
     expect(screen.getByTestId('process-text-block')).toHaveTextContent('这是最终回答。')
     expect(screen.getAllByText('这是最终回答。')).toHaveLength(2)
   })
