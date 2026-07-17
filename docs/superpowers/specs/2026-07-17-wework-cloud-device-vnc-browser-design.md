@@ -39,12 +39,24 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 
 ## 组件与职责
 
-- `VncDesktopButton`：管理配置请求、加载状态、内置浏览器请求和错误反馈。
-- `buildVncPageUrl`：根据设备 ID、sandbox ID、当前云连接的 `socketBaseUrl`、云端
-  token 和应用 base path 构建 VNC 页面 URL。页面仍来自 Wework 本地资源，WebSocket
-  则连接云端 `/vnc-proxy/{deviceId}`。
+- `ConnectionsSettingsPage` 内的 `VncDesktopButton`：管理配置请求、加载状态、
+  内置浏览器请求和错误反馈，并丢弃断开或切换云连接后返回的旧响应。
+- `WorkspacePanelCards`：在项目工作台的“桌面”工具中复用同一安全会话链路；
+  云桌面请求使用当前云连接 API 和 token，运行时终端仍使用本地运行时 API。
+- `prepareVncSession`：根据设备 ID、当前云连接的 `socketBaseUrl` 和云端 token 构建
+  WebSocket 代理地址，并把地址与 token 写入 Tauri 进程内的短期会话注册表。
+- `buildVncPageUrl`：使用随机 `sessionId`、sandbox ID 和应用 base path 构建本地页面
+  URL；页面地址不包含 WebSocket URL 或认证令牌。
+- `browser-url` 与 `requestEmbeddedBrowserOpen`：允许 HTTP(S) 页面和当前 Tauri
+  应用同源的本地 VNC 页面，在分发前拒绝其他协议或不同源内部 URL。
+- `vnc_session`：校验并保存短期 VNC 会话；IPC 交接窗口为两分钟，读取不会
+  延长过期时间。
+- `vnc.html`：在交接窗口内获取配置，在子 WebView 内存中为
+  WebSocket `/vnc-proxy/{deviceId}` 添加 token，并缓存该认证地址以支持子页生命周期内重连。
 - `requestEmbeddedBrowserOpen`：向已挂载的当前工作台浏览器监听器发送明确的打开请求，
   并返回请求是否被接受。
+- `WorkspaceBrowserPanel`：识别同源内部 VNC 页面，禁用浏览器注释和系统外部打开
+  入口，避免把会话上下文传递到这两条通道。
 - `ConnectionsSettingsPage`：向云设备区域传递“成功打开后离开设置页”的回调；该回调
   沿用现有返回工作台逻辑。
 - `DesktopWorkbenchMain`：继续接收打开请求、展开右侧浏览器面板并导航原生 WebView。
@@ -53,12 +65,22 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 
 1. 在线云设备显示可用的“桌面”按钮；离线设备按钮禁用。
 2. 用户点击后，按钮进入加载和禁用状态，防止重复请求。
-3. Wework 请求该设备的 VNC 配置，并使用返回的 sandbox ID、当前云连接地址和 token
-   构建 VNC 页面 URL。
-4. Wework 调用 `requestEmbeddedBrowserOpen`，目标为当前工作台默认浏览器标签。
-5. 当前工作台监听器接收 URL，选择浏览器标签并展开右侧面板。
-6. 请求被接受后，设置页执行现有返回操作，路由回工作台；用户看到右侧 VNC 桌面。
-7. 按钮结束加载状态。再次从设置页触发时，仍复用当前工作台浏览器标签。
+3. Wework 请求该设备的 VNC 配置，生成随机会话 ID，并把 WebSocket 代理地址与当前
+   云连接 token 注册到 Tauri 进程内的两分钟短期会话中。
+4. Wework 构建只含 `sessionId` 和 sandbox ID 的本地 `vnc.html` 页面 URL，再调用
+   `requestEmbeddedBrowserOpen`，目标为当前工作台默认浏览器标签。
+5. 当前工作台监听器接收 URL，选择浏览器标签并展开右侧面板。Tauri 对本地应用 URL
+   使用自定义协议 WebView，而普通 HTTP(S) 页面继续使用外部 URL WebView。请求被
+   接受后，设置页执行现有返回操作，路由回工作台。
+6. `vnc.html` 在两分钟 IPC 交接窗口内读取会话，再在 VNC 子 WebView
+   内存中为 noVNC WebSocket URL 添加 token 查询参数。该认证 URL 仅用于协议连接且
+   禁止输出到日志；可见地址栏、Wework 应用日志、注释上下文和外部打开入口均不含 token。
+7. 子页在生命周期内缓存认证 WebSocket URL，断线重连不需要延长或再次读取 IPC
+   会话。完整 reload 会清除子页缓存；若注册表交接窗口已过期，页面明确提示用户
+   关闭并重新打开桌面，而不是继续刷新。
+8. noVNC 触发 `connect` 后隐藏连接提示，设置子页已连接标志，并把标题更新为
+   包含 sandbox ID 的已连接标题。
+9. 再次从设置页触发时，仍复用当前工作台浏览器标签。
 
 ## 状态与错误处理
 
@@ -67,7 +89,11 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 - 内置浏览器没有可用监听器时，留在设置页、恢复按钮并显示本地化错误。
 - 失败提示使用可访问的警告语义，重试开始时清除，成功后保持清除。
 - 失败路径不调用系统浏览器，也不把失败显示成成功跳转。
-- 日志不得包含带认证令牌的完整 VNC URL。
+- 地址栏中显示的页面 URL、Wework 应用日志、浏览器注释上下文和外部打开入口都不得包含
+  VNC WebSocket URL 或认证令牌；VNC 子 WebView 仅在内存中把 token 作为 WebSocket
+  查询参数用于协议连接，且不得记录该认证 URL。VNC 页面禁用注释和系统浏览器操作。
+- 两分钟 TTL 只是主 WebView 到 VNC 子 WebView 的 IPC 交接窗口，不是已建立 VNC
+  连接的生命期。子页重连使用内存缓存；过期后完整 reload 需要关闭并重新打开桌面。
 - 不再使用不存在的 `/api/cloud-devices/{deviceId}/vnc-ws` 路径，也不使用可能属于
   本地运行时的 `auth_token` 代替当前云连接 token。
 
@@ -82,7 +108,13 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 单元和组件测试覆盖：
 
 - 在线设备点击后只请求一次 VNC 配置。
-- 构建后的 VNC URL 被发送给内置浏览器请求通道。
+- 构建后的安全页面 URL 只包含随机会话 ID，并被发送给内置浏览器请求通道。
+- `http`/`https`/`ws`/`wss` 云地址分别保留正确的 WebSocket 安全级别。
+- Tauri 会话拒绝无效 UUID、非 WebSocket 地址以及 URL 内已有凭证的输入。
+- Tauri 会话的两分钟 TTL 不会因读取而延长；子页重连复用内存中的认证
+  WebSocket URL，过期后 reload 会提示关闭并重新打开桌面。
+- 浏览器 URL 校验只接受 HTTP(S) 或当前 Tauri 应用同源的 VNC 页面，并且
+  VNC 页面禁用注释与外部打开操作。
 - 只有内置浏览器接受请求后才执行退出设置页回调。
 - 请求期间按钮禁用，重复点击不会产生第二次配置请求。
 - 离线云设备的桌面按钮禁用。
@@ -90,8 +122,12 @@ Wework 的云设备列表已经提供“桌面”按钮、VNC 配置接口、VNC
 - 错误后再次点击可以重试，并在成功时清除错误。
 
 桌面集成回归覆盖从连接设置点击“桌面”，确认设置页关闭、工作台恢复、右侧浏览器
-标签被选中并接收 VNC URL。按照 `wework/AGENTS.md`，最终还需在隔离的真实 Tauri
-会话中验证主路径、失败恢复路径和可见结果，并保留可复现的验证记录。
+标签被选中并接收安全页面 URL。真实 Desktop E2E 使用真实 HTTP 路由校验 VNC
+配置请求的 `Authorization: Bearer ...`，再在 WebSocket upgrade 校验 token 查询参数，
+完成 noVNC RFB 3.8 版本、安全类型、`ClientInit` 和 `ServerInit` 交换。E2E 最后确认
+noVNC `connect` 事件后的 VNC 子页连接标题，不只检查浏览器标签。按照
+`wework/AGENTS.md`，最终还需在隔离的真实 Tauri 会话中验证可见结果，并保留可复现的
+验证记录。
 
 ---
 
@@ -124,38 +160,57 @@ invisible to the user.
 
 ## Chosen Design
 
-After loading the VNC configuration and building the page URL from the active
-cloud connection's `socketBaseUrl` and token,
-`VncDesktopButton` sends an explicit `requestEmbeddedBrowserOpen` request to the
-current workbench. It invokes the existing leave-settings callback only when
-that request is accepted.
+After loading the VNC configuration, `VncDesktopButton` creates a random
+session ID and stores the WebSocket URL and active cloud token in a short-lived,
+in-memory Tauri registry. The local page URL contains only that session ID and
+the sandbox ID. The page obtains its configuration through Tauri IPC and adds
+the token as a query parameter only when constructing the noVNC WebSocket in
+the child WebView's memory. It caches that authenticated WebSocket URL for
+reconnects during the child-page lifetime.
+
+`VncDesktopButton` then sends the safe page URL through
+`requestEmbeddedBrowserOpen` to the current workbench. It invokes the existing
+leave-settings callback only when that request is accepted.
 
 `DesktopWorkbenchMain` remains responsible for selecting the browser tab,
 opening the right panel, and navigating the native WebView. The VNC page
 replaces the existing page in that single browser tab.
 
+The registry's two-minute TTL is an IPC handoff window, not the lifetime of an
+established VNC connection. Reads do not extend it. A full reload destroys the
+child page's cached WebSocket URL; if the handoff has expired, the page tells
+the user to close and reopen Desktop instead of repeatedly reloading.
+
 ## Flow and Failure Semantics
 
 1. Only an online cloud device has an enabled Desktop action.
 2. A click disables the action while Wework loads the VNC configuration.
-3. Wework keeps the page on the local app origin, points its WebSocket URL at
-   the cloud backend's `/vnc-proxy/{deviceId}` endpoint, and sends the page URL
-   to the embedded browser request channel.
+3. Wework keeps the page on the local app origin and sends a credential-free
+   page URL to the embedded browser. The page resolves the short-lived session
+   over IPC and connects noVNC to `/vnc-proxy/{deviceId}`. The VNC child
+   WebView carries the token in the protocol connection's WebSocket URL query
+   parameters and never logs that authenticated URL.
 4. Once accepted, Wework closes settings and reveals the current workbench and
    its right browser panel.
 5. If configuration loading fails or no listener accepts the request, Wework
    stays in settings, restores the action, and shows a localized accessible
    error. It never opens the system browser on this failure path.
 
-The implementation must not log a complete VNC URL because it contains the
-encoded cloud authentication token. It must not use the obsolete
-`/api/cloud-devices/{deviceId}/vnc-ws` path or substitute the local runtime's
-`auth_token` for the active cloud-connection token.
+The implementation must not put the WebSocket URL or cloud token in the visible
+address bar, Wework application logs, browser annotation context, or
+external-open flow. The VNC child WebView may hold the authenticated WebSocket
+URL in memory for the protocol connection, but must never log it. It must not
+use the obsolete `/api/cloud-devices/{deviceId}/vnc-ws` path or substitute the
+local runtime's `auth_token` for the active cloud-connection token.
 
 ## Verification
 
-Focused tests cover successful routing, success-only settings exit, loading
-deduplication, offline disabling, visible failure, retry, and the absence of a
-system-browser fallback. A desktop integration regression covers the complete
-settings-to-workbench transition. Isolated real-Tauri verification follows the
+Focused tests cover secure session creation, protocol preservation, successful
+routing, success-only settings exit, loading deduplication, offline disabling,
+visible failure, retry, same-origin Tauri URL validation, workspace-card entry,
+and disabled annotation/system-open controls for internal VNC pages. A desktop
+integration regression covers the complete settings-to-workbench transition.
+The real Desktop E2E verifies the HTTP Bearer header, WebSocket token query,
+RFB 3.8 negotiation through `ServerInit`, and the child-page connected title
+set by the noVNC `connect` event. Isolated real-Tauri verification follows the
 QA and evidence requirements in `wework/AGENTS.md`.

@@ -4089,8 +4089,21 @@ describe('DesktopWorkbenchLayout', () => {
         (screen.getByTestId('workspace-browser-url-input') as HTMLInputElement).value
       )
       expect(openedUrl.pathname).toBe('/vnc.html')
-      expect(openedUrl.searchParams.get('wsUrl')).toBe(
-        'ws://localhost:3000/vnc-proxy/24a59054-4638-4744-983d-372706c30fcd?token=fallback-token'
+      expect(openedUrl.searchParams.get('sessionId')).toEqual(expect.any(String))
+      expect(openedUrl.searchParams.has('wsUrl')).toBe(false)
+      expect(openedUrl.toString()).not.toContain('fallback-token')
+      expect(screen.getByTestId('workspace-browser-annotate-button')).toBeDisabled()
+      expect(screen.getByTestId('workspace-browser-open-external-button')).toBeDisabled()
+      await waitFor(() =>
+        expect(tauriInvoke).toHaveBeenCalledWith(
+          'prepare_vnc_session',
+          {
+            sessionId: openedUrl.searchParams.get('sessionId'),
+            token: 'fallback-token',
+            wsUrl: 'ws://localhost:3000/vnc-proxy/24a59054-4638-4744-983d-372706c30fcd',
+          },
+          undefined
+        )
       )
       await waitFor(() =>
         expect(tauriInvoke).toHaveBeenCalledWith(

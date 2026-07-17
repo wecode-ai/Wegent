@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { normalizeBrowserUrl } from './browser-url'
 import { isTauriRuntime } from './runtime-environment'
 
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
@@ -216,7 +217,10 @@ export function requestEmbeddedBrowserOpen(
     return false
   }
 
-  const request = { url, label }
+  const normalizedUrl = normalizeBrowserUrl(url, window.location.href)
+  if (!normalizedUrl) return false
+
+  const request = { url: normalizedUrl, label }
   embeddedBrowserOpenRequestHandlers.forEach(handler => handler(request))
   return true
 }

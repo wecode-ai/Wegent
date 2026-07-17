@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -12,6 +12,7 @@ import {
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
+import { prepareVncSession } from '@/lib/vnc'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -87,6 +88,11 @@ vi.mock('@/lib/embedded-browser', async importOriginal => ({
   requestEmbeddedBrowserOpen: vi.fn(),
 }))
 
+vi.mock('@/lib/vnc', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/vnc')>()),
+  prepareVncSession: vi.fn(),
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
@@ -105,6 +111,7 @@ const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 const requestEmbeddedBrowserOpenMock = vi.mocked(requestEmbeddedBrowserOpen)
+const prepareVncSessionMock = vi.mocked(prepareVncSession)
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void
@@ -213,6 +220,7 @@ describe('ConnectionsSettingsPage', () => {
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
     requestEmbeddedBrowserOpenMock.mockReturnValue(true)
+    prepareVncSessionMock.mockResolvedValue('vnc-session-1')
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -833,9 +841,14 @@ describe('ConnectionsSettingsPage', () => {
     await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
     const openedUrl = new URL(requestEmbeddedBrowserOpenMock.mock.calls[0][0])
     expect(openedUrl.pathname).toBe('/vnc.html')
-    expect(openedUrl.searchParams.get('wsUrl')).toBe(
-      'ws://localhost:3000/vnc-proxy/device-1?token=fallback-token'
-    )
+    expect(openedUrl.searchParams.get('sessionId')).toBe('vnc-session-1')
+    expect(openedUrl.searchParams.has('wsUrl')).toBe(false)
+    expect(openedUrl.toString()).not.toContain('fallback-token')
+    expect(prepareVncSessionMock).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      socketBaseUrl: 'http://localhost:3000',
+      token: 'fallback-token',
+    })
     expect(onBack).toHaveBeenCalledTimes(1)
     expect(openExternalUrlMock).not.toHaveBeenCalled()
   })
@@ -899,6 +912,73 @@ describe('ConnectionsSettingsPage', () => {
       sandbox_id: 'sandbox-1',
     })
     await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
+  })
+
+  test('discards a pending VNC response after the cloud connection changes', async () => {
+    const deferred = createDeferred<{
+      wss_url: string
+      signature: string
+      sandbox_id: string
+    }>()
+    const onBack = vi.fn()
+    const connectedConnection: CloudConnectionContextValue = {
+      status: 'connected',
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      token: 'connected-token',
+      tokenExpiresAt: null,
+      user: { id: 1, user_name: 'cloud-user', email: 'cloud@example.com' },
+      connectedAt: '2026-07-17T00:00:00.000Z',
+      error: null,
+      isConnected: true,
+      serviceKey: 'connected:1',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    const nextConnectedConnection: CloudConnectionContextValue = {
+      ...connectedConnection,
+      token: 'next-connected-token',
+      serviceKey: 'connected:2',
+    }
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.getVncConfig.mockReturnValueOnce(deferred.promise)
+
+    const view = render(
+      <CloudConnectionContext.Provider value={connectedConnection}>
+        <ConnectionsSettingsPage onBack={onBack} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
+    expect(api.getVncConfig).toHaveBeenCalledTimes(1)
+
+    view.rerender(
+      <CloudConnectionContext.Provider value={nextConnectedConnection}>
+        <ConnectionsSettingsPage onBack={onBack} />
+      </CloudConnectionContext.Provider>
+    )
+    const reconnectedButton = await screen.findByTestId('connection-vnc-button-device-1')
+    await waitFor(() => expect(reconnectedButton).not.toBeDisabled())
+    await userEvent.click(reconnectedButton)
+    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
+
+    await act(async () => {
+      deferred.resolve({
+        wss_url: 'wss://example.com/vnc',
+        signature: 'signature',
+        sandbox_id: 'sandbox-1',
+      })
+      await deferred.promise
+      await Promise.resolve()
+    })
+
+    expect(api.getVncConfig).toHaveBeenCalledTimes(2)
+    expect(prepareVncSessionMock).toHaveBeenCalledTimes(1)
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1)
+    expect(onBack).toHaveBeenCalledTimes(1)
   })
 
   test('disables the VNC action for an offline cloud device', async () => {

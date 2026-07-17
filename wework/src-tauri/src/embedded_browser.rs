@@ -252,6 +252,13 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
+fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
+    match url.scheme() {
+        "http" | "https" => WebviewUrl::External(url),
+        _ => WebviewUrl::CustomProtocol(url),
+    }
+}
+
 fn browser_label(label: Option<String>) -> String {
     label.unwrap_or_else(|| BROWSER_WEBVIEW_LABEL.to_string())
 }
@@ -986,7 +993,7 @@ pub async fn embedded_browser_open(
     let label_for_load = label.clone();
     let label_for_title = label.clone();
 
-    let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed_url))
+    let builder = tauri::webview::WebviewBuilder::new(&label, browser_webview_url(parsed_url))
         .user_agent(EMBEDDED_BROWSER_USER_AGENT)
         .data_directory(browser_data_directory(&app)?)
         .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
@@ -1090,6 +1097,27 @@ pub async fn embedded_browser_open(
         title: None,
         url: Some(url),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::browser_webview_url;
+    use tauri::WebviewUrl;
+
+    #[test]
+    fn browser_webview_url_uses_custom_protocol_for_tauri_pages() {
+        let app_url = tauri::Url::parse("tauri://localhost/vnc.html?sessionId=test").unwrap();
+        let external_url = tauri::Url::parse("https://example.com/").unwrap();
+
+        assert!(matches!(
+            browser_webview_url(app_url),
+            WebviewUrl::CustomProtocol(_)
+        ));
+        assert!(matches!(
+            browser_webview_url(external_url),
+            WebviewUrl::External(_)
+        ));
+    }
 }
 
 #[tauri::command]

@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
   canUseEmbeddedBrowser,
@@ -43,6 +43,7 @@ import {
 import { openExternalUrl } from '@/lib/external-links'
 import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
+import { isInternalVncPageUrl } from '@/lib/vnc'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
@@ -59,6 +60,13 @@ const EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS = 5000
 const EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
+const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
+  try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
+  try { window.__weworkBrowserAnnotationClose?.(); } catch (_) {}
+  document.getElementById('__wework_browser_annotation_layer__')?.remove();
+  document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
+  return true;
+})()`
 
 interface WorkspaceBrowserPanelProps {
   active: boolean
@@ -555,6 +563,14 @@ export function WorkspaceBrowserPanel({
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
+  const activePageUrlRef = useRef<string | null>(null)
+  const annotationModeRef = useRef(false)
+  const annotationCleanupPromiseRef = useRef<Promise<void> | null>(null)
+  const annotationInjectionOwnerRef = useRef<number | null>(null)
+  const annotationRequestGenerationRef = useRef(0)
+  const currentLabelRef = useRef(label)
+  const mountedRef = useRef(true)
+  const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
   const handledOpenRequestIdRef = useRef<number | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
@@ -573,7 +589,20 @@ export function WorkspaceBrowserPanel({
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
+  const internalVncPage = Boolean(activePageUrl && isInternalVncPageUrl(activePageUrl))
   const embeddedBrowserOccluded = occludingOverlayIds.size > 0
+
+  useLayoutEffect(() => {
+    mountedRef.current = true
+    currentLabelRef.current = label
+    pageStateRequestGenerationRef.current += 1
+    annotationRequestGenerationRef.current += 1
+    return () => {
+      mountedRef.current = false
+      pageStateRequestGenerationRef.current += 1
+      annotationRequestGenerationRef.current += 1
+    }
+  }, [active, label])
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserDownloads(download => {
@@ -592,6 +621,7 @@ export function WorkspaceBrowserPanel({
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
+      activePageUrlRef.current = url
       setPageUrl(url)
       if (url) {
         setAddress(url)
@@ -633,29 +663,52 @@ export function WorkspaceBrowserPanel({
     await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
   }, [embeddedBrowserAvailable, label])
 
+  const cleanupAnnotationLayer = useCallback((targetLabel: string) => {
+    const previousCleanup = annotationCleanupPromiseRef.current ?? Promise.resolve()
+    const cleanupPromise = previousCleanup
+      .then(() => evalEmbeddedBrowser(BROWSER_ANNOTATION_CLEANUP_SCRIPT, targetLabel))
+      .then(() => undefined)
+      .catch(error => {
+        console.error('Failed to close embedded browser annotation layer:', error)
+      })
+    annotationCleanupPromiseRef.current = cleanupPromise
+    void cleanupPromise.finally(() => {
+      if (annotationCleanupPromiseRef.current === cleanupPromise) {
+        annotationCleanupPromiseRef.current = null
+      }
+    })
+    return cleanupPromise
+  }, [])
+
+  const cleanupInvalidatedAnnotationRequest = useCallback(
+    async (requestGeneration: number, targetLabel: string) => {
+      if (
+        !mountedRef.current ||
+        currentLabelRef.current !== targetLabel ||
+        annotationInjectionOwnerRef.current !== requestGeneration
+      ) {
+        return
+      }
+      annotationInjectionOwnerRef.current = null
+      await cleanupAnnotationLayer(targetLabel)
+    },
+    [cleanupAnnotationLayer]
+  )
+
   const exitAnnotationMode = useCallback(() => {
     logBrowserAnnotation('exit annotation mode', {
       label,
       currentUrl,
       nativeBrowserOpen: nativeBrowserOpenRef.current,
     })
+    annotationRequestGenerationRef.current += 1
+    annotationModeRef.current = false
     setAnnotationMode(false)
     setAnnotations([])
     // Clear visuals first, then close the session. Also remove any orphaned
     // annotation nodes so published boxes cannot linger after mode exit.
-    void evalEmbeddedBrowser(
-      `(() => {
-        try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
-        try { window.__weworkBrowserAnnotationClose?.(); } catch (_) {}
-        document.getElementById('__wework_browser_annotation_layer__')?.remove();
-        document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
-        return true;
-      })()`,
-      label
-    ).catch(error => {
-      console.error('Failed to close embedded browser annotation layer:', error)
-    })
-  }, [currentUrl, label])
+    void cleanupAnnotationLayer(label)
+  }, [cleanupAnnotationLayer, currentUrl, label])
 
   const enterAnnotationMode = useCallback(async () => {
     logBrowserAnnotation('enter annotation mode requested', {
@@ -665,7 +718,12 @@ export function WorkspaceBrowserPanel({
       embeddedBrowserAvailable,
       nativeBrowserOpen: nativeBrowserOpenRef.current,
     })
-    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current || !currentUrl) {
+    if (
+      internalVncPage ||
+      !embeddedBrowserAvailable ||
+      !nativeBrowserOpenRef.current ||
+      !currentUrl
+    ) {
       logBrowserAnnotation('enter annotation mode skipped', {
         label,
         active,
@@ -675,12 +733,48 @@ export function WorkspaceBrowserPanel({
       })
       return
     }
+    const requestGeneration = annotationRequestGenerationRef.current + 1
+    annotationRequestGenerationRef.current = requestGeneration
     try {
+      const pendingCleanup = annotationCleanupPromiseRef.current
+      if (pendingCleanup) {
+        await pendingCleanup
+      }
+      if (
+        !mountedRef.current ||
+        currentLabelRef.current !== label ||
+        annotationRequestGenerationRef.current !== requestGeneration
+      ) {
+        return
+      }
+      annotationInjectionOwnerRef.current = requestGeneration
       await evalEmbeddedBrowser(browserAnnotationInjectionScript(appearance.uiFontSize), label)
+      if (
+        !mountedRef.current ||
+        currentLabelRef.current !== label ||
+        annotationRequestGenerationRef.current !== requestGeneration
+      ) {
+        await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
+        return
+      }
+      if (activePageUrlRef.current && isInternalVncPageUrl(activePageUrlRef.current)) {
+        exitAnnotationMode()
+        return
+      }
       annotationEmptyPollLogCountRef.current = 0
+      annotationModeRef.current = true
       setAnnotationMode(true)
       logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
     } catch (error) {
+      if (
+        !mountedRef.current ||
+        currentLabelRef.current !== label ||
+        annotationRequestGenerationRef.current !== requestGeneration
+      ) {
+        await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
+        return
+      }
+      annotationInjectionOwnerRef.current = null
       console.error('Failed to enter embedded browser annotation mode:', error)
       logBrowserAnnotation('enter annotation mode failed', {
         label,
@@ -690,7 +784,17 @@ export function WorkspaceBrowserPanel({
       setStatus('error')
       setError(t('workbench.browser_annotation_failed'))
     }
-  }, [active, appearance.uiFontSize, currentUrl, embeddedBrowserAvailable, label, t])
+  }, [
+    active,
+    appearance.uiFontSize,
+    currentUrl,
+    cleanupInvalidatedAnnotationRequest,
+    embeddedBrowserAvailable,
+    exitAnnotationMode,
+    internalVncPage,
+    label,
+    t,
+  ])
 
   useEffect(() => {
     const previousCount = previousCodeCommentCountRef.current
@@ -759,20 +863,41 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => clearScheduledBoundsSync, [clearScheduledBoundsSync])
 
-  const refreshPageState = useCallback(async () => {
-    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+  const refreshPageState = useCallback(async (): Promise<boolean> => {
+    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return false
+    const requestGeneration = pageStateRequestGenerationRef.current + 1
+    pageStateRequestGenerationRef.current = requestGeneration
     try {
       const pageState = await readEmbeddedBrowserPageState(label)
+      if (!mountedRef.current || pageStateRequestGenerationRef.current !== requestGeneration) {
+        return false
+      }
       const nextUrl = pageState.url || currentUrlRef.current
+      if (nextUrl && isInternalVncPageUrl(nextUrl) && annotationModeRef.current) {
+        logBrowserAnnotation('exit annotation mode for internal VNC page', { label })
+        exitAnnotationMode()
+      }
       updatePageUrl(nextUrl)
       if (nextUrl) {
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
         onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
       }
+      return true
     } catch (error) {
+      if (!mountedRef.current || pageStateRequestGenerationRef.current !== requestGeneration) {
+        return false
+      }
       console.error('Failed to read embedded browser page state:', error)
+      return false
     }
-  }, [embeddedBrowserAvailable, label, onFaviconChange, onTitleChange, updatePageUrl])
+  }, [
+    embeddedBrowserAvailable,
+    exitAnnotationMode,
+    label,
+    onFaviconChange,
+    onTitleChange,
+    updatePageUrl,
+  ])
 
   useEffect(() => {
     currentUrlRef.current = currentUrl
@@ -924,10 +1049,16 @@ export function WorkspaceBrowserPanel({
     }, EMBEDDED_BROWSER_STATE_INTERVAL_MS)
 
     return () => window.clearInterval(intervalId)
-  }, [active, embeddedBrowserAvailable, refreshPageState])
+  }, [active, embeddedBrowserAvailable, refreshPageState, status])
 
   useEffect(() => {
-    if (!active || !annotationMode || !embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
+    if (
+      !active ||
+      !annotationMode ||
+      internalVncPage ||
+      !embeddedBrowserAvailable ||
+      !nativeBrowserOpenRef.current
+    ) {
       if (annotationMode) {
         logBrowserAnnotation('consume effect inactive', {
           label,
@@ -945,6 +1076,7 @@ export function WorkspaceBrowserPanel({
       activePageUrl,
       hasAddCodeComment: Boolean(onAddCodeComment),
     })
+    let cancelled = false
 
     const consumeAnnotations = async () => {
       try {
@@ -952,6 +1084,7 @@ export function WorkspaceBrowserPanel({
           'window.__weworkBrowserAnnotationConsume?.() ?? []',
           label
         )
+        if (cancelled) return
         if (!Array.isArray(published)) {
           logBrowserAnnotation('consume returned non-array payload', {
             label,
@@ -992,6 +1125,7 @@ export function WorkspaceBrowserPanel({
           )
         })
       } catch (error) {
+        if (cancelled) return
         console.error('Failed to consume embedded browser annotations:', error)
         logBrowserAnnotation('consume annotations failed', {
           label,
@@ -1006,10 +1140,19 @@ export function WorkspaceBrowserPanel({
     void consumeAnnotations()
 
     return () => {
+      cancelled = true
       logBrowserAnnotation('consume effect cleanup', { label })
       window.clearInterval(intervalId)
     }
-  }, [active, activePageUrl, annotationMode, embeddedBrowserAvailable, label, onAddCodeComment])
+  }, [
+    active,
+    activePageUrl,
+    annotationMode,
+    embeddedBrowserAvailable,
+    internalVncPage,
+    label,
+    onAddCodeComment,
+  ])
 
   useEffect(() => {
     return () => {
@@ -1073,7 +1216,7 @@ export function WorkspaceBrowserPanel({
       if (!currentUrl) return
       try {
         await command()
-        await refreshPageState()
+        if (!(await refreshPageState())) return
         setStatus('ready')
       } catch (error) {
         console.error('Failed to control embedded browser:', error)
@@ -1099,7 +1242,7 @@ export function WorkspaceBrowserPanel({
 
   const openBrowserUrl = useCallback(
     (rawUrl: string) => {
-      const nextUrl = normalizeBrowserUrl(rawUrl)
+      const nextUrl = normalizeBrowserUrl(rawUrl, window.location.href)
       if (!nextUrl) {
         setStatus('error')
         setError(t('workbench.browser_invalid_url'))
@@ -1108,6 +1251,11 @@ export function WorkspaceBrowserPanel({
 
       setAddress(nextUrl)
       setError(null)
+      pageStateRequestGenerationRef.current += 1
+
+      if (annotationMode && isInternalVncPageUrl(nextUrl)) {
+        exitAnnotationMode()
+      }
 
       if (nextUrl === activePageUrl) {
         setStatus('ready')
@@ -1131,7 +1279,9 @@ export function WorkspaceBrowserPanel({
     },
     [
       activePageUrl,
+      annotationMode,
       embeddedBrowserAvailable,
+      exitAnnotationMode,
       label,
       reloadCurrentUrl,
       runBrowserCommand,
@@ -1159,7 +1309,7 @@ export function WorkspaceBrowserPanel({
   }
 
   const handleOpenExternal = () => {
-    if (!activePageUrl) return
+    if (!activePageUrl || internalVncPage) return
     void openExternalUrl(activePageUrl, { target: 'system' })
   }
 
@@ -1171,7 +1321,7 @@ export function WorkspaceBrowserPanel({
         !active && 'hidden'
       )}
     >
-      {annotationMode ? (
+      {annotationMode && !internalVncPage ? (
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-sm text-text-primary">
           <BrowserToolbarButton
             testId="workspace-browser-annotation-close-button"
@@ -1270,7 +1420,7 @@ export function WorkspaceBrowserPanel({
           <BrowserToolbarButton
             testId="workspace-browser-annotate-button"
             label={t('workbench.browser_annotation_start')}
-            disabled={!activePageUrl || !embeddedBrowserAvailable}
+            disabled={!activePageUrl || !embeddedBrowserAvailable || internalVncPage}
             onClick={() => void enterAnnotationMode()}
           >
             <MessageSquarePlus className="h-4 w-4" />
@@ -1278,14 +1428,14 @@ export function WorkspaceBrowserPanel({
           <BrowserToolbarButton
             testId="workspace-browser-open-external-button"
             label={t('workbench.browser_open_external')}
-            disabled={!activePageUrl}
+            disabled={!activePageUrl || internalVncPage}
             onClick={handleOpenExternal}
           >
             <ExternalLink className="h-4 w-4" />
           </BrowserToolbarButton>
         </div>
       )}
-      {!annotationMode && downloadsOpen ? (
+      {(!annotationMode || internalVncPage) && downloadsOpen ? (
         <div
           data-testid="workspace-browser-downloads-panel"
           className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"

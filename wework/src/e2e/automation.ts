@@ -15,6 +15,7 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { invoke } from '@tauri-apps/api/core'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -29,6 +30,7 @@ type DesktopControlAction =
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
   | 'fill'
+  | 'getEmbeddedBrowserVncState'
   | 'getText'
   | 'hover'
   | 'pointerMove'
@@ -449,6 +451,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'getEmbeddedBrowserVncState': {
+      const state = await evalEmbeddedBrowserJson<{ connected?: string; title?: string }>(
+        "({ connected: document.documentElement.dataset.vncConnected ?? '', title: document.title })",
+        command.selector || undefined
+      )
+      return JSON.stringify(state)
+    }
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':

@@ -1,31 +1,73 @@
+import { invoke } from '@tauri-apps/api/core'
 import { getRuntimeConfig, joinAppPath } from '@/config/runtime'
 
-interface BuildVncPageUrlOptions {
+interface PrepareVncSessionOptions {
   deviceId: string
-  sandboxId: string
   socketBaseUrl: string
   token: string
 }
 
+interface BuildVncPageUrlOptions {
+  sandboxId: string
+  sessionId: string
+}
+
 function buildVncWebSocketBaseUrl(socketBaseUrl: string): string {
   const url = new URL(socketBaseUrl)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  switch (url.protocol) {
+    case 'http:':
+      url.protocol = 'ws:'
+      break
+    case 'https:':
+      url.protocol = 'wss:'
+      break
+    case 'ws:':
+    case 'wss:':
+      break
+    default:
+      throw new Error(`Unsupported VNC socket protocol: ${url.protocol}`)
+  }
   url.search = ''
   url.hash = ''
   return url.toString().replace(/\/+$/, '')
 }
 
-export function buildVncPageUrl({
+export async function prepareVncSession({
   deviceId,
-  sandboxId,
   socketBaseUrl,
   token,
-}: BuildVncPageUrlOptions): string {
-  const { appBasePath } = getRuntimeConfig()
-  const vncWsUrl = `${buildVncWebSocketBaseUrl(socketBaseUrl)}/vnc-proxy/${encodeURIComponent(deviceId)}?token=${encodeURIComponent(token)}`
-  const pageUrl = new URL(joinAppPath(appBasePath, '/vnc.html'), window.location.origin)
+}: PrepareVncSessionOptions): Promise<string> {
+  const sessionId = crypto.randomUUID()
+  const wsUrl = `${buildVncWebSocketBaseUrl(socketBaseUrl)}/vnc-proxy/${encodeURIComponent(deviceId)}`
 
-  pageUrl.searchParams.set('wsUrl', vncWsUrl)
+  await invoke('prepare_vnc_session', {
+    sessionId,
+    wsUrl,
+    token,
+  })
+  return sessionId
+}
+
+export function buildVncPageUrl({ sandboxId, sessionId }: BuildVncPageUrlOptions): string {
+  const { appBasePath } = getRuntimeConfig()
+  const pageUrl = new URL(joinAppPath(appBasePath, '/vnc.html'), window.location.href)
+
+  pageUrl.searchParams.set('sessionId', sessionId)
   pageUrl.searchParams.set('sandboxId', sandboxId)
   return pageUrl.toString()
+}
+
+export function isInternalVncPageUrl(value: string): boolean {
+  try {
+    const { appBasePath } = getRuntimeConfig()
+    const expectedUrl = new URL(joinAppPath(appBasePath, '/vnc.html'), window.location.href)
+    const url = new URL(value)
+    return (
+      url.protocol === expectedUrl.protocol &&
+      url.host === expectedUrl.host &&
+      url.pathname === expectedUrl.pathname
+    )
+  } catch {
+    return false
+  }
 }

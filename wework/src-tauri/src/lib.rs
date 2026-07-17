@@ -4,6 +4,7 @@ mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
+mod vnc_session;
 mod wecode;
 mod workbench_background;
 
@@ -3682,6 +3683,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(vnc_session::VncSessionState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
@@ -3788,6 +3790,8 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
+            vnc_session::get_vnc_session_config,
+            vnc_session::prepare_vnc_session,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
