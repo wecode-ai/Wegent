@@ -11,6 +11,7 @@ This module provides the SubscriptionMarketService class for:
 - Managing user's rental subscriptions
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,6 +22,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.subscription_follow import (
+    FollowType,
+    InvitationStatus,
+    SubscriptionFollow,
+)
 from app.models.user import User
 from app.schemas.subscription import (
     MarketSubscriptionDetail,
@@ -28,6 +34,7 @@ from app.schemas.subscription import (
     RentalSubscriptionResponse,
     RentSubscriptionRequest,
     Subscription,
+    SubscriptionFollowConfig,
     SubscriptionTriggerType,
     SubscriptionVisibility,
 )
@@ -456,6 +463,50 @@ class SubscriptionMarketService:
             "source_owner_username": source_owner_username,
         }
 
+        source_follow = (
+            db.query(SubscriptionFollow)
+            .filter(
+                SubscriptionFollow.subscription_id == source.id,
+                SubscriptionFollow.follower_user_id == source.user_id,
+            )
+            .first()
+        )
+        source_notification_config = SubscriptionFollowConfig()
+        if source_follow and source_follow.config:
+            try:
+                source_notification_config = SubscriptionFollowConfig.model_validate(
+                    json.loads(source_follow.config)
+                )
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(
+                    "Invalid notification config on market subscription %s",
+                    source.id,
+                )
+
+        channel_ids = source_notification_config.notification_channel_ids or []
+        source_bindings = source_internal.get("notification_channel_bindings", {})
+        private_channel_ids = [
+            channel_id
+            for channel_id in channel_ids
+            if source_bindings.get(str(channel_id), {}).get("bind_private", True)
+        ]
+        rental_notification_config = SubscriptionFollowConfig(
+            notification_level=source_notification_config.notification_level,
+            notification_channel_ids=private_channel_ids,
+        )
+        private_bindings = {
+            str(channel_id): {
+                "bind_private": True,
+                "bind_group": False,
+                "group_conversation_id": None,
+                "group_name": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            for channel_id in private_channel_ids
+        }
+        if private_bindings:
+            crd_json["_internal"]["notification_channel_bindings"] = private_bindings
+
         # Create rental subscription
         rental = Kind(
             user_id=renter_user_id,
@@ -466,6 +517,21 @@ class SubscriptionMarketService:
             is_active=True,
         )
         db.add(rental)
+        db.flush()
+
+        rental_follow = SubscriptionFollow(
+            subscription_id=rental.id,
+            follower_user_id=renter_user_id,
+            follow_type=FollowType.DIRECT.value,
+            invited_by_user_id=0,
+            invitation_status=InvitationStatus.ACCEPTED.value,
+            invited_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            responded_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            config=rental_notification_config.model_dump_json(),
+        )
+        db.add(rental_follow)
 
         # Increment rental count on source subscription
         source_internal["rental_count"] = source_internal.get("rental_count", 0) + 1

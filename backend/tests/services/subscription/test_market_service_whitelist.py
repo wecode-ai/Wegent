@@ -13,10 +13,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
+from app.models.subscription_follow import SubscriptionFollow
 from app.models.user import User
 from app.schemas.subscription import (
+    NotificationLevel,
     RentSubscriptionRequest,
     SubscriptionCreate,
+    SubscriptionFollowConfig,
     SubscriptionVisibility,
 )
 from app.services.subscription.market_service import subscription_market_service
@@ -179,6 +182,75 @@ def test_rent_subscription_returns_403_for_non_whitelist_user(
         )
 
     assert exc_info.value.status_code == 403
+
+
+def test_rent_subscription_inherits_private_notification_for_renter(
+    test_db: Session, test_user: User
+):
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    renter = _create_user(
+        test_db,
+        username=f"renter-{uuid.uuid4().hex[:6]}",
+        email=f"renter-{uuid.uuid4().hex[:6]}@example.com",
+    )
+    subscription_id = _create_market_subscription(
+        test_db,
+        owner_user_id=test_user.id,
+        team_id=team.id,
+        whitelist_user_ids=[renter.id],
+    )
+    source = test_db.query(Kind).filter(Kind.id == subscription_id).one()
+    source.json["_internal"]["notification_channel_bindings"] = {
+        "123": {
+            "bind_private": True,
+            "bind_group": True,
+            "group_conversation_id": "publisher-group",
+            "group_name": "Publisher group",
+        }
+    }
+    flag_modified(source, "json")
+    owner_follow = (
+        test_db.query(SubscriptionFollow)
+        .filter(
+            SubscriptionFollow.subscription_id == subscription_id,
+            SubscriptionFollow.follower_user_id == test_user.id,
+        )
+        .one()
+    )
+    owner_follow.config = SubscriptionFollowConfig(
+        notification_level=NotificationLevel.NOTIFY,
+        notification_channel_ids=[123],
+    ).model_dump_json()
+    test_db.commit()
+
+    rental = subscription_market_service.rent_subscription(
+        test_db,
+        source_subscription_id=subscription_id,
+        renter_user_id=renter.id,
+        request=RentSubscriptionRequest(
+            name=f"rental-{uuid.uuid4().hex[:8]}",
+            display_name="Rental",
+            trigger_type="interval",
+            trigger_config={"value": 1, "unit": "hours"},
+        ),
+    )
+
+    rental_follow = (
+        test_db.query(SubscriptionFollow)
+        .filter(
+            SubscriptionFollow.subscription_id == rental.id,
+            SubscriptionFollow.follower_user_id == renter.id,
+        )
+        .one()
+    )
+    assert SubscriptionFollowConfig.model_validate_json(
+        rental_follow.config
+    ).notification_channel_ids == [123]
+    rental_kind = test_db.query(Kind).filter(Kind.id == rental.id).one()
+    binding = rental_kind.json["_internal"]["notification_channel_bindings"]["123"]
+    assert binding["bind_private"] is True
+    assert binding["bind_group"] is False
+    assert binding["group_conversation_id"] is None
 
 
 def test_discover_market_subscriptions_handles_legacy_invalid_interval(
