@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from typing import Any
 
 import httpx
@@ -337,3 +338,161 @@ def test_sites_api_token_repr_hides_secret(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     assert SITES_API_TOKEN not in repr(settings.SITES_API_TOKEN)
+
+
+def test_publish_site_proxies_authenticated_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_inner"
+    project = _project(id=project_id, network="outer")
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/deploy/outer",
+        json=project,
+    )
+
+    response = test_client.post(
+        f"/api/v1/sites/{project_id}/publish",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == project
+    assert response.json()["network"] == "outer"
+    request = httpx_mock.get_requests()[0]
+    assert json.loads(request.content) == {
+        "username": "testuser",
+        "project_id": project_id,
+    }
+
+
+def test_delete_site_returns_no_content_after_upstream_confirmation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_delete"
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        json={"deleted": True},
+    )
+
+    response = test_client.delete(
+        f"/api/v1/sites/{project_id}",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    request = httpx_mock.get_requests()[0]
+    assert json.loads(request.content) == {
+        "username": "testuser",
+        "project_id": project_id,
+    }
+
+
+@pytest.mark.parametrize("upstream_response", [{"deleted": False}, {}])
+def test_delete_site_requires_valid_upstream_confirmation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+    upstream_response: dict[str, Any],
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_delete"
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        json=upstream_response,
+    )
+
+    response = test_client.delete(
+        f"/api/v1/sites/{project_id}",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_rename_site_strips_title_and_proxies_authenticated_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_rename"
+    project = _project(id=project_id, title="Renamed site")
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/update",
+        json=project,
+    )
+
+    response = test_client.post(
+        f"/api/v1/sites/{project_id}/rename",
+        headers=_authorization(test_token),
+        json={"title": "  Renamed site  "},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == project
+    request = httpx_mock.get_requests()[0]
+    assert json.loads(request.content) == {
+        "username": "testuser",
+        "project_id": project_id,
+        "sitename": "Renamed site",
+    }
+
+
+@pytest.mark.parametrize("title", ["", "   ", "x" * 256])
+def test_rename_site_rejects_invalid_title_without_calling_upstream(
+    test_client: TestClient,
+    test_token: str,
+    httpx_mock,
+    title: str,
+) -> None:
+    response = test_client.post(
+        "/api/v1/sites/prj_rename/rename",
+        headers=_authorization(test_token),
+        json={"title": title},
+    )
+
+    assert response.status_code == 422
+    assert httpx_mock.get_requests() == []
+
+
+def test_delete_site_preserves_upstream_conflict_detail(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    error = {
+        "code": "CONFLICT",
+        "message": "Project still has associated resources",
+    }
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        status_code=409,
+        json={"error": error},
+    )
+
+    response = test_client.delete(
+        "/api/v1/sites/prj_delete",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == error

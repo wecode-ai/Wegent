@@ -10,7 +10,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.site import SiteListResponse, SiteResponse
+from app.schemas.site import SiteDeleteResponse, SiteListResponse, SiteResponse
 from shared.telemetry.decorators import trace_async
 
 SITES_ERROR_TEXT_MAX_LENGTH = 2048
@@ -173,6 +173,48 @@ class SitesService:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid project list"
             ) from exc
+
+    async def publish_site(self, username: str, project_id: str) -> SiteResponse:
+        payload = await self._request(
+            "POST",
+            "/v1/projects/deploy/outer",
+            json_body={"username": username, "project_id": project_id},
+        )
+        return self._validate_site(payload)
+
+    async def delete_site(self, username: str, project_id: str) -> None:
+        payload = await self._request(
+            "POST",
+            "/v1/projects/del",
+            json_body={"username": username, "project_id": project_id},
+        )
+        try:
+            response = SiteDeleteResponse.model_validate(payload)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid delete response"
+            ) from exc
+        if not response.deleted:
+            raise SitesUpstreamUnavailableError(
+                "Sites service did not confirm project deletion"
+            )
+
+    async def rename_site(
+        self,
+        username: str,
+        project_id: str,
+        title: str,
+    ) -> SiteResponse:
+        payload = await self._request(
+            "POST",
+            "/v1/projects/update",
+            json_body={
+                "username": username,
+                "project_id": project_id,
+                "sitename": title,
+            },
+        )
+        return self._validate_site(payload)
 
     @staticmethod
     def _validate_site(payload: Any) -> SiteResponse:

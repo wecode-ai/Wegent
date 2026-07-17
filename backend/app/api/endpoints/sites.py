@@ -6,11 +6,11 @@
 
 from typing import NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.core import security
 from app.models.user import User
-from app.schemas.site import SiteListResponse
+from app.schemas.site import SiteListResponse, SiteRenameRequest, SiteResponse
 from app.services.sites import (
     SitesNotAvailableError,
     SitesUpstreamAuthenticationError,
@@ -69,6 +69,69 @@ async def list_sites(
             query=q.strip() if q else None,
             cursor=cursor,
             limit=limit,
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamAuthenticationError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.post("/{project_id}/publish", response_model=SiteResponse)
+async def publish_site(
+    project_id: str,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteResponse:
+    """Publish a project owned by the authenticated user."""
+    try:
+        return await sites_service.publish_site(
+            current_user.user_name,
+            project_id,
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamAuthenticationError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_site(
+    project_id: str,
+    current_user: User = Depends(security.get_current_user),
+) -> Response:
+    """Delete a project owned by the authenticated user."""
+    try:
+        await sites_service.delete_site(
+            current_user.user_name,
+            project_id,
+        )
+    except (
+        SitesNotAvailableError,
+        SitesUpstreamAuthenticationError,
+        SitesUpstreamUnavailableError,
+        SitesUpstreamResponseError,
+    ) as error:
+        _raise_sites_error(error)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{project_id}/rename", response_model=SiteResponse)
+async def rename_site(
+    project_id: str,
+    request: SiteRenameRequest,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteResponse:
+    """Rename a project owned by the authenticated user."""
+    try:
+        return await sites_service.rename_site(
+            current_user.user_name,
+            project_id,
+            request.title,
         )
     except (
         SitesNotAvailableError,
