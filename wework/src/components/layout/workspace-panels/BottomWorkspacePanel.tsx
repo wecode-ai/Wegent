@@ -151,7 +151,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
             role="tablist"
             className={cn(
               'flex h-10 shrink-0 items-center gap-1.5 overflow-hidden px-2 pr-12',
-              showWorkbenchBackground ? 'bg-background/20' : 'bg-background'
+              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
             )}
           >
             <div className="flex min-w-0 items-center gap-1 overflow-x-auto">

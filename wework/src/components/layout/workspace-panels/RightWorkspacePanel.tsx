@@ -272,7 +272,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         'relative z-chrome flex shrink-0 items-center gap-1.5 pointer-events-auto',
         renderTabsInTitlebar
           ? 'h-[38px] w-full bg-transparent pl-4 pr-2'
-          : 'h-10 border-b border-border bg-background px-3'
+          : cn(
+              'h-10 border-b border-border px-3',
+              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+            )
       )}
     >
       {visibleTabs.map(tab => (
@@ -325,7 +328,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
       data-testid="right-workspace-panel"
       className={cn(
         'relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col opacity-100 transition-[opacity,transform] duration-300 ease-out',
-        showWorkbenchBackground ? 'bg-background/20' : 'bg-background'
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
       )}
     >
       {renderTabsInTitlebar ? <TitlebarRightPanelPortal>{tabBar}</TitlebarRightPanelPortal> : null}

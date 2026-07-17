@@ -4094,11 +4094,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
 
     expect(screen.getByTestId('right-workspace-panel-shell')).toHaveClass('bg-background/20')
-    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('right-workspace-panel')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('right-workspace-tabbar')).toHaveClass('bg-transparent')
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveClass('bg-background/20')
-    expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-transparent')
   })
 
   test('opens the browser from the right workspace launcher row', async () => {
