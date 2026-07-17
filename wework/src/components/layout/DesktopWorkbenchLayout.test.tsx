@@ -7,6 +7,7 @@ import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
 import { AuthContext } from '@/features/auth/useAuth'
+import { AppearanceProvider } from '@/features/appearance'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type {
   WorkbenchContextValue,
@@ -773,13 +774,15 @@ describe('DesktopWorkbenchLayout', () => {
     paneSessionMockRef.current = paneSession
 
     return (
-      <AuthContext.Provider value={authValue}>
-        <WorkbenchContext.Provider value={workbenchValue}>
-          <WorkbenchPaneContext.Provider value={paneValue}>
-            <ActualDesktopWorkbenchLayout />
-          </WorkbenchPaneContext.Provider>
-        </WorkbenchContext.Provider>
-      </AuthContext.Provider>
+      <AppearanceProvider>
+        <AuthContext.Provider value={authValue}>
+          <WorkbenchContext.Provider value={workbenchValue}>
+            <WorkbenchPaneContext.Provider value={paneValue}>
+              <ActualDesktopWorkbenchLayout />
+            </WorkbenchPaneContext.Provider>
+          </WorkbenchContext.Provider>
+        </AuthContext.Provider>
+      </AppearanceProvider>
     )
   }
 
@@ -2358,6 +2361,25 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
+  })
+
+  test('lets the workbench background show through the Tauri titlebar', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInTopBar: true,
+      })
+    )
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-main-header')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('workbench-main-header')).not.toHaveClass('bg-background/20')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {

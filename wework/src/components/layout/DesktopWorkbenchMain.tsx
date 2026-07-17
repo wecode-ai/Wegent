@@ -333,7 +333,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         className={cn(
           'relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40',
           appearance.backgroundImagePath && appearance.backgroundInTopBar
-            ? 'bg-background/20'
+            ? 'bg-transparent'
             : 'bg-background/95'
         )}
       />
@@ -1549,7 +1549,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             className={cn(
               'absolute left-0 top-0 z-chrome h-11 overflow-visible border-b border-border/50 pr-7',
               appearance.backgroundImagePath && appearance.backgroundInTopBar
-                ? 'bg-background/20'
+                ? 'bg-transparent'
                 : 'bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80',
               isTauri && sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
