@@ -2193,6 +2193,7 @@ impl RuntimeWorkRpcHandler {
                 link.status = "cancelled".to_owned();
                 link.running = false;
                 link.updated_at = now_ms();
+                link.completed_at = Some(link.updated_at);
             })
             .or_else(|| self.local_task_link(&local_task_id));
         self.resolve_pending_request_user_input_for_cancel(&local_task_id);
@@ -3421,7 +3422,10 @@ impl RuntimeWorkRpcHandler {
                 continue;
             }
 
-            let group_path = workspace_group_path(&link.workspace_path);
+            let group_path = self
+                .worktrees
+                .source_path_for(&link.workspace_path)
+                .unwrap_or_else(|| workspace_group_path(&link.workspace_path));
             let thread_id = link.thread_id.as_deref();
             let thread_hint = thread_id.and_then(|id| project_index.thread_workspace_hint(id));
             if thread_id.is_some_and(|id| project_index.is_projectless_thread(id)) {
@@ -3866,6 +3870,9 @@ impl RuntimeWorkRpcHandler {
             link.status = status.to_owned();
             link.running = status == "running";
             link.updated_at = now_ms();
+            if status != "running" {
+                link.completed_at = Some(link.updated_at);
+            }
             if link.thread_id.is_some() && status != "running" {
                 retain_runtime_handle_user_messages(&mut link.runtime_handle);
             }

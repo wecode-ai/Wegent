@@ -32,6 +32,7 @@ pub(crate) struct RuntimeTaskLink {
     pub git_info: Option<Value>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub completed_at: Option<i64>,
     pub runtime_handle: Value,
     pub parent: Option<Value>,
     pub ephemeral: bool,
@@ -61,6 +62,7 @@ impl RuntimeTaskLink {
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
+            completed_at: None,
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
@@ -92,6 +94,7 @@ impl RuntimeTaskLink {
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
+            completed_at: None,
             runtime_handle,
             parent: Some(parent),
             ephemeral: false,
@@ -153,6 +156,12 @@ impl RuntimeTaskLink {
             git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
+            completed_at: if running {
+                local_link.as_ref().and_then(|link| link.completed_at)
+            } else {
+                timestamp_ms_field(thread, "updatedAt")
+                    .or_else(|| local_link.as_ref().and_then(|link| link.completed_at))
+            },
             runtime_handle: local_link
                 .as_ref()
                 .map(|link| link.runtime_handle.clone())
@@ -180,6 +189,7 @@ impl RuntimeTaskLink {
             git_info: self.git_info.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
+            completed_at: self.completed_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
@@ -227,6 +237,7 @@ impl Default for RuntimeTaskLink {
             git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
+            completed_at: None,
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
@@ -412,15 +423,18 @@ fn compare_runtime_task_links(
     match (left.list_order, right.list_order) {
         (Some(left_order), Some(right_order)) => left_order
             .cmp(&right_order)
-            .then_with(|| right.updated_at.cmp(&left.updated_at))
+            .then_with(|| runtime_task_sort_time(right).cmp(&runtime_task_sort_time(left)))
             .then_with(|| left.local_task_id.cmp(&right.local_task_id)),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => right
-            .updated_at
-            .cmp(&left.updated_at)
+        (None, None) => runtime_task_sort_time(right)
+            .cmp(&runtime_task_sort_time(left))
             .then_with(|| left.local_task_id.cmp(&right.local_task_id)),
     }
+}
+
+fn runtime_task_sort_time(link: &RuntimeTaskLink) -> i64 {
+    link.completed_at.unwrap_or(link.created_at)
 }
 
 pub(crate) fn archived_conversations_response(
@@ -540,6 +554,9 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
         "updatedAt".to_owned(),
         Value::Number(link.updated_at.into()),
     );
+    if let Some(completed_at) = link.completed_at {
+        task.insert("completedAt".to_owned(), Value::Number(completed_at.into()));
+    }
     if let Some(parent) = link.parent {
         task.insert("parent".to_owned(), parent);
     }
@@ -819,6 +836,40 @@ mod tests {
 
         assert_eq!(link.status, "running");
         assert!(link.running);
+    }
+
+    #[test]
+    fn active_thread_keeps_previous_completion_time_for_sorting() {
+        let local_link = RuntimeTaskLink {
+            completed_at: Some(1_780_000_000_000),
+            ..RuntimeTaskLink::default()
+        };
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": {"type": "active", "activeFlags": []},
+                "updatedAt": 1_780_000_100_000_i64,
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+        );
+
+        assert_eq!(link.completed_at, Some(1_780_000_000_000));
+    }
+
+    #[test]
+    fn completed_thread_uses_its_final_update_time_for_sorting() {
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": "idle",
+                "updatedAt": 1_780_000_100_000_i64,
+            }),
+            None,
+            "/workspace/project".to_owned(),
+        );
+
+        assert_eq!(link.completed_at, Some(1_780_000_100_000));
     }
 
     #[test]

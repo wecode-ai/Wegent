@@ -985,6 +985,9 @@ fn index_from_payload(payload: &Map<String, Value>) -> CodexGlobalProjectIndex {
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
+        .filter(|(_, order)| {
+            order.get("sortKey").and_then(clean_string).as_deref() == Some("manual")
+        })
         .map(|(project_key, order)| (project_key.to_owned(), text_list(order.get("threadIds"))))
         .collect();
 
@@ -1696,7 +1699,7 @@ mod tests {
             "thread-workspace-root-hints": {"hinted": "/repo"},
             "pinned-thread-ids": ["assigned"],
             "sidebar-project-thread-orders": {
-                "multi": {"threadIds": ["nested"]}
+                "multi": {"threadIds": ["nested"], "sortKey": "manual"}
             }
         }));
 

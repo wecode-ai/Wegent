@@ -2261,9 +2261,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-wework')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-todo')
-    )
+    expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-apps')
     )
@@ -2341,7 +2339,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workbench-main-header-left-controls')
     )
     expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
-    expect(collapsedHeaderControls.getByTestId('chrome-tab-todo')).toBeInTheDocument()
+    expect(collapsedHeaderControls.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',

@@ -880,6 +880,8 @@
     "general_settings_startup": "启动",
     "general_settings_show_main_window_on_launch": "启动应用后显示主界面",
     "general_settings_show_main_window_on_launch_description": "关闭后，Wework 会直接在系统托盘后台启动。",
+    "general_settings_experimental_features": "实验性功能",
+    "general_settings_experimental_features_description": "显示仍在实验阶段、可能发生变化或不稳定的功能。",
     "general_settings_background_title": "后台执行",
     "general_settings_close_to_tray": "关闭主窗口后后台运行",
     "general_settings_background_description": "关闭主窗口不会停止正在运行的任务。任务会在后台继续执行，你可以双击系统托盘图标回到主界面。",

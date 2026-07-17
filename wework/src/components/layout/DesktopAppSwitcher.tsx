@@ -1,6 +1,7 @@
 import { Globe2, Grid3X3, ListTodo } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 
 export type DesktopAppKey = 'wework' | 'todo' | 'apps'
 
@@ -24,6 +25,7 @@ export function DesktopAppSwitcher({
   testIds,
 }: DesktopAppSwitcherProps) {
   const { t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const apps = [
     {
       key: 'wework' as const,
@@ -48,34 +50,36 @@ export function DesktopAppSwitcher({
       aria-label={t('workbench.app_navigation', '应用导航')}
       className={cn('flex shrink-0 items-center gap-1', className)}
     >
-      {apps.map(app => {
-        const Icon = app.icon
-        const active = activeApp === app.key
+      {apps
+        .filter(app => app.key !== 'todo' || experimentalFeaturesEnabled || activeApp === 'todo')
+        .map(app => {
+          const Icon = app.icon
+          const active = activeApp === app.key
 
-        return (
-          <button
-            key={app.key}
-            type="button"
-            data-testid={testIds?.[app.key] ?? `chrome-tab-${app.key}`}
-            onClick={() => onNavigate(app.key)}
-            title={app.label}
-            aria-label={app.label}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              APP_BUTTON_CLASS,
-              active && app.key === 'todo'
-                ? 'bg-[#DDE2E2] text-[#0F8F82]'
-                : active
-                  ? 'bg-black/[0.045] text-text-primary'
-                  : 'text-text-secondary hover:bg-black/[0.04]'
-            )}
-          >
-            <Icon aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-            <span className="sr-only">{app.label}</span>
-            <span className={APP_TOOLTIP_CLASS}>{app.label}</span>
-          </button>
-        )
-      })}
+          return (
+            <button
+              key={app.key}
+              type="button"
+              data-testid={testIds?.[app.key] ?? `chrome-tab-${app.key}`}
+              onClick={() => onNavigate(app.key)}
+              title={app.label}
+              aria-label={app.label}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                APP_BUTTON_CLASS,
+                active && app.key === 'todo'
+                  ? 'bg-[#DDE2E2] text-[#0F8F82]'
+                  : active
+                    ? 'bg-black/[0.045] text-text-primary'
+                    : 'text-text-secondary hover:bg-black/[0.04]'
+              )}
+            >
+              <Icon aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+              <span className="sr-only">{app.label}</span>
+              <span className={APP_TOOLTIP_CLASS}>{app.label}</span>
+            </button>
+          )
+        })}
     </nav>
   )
 }

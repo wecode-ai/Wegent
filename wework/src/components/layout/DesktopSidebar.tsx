@@ -35,6 +35,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
@@ -2488,6 +2489,7 @@ export function DesktopSidebar({
   onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
@@ -3060,13 +3062,15 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
-              <SidebarButton
-                icon={Grid3X3}
-                label={t('workbench.sites', '站点')}
-                testId="sites-button"
-                selected={activeItem === 'sites'}
-                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
-              />
+              {(experimentalFeaturesEnabled || activeItem === 'sites') && (
+                <SidebarButton
+                  icon={Grid3X3}
+                  label={t('workbench.sites', '站点')}
+                  testId="sites-button"
+                  selected={activeItem === 'sites'}
+                  onClick={onOpenSites ?? (() => navigateTo('/sites'))}
+                />
+              )}
               {showCloudConnectionEntry && (
                 <CloudConnectionSidebarButton
                   devices={devices}
