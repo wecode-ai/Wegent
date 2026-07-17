@@ -27,6 +27,8 @@ use futures_util::{Stream, StreamExt};
 use serde_json::{Map, Value};
 
 use crate::logging::log_executor_event;
+#[cfg(target_os = "windows")]
+use crate::logging::wework_debug_log;
 
 use super::{codex_responses_proxy_transform, HttpError};
 
@@ -84,6 +86,23 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
     let (request_body, conversion, expanded_browser_tools) =
         prepare_request(&upstream.api_format, &body)?;
+    #[cfg(target_os = "windows")]
+    {
+        let debug_request_id = format!(
+            "req-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let original_body = String::from_utf8_lossy(&body);
+        let modified_body = String::from_utf8_lossy(&request_body);
+        wework_debug_log(&format!(
+            "windows_codex_proxy_request request_id={debug_request_id} api_format={} expanded_tools={:?} original_body={original_body} modified_body={modified_body}",
+            upstream.api_format, expanded_browser_tools
+        ));
+    }
     log_executor_event(
         "local model proxy request started",
         &[
@@ -346,6 +365,16 @@ fn rewrite_responses_event(event: &str, expanded: &HashSet<String>) -> String {
             codex_responses_proxy_transform::rewrite_wework_browser_function_calls(
                 &mut value, expanded,
             );
+            #[cfg(target_os = "windows")]
+            if value != original {
+                let rewritten = format!(
+                    "data: {}",
+                    serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
+                );
+                wework_debug_log(&format!(
+                    "windows_codex_proxy_response_rewrite original={line} rewritten={rewritten}"
+                ));
+            }
             if value == original {
                 return line.to_owned();
             }

@@ -11,6 +11,9 @@ use chrono::Local;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+#[cfg(target_os = "windows")]
+use crate::logging::wework_debug_log;
+
 const DEFAULT_BRIDGE_URL: &str = "http://127.0.0.1:9231";
 const BRIDGE_URL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL";
 const BROWSER_LABEL_ENV: &str = "WEWORK_EMBEDDED_BROWSER_LABEL";
@@ -150,7 +153,15 @@ async fn handle_request(
                 }),
             )
         }),
-        "tools/list" => id.map(|id| result_response(id, json!({ "tools": tools() }))),
+        "tools/list" => {
+            let response = result_response(id?, json!({ "tools": tools() }));
+            #[cfg(target_os = "windows")]
+            wework_debug_log(&format!(
+                "windows_browser_mcp_tools_list tools={}",
+                serde_json::to_string(&response).unwrap_or_else(|_| "<serialize-error>".to_owned())
+            ));
+            Some(response)
+        }
         "ping" => id.map(|id| result_response(id, json!({}))),
         "tools/call" => {
             let id = id?;

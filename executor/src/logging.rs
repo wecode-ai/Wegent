@@ -18,7 +18,6 @@ use crate::config::device::DeviceConfig;
 
 const DEFAULT_LOG_FILE_NAME: &str = "executor.log";
 const BYTES_PER_MIB: u64 = 1024 * 1024;
-const WEWORK_DEBUG_LOG_PATH: &str = "/tmp/wework-debug-1";
 
 static ROLLING_LOGGER: OnceLock<Mutex<Option<RollingLogFile>>> = OnceLock::new();
 static STDOUT_RESERVED_FOR_PROTOCOL: AtomicBool = AtomicBool::new(false);
@@ -121,11 +120,29 @@ pub fn write_executor_error_line(line: &str) {
 pub fn wework_debug_log(message: &str) {
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S.%3f");
     let line = format!("{timestamp} [executor] {message}");
-    let _ = std::fs::OpenOptions::new()
+    let path = wework_debug_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(WEWORK_DEBUG_LOG_PATH)
+        .open(&path)
         .and_then(|mut file| writeln!(file, "{line}"));
+}
+
+fn wework_debug_log_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("tmp")
+            .join("wework-debug-1.txt")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/tmp/wework-debug-1")
+    }
 }
 
 pub fn init_executor_logging(config: &DeviceConfig) {

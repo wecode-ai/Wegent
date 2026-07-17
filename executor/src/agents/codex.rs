@@ -2922,7 +2922,27 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
             .map(|object| object.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default()
     ));
+    #[cfg(target_os = "windows")]
+    wework_debug_log(&format!(
+        "windows_launch_config config_overrides={} thread_config_keys={:?} full_config={}",
+        launch_config.config_overrides.len(),
+        launch_config.thread_config.keys().collect::<Vec<_>>(),
+        serde_json::to_string(&launch_config_to_debug_value(&launch_config))
+            .unwrap_or_else(|_| "<serialize-error>".to_owned())
+    ));
     launch_config
+}
+
+#[cfg(target_os = "windows")]
+fn launch_config_to_debug_value(launch_config: &CodexLaunchConfig) -> Value {
+    json!({
+        "config_overrides": launch_config.config_overrides,
+        "thread_config": launch_config.thread_config,
+        "model_provider": launch_config.model_provider,
+        "env_keys": launch_config.env.keys().collect::<Vec<_>>(),
+        "effort": launch_config.effort,
+        "summary": launch_config.summary,
+    })
 }
 
 fn shell_path_config_override() -> String {
@@ -4130,7 +4150,14 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
-    Value::Object(params)
+    let params = Value::Object(params);
+    #[cfg(target_os = "windows")]
+    wework_debug_log(&format!(
+        "windows_thread_start_params model_id={:?} params={}",
+        model_id(request),
+        serde_json::to_string(&params).unwrap_or_else(|_| "<serialize-error>".to_owned())
+    ));
+    params
 }
 
 fn thread_fork_params(
