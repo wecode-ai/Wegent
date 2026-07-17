@@ -14,4 +14,4 @@ Wework can hide features that are still experimental and may change or be unstab
 
 The preference is saved on the current device and updates the visible interface immediately. Turning it off hides experimental feature entry points again.
 
-TODO is currently an experimental feature. By default, Wework does not show the TODO switcher button in the upper-left corner. After experimental features are enabled, the button appears between the Wework and Apps switcher buttons.
+TODO and Sites are currently experimental features. By default, Wework does not show the TODO switcher button in the upper-left corner or the Sites entry in the sidebar. After experimental features are enabled, the TODO button appears between the Wework and Apps switcher buttons, and Sites appears in the sidebar.
