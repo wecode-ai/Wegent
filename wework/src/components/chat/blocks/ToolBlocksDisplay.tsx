@@ -238,10 +238,16 @@ export function ToolBlocksDisplay({
     activityStats.file === 0 &&
     activityStats.search === 0 &&
     activityStats.other === 0
+  const toolCallCount = countProcessingToolCalls(activityStats)
   const summaryTitle = hasToolActivity
     ? hasOnlyEditActivity
       ? t('tool_activity.edit_summary', { count: activityStats.edit })
-      : t('tool_activity.summary', { count: countProcessingToolCalls(activityStats) })
+      : activityStats.edit > 0
+        ? t('tool_activity.mixed_summary', {
+            toolCount: toolCallCount,
+            fileCount: activityStats.edit,
+          })
+        : t('tool_activity.summary', { count: toolCallCount })
     : t('thinking.completed')
   const summaryDuration = hasToolActivity
     ? getWholeSecondsDurationText(blocks, turnStartedAt, now, completedAt, isRunning)

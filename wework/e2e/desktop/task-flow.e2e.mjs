@@ -1165,8 +1165,8 @@ async function main() {
     )
     assert.match(
       processingSummaryText,
-      /调用 1 个工具|Called 1 tools/,
-      'The processing summary did not count edited files separately from tool calls'
+      /调用 1 个工具，编辑 1 个文件|Called 1 tools, edited 1 files/,
+      'The processing summary did not report tool calls and edited files separately'
     )
     await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
       timeoutMs: UI_TIMEOUT_MS,

@@ -17,6 +17,7 @@
   },
   "tool_activity": {
     "summary": "Called {{count}} tools",
+    "mixed_summary": "Called {{toolCount}} tools, edited {{fileCount}} files",
     "edit_summary": "Edited {{count}} files",
     "command": "Commands",
     "file": "Reads",

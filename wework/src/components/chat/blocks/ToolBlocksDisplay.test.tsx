@@ -476,7 +476,9 @@ describe('ToolBlocksDisplay', () => {
       />
     )
 
-    expect(screen.getByRole('button', { name: /调用 1 个工具 已处理/ })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /调用 1 个工具，编辑 3 个文件 已处理/ })
+    ).toBeInTheDocument()
     expect(screen.getByLabelText('命令 1')).toBeInTheDocument()
     expect(screen.getByLabelText('编辑 3')).toBeInTheDocument()
   })

@@ -17,6 +17,7 @@
   },
   "tool_activity": {
     "summary": "调用 {{count}} 个工具",
+    "mixed_summary": "调用 {{toolCount}} 个工具，编辑 {{fileCount}} 个文件",
     "edit_summary": "编辑 {{count}} 个文件",
     "command": "命令",
     "file": "读取",
