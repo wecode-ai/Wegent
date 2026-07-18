@@ -25,19 +25,20 @@ This guide explains how to create, execute, and manage code-type tasks in Wegent
 A code task is a task type in Wegent specifically designed for software development. Unlike regular chat tasks, code tasks connect to Git repositories, allowing AI agents to make code changes directly in the repository.
 
 **Core Concept**:
+
 ```
 Code Task = User Prompt + Code Agent + Git Repository + Branch
 ```
 
 ### Code Tasks vs Chat Tasks
 
-| Feature | Code Task | Chat Task |
-|---------|-----------|-----------|
-| **Git Repository** | Required | Optional |
-| **Code Execution** | Runs in Docker container | No code execution |
-| **Workbench** | Shows file changes, commit history | Not displayed |
-| **Branch Management** | Auto-creates feature branches | None |
-| **Use Cases** | Development, refactoring, bug fixes | Q&A, analysis, documentation |
+| Feature               | Code Task                           | Chat Task                    |
+| --------------------- | ----------------------------------- | ---------------------------- |
+| **Git Repository**    | Required                            | Optional                     |
+| **Code Execution**    | Runs in Docker container            | No code execution            |
+| **Workbench**         | Shows file changes, commit history  | Not displayed                |
+| **Branch Management** | Auto-creates feature branches       | None                         |
+| **Use Cases**         | Development, refactoring, bug fixes | Q&A, analysis, documentation |
 
 ---
 
@@ -146,13 +147,13 @@ graph LR
 
 ### Task States
 
-| Status | Description | Actions |
-|--------|-------------|---------|
-| **PENDING** | Waiting to execute | Can cancel |
-| **RUNNING** | Currently executing | Can stop |
-| **COMPLETED** | Execution finished | Can view results, create PR |
-| **FAILED** | Execution failed | Can retry |
-| **CANCELLED** | Was cancelled | Can recreate |
+| Status        | Description         | Actions                     |
+| ------------- | ------------------- | --------------------------- |
+| **PENDING**   | Waiting to execute  | Can cancel                  |
+| **RUNNING**   | Currently executing | Can stop                    |
+| **COMPLETED** | Execution finished  | Can view results, create PR |
+| **FAILED**    | Execution failed    | Can retry                   |
+| **CANCELLED** | Was cancelled       | Can recreate                |
 
 ### Stopping a Task
 
@@ -187,6 +188,7 @@ After task completion, you can continue chatting with the agent:
 View detailed execution information in the Workbench:
 
 - **Execution Timeline**: See tools used by AI and execution order
+- **Tool Duration**: Shows seconds below one minute, then minutes and seconds from one minute onward
 - **Commit History**: View all code commits
 - **File Changes**: See specific modifications for each file
 
@@ -235,11 +237,13 @@ For API details, see [Runtime Cleanup](../../developer-guide/runtime-cleanup.md)
 ### Q1: Task stuck in PENDING status?
 
 **Possible causes**:
+
 1. No available execution containers
 2. Repository access permission issues
 3. Git token expired
 
 **Solutions**:
+
 - Check if system resources are sufficient
 - Verify Git token is valid
 - Check repository access permissions
@@ -247,11 +251,13 @@ For API details, see [Runtime Cleanup](../../developer-guide/runtime-cleanup.md)
 ### Q2: Code commit failed?
 
 **Possible causes**:
+
 1. Branch protection rules
 2. Insufficient permissions
 3. Network issues
 
 **Solutions**:
+
 - Check target branch protection rules
 - Confirm Git token has write permissions
 - Retry the task
@@ -259,6 +265,7 @@ For API details, see [Runtime Cleanup](../../developer-guide/runtime-cleanup.md)
 ### Q3: AI modified the wrong files?
 
 **Solutions**:
+
 1. Explicitly specify file paths to modify in the task
 2. Provide more detailed context information
 3. Use knowledge base to provide project structure documentation
@@ -266,6 +273,7 @@ For API details, see [Runtime Cleanup](../../developer-guide/runtime-cleanup.md)
 ### Q4: How to make AI follow project coding standards?
 
 **Solutions**:
+
 1. Add `.cursorrules` or `.windsurfrules` file in repository root
 2. Explicitly state coding standards in task description
 3. Use knowledge base to provide coding standards documentation
@@ -273,11 +281,13 @@ For API details, see [Runtime Cleanup](../../developer-guide/runtime-cleanup.md)
 ### Q5: Task execution taking too long?
 
 **Possible causes**:
+
 1. Task scope too large
 2. Need to install many dependencies
 3. Network latency
 
 **Solutions**:
+
 - Split large tasks into smaller ones
 - Use pre-configured base images
 - Check network connection
