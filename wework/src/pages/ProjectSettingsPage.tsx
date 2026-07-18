@@ -86,6 +86,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pluginError, setPluginError] = useState<string | null>(null)
 
   const dirty = instructions.content !== savedInstructions || config.content !== savedConfig
   const projectPluginKeys = useMemo(
@@ -104,7 +105,15 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     let cancelled = false
     const load = async () => {
       const context = loadContextRef.current
+      setLoading(true)
+      setTarget(null)
+      setInstructions(EMPTY_FILE)
+      setConfig(EMPTY_FILE)
+      setSavedInstructions('')
+      setSavedConfig('')
+      setSaved(false)
       setError(null)
+      setPluginError(null)
       if (!context.project) {
         setError(context.t('workbench.project_settings_project_missing'))
         setLoading(false)
@@ -136,12 +145,11 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
           entry => entry.isDirectory && entry.name === '.codex'
         )
         const pluginApi = isTauriRuntime() ? createLocalCodexPluginApi() : null
-        const [nextInstructions, nextConfig, pluginState] = await Promise.all([
+        const [nextInstructions, nextConfig] = await Promise.all([
           loadOptionalFile(root, 'AGENTS.md'),
           hasCodexDirectory
             ? loadOptionalFile(codexDirectory, 'config.toml')
             : Promise.resolve(EMPTY_FILE),
-          pluginApi?.readState() ?? Promise.resolve(null),
         ])
         if (cancelled) return
         setTarget({ deviceId, root, codexDirectoryExists: hasCodexDirectory })
@@ -149,7 +157,22 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
         setConfig(nextConfig)
         setSavedInstructions(nextInstructions.content)
         setSavedConfig(nextConfig.content)
-        if (pluginState) applyPluginState(pluginState)
+        if (pluginApi) {
+          void pluginApi
+            .readState()
+            .then(pluginState => {
+              if (!cancelled) applyPluginState(pluginState)
+            })
+            .catch(pluginLoadError => {
+              if (!cancelled) {
+                setPluginError(
+                  pluginLoadError instanceof Error
+                    ? pluginLoadError.message
+                    : String(pluginLoadError)
+                )
+              }
+            })
+        }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError))
       } finally {
@@ -168,8 +191,6 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     setSaved(false)
     setError(null)
     try {
-      let nextInstructions = instructions
-      let nextConfig = config
       if (instructions.content !== savedInstructions) {
         const response = await writeWorkspaceTextFile(
           target.deviceId,
@@ -177,11 +198,14 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
           instructions.content,
           instructions.revision
         )
-        nextInstructions = { content: response.content, revision: response.revision }
+        const committed = { content: response.content, revision: response.revision }
+        setInstructions(committed)
+        setSavedInstructions(committed.content)
       }
       if (config.content !== savedConfig) {
         if (config.revision === MISSING_WORKSPACE_FILE_REVISION && !target.codexDirectoryExists) {
           await createDeviceDirectory(target.deviceId, joinPath(target.root, '.codex'))
+          setTarget(current => (current ? { ...current, codexDirectoryExists: true } : current))
         }
         const response = await writeWorkspaceTextFile(
           target.deviceId,
@@ -189,12 +213,10 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
           config.content,
           config.revision
         )
-        nextConfig = { content: response.content, revision: response.revision }
+        const committed = { content: response.content, revision: response.revision }
+        setConfig(committed)
+        setSavedConfig(committed.content)
       }
-      setInstructions(nextInstructions)
-      setConfig(nextConfig)
-      setSavedInstructions(nextInstructions.content)
-      setSavedConfig(nextConfig.content)
       setSaved(true)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
@@ -221,7 +243,16 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
       if (selectedMarketplaceId) await pluginApi.selectMarketplace(selectedMarketplaceId)
       const installed = await pluginApi.installAvailablePlugin(item.id)
       const id = installedPluginId(installed)
-      if (id != null) await pluginApi.updateInstalledPlugin(id, { enabled: false })
+      if (id == null) {
+        await pluginApi.uninstallInstalledPlugin(item.id)
+        throw new Error('Codex plugin installation did not return an installed plugin ID')
+      }
+      try {
+        await pluginApi.updateInstalledPlugin(id, { enabled: false })
+      } catch (disableError) {
+        await pluginApi.uninstallInstalledPlugin(id).catch(() => undefined)
+        throw disableError
+      }
       const key = installedPluginKey(installed)
       setPlugins(current => [
         ...current.filter(plugin => installedPluginKey(plugin) !== key),
@@ -278,7 +309,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
       <SettingsPage>
         <button
           type="button"
-          className="mb-5 flex h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface-secondary hover:text-text-primary"
+          className="mb-5 flex h-11 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface-secondary hover:text-text-primary md:h-8"
           data-testid="project-settings-back-button"
           onClick={() => navigateTo('/')}
         >
@@ -294,7 +325,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
               data-testid="project-settings-save-button"
               disabled={!dirty || saving || !target}
               onClick={() => void save()}
-              className="flex h-8 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-surface disabled:opacity-40"
+              className="flex h-11 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-surface disabled:opacity-40 md:h-8"
             >
               {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -327,6 +358,14 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                 data-testid="project-settings-error"
               >
                 {error}
+              </p>
+            ) : null}
+            {pluginError ? (
+              <p
+                className="rounded-lg border border-danger/20 bg-danger/5 px-3 py-2 text-sm text-danger"
+                data-testid="project-settings-plugin-error"
+              >
+                {pluginError}
               </p>
             ) : null}
 
@@ -369,11 +408,15 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                           disabled={inherited}
                           data-testid={`project-plugin-toggle-${key}`}
                           onClick={() => toggleProjectPlugin(plugin)}
-                          className={`relative h-6 w-10 rounded-full transition-colors ${checked ? 'bg-text-primary' : 'bg-border'} disabled:opacity-55`}
+                          className="flex h-11 w-11 items-center justify-center disabled:opacity-55 md:h-8"
                         >
                           <span
-                            className={`absolute top-1 h-4 w-4 rounded-full bg-surface transition-transform ${checked ? 'translate-x-5' : 'translate-x-1'}`}
-                          />
+                            className={`relative h-6 w-10 rounded-full transition-colors ${checked ? 'bg-text-primary' : 'bg-border'}`}
+                          >
+                            <span
+                              className={`absolute top-1 h-4 w-4 rounded-full bg-surface transition-transform ${checked ? 'translate-x-5' : 'translate-x-1'}`}
+                            />
+                          </span>
                         </button>
                       </div>
                     )
@@ -454,7 +497,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                           data-testid={`project-plugin-install-${plugin.id}`}
                           disabled={installingPluginId != null}
                           onClick={() => void installPluginForProject(plugin)}
-                          className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-surface-secondary disabled:opacity-40"
+                          className="flex h-11 shrink-0 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-surface-secondary disabled:opacity-40 md:h-8"
                         >
                           {installingPluginId === plugin.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -472,7 +515,8 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
               </div>
               <button
                 type="button"
-                className="mt-2 flex h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface-secondary"
+                data-testid="project-settings-browse-plugins-button"
+                className="mt-2 flex h-11 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface-secondary md:h-8"
                 onClick={() => navigateTo('/plugins')}
               >
                 <ExternalLink className="h-4 w-4" />
@@ -488,7 +532,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                     type="button"
                     data-testid={`project-settings-tab-${item}`}
                     onClick={() => setTab(item)}
-                    className={`h-9 border-b-2 px-3 text-sm ${tab === item ? 'border-text-primary text-text-primary' : 'border-transparent text-text-secondary'}`}
+                    className={`h-11 border-b-2 px-3 text-sm md:h-9 ${tab === item ? 'border-text-primary text-text-primary' : 'border-transparent text-text-secondary'}`}
                   >
                     {item === 'instructions' ? 'AGENTS.md' : '.codex/config.toml'}
                   </button>

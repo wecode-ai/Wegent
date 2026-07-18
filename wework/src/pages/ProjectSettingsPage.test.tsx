@@ -8,6 +8,7 @@ const upsertMarketplace = vi.fn()
 const selectMarketplace = vi.fn()
 const installAvailablePlugin = vi.fn()
 const updateInstalledPlugin = vi.fn()
+const uninstallInstalledPlugin = vi.fn()
 const writeWorkspaceTextFile = vi.fn()
 const createDeviceDirectory = vi.fn()
 const listWorkspaceEntries = vi.fn((_deviceId: string, path: string) =>
@@ -71,6 +72,7 @@ vi.mock('@/api/local/codexPlugins', () => ({
     selectMarketplace,
     installAvailablePlugin,
     updateInstalledPlugin,
+    uninstallInstalledPlugin,
   }),
 }))
 
@@ -83,6 +85,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 describe('ProjectSettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    uninstallInstalledPlugin.mockResolvedValue(undefined)
     readPluginState.mockResolvedValue({
       installedPlugins: [
         {
@@ -251,7 +254,55 @@ describe('ProjectSettingsPage', () => {
     await user.click(await screen.findByTestId('project-plugin-install-documents@openai'))
 
     expect(installAvailablePlugin).toHaveBeenCalledWith('documents@openai')
+    expect(selectMarketplace).toHaveBeenCalledWith('openai')
     expect(updateInstalledPlugin).toHaveBeenCalledWith('documents@openai', { enabled: false })
     expect(screen.getByTestId('project-plugin-toggle-documents@openai')).toBeChecked()
+  })
+
+  test('keeps native file editing available when plugin discovery fails', async () => {
+    readPluginState.mockRejectedValue(new Error('plugin discovery failed'))
+    render(<ProjectSettingsPage projectId={7} />)
+
+    expect(await screen.findByTestId('project-settings-editor-instructions')).toHaveValue(
+      'Run focused tests.'
+    )
+    expect(await screen.findByTestId('project-settings-plugin-error')).toHaveTextContent(
+      'plugin discovery failed'
+    )
+  })
+
+  test('rolls back installation when global disablement fails', async () => {
+    readPluginState.mockResolvedValue({
+      installedPlugins: [],
+      marketplaceItems: [
+        {
+          id: 'documents@openai',
+          displayName: 'Documents',
+          description: 'Create and edit documents',
+          installed: false,
+        },
+      ],
+      marketplaces: [{ id: 'openai', name: 'OpenAI', path: '/marketplace' }],
+      selectedMarketplaceId: 'openai',
+      marketplacePath: '/marketplace',
+      installRegistryPath: '',
+    })
+    installAvailablePlugin.mockResolvedValue({
+      metadata: { labels: { id: 'documents@openai' } },
+      spec: {
+        source: { providerKey: 'openai', pluginKey: 'documents' },
+        displayName: 'Documents',
+        enabled: true,
+      },
+    })
+    updateInstalledPlugin.mockRejectedValue(new Error('disable failed'))
+    const user = userEvent.setup()
+    render(<ProjectSettingsPage projectId={7} />)
+
+    await user.click(await screen.findByTestId('project-plugin-install-documents@openai'))
+
+    await waitFor(() => expect(uninstallInstalledPlugin).toHaveBeenCalledWith('documents@openai'))
+    expect(screen.getByTestId('project-settings-error')).toHaveTextContent('disable failed')
+    expect(screen.queryByTestId('project-plugin-toggle-documents@openai')).not.toBeInTheDocument()
   })
 })

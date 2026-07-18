@@ -426,7 +426,7 @@ export function MobileDrawer({
                         toggleProject(project.id)
                       }}
                       onPointerDown={event =>
-                        startLongPress(event.clientX, event.clientY, 2, () =>
+                        startLongPress(event.clientX, event.clientY, 3, () =>
                           setProjectActionTarget(project)
                         )
                       }
@@ -442,7 +442,7 @@ export function MobileDrawer({
                         event.preventDefault()
                         cancelLongPress()
                         longPressTriggeredRef.current = true
-                        positionActionMenu(event.clientX, event.clientY, 2)
+                        positionActionMenu(event.clientX, event.clientY, 3)
                         setProjectActionTarget(project)
                       }}
                       aria-expanded={expanded}

@@ -246,9 +246,15 @@ fn write_text_file(
         .as_file_mut()
         .sync_all()
         .map_err(|error| format!("Failed to flush file: {error}"))?;
-    if let Some(metadata) = existing_metadata {
+    if let Some(ref metadata) = existing_metadata {
         fs::set_permissions(temporary.path(), metadata.permissions())
             .map_err(|error| format!("Failed to preserve file permissions: {error}"))?;
+    }
+    #[cfg(unix)]
+    if existing_metadata.is_none() {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o644))
+            .map_err(|error| format!("Failed to set new file permissions: {error}"))?;
     }
     temporary
         .persist(&target)
@@ -423,6 +429,18 @@ mod tests {
             "Project instructions"
         );
         assert_eq!(saved["revision"], sha256_revision(b"Project instructions"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&target)
+                    .expect("read created file metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o644
+            );
+        }
     }
 
     #[test]
