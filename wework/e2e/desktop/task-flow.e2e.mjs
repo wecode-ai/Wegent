@@ -1171,14 +1171,16 @@ async function main() {
     await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
-    const processingSummaryScreenshot = await control.command(
-      'capture',
-      '[data-testid="processing-summary-header"]'
-    )
-    await writeFile(
-      join(resultDir, 'processing-summary.png'),
-      Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
-    )
+    if (process.platform === 'darwin') {
+      const processingSummaryScreenshot = await control.command(
+        'capture',
+        '[data-testid="processing-summary-header"]'
+      )
+      await writeFile(
+        join(resultDir, 'processing-summary.png'),
+        Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
+      )
+    }
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',
       timeoutMs: UI_TIMEOUT_MS,
