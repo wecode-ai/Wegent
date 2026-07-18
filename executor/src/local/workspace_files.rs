@@ -211,17 +211,32 @@ fn write_text_file(
     if content.len() > MAX_TEXT_FILE_BYTES {
         return Err("File content exceeds 256 KiB".to_owned());
     }
-    let target = resolve_workspace_file(root, allowed_roots, &args[0])?;
-    let current = fs::read(&target).map_err(|error| format!("Failed to read file: {error}"))?;
-    std::str::from_utf8(&current).map_err(|_| "File is not valid UTF-8".to_owned())?;
-    if sha256_revision(&current) != args[1] {
-        return Err("Workspace file has changed on disk".to_owned());
+    let parent = fs::canonicalize(root)
+        .map_err(|error| format!("Failed to resolve workspace directory: {error}"))?;
+    require_allowed_root(&parent, allowed_roots)?;
+    let target = parent.join(&args[0]);
+    if target.parent() != Some(parent.as_path()) {
+        return Err("File path is outside workspace".to_owned());
     }
-    let metadata =
-        fs::metadata(&target).map_err(|error| format!("Failed to read file metadata: {error}"))?;
-    let parent = target
-        .parent()
-        .ok_or_else(|| "File parent directory is missing".to_owned())?;
+    let existing_metadata = match fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            if !metadata.is_file() {
+                return Err("File does not exist".to_owned());
+            }
+            let current =
+                fs::read(&target).map_err(|error| format!("Failed to read file: {error}"))?;
+            std::str::from_utf8(&current).map_err(|_| "File is not valid UTF-8".to_owned())?;
+            if sha256_revision(&current) != args[1] {
+                return Err("Workspace file has changed on disk".to_owned());
+            }
+            Some(metadata)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && args[1] == "missing" => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err("Workspace file has changed on disk".to_owned());
+        }
+        Err(error) => return Err(format!("Failed to read file metadata: {error}")),
+    };
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|error| format!("Failed to create temporary file: {error}"))?;
     temporary
@@ -231,8 +246,10 @@ fn write_text_file(
         .as_file_mut()
         .sync_all()
         .map_err(|error| format!("Failed to flush file: {error}"))?;
-    fs::set_permissions(temporary.path(), metadata.permissions())
-        .map_err(|error| format!("Failed to preserve file permissions: {error}"))?;
+    if let Some(metadata) = existing_metadata {
+        fs::set_permissions(temporary.path(), metadata.permissions())
+            .map_err(|error| format!("Failed to preserve file permissions: {error}"))?;
+    }
     temporary
         .persist(&target)
         .map_err(|error| format!("Failed to replace file: {}", error.error))?;
@@ -385,6 +402,27 @@ mod tests {
         assert_eq!(saved["content"], "updated");
         assert_eq!(saved["editable"], true);
         assert_eq!(saved["revision"], sha256_revision(b"updated"));
+    }
+
+    #[test]
+    fn write_text_file_creates_missing_file_with_missing_revision() {
+        let directory = tempfile::tempdir().expect("create workspace");
+        let target = directory.path().join("AGENTS.md");
+
+        let saved = execute_blocking(
+            "workspace_write_text_file",
+            directory.path().to_str(),
+            &["AGENTS.md".to_owned(), "missing".to_owned()],
+            &allowed_env(directory.path()),
+            Some("Project instructions"),
+        )
+        .expect("create file");
+
+        assert_eq!(
+            fs::read_to_string(&target).expect("read created file"),
+            "Project instructions"
+        );
+        assert_eq!(saved["revision"], sha256_revision(b"Project instructions"));
     }
 
     #[test]

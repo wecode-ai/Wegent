@@ -767,6 +767,20 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return installed
     },
     async updateInstalledPlugin(id, data) {
+      if (typeof data.enabled === 'boolean') {
+        await codexAppServerRequest('config/batchWrite', {
+          edits: [
+            {
+              keyPath: `plugins.${String(id)}.enabled`,
+              value: data.enabled,
+              mergeStrategy: 'replace',
+            },
+          ],
+          filePath: null,
+          expectedVersion: null,
+          reloadUserConfig: true,
+        })
+      }
       if (data.componentStates) {
         const currentState = cachedState ?? (await readState())
         const plugin = currentState.installedPlugins.find(
