@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { ProjectWithTasks } from '@/types/api'
 import {
+  createLocalAttachmentWorkspaceTarget,
   createLocalFileWorkspaceTarget,
   resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
@@ -36,6 +37,33 @@ describe('resolveWorkspaceTarget', () => {
 
   test('rejects relative local file paths', () => {
     expect(createLocalFileWorkspaceTarget('skills/gmail/SKILL.md', [])).toBeNull()
+  })
+
+  test('creates a local target only for Wework attachment paths', () => {
+    const devices = [
+      {
+        id: 1,
+        device_id: 'device-local-real',
+        name: 'Local Mac',
+        status: 'online' as const,
+        is_default: true,
+        device_type: 'local' as const,
+      },
+    ]
+
+    expect(
+      createLocalAttachmentWorkspaceTarget(
+        '/Users/me/.wegent-executor/workspace/attachments/draft/42/result.png',
+        devices
+      )
+    ).toMatchObject({
+      deviceId: 'device-local-real',
+      path: '/Users/me/.wegent-executor/workspace/attachments/draft/42',
+      workspaceSource: 'local',
+    })
+    expect(
+      createLocalAttachmentWorkspaceTarget('/workspace/project/result.png', devices)
+    ).toBeNull()
   })
 
   test('resolves relative git project paths under the executor workspace root', async () => {
