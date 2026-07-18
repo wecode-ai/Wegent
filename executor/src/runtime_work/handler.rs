@@ -5357,6 +5357,7 @@ fn is_allowed_plugin_app_server_method(method: &str) -> bool {
             | "plugin/uninstall"
             | "skills/list"
             | "skills/config/write"
+            | "config/batchWrite"
             | "app/list"
     )
 }
@@ -5637,6 +5638,7 @@ mod tests {
             "plugin/uninstall",
             "skills/list",
             "skills/config/write",
+            "config/batchWrite",
             "app/list",
         ] {
             assert!(

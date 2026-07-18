@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Check, ExternalLink, Loader2, Save } from 'lucide-react'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowLeft, Check, ExternalLink, Loader2, Plus, Save } from 'lucide-react'
+import {
+  createLocalCodexPluginApi,
+  type LocalCodexMarketplace,
+  type LocalCodexPluginsState,
+} from '@/api/local/codexPlugins'
 import { SettingsPage, SettingsPageHeader } from '@/components/settings/settings-ui'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { findSelectableProject } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   MISSING_WORKSPACE_FILE_REVISION,
@@ -43,7 +48,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const { t } = useTranslation()
   const { state, workspaceFileApi, getProjectWorkspaceRoot, createDeviceDirectory } = useWorkbench()
   const { listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile } = workspaceFileApi
-  const project = state.projects.find(item => item.id === projectId) ?? null
+  const project = findSelectableProject(state.projects, state.runtimeWork, Number(projectId))
   const loadContextRef = useRef({
     getProjectWorkspaceRoot,
     listWorkspaceEntries,
@@ -71,6 +76,10 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const [savedConfig, setSavedConfig] = useState('')
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([])
   const [availablePlugins, setAvailablePlugins] = useState<PluginMarketplaceItem[]>([])
+  const [marketplaces, setMarketplaces] = useState<LocalCodexMarketplace[]>([])
+  const [selectedMarketplaceId, setSelectedMarketplaceId] = useState('')
+  const [marketplaceSource, setMarketplaceSource] = useState('')
+  const [addingMarketplace, setAddingMarketplace] = useState(false)
   const [installingPluginId, setInstallingPluginId] = useState<string | number | null>(null)
   const [tab, setTab] = useState<ConfigTab>('instructions')
   const [loading, setLoading] = useState(true)
@@ -84,10 +93,18 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     [config.content]
   )
 
+  const applyPluginState = useCallback((pluginState: LocalCodexPluginsState) => {
+    setPlugins(pluginState.installedPlugins)
+    setAvailablePlugins(pluginState.marketplaceItems.filter(item => !item.installed))
+    setMarketplaces(pluginState.marketplaces)
+    setSelectedMarketplaceId(pluginState.selectedMarketplaceId)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       const context = loadContextRef.current
+      setError(null)
       if (!context.project) {
         setError(context.t('workbench.project_settings_project_missing'))
         setLoading(false)
@@ -119,13 +136,12 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
           entry => entry.isDirectory && entry.name === '.codex'
         )
         const pluginApi = isTauriRuntime() ? createLocalCodexPluginApi() : null
-        const [nextInstructions, nextConfig, installed, available] = await Promise.all([
+        const [nextInstructions, nextConfig, pluginState] = await Promise.all([
           loadOptionalFile(root, 'AGENTS.md'),
           hasCodexDirectory
             ? loadOptionalFile(codexDirectory, 'config.toml')
             : Promise.resolve(EMPTY_FILE),
-          pluginApi?.listInstalledPlugins().then(response => response.items) ?? Promise.resolve([]),
-          pluginApi?.listAvailablePlugins().then(response => response.items) ?? Promise.resolve([]),
+          pluginApi?.readState() ?? Promise.resolve(null),
         ])
         if (cancelled) return
         setTarget({ deviceId, root, codexDirectoryExists: hasCodexDirectory })
@@ -133,8 +149,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
         setConfig(nextConfig)
         setSavedInstructions(nextInstructions.content)
         setSavedConfig(nextConfig.content)
-        setPlugins(installed)
-        setAvailablePlugins(available.filter(item => !item.installed))
+        if (pluginState) applyPluginState(pluginState)
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : String(loadError))
       } finally {
@@ -145,7 +160,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     return () => {
       cancelled = true
     }
-  }, [project?.id])
+  }, [applyPluginState, project?.id])
 
   const save = async () => {
     if (!target || !writeWorkspaceTextFile || !dirty) return
@@ -203,6 +218,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     setError(null)
     try {
       const pluginApi = createLocalCodexPluginApi()
+      if (selectedMarketplaceId) await pluginApi.selectMarketplace(selectedMarketplaceId)
       const installed = await pluginApi.installAvailablePlugin(item.id)
       const id = installedPluginId(installed)
       if (id != null) await pluginApi.updateInstalledPlugin(id, { enabled: false })
@@ -221,6 +237,36 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
       setError(installError instanceof Error ? installError.message : String(installError))
     } finally {
       setInstallingPluginId(null)
+    }
+  }
+
+  const addMarketplace = async () => {
+    const source = marketplaceSource.trim()
+    if (!source) return
+    setAddingMarketplace(true)
+    setError(null)
+    try {
+      const pluginState = await createLocalCodexPluginApi().upsertMarketplace({ path: source })
+      applyPluginState(pluginState)
+      setMarketplaceSource('')
+    } catch (marketplaceError) {
+      setError(
+        marketplaceError instanceof Error ? marketplaceError.message : String(marketplaceError)
+      )
+    } finally {
+      setAddingMarketplace(false)
+    }
+  }
+
+  const selectMarketplace = async (marketplaceId: string) => {
+    setSelectedMarketplaceId(marketplaceId)
+    setError(null)
+    try {
+      applyPluginState(await createLocalCodexPluginApi().selectMarketplace(marketplaceId))
+    } catch (marketplaceError) {
+      setError(
+        marketplaceError instanceof Error ? marketplaceError.message : String(marketplaceError)
+      )
     }
   }
 
@@ -334,13 +380,63 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                   })
                 )}
               </div>
-              {availablePlugins.length > 0 ? (
-                <div className="mt-3">
+              <div className="mt-4" data-testid="project-plugin-catalog">
+                <div className="flex items-center justify-between gap-3">
                   <h3 className="text-sm font-medium text-text-primary">
                     {t('workbench.project_settings_available_plugins')}
                   </h3>
+                  {marketplaces.length > 0 ? (
+                    <select
+                      value={selectedMarketplaceId}
+                      data-testid="project-plugin-marketplace-select"
+                      aria-label={t('workbench.project_settings_marketplace_label')}
+                      onChange={event => void selectMarketplace(event.target.value)}
+                      className="h-11 max-w-64 rounded-lg border border-border bg-surface px-2 text-sm text-text-primary outline-none focus:border-focus md:h-8"
+                    >
+                      {marketplaces.map(marketplace => (
+                        <option key={marketplace.id} value={marketplace.id}>
+                          {marketplace.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </div>
+                {marketplaces.length === 0 ? (
+                  <div className="mt-2 rounded-xl border border-border p-4">
+                    <p className="text-sm text-text-secondary">
+                      {t('workbench.project_settings_marketplace_empty')}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <input
+                        value={marketplaceSource}
+                        data-testid="project-plugin-marketplace-source"
+                        aria-label={t('workbench.project_settings_marketplace_source')}
+                        placeholder={t('workbench.project_settings_marketplace_placeholder')}
+                        onChange={event => setMarketplaceSource(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') void addMarketplace()
+                        }}
+                        className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface-secondary px-3 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-focus md:h-9"
+                      />
+                      <button
+                        type="button"
+                        data-testid="project-plugin-add-marketplace"
+                        disabled={!marketplaceSource.trim() || addingMarketplace}
+                        onClick={() => void addMarketplace()}
+                        className="flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-surface-secondary disabled:opacity-40 md:h-9"
+                      >
+                        {addingMarketplace ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Plus className="h-4 w-4" />
+                        )}
+                        {t('workbench.project_settings_add_marketplace')}
+                      </button>
+                    </div>
+                  </div>
+                ) : availablePlugins.length > 0 ? (
                   <div className="mt-2 overflow-hidden rounded-xl border border-border">
-                    {availablePlugins.slice(0, 8).map(plugin => (
+                    {availablePlugins.map(plugin => (
                       <div
                         key={plugin.id}
                         className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 last:border-b-0"
@@ -368,8 +464,12 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : null}
+                ) : (
+                  <p className="mt-2 rounded-xl border border-border px-4 py-4 text-sm text-text-secondary">
+                    {t('workbench.project_settings_no_available_plugins')}
+                  </p>
+                )}
+              </div>
               <button
                 type="button"
                 className="mt-2 flex h-8 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface-secondary"
