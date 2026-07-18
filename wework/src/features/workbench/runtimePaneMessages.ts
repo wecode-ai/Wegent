@@ -114,7 +114,10 @@ export function createRuntimeTaskStreamHandlers(
       })
     },
     onChatDone: payload => {
-      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      if (!isRuntimeTaskStreamPayload(address, payload)) {
+        warnAndDropMismatchedRuntimeTerminalEvent('chat:done', address, payload)
+        return
+      }
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:done', address, payload)
@@ -127,6 +130,10 @@ export function createRuntimeTaskStreamHandlers(
         mergeTurnFileChanges([...(streamedFileChanges.get(identity.subtaskId)?.values() ?? [])])
       streamedFileChanges.delete(identity.subtaskId)
       debugRuntimeStreamEvent('chat:done', address, payload, true, {
+        hasFileChanges: Boolean(fileChanges),
+        blockCount: blocks?.length ?? 0,
+      })
+      logAcceptedRuntimeTerminalEvent('chat:done', address, payload, {
         hasFileChanges: Boolean(fileChanges),
         blockCount: blocks?.length ?? 0,
       })
@@ -144,7 +151,10 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
-      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      if (!isRuntimeTaskStreamPayload(address, payload)) {
+        warnAndDropMismatchedRuntimeTerminalEvent('chat:error', address, payload)
+        return
+      }
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:error', address, payload, {
@@ -155,6 +165,9 @@ export function createRuntimeTaskStreamHandlers(
       debugRuntimeStreamEvent('chat:error', address, payload, true, {
         error: payload.error,
         errorType: payload.type,
+      })
+      logAcceptedRuntimeTerminalEvent('chat:error', address, payload, {
+        errorType: payload.type ?? null,
       })
       handlers.onAssistantSettled?.()
       if (isCancelledRuntimeError(payload)) {
@@ -513,6 +526,36 @@ function warnAndDropRuntimeStreamEvent(
     taskId: payload.taskId,
     deviceId: payload.deviceId,
     subtaskId: payload.subtaskId,
+    ...details,
+  })
+}
+
+function warnAndDropMismatchedRuntimeTerminalEvent(
+  event: 'chat:done' | 'chat:error',
+  address: RuntimeTaskAddress,
+  payload: { taskId?: string; deviceId?: string; subtaskId?: string }
+): void {
+  console.warn('[Wework] Dropped mismatched runtime terminal event', {
+    event,
+    currentRuntimeTask: runtimeAddressDebug(address),
+    payloadTaskId: payload.taskId ?? null,
+    payloadDeviceId: payload.deviceId ?? null,
+    payloadSubtaskId: payload.subtaskId ?? null,
+  })
+}
+
+function logAcceptedRuntimeTerminalEvent(
+  event: 'chat:done' | 'chat:error',
+  address: RuntimeTaskAddress,
+  payload: { taskId?: string; deviceId?: string; subtaskId?: string },
+  details: Record<string, unknown>
+): void {
+  console.info('[Wework] Runtime terminal event accepted', {
+    event,
+    currentRuntimeTask: runtimeAddressDebug(address),
+    payloadTaskId: payload.taskId ?? null,
+    payloadDeviceId: payload.deviceId ?? null,
+    payloadSubtaskId: payload.subtaskId ?? null,
     ...details,
   })
 }

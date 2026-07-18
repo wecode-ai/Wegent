@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   CloudConnectionContext,
@@ -46,6 +46,7 @@ describe('DesktopAppSwitcher', () => {
       'before:bg-border'
     )
     expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveTextContent('Wework')
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')
   })
 
@@ -54,12 +55,21 @@ describe('DesktopAppSwitcher', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={onNavigate} />)
 
     fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    expect(screen.getByTestId('app-switcher-option-wework')).toHaveTextContent(
-      'work对话与本地工作台'
-    )
+    expect(screen.getByTestId('app-switcher-option-wework').parentElement).toHaveClass('pl-2')
+    expect(screen.getByTestId('app-switcher-option-wework')).toHaveTextContent('WeworkAI对话工作台')
     expect(screen.queryByTestId('app-switcher-option-todo')).not.toBeInTheDocument()
     const wegentOption = screen.getByTestId('app-switcher-option-wegent')
-    expect(wegentOption).toHaveTextContent('gent连接云端后可用云端智能体平台')
+    expect(wegentOption).not.toHaveClass('opacity-60')
+    expect(within(wegentOption).getByText('Wegent')).toBeInTheDocument()
+    expect(within(wegentOption).getByText('云端智能体平台')).toBeInTheDocument()
+    const unavailableStatus = screen.getByTestId('app-switcher-unavailable-wegent')
+    expect(unavailableStatus).toHaveAccessibleName('连接云端后可用')
+    fireEvent.mouseEnter(unavailableStatus)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('连接云端后可用')
+    fireEvent.mouseLeave(unavailableStatus)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    fireEvent.focus(unavailableStatus)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('连接云端后可用')
     expect(wegentOption).toBeDisabled()
     fireEvent.click(wegentOption)
     expect(onNavigate).not.toHaveBeenCalled()
@@ -70,7 +80,7 @@ describe('DesktopAppSwitcher', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('chrome-tab-wework'))
-    expect(screen.getByTestId('app-switcher-option-todo')).toHaveTextContent('loop智能体工作流面板')
+    expect(screen.getByTestId('app-switcher-option-todo')).toHaveTextContent('WeloopAI原生工作流')
   })
 
   test('shows Wegent after connecting and navigates to it', () => {
@@ -103,6 +113,9 @@ describe('DesktopAppSwitcher', () => {
     )
 
     fireEvent.click(screen.getByTestId('chrome-tab-wegent'))
+    expect(screen.getByTestId('app-switcher-option-wegent')).toHaveTextContent(
+      'Wegent云端智能体平台'
+    )
     fireEvent.click(screen.getByTestId('app-switcher-settings'))
     expect(window.location.pathname).toBe('/settings')
   })

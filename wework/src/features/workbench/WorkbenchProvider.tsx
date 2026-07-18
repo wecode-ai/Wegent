@@ -1103,6 +1103,11 @@ export function WorkbenchProvider({
           handlers.onContextUsageUpdated?.(contextUsage)
         },
         onAssistantSettled: () => {
+          console.info('[Wework] Runtime task settlement dispatched', {
+            deviceId: address.deviceId,
+            taskId: address.taskId,
+            workspacePath: address.workspacePath ?? null,
+          })
           dispatch({ type: 'runtime_task_settled', address })
           handlers.onAssistantSettled?.()
         },
