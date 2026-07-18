@@ -2176,6 +2176,9 @@ while IFS= read -r line; do
     while [ "$notification_index" -lt 2200 ]; do
       printf '%s\n' '{{"method":"thread/name/updated","params":{{"threadId":"thread-noise","name":"waiting"}}}}'
       notification_index=$((notification_index + 1))
+      if [ $((notification_index % 50)) -eq 0 ]; then
+        sleep 0.002
+      fi
     done
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
