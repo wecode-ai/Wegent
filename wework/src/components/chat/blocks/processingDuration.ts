@@ -20,7 +20,11 @@ export function getWholeSecondsDurationText(
   isRunning: boolean
 ): string {
   const durationMs = getProcessingDurationMs(blocks, turnStartedAt, now, completedAt, isRunning)
-  return `${Math.floor(durationMs / 1000)} 秒`
+  const seconds = Math.floor(durationMs / 1000)
+  if (seconds < 60) return `${seconds} 秒`
+
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes} 分 ${seconds % 60} 秒`
 }
 
 function getProcessingDurationMs(

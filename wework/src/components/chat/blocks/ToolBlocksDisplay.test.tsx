@@ -761,7 +761,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByRole('button', { name: /已处理 6 分 8 秒/ })).toBeInTheDocument()
   })
 
-  test('formats live duration with natural Chinese units', () => {
+  test('formats live duration with minutes and seconds after one minute', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
 
@@ -777,7 +777,26 @@ describe('ToolBlocksDisplay', () => {
       vi.advanceTimersByTime(62000)
     })
 
-    expect(screen.getByText('62 秒')).toBeInTheDocument()
+    expect(screen.getByText('1 分 2 秒')).toBeInTheDocument()
+  })
+
+  test('formats exactly one minute with zero remaining seconds', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
+
+    const runningBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      status: 'streaming',
+      createdAt: Date.now(),
+    }
+
+    render(<ToolBlocksDisplay blocks={[runningBlock]} isStreaming={true} />)
+
+    act(() => {
+      vi.advanceTimersByTime(60000)
+    })
+
+    expect(screen.getByText('1 分 0 秒')).toBeInTheDocument()
   })
 
   test('keeps ticking while streaming even when all tool blocks are done', () => {
