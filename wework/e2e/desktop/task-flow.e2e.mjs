@@ -17,6 +17,9 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const REQUEST_USER_INPUT_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
+const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -155,6 +158,15 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function captureVerificationScreenshot(control, name) {
+  const dataUrl = await control.command('capture', 'body')
+  const prefix = 'data:image/png;base64,'
+  assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
+  const path = join(resultDir, name)
+  await writeFile(path, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
+  return path
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
@@ -382,6 +394,9 @@ class DesktopE2EServer {
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
     })
+    this.requestUserInputRelease = new Promise(resolvePromise => {
+      this.releaseRequestUserInput = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
   }
@@ -459,7 +474,14 @@ class DesktopE2EServer {
 
   setScenario(scenario) {
     assert.ok(
-      ['initial', 'follow_up', 'cancellation', 'retry', 'fresh_chat'].includes(scenario),
+      [
+        'initial',
+        'follow_up',
+        'request_user_input',
+        'cancellation',
+        'retry',
+        'fresh_chat',
+      ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
@@ -490,6 +512,10 @@ class DesktopE2EServer {
 
   releaseRetryResponse() {
     this.releaseRetryCompletion()
+  }
+
+  releaseRequestUserInputResponse() {
+    this.releaseRequestUserInput()
   }
 
   async command(action, selector, options = {}) {
@@ -683,6 +709,34 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'request_user_input') {
+      this.recordScenarioRequest('request_user_input', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(REQUEST_USER_INPUT_PROMPT),
+        'The real Codex request did not contain the request-user-input prompt'
+      )
+      const tool = selectTool(body, 'request_user_input', {
+        questions: [
+          {
+            header: 'Direction',
+            id: 'direction',
+            question: REQUEST_USER_INPUT_QUESTION,
+            options: [
+              { label: 'Minimal', description: 'Make the smallest focused change.' },
+              { label: 'Complete', description: 'Cover the full interaction flow.' },
+            ],
+          },
+        ],
+      })
+      await this.requestUserInputRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
         responseCompleted(responseId),
       ])
       return
@@ -1141,6 +1195,36 @@ async function main() {
       JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
       'The follow-up request did not preserve the user prompt'
     )
+
+    phase = 'background-request-user-input'
+    control.setScenario('request_user_input')
+    await control.command('click', '[data-testid="add-context-button"]')
+    await control.command('click', '[data-testid="set-plan-mode-button"]')
+    await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      REQUEST_USER_INPUT_PROMPT,
+      'request_user_input'
+    )
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    control.releaseRequestUserInputResponse()
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+      text: REQUEST_USER_INPUT_QUESTION,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, 'background-request-user-input.png')
+    await control.command('click', '[data-testid="request-user-input-ignore-button"]')
+    await control.command('waitFor', '[data-testid="chat-message-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
 
     phase = 'cancellation'
     control.setScenario('cancellation')

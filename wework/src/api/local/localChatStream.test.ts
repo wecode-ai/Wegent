@@ -8,6 +8,7 @@ describe('createLocalChatStream', () => {
 
   beforeEach(() => {
     subscribe.mockReset()
+    subscribe.mockResolvedValue(vi.fn())
     request.mockReset()
     localStorage.clear()
   })
@@ -199,14 +200,14 @@ describe('createLocalChatStream', () => {
     consoleInfo.mockRestore()
   })
 
-  test('does not open a local executor listener for device-only subscriptions', () => {
+  test('opens the local executor listener before a task pane subscribes', () => {
     const stream = createLocalChatStream({ subscribe, request })
     const cleanup = stream.subscribe({ onDeviceStatus: vi.fn() })
 
-    expect(subscribe).not.toHaveBeenCalled()
+    expect(subscribe).toHaveBeenCalledTimes(1)
 
     cleanup()
-    expect(subscribe).not.toHaveBeenCalled()
+    expect(subscribe).toHaveBeenCalledTimes(1)
   })
 
   test('shares one native event listener across multiple stream subscribers', async () => {
@@ -241,7 +242,7 @@ describe('createLocalChatStream', () => {
     cleanupFirst()
     expect(unlisten).not.toHaveBeenCalled()
     cleanupSecond()
-    expect(unlisten).toHaveBeenCalledTimes(1)
+    expect(unlisten).not.toHaveBeenCalled()
   })
 
   test('routes scoped events only to matching stream subscribers', async () => {
@@ -286,10 +287,6 @@ describe('createLocalChatStream', () => {
     })
     const stream = createLocalChatStream({ subscribe, request })
 
-    stream.subscribe({
-      scope: { deviceId: 'local-device', taskId: 'foreground-task' },
-      onBlockCreated: vi.fn(),
-    })
     await Promise.resolve()
     listener({
       event: 'response.block.created',
@@ -329,7 +326,7 @@ describe('createLocalChatStream', () => {
     })
   })
 
-  test('cleans up a late native listener when all subscribers release before it is ready', async () => {
+  test('keeps a late native listener active when no pane is subscribed', async () => {
     let resolveSubscribe!: (unlisten: () => void) => void
     const unlisten = vi.fn()
     subscribe.mockImplementation(
@@ -345,7 +342,7 @@ describe('createLocalChatStream', () => {
     resolveSubscribe(unlisten)
     await Promise.resolve()
 
-    expect(unlisten).toHaveBeenCalledTimes(1)
+    expect(unlisten).not.toHaveBeenCalled()
   })
 
   test('routes guidance and cancel requests through app ipc', async () => {

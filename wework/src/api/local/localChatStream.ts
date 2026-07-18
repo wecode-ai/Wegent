@@ -45,8 +45,8 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
 
   function ensureNativeListener(): void {
     if (nativeCleanup || nativeSubscribePromise) return
-    nativeSubscribePromise = deps
-      .subscribe(event => {
+    nativeSubscribePromise = Promise.resolve(
+      deps.subscribe(event => {
         rememberPendingBlockEvent(pendingBlockEventsByTask, event)
         if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
           console.warn('[Wework] Local runtime task plan event received', {
@@ -103,13 +103,9 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
           globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
         }
       })
+    )
       .then(unlisten => {
         nativeSubscribePromise = null
-        if (subscriptions.size === 0) {
-          logLocalChatStreamNativeSubscription('late-native-listener-cleanup')
-          unlisten()
-          return
-        }
         nativeCleanup = unlisten
         logLocalChatStreamNativeSubscription('native-listener-ready')
       })
@@ -125,13 +121,9 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       })
   }
 
-  function releaseNativeListenerIfIdle(): void {
-    if (subscriptions.size > 0) return
-    if (!nativeCleanup) return
-    nativeCleanup()
-    nativeCleanup = null
-    logLocalChatStreamNativeSubscription('native-listener-released')
-  }
+  // Start listening before a task pane exists. Local task creation and the
+  // first tool event can otherwise race the pane's asynchronous subscription.
+  ensureNativeListener()
 
   return {
     sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
@@ -168,6 +160,7 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
         activeSubscriptions: activeLocalChatStreamSubscriptions,
         ...streamScopeDebug(handlers.scope),
       })
+      // Retry setup if the eager native subscription failed.
       ensureNativeListener()
 
       return () => {
@@ -182,7 +175,6 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
           textDeltaCount: subscription?.textDeltaCount ?? 0,
           ...streamScopeDebug(subscription?.handlers.scope),
         })
-        releaseNativeListenerIfIdle()
       }
     },
   }

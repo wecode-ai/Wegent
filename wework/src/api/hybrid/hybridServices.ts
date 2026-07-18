@@ -870,16 +870,17 @@ export function createHybridWorkbenchServices(
     },
   }
 
+  const cloudRuntimeChatStream = createLocalChatStream({
+    request: (method, params) => {
+      const deviceId = cloudDeviceIdFromData(params)
+      return cloudRuntimeIpc.request(method, params, deviceId)
+    },
+    subscribe: cloudRuntimeIpc.subscribe,
+  })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
       const cleanupLocal = localServices.chatStream.subscribe(handlers)
-      const cleanupCloudRuntime = createLocalChatStream({
-        request: (method, params) => {
-          const deviceId = cloudDeviceIdFromData(params)
-          return cloudRuntimeIpc.request(method, params, deviceId)
-        },
-        subscribe: cloudRuntimeIpc.subscribe,
-      }).subscribe(handlers)
+      const cleanupCloudRuntime = cloudRuntimeChatStream.subscribe(handlers)
       const cleanupCloudDeviceEvents = cloudServices.chatStream.subscribe({
         onDeviceOnline: handlers.onDeviceOnline,
         onDeviceOffline: handlers.onDeviceOffline,
