@@ -113,6 +113,8 @@ Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque
 
 executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex 卡在 MCP 初始化等启动阶段时让 Wework 永久显示“正在思考”。默认超时为 180 秒，可以通过 `WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS` 调整。用户输入回显、声明仍会重试的错误和子 agent 事件不算有效进展；首个 assistant、reasoning 或 tool item 到达后立即关闭这个启动看门狗，因此已经开始执行的长工具调用不会被误杀。启动超时后，executor 会结束卡住的共享 app-server、让当前 turn 以明确错误结束，并在用户重试或发送下一条消息时启动新进程。Wework 必须保留原用户消息和失败卡片，重试时发送与失败 turn 绑定的同一条用户输入，不能留下空白 assistant 消息或误发更早的消息。
 
+排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。Tauri 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
+
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。打包本地 app 的 `createLocalAppServices()` 是本机 Codex 模型名规范化的唯一边界：UI 可以展示 `codex-gpt-5.5`，但发送到 Codex app-server 前必须统一转换成真实模型 id `gpt-5.5`。新建任务和继续任务都必须复用同一套规范化逻辑。
 
 如果当前 LocalTask 仍在回复，Wework 会把新的用户输入放入本地队列，而不是并发调用 `runtime.tasks.send`。用户可以取消队列中的消息；也可以在队列面板中选择“暂停当前回复并发送”，这会先调用：
