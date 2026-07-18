@@ -253,10 +253,12 @@ describe('ProjectSettingsPage', () => {
     })
     await user.click(await screen.findByTestId('project-plugin-install-documents@openai'))
 
-    expect(installAvailablePlugin).toHaveBeenCalledWith('documents@openai')
-    expect(selectMarketplace).toHaveBeenCalledWith('openai')
-    expect(updateInstalledPlugin).toHaveBeenCalledWith('documents@openai', { enabled: false })
-    expect(screen.getByTestId('project-plugin-toggle-documents@openai')).toBeChecked()
+    await waitFor(() => {
+      expect(installAvailablePlugin).toHaveBeenCalledWith('documents@openai')
+      expect(selectMarketplace).toHaveBeenCalledWith('openai')
+      expect(updateInstalledPlugin).toHaveBeenCalledWith('documents@openai', { enabled: false })
+      expect(screen.getByTestId('project-plugin-toggle-documents@openai')).toBeChecked()
+    })
   })
 
   test('keeps native file editing available when plugin discovery fails', async () => {
@@ -301,8 +303,10 @@ describe('ProjectSettingsPage', () => {
 
     await user.click(await screen.findByTestId('project-plugin-install-documents@openai'))
 
-    await waitFor(() => expect(uninstallInstalledPlugin).toHaveBeenCalledWith('documents@openai'))
-    expect(screen.getByTestId('project-settings-error')).toHaveTextContent('disable failed')
-    expect(screen.queryByTestId('project-plugin-toggle-documents@openai')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(uninstallInstalledPlugin).toHaveBeenCalledWith('documents@openai')
+      expect(screen.getByTestId('project-settings-error')).toHaveTextContent('disable failed')
+      expect(screen.queryByTestId('project-plugin-toggle-documents@openai')).not.toBeInTheDocument()
+    })
   })
 })
