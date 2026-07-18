@@ -13,7 +13,10 @@ import {
   getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
-import { createLocalFileWorkspaceTarget } from '@/lib/workspace-target'
+import {
+  createLocalAttachmentWorkspaceTarget,
+  createLocalFileWorkspaceTarget,
+} from '@/lib/workspace-target'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   isDeviceBelowWeWorkVersion,
@@ -1116,15 +1119,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = path.trim()
       if (!trimmedPath) return
+      const localTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
       setOpenFileRequest(current => ({
         id: (current?.id ?? 0) + 1,
         path: trimmedPath,
         lineStart: options?.lineStart,
         lineEnd: options?.lineEnd,
+        target: localTarget ?? undefined,
       }))
       openRightPanelTab('files')
     },
-    [openRightPanelTab, setOpenFileRequest]
+    [devices, openRightPanelTab, setOpenFileRequest]
   )
 
   const openLocalSkillFile = useCallback(

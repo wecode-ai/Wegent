@@ -5041,6 +5041,67 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('opens a local image link on the local device while the project workspace is remote', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const localDevice = createLocalSkillDevice()
+    const imagePath = '/Users/me/.wegent-executor/workspace/attachments/draft/42/result.png'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/.wegent-executor/workspace/attachments/draft/42',
+      entries: [],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: imagePath,
+      name: 'result.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      size: 5,
+      eof: true,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile: vi.fn(),
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          devices: [...workspacePanelState.devices, localDevice],
+        }}
+        messages={[
+          {
+            id: 'assistant-local-image-link',
+            role: 'assistant',
+            content: `[result.png](${imagePath})`,
+            status: 'done',
+            createdAt: '2026-07-18T00:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: [...workspacePanelState.devices, localDevice],
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-binary-file-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '/Users/me/.wegent-executor/workspace/attachments/draft/42'
+    )
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(localDevice.device_id, imagePath, 0)
+  })
+
   test('opens a skill from the empty composer on the real local device', async () => {
     const user = userEvent.setup()
     const localDevice = createLocalSkillDevice()
