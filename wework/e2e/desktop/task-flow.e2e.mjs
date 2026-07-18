@@ -1233,6 +1233,7 @@ async function main() {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('click', '[data-testid="message-assistant"]')
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
     await captureVerificationScreenshot(control, '01-request-running-in-background.png')
     await withTimeout(
       control.releaseRequestUserInputResponse(),
