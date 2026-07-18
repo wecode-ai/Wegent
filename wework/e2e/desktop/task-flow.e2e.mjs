@@ -1232,6 +1232,7 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await control.command('click', composerSelector)
     await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, '01-request-running-in-background.png')
     await withTimeout(
