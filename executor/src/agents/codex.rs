@@ -191,6 +191,7 @@ pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
 struct InteractionAnswerRouterState {
     pending: HashMap<String, oneshot::Sender<Result<Value, String>>>,
     buffered: HashMap<String, Value>,
+    closed: bool,
 }
 
 struct InteractionAnswerRouter {
@@ -221,6 +222,7 @@ impl InteractionAnswerRouter {
                 }
             }
             let mut state = state.lock().await;
+            state.closed = true;
             for (_, sender) in state.pending.drain() {
                 let _ = sender.send(Err("request_user_input response channel closed".to_owned()));
             }
@@ -233,6 +235,9 @@ impl InteractionAnswerRouter {
             let mut state = self.state.lock().await;
             if let Some(answer) = state.buffered.remove(&key) {
                 return Ok(answer);
+            }
+            if state.closed {
+                return Err("request_user_input response router closed".to_owned());
             }
             let (sender, receiver) = oneshot::channel();
             if state.pending.insert(key, sender).is_some() {
@@ -4977,6 +4982,35 @@ mod tests {
         assert_eq!(
             second.await.expect("second waiter should join").unwrap()["answers"]["choice"],
             "second"
+        );
+    }
+
+    #[tokio::test]
+    async fn interaction_answer_router_rejects_waiters_after_channel_closes() {
+        let (sender, receiver) = mpsc::channel(1);
+        let router = InteractionAnswerRouter::new(receiver);
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if router.state.lock().await.closed {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("router should observe the closed response channel");
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            router.receive("closed-request".to_owned()),
+        )
+        .await
+        .expect("closed router should not leave the waiter pending");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "request_user_input response router closed"
         );
     }
 
