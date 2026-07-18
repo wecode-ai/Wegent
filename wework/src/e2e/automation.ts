@@ -31,6 +31,7 @@ type DesktopControlAction =
   | 'fill'
   | 'getText'
   | 'hover'
+  | 'navigate'
   | 'pointerMove'
   | 'snapshot'
   | 'waitFor'
@@ -455,6 +456,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlElementText(command.selector)
     case 'snapshot':
       return desktopControlSnapshot()
+    case 'navigate':
+      window.history.pushState({}, '', command.value ?? '/')
+      dispatchNavigationEvents()
+      return window.location.href
     case 'click': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -520,7 +525,10 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
   while (true) {
     try {
-      const response = await fetch(`${url}/commands`, { headers: desktopControlHeaders() })
+      const response = await fetch(`${url}/commands`, {
+        cache: 'no-store',
+        headers: desktopControlHeaders(),
+      })
       if (response.status === 204) {
         await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_IDLE_POLL_DELAY_MS))
         continue

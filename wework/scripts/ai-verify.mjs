@@ -22,12 +22,13 @@ const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-origin': '*',
+  'cache-control': 'no-store',
 }
 
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
@@ -114,6 +115,7 @@ async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
   const pending = new Map()
+  let waitingCommandResponse = null
   let ready = null
   let app = null
   const server = createServer((request, response) => {
@@ -132,11 +134,12 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
-          response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+        if (command) return json(response, 200, command)
+        waitingCommandResponse = response
+        response.once('close', () => {
+          if (waitingCommandResponse === response) waitingCommandResponse = null
+        })
+        return
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -163,7 +166,14 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const queuedCommand = { id, ...command }
+        if (waitingCommandResponse) {
+          const commandResponse = waitingCommandResponse
+          waitingCommandResponse = null
+          json(commandResponse, 200, queuedCommand)
+        } else {
+          queue.push(queuedCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
@@ -315,6 +325,7 @@ async function main() {
     'close-to-tray': 'closeMainWindowToTray',
     fill: 'fill',
     hover: 'hover',
+    navigate: 'navigate',
     'pointer-move': 'pointerMove',
     press: 'press',
     'select-text': 'selectText',
@@ -330,6 +341,7 @@ async function main() {
     options.selector ??
     (command === 'capture' ||
     command === 'snapshot' ||
+    command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
     command === 'close-to-tray'

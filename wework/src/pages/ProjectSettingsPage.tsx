@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, ExternalLink, Loader2, Save } from 'lucide-react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { SettingsPage, SettingsPageHeader } from '@/components/settings/settings-ui'
@@ -42,7 +42,24 @@ function installedPluginId(plugin: InstalledPlugin): string | number | null {
 export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const { t } = useTranslation()
   const { state, workspaceFileApi, getProjectWorkspaceRoot, createDeviceDirectory } = useWorkbench()
+  const { listWorkspaceEntries, readWorkspaceTextFile, writeWorkspaceTextFile } = workspaceFileApi
   const project = state.projects.find(item => item.id === projectId) ?? null
+  const loadContextRef = useRef({
+    getProjectWorkspaceRoot,
+    listWorkspaceEntries,
+    project,
+    readWorkspaceTextFile,
+    t,
+  })
+  useEffect(() => {
+    loadContextRef.current = {
+      getProjectWorkspaceRoot,
+      listWorkspaceEntries,
+      project,
+      readWorkspaceTextFile,
+      t,
+    }
+  }, [getProjectWorkspaceRoot, listWorkspaceEntries, project, readWorkspaceTextFile, t])
   const [target, setTarget] = useState<{
     deviceId: string
     root: string
@@ -67,48 +84,45 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     [config.content]
   )
 
-  const loadOptionalFile = useCallback(
-    async (deviceId: string, directory: string, name: string): Promise<EditableFile> => {
-      const entries = await workspaceFileApi.listWorkspaceEntries(deviceId, directory)
-      if (!entries.entries.some(entry => !entry.isDirectory && entry.name === name))
-        return EMPTY_FILE
-      const file = await workspaceFileApi.readWorkspaceTextFile(deviceId, joinPath(directory, name))
-      if (!file.editable || file.truncated)
-        throw new Error(t('workbench.project_settings_file_too_large'))
-      return { content: file.content, revision: file.revision }
-    },
-    [t, workspaceFileApi]
-  )
-
   useEffect(() => {
     let cancelled = false
     const load = async () => {
-      if (!project) {
-        setError(t('workbench.project_settings_project_missing'))
+      const context = loadContextRef.current
+      if (!context.project) {
+        setError(context.t('workbench.project_settings_project_missing'))
         setLoading(false)
         return
       }
-      const deviceId = executionDeviceId(project)
+      const deviceId = executionDeviceId(context.project)
       if (!deviceId) {
-        setError(t('workbench.project_settings_workspace_missing'))
+        setError(context.t('workbench.project_settings_workspace_missing'))
         setLoading(false)
         return
       }
       try {
-        const root = await resolveProjectWorkspacePath(project, deviceId, {
-          getProjectWorkspaceRoot,
+        const root = await resolveProjectWorkspacePath(context.project, deviceId, {
+          getProjectWorkspaceRoot: context.getProjectWorkspaceRoot,
         })
-        if (!root) throw new Error(t('workbench.project_settings_workspace_missing'))
-        const rootEntries = await workspaceFileApi.listWorkspaceEntries(deviceId, root)
+        if (!root) throw new Error(context.t('workbench.project_settings_workspace_missing'))
+        const loadOptionalFile = async (directory: string, name: string): Promise<EditableFile> => {
+          const entries = await context.listWorkspaceEntries(deviceId, directory)
+          if (!entries.entries.some(entry => !entry.isDirectory && entry.name === name))
+            return EMPTY_FILE
+          const file = await context.readWorkspaceTextFile(deviceId, joinPath(directory, name))
+          if (!file.editable || file.truncated)
+            throw new Error(context.t('workbench.project_settings_file_too_large'))
+          return { content: file.content, revision: file.revision }
+        }
+        const rootEntries = await context.listWorkspaceEntries(deviceId, root)
         const codexDirectory = joinPath(root, '.codex')
         const hasCodexDirectory = rootEntries.entries.some(
           entry => entry.isDirectory && entry.name === '.codex'
         )
         const pluginApi = isTauriRuntime() ? createLocalCodexPluginApi() : null
         const [nextInstructions, nextConfig, installed, available] = await Promise.all([
-          loadOptionalFile(deviceId, root, 'AGENTS.md'),
+          loadOptionalFile(root, 'AGENTS.md'),
           hasCodexDirectory
-            ? loadOptionalFile(deviceId, codexDirectory, 'config.toml')
+            ? loadOptionalFile(codexDirectory, 'config.toml')
             : Promise.resolve(EMPTY_FILE),
           pluginApi?.listInstalledPlugins().then(response => response.items) ?? Promise.resolve([]),
           pluginApi?.listAvailablePlugins().then(response => response.items) ?? Promise.resolve([]),
@@ -131,10 +145,10 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     return () => {
       cancelled = true
     }
-  }, [getProjectWorkspaceRoot, loadOptionalFile, project, t, workspaceFileApi])
+  }, [project?.id])
 
   const save = async () => {
-    if (!target || !workspaceFileApi.writeWorkspaceTextFile || !dirty) return
+    if (!target || !writeWorkspaceTextFile || !dirty) return
     setSaving(true)
     setSaved(false)
     setError(null)
@@ -142,7 +156,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
       let nextInstructions = instructions
       let nextConfig = config
       if (instructions.content !== savedInstructions) {
-        const response = await workspaceFileApi.writeWorkspaceTextFile(
+        const response = await writeWorkspaceTextFile(
           target.deviceId,
           joinPath(target.root, 'AGENTS.md'),
           instructions.content,
@@ -154,7 +168,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
         if (config.revision === MISSING_WORKSPACE_FILE_REVISION && !target.codexDirectoryExists) {
           await createDeviceDirectory(target.deviceId, joinPath(target.root, '.codex'))
         }
-        const response = await workspaceFileApi.writeWorkspaceTextFile(
+        const response = await writeWorkspaceTextFile(
           target.deviceId,
           joinPath(target.root, '.codex/config.toml'),
           config.content,
