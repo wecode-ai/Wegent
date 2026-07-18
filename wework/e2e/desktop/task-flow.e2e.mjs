@@ -288,6 +288,18 @@ function functionCall(callId, name, argumentsValue) {
   }
 }
 
+function customToolCall(callId, name, input) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'custom_tool_call',
+      call_id: callId,
+      name,
+      input,
+    },
+  }
+}
+
 function assistantMessage(text) {
   return {
     type: 'response.output_item.done',
@@ -349,7 +361,7 @@ function selectTool(request, name, argumentsValue) {
 }
 
 function selectShellTool(request, workspacePath) {
-  const command = `printf '%s\\n' '${ARTIFACT_CONTENT}' > ${ARTIFACT_NAME}`
+  const command = 'pwd'
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
@@ -366,6 +378,23 @@ function selectShellTool(request, workspacePath) {
     })
   }
   throw new Error('Real Codex did not advertise a supported shell tool')
+}
+
+function selectApplyPatchTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    tools.some(tool => tool?.name === 'apply_patch'),
+    `Real Codex did not advertise apply_patch: ${tools
+      .map(tool => tool?.name)
+      .filter(Boolean)
+      .join(', ')}`
+  )
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${ARTIFACT_NAME}`,
+    `+${ARTIFACT_CONTENT}`,
+    '*** End Patch',
+  ].join('\n')
 }
 
 class DesktopE2EServer {
@@ -674,11 +703,13 @@ class DesktopE2EServer {
         'The real Codex request did not contain the UI task prompt'
       )
       const tool = selectShellTool(body, this.workspacePath)
+      const patch = selectApplyPatchTool(body)
       this.modelStage = 'awaiting_tool_output'
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
         functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
       return
@@ -1124,6 +1155,30 @@ async function main() {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('click', '[data-testid="final-processing-toggle"]')
+    await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const processingSummaryText = await control.command(
+      'getText',
+      '[data-testid="processing-summary-toggle"]'
+    )
+    assert.match(
+      processingSummaryText,
+      /调用 1 个工具|Called 1 tools/,
+      'The processing summary did not count edited files separately from tool calls'
+    )
+    await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const processingSummaryScreenshot = await control.command(
+      'capture',
+      '[data-testid="processing-summary-header"]'
+    )
+    await writeFile(
+      join(resultDir, 'processing-summary.png'),
+      Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
+    )
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',
       timeoutMs: UI_TIMEOUT_MS,

@@ -241,7 +241,7 @@ export function ToolBlocksDisplay({
   const summaryTitle = hasToolActivity
     ? hasOnlyEditActivity
       ? t('tool_activity.edit_summary', { count: activityStats.edit })
-      : t('tool_activity.summary', { count: countProcessingActivities(rows) })
+      : t('tool_activity.summary', { count: countProcessingToolCalls(activityStats) })
     : t('thinking.completed')
   const summaryDuration = hasToolActivity
     ? getWholeSecondsDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
@@ -629,9 +629,8 @@ function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {
   return stats
 }
 
-function countProcessingActivities(rows: ProcessingDisplayRow[]): number {
-  const stats = countProcessingActivityKinds(rows)
-  return stats.command + stats.file + stats.search + stats.edit + stats.other
+function countProcessingToolCalls(stats: ReturnType<typeof countProcessingActivityKinds>): number {
+  return stats.command + stats.file + stats.search + stats.other
 }
 
 function CollapsibleProcessingContent({
