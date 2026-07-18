@@ -161,12 +161,16 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
 }
 
 async function captureVerificationScreenshot(control, name) {
+  const screenshotPath = join(resultDir, name)
+  if (process.platform === 'linux') {
+    await runChecked('import', ['-window', 'root', screenshotPath])
+    return screenshotPath
+  }
   const dataUrl = await control.command('capture', 'body')
   const prefix = 'data:image/png;base64,'
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
-  const path = join(resultDir, name)
-  await writeFile(path, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
-  return path
+  await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
+  return screenshotPath
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
