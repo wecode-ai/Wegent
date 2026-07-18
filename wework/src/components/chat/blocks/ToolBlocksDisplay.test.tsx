@@ -1,4 +1,4 @@
-import '@/i18n'
+import i18n from '@/i18n'
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -481,6 +481,24 @@ describe('ToolBlocksDisplay', () => {
     ).toBeInTheDocument()
     expect(screen.getByLabelText('命令 1')).toBeInTheDocument()
     expect(screen.getByLabelText('编辑 3')).toBeInTheDocument()
+  })
+
+  test('pluralizes English tool and edited file counts independently', () => {
+    const toolSummary = i18n.t('tool_activity.summary', {
+      ns: 'chat',
+      lng: 'en',
+      count: 1,
+    })
+
+    expect(toolSummary).toBe('Called 1 tool')
+    expect(
+      i18n.t('tool_activity.mixed_summary', {
+        ns: 'chat',
+        lng: 'en',
+        count: 1,
+        toolSummary,
+      })
+    ).toBe('Called 1 tool, edited 1 file')
   })
 
   test('merges consecutive file change blocks into one activity row', () => {

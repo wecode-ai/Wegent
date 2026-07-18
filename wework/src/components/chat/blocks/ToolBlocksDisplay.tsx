@@ -244,8 +244,8 @@ export function ToolBlocksDisplay({
       ? t('tool_activity.edit_summary', { count: activityStats.edit })
       : activityStats.edit > 0
         ? t('tool_activity.mixed_summary', {
-            toolCount: toolCallCount,
-            fileCount: activityStats.edit,
+            count: activityStats.edit,
+            toolSummary: t('tool_activity.summary', { count: toolCallCount }),
           })
         : t('tool_activity.summary', { count: toolCallCount })
     : t('thinking.completed')

@@ -16,9 +16,12 @@
     "running": "Working"
   },
   "tool_activity": {
-    "summary": "Called {{count}} tools",
-    "mixed_summary": "Called {{toolCount}} tools, edited {{fileCount}} files",
-    "edit_summary": "Edited {{count}} files",
+    "summary_one": "Called {{count}} tool",
+    "summary_other": "Called {{count}} tools",
+    "mixed_summary_one": "{{toolSummary}}, edited {{count}} file",
+    "mixed_summary_other": "{{toolSummary}}, edited {{count}} files",
+    "edit_summary_one": "Edited {{count}} file",
+    "edit_summary_other": "Edited {{count}} files",
     "command": "Commands",
     "file": "Reads",
     "search": "Searches",

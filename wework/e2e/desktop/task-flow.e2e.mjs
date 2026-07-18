@@ -1165,7 +1165,7 @@ async function main() {
     )
     assert.match(
       processingSummaryText,
-      /调用 1 个工具，编辑 1 个文件|Called 1 tools, edited 1 files/,
+      /调用 1 个工具，编辑 1 个文件|Called 1 tool, edited 1 file/,
       'The processing summary did not report tool calls and edited files separately'
     )
     await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
