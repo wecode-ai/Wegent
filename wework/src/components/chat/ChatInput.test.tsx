@@ -371,6 +371,26 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('继续修复')
   })
 
+  test('offers interrupt-and-send while the assistant is streaming', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="立即改方向"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
+
+    expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {

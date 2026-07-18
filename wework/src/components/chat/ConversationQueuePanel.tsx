@@ -11,7 +11,7 @@ import {
 } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { CornerDownRight, GripVertical, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { CornerDownRight, GripVertical, MoreHorizontal, Pencil, Trash2, Zap } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
@@ -21,6 +21,7 @@ interface ConversationQueuePanelProps {
   guidanceMessages: GuidanceWorkbenchMessage[]
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
+  onInterruptAndSendQueuedMessage?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onReorderQueuedMessages?: (sourceId: string, targetId: string) => void
   queuePaused?: boolean
@@ -33,6 +34,7 @@ export function ConversationQueuePanel({
   guidanceMessages,
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
+  onInterruptAndSendQueuedMessage,
   onEditQueuedMessage,
   onReorderQueuedMessages,
   queuePaused = false,
@@ -107,6 +109,7 @@ export function ConversationQueuePanel({
                 error={message.error}
                 mode="guidance"
                 onCancel={onCancelGuidanceMessage}
+                onInterrupt={onInterruptAndSendQueuedMessage}
               />
             ))}
             {displayedQueuedMessages.map(message => (
@@ -119,6 +122,7 @@ export function ConversationQueuePanel({
                 notice={message.notice}
                 mode="queue"
                 onGuide={onSendQueuedAsGuidance}
+                onInterrupt={onInterruptAndSendQueuedMessage}
                 onEdit={onEditQueuedMessage}
                 canReorder={message.status === 'queued' && queuedMessageIds.length > 1}
                 onCancel={onCancelQueuedMessage}
@@ -149,6 +153,7 @@ interface QueueRowProps {
   mode: 'queue' | 'guidance'
   onGuide?: (id: string) => void
   onEdit?: (id: string) => void
+  onInterrupt?: (id: string) => void
   canReorder?: boolean
   onCancel?: (id: string) => void
 }
@@ -162,6 +167,7 @@ function QueueRow({
   mode,
   onGuide,
   onEdit,
+  onInterrupt,
   canReorder = false,
   onCancel,
 }: QueueRowProps) {
@@ -223,6 +229,18 @@ function QueueRow({
         )}
       </span>
       <div className="flex shrink-0 items-center gap-1">
+        {mode === 'guidance' && (
+          <button
+            type="button"
+            data-testid={`queue-interrupt-button-${id}`}
+            onClick={() => onInterrupt?.(id)}
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
+            aria-label="打断并立即发送"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>打断并发送</span>
+          </button>
+        )}
         {mode === 'queue' && (
           <button
             type="button"
@@ -258,6 +276,12 @@ function QueueRow({
                 icon: Pencil,
                 testId: `queue-edit-button-${id}`,
                 onSelect: () => onEdit?.(id),
+              },
+              {
+                label: '打断并立即发送',
+                icon: Zap,
+                testId: `queue-interrupt-button-${id}`,
+                onSelect: () => onInterrupt?.(id),
               },
             ]}
           />

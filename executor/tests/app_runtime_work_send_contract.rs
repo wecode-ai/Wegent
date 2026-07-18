@@ -1517,6 +1517,77 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_interrupt_and_send_starts_a_new_turn_after_interrupting() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-interrupt-send-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-interrupt-send-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-interrupt-send-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-interrupt-send",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-interrupt-send").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.interrupt_and_send",
+            "payload": {
+                "taskId": "local-task-interrupt-send",
+                "workspacePath": "/tmp/project",
+                "message": "replace the current direction",
+                "executionRequest": codex_execution_request(
+                    "replace the current direction",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("interrupt-and-send should be accepted");
+
+    assert_eq!(response["accepted"], true);
+    wait_for_method_count(&log_path, "turn/start", 2).await;
+    let methods = read_json_lines(&log_path)
+        .into_iter()
+        .filter_map(|call| call["method"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let interrupt_index = methods
+        .iter()
+        .position(|method| method == "turn/interrupt")
+        .expect("active turn should be interrupted");
+    let second_start_index = methods
+        .iter()
+        .enumerate()
+        .filter(|(_, method)| method.as_str() == "turn/start")
+        .nth(1)
+        .map(|(index, _)| index)
+        .expect("a second turn should start");
+    assert!(interrupt_index < second_start_index);
+}
+
+#[tokio::test]
 async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1868,6 +1939,9 @@ while IFS= read -r line; do
       exit 0
       ;;
     *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/fork"'*)
@@ -2273,6 +2347,12 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
       ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'

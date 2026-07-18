@@ -1,14 +1,18 @@
 import {
   ArrowUp,
+  ArrowDownToLine,
   Camera,
   ClipboardList,
+  CornerDownRight,
   Image,
   Maximize2,
   Minimize2,
   Plus,
   Square,
   Target,
+  Zap,
 } from 'lucide-react'
+import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ChangeEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -286,6 +290,43 @@ export function CompactChatComposer({
             >
               <Square className="h-4 w-4 fill-current" />
             </button>
+          ) : isStreaming && canSend ? (
+            <div className="absolute bottom-1 right-1 flex items-center rounded-[22px] bg-[#242424] text-white">
+              <button
+                type="submit"
+                data-testid="send-message-button"
+                className="flex h-11 w-11 items-center justify-center rounded-l-[22px] hover:bg-[#333]"
+                aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+              >
+                <ArrowUp className="h-5 w-5" />
+              </button>
+              <ActionMenu
+                ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+                testId="send-mode-menu-button"
+                icon={ArrowDownToLine}
+                triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-white/20 hover:bg-[#333]"
+                items={[
+                  {
+                    label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                    icon: ArrowUp,
+                    testId: 'send-after-turn-option',
+                    onSelect: () => onSubmit(value),
+                  },
+                  {
+                    label: t('workbench.guide_current_turn', '引导当前回复'),
+                    icon: CornerDownRight,
+                    testId: 'guide-current-turn-option',
+                    onSelect: () => onSubmit(value, { guideWhenBusy: true }),
+                  },
+                  {
+                    label: t('workbench.interrupt_and_send', '打断并立即发送'),
+                    icon: Zap,
+                    testId: 'interrupt-and-send-option',
+                    onSelect: () => onSubmit(value, { interruptWhenBusy: true }),
+                  },
+                ]}
+              />
+            </div>
           ) : (
             <button
               type="submit"

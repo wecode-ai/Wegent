@@ -387,6 +387,7 @@ export function ProjectChatComposer({
           isStreaming={isStreaming}
           onPause={onPause}
           onQuickPhraseSelect={handleQuickPhraseSelect}
+          onSubmit={options => onSubmit(value, options)}
         />
       </form>
     </div>

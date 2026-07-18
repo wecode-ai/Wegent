@@ -20,6 +20,7 @@ import type {
   RuntimeFileChangesRevertResponse,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -1770,6 +1771,22 @@ export function createRuntimeWorkApiFromIpc(
           ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
           ...(data.additionalContext ? { additionalContext: data.additionalContext } : {}),
           ...(data.additional_context ? { additional_context: data.additional_context } : {}),
+        },
+        localDeviceId
+      )
+    },
+    async interruptAndSendRuntimeMessage(
+      data: RuntimeInterruptAndSendRequest
+    ): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.interrupt_and_send',
+        {
+          ...data,
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
         },
         localDeviceId
       )

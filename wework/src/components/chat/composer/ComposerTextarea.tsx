@@ -842,13 +842,18 @@ export function ComposerTextarea({
           event.stopPropagation()
           return true
         }
-        if (event.shiftKey) return false
+        if (event.shiftKey && !event.metaKey && !event.ctrlKey) return false
 
         event.preventDefault()
         if (snapshot.value.trim().length > 0 || canSend) {
+          const modifierPressed = event.metaKey || event.ctrlKey
           onSubmit(
             snapshot.value,
-            event.metaKey || event.ctrlKey ? { guideWhenBusy: true } : undefined
+            modifierPressed
+              ? event.shiftKey
+                ? { interruptWhenBusy: true }
+                : { guideWhenBusy: true }
+              : undefined
           )
         }
         return true

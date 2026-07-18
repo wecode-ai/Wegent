@@ -328,6 +328,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
+            "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.compact" => self.compact_task(payload).await,
@@ -1937,6 +1938,22 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "runtime": "codex",
         }))
+    }
+
+    async fn interrupt_and_send(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        if !self.abort_active_turn(&local_task_id).await {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": local_task_id,
+                "runtime": "codex",
+                "error": "runtime turn did not stop within timeout",
+                "code": "interrupt_timeout",
+            }));
+        }
+        self.send_message(payload).await
     }
 
     async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {

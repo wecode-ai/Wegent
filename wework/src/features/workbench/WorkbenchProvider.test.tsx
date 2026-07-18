@@ -238,6 +238,10 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       accepted: true,
       taskId: 'runtime-a',
     }),
+    interruptAndSendRuntimeMessage: vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    }),
     compactRuntimeTask: vi.fn().mockResolvedValue({
       accepted: true,
       taskId: 'runtime-a',
@@ -1486,6 +1490,12 @@ function FollowUpProbe() {
         onClick={() => void paneSession.send(undefined, { guideWhenBusy: true })}
       >
         send follow-up as guidance
+      </button>
+      <button
+        type="button"
+        onClick={() => void paneSession.send(undefined, { interruptWhenBusy: true })}
+      >
+        interrupt and send follow-up
       </button>
       <button
         type="button"
