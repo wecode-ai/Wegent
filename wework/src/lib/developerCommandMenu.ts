@@ -266,7 +266,8 @@ async function toggleCodexStreamDebug() {
   if (codexStreamDebugEnabled === null) {
     await refreshCodexStreamDebugStatus()
   }
-  const enabled = !(isRuntimeChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false))
+  const frontendWasEnabled = isRuntimeChatStreamDebugEnabled()
+  const enabled = !(frontendWasEnabled || (codexStreamDebugEnabled ?? false))
   setRuntimeChatStreamDebugEnabled(enabled)
   try {
     const state = await requestLocalExecutor<CodexStreamDebugState>(CODEX_STREAM_DEBUG_SET_METHOD, {
@@ -275,7 +276,7 @@ async function toggleCodexStreamDebug() {
     codexStreamDebugEnabled = state.enabled
     console.info(`[Wework dev] Stream logs ${state.enabled ? 'enabled' : 'disabled'}.`)
   } catch (error) {
-    setRuntimeChatStreamDebugEnabled(!enabled)
+    setRuntimeChatStreamDebugEnabled(frontendWasEnabled)
     console.error('[Wework dev] Failed to toggle Codex stream logs', error)
   }
 }

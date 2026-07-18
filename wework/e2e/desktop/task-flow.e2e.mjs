@@ -1232,8 +1232,13 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, '01-request-running-in-background.png')
-    await control.releaseRequestUserInputResponse()
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
+      UI_TIMEOUT_MS,
+      'Timed out waiting for the request-user-input SSE response'
+    )
     await control.command('press', 'body', { key: 'Escape' })
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="request-user-input-card"]', {
@@ -1243,9 +1248,12 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
     await captureVerificationScreenshot(control, '02-background-request-user-input-visible.png')
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 3_000))
     await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: UI_TIMEOUT_MS,
     })
     await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')

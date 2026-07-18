@@ -266,18 +266,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [state.runtimeWork]
   )
   const validRuntimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
-  const validTerminalPinnedPaneKeys = useMemo(
-    () => terminalPinnedPaneKeys.filter(key => validRuntimePaneKeySet.has(key)),
-    [terminalPinnedPaneKeys, validRuntimePaneKeySet]
-  )
   const prunedPaneKeys = useMemo(
     () => terminalPinnedPaneKeys.filter(key => !validRuntimePaneKeySet.has(key)),
     [terminalPinnedPaneKeys, validRuntimePaneKeySet]
   )
-  const pinnedPaneKeys = useMemo(
-    () => Array.from(new Set([...runtimePaneKeys, ...validTerminalPinnedPaneKeys])),
-    [runtimePaneKeys, validTerminalPinnedPaneKeys]
-  )
+  const pinnedPaneKeys = runtimePaneKeys
   const pinTerminalPane = useCallback((paneKey: string) => {
     setTerminalPinnedPaneKeys(current =>
       current.includes(paneKey) ? current : [...current, paneKey]

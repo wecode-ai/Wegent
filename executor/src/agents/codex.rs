@@ -187,6 +187,82 @@ pub struct CodexAppServerTurn {
 
 pub type CodexRequestUserInputReceiver = mpsc::Receiver<Value>;
 
+#[derive(Default)]
+struct InteractionAnswerRouterState {
+    pending: HashMap<String, oneshot::Sender<Result<Value, String>>>,
+    buffered: HashMap<String, Value>,
+}
+
+struct InteractionAnswerRouter {
+    state: Arc<Mutex<InteractionAnswerRouterState>>,
+}
+
+impl InteractionAnswerRouter {
+    fn new(mut receiver: CodexRequestUserInputReceiver) -> Arc<Self> {
+        let router = Arc::new(Self {
+            state: Arc::new(Mutex::new(InteractionAnswerRouterState::default())),
+        });
+        let state = router.state.clone();
+        tokio::spawn(async move {
+            while let Some(answer) = receiver.recv().await {
+                let mut state = state.lock().await;
+                let key = interaction_answer_key(&answer).or_else(|| {
+                    (state.pending.len() == 1)
+                        .then(|| state.pending.keys().next().cloned())
+                        .flatten()
+                });
+                let Some(key) = key else {
+                    continue;
+                };
+                if let Some(sender) = state.pending.remove(&key) {
+                    let _ = sender.send(Ok(answer));
+                } else {
+                    state.buffered.insert(key, answer);
+                }
+            }
+            let mut state = state.lock().await;
+            for (_, sender) in state.pending.drain() {
+                let _ = sender.send(Err("request_user_input response channel closed".to_owned()));
+            }
+        });
+        router
+    }
+
+    async fn receive(&self, key: String) -> Result<Value, String> {
+        let receiver = {
+            let mut state = self.state.lock().await;
+            if let Some(answer) = state.buffered.remove(&key) {
+                return Ok(answer);
+            }
+            let (sender, receiver) = oneshot::channel();
+            if state.pending.insert(key, sender).is_some() {
+                return Err("duplicate pending interaction correlation key".to_owned());
+            }
+            receiver
+        };
+        receiver
+            .await
+            .map_err(|_| "request_user_input response router closed".to_owned())?
+    }
+}
+
+fn interaction_answer_key(answer: &Value) -> Option<String> {
+    answer
+        .get("requestId")
+        .or_else(|| answer.get("request_id"))
+        .or_else(|| answer.get("itemId"))
+        .or_else(|| answer.get("item_id"))
+        .and_then(interaction_value_key)
+}
+
+fn interaction_value_key(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CodexAppServerEngine {
     binary: String,
@@ -1305,7 +1381,7 @@ async fn read_shared_turn_notifications(
     let request_user_input_answers = options
         .request_user_input_answers
         .take()
-        .map(|receiver| Arc::new(Mutex::new(receiver)));
+        .map(InteractionAnswerRouter::new);
     let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     loop {
         let receive_notification = async {
@@ -1530,7 +1606,7 @@ async fn interrupt_shared_turn(
 fn spawn_shared_request_user_input_response(
     client: &CodexAppServerClient,
     message: &Value,
-    request_user_input_answers: Option<Arc<Mutex<CodexRequestUserInputReceiver>>>,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
@@ -1538,15 +1614,12 @@ fn spawn_shared_request_user_input_response(
     let Some(receiver) = request_user_input_answers else {
         return Err("request_user_input requires a runtime response channel".to_owned());
     };
+    let correlation_key = interaction_value_key(&request_id)
+        .ok_or_else(|| "request_user_input message has invalid JSON-RPC id".to_owned())?;
     let client = client.clone();
     tokio::spawn(async move {
         let result = async {
-            let response = receiver
-                .lock()
-                .await
-                .recv()
-                .await
-                .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
+            let response = receiver.receive(correlation_key).await?;
             client
                 .send_response(request_id, request_user_input_result(response))
                 .await
@@ -1562,22 +1635,22 @@ fn spawn_shared_request_user_input_response(
 fn spawn_shared_mcp_server_elicitation_response(
     client: &CodexAppServerClient,
     message: &Value,
-    request_user_input_answers: Option<Arc<Mutex<CodexRequestUserInputReceiver>>>,
+    request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
+    let correlation_key = interaction_value_key(&request_id)
+        .ok_or_else(|| "mcpServer/elicitation/request has invalid JSON-RPC id".to_owned())?;
     let client = client.clone();
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
-            let result = match request_user_input_answers {
-                Some(receiver) => {
-                    let mut receiver = receiver.lock().await;
-                    receive_mcp_server_elicitation_response(&message, Some(&mut receiver)).await?
-                }
-                None => receive_mcp_server_elicitation_response(&message, None).await?,
+            let response = match request_user_input_answers {
+                Some(receiver) => Some(receiver.receive(correlation_key).await?),
+                None => None,
             };
+            let result = mcp_server_elicitation_response(&message, response.as_ref())?;
             client.send_response(request_id, result).await
         }
         .await;
@@ -4488,6 +4561,23 @@ async fn receive_mcp_server_elicitation_response(
     message: &Value,
     request_user_input_answers: Option<&mut CodexRequestUserInputReceiver>,
 ) -> Result<Value, String> {
+    if mcp_server_elicitation_request_user_input_params(message_params(message)).is_none() {
+        return mcp_server_elicitation_response(message, None);
+    }
+    let Some(receiver) = request_user_input_answers else {
+        return mcp_server_elicitation_response(message, None);
+    };
+    let response = receiver
+        .recv()
+        .await
+        .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
+    mcp_server_elicitation_response(message, Some(&response))
+}
+
+fn mcp_server_elicitation_response(
+    message: &Value,
+    response: Option<&Value>,
+) -> Result<Value, String> {
     let params = message_params(message);
     let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
     log_executor_event(
@@ -4529,14 +4619,10 @@ async fn receive_mcp_server_elicitation_response(
         return Ok(mcp_server_elicitation_decline_result());
     }
 
-    let Some(receiver) = request_user_input_answers else {
+    let Some(response) = response else {
         return Ok(mcp_server_elicitation_cancel_result());
     };
-    let response = receiver
-        .recv()
-        .await
-        .ok_or_else(|| "mcp elicitation response channel closed".to_owned())?;
-    let result = mcp_server_elicitation_result(params, &response);
+    let result = mcp_server_elicitation_result(params, response);
     log_executor_event(
         "codex mcp elicitation response",
         &[
@@ -4861,6 +4947,38 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn interaction_answer_router_matches_reverse_order_answers() {
+        let (sender, receiver) = mpsc::channel(2);
+        let router = InteractionAnswerRouter::new(receiver);
+        let first = {
+            let router = router.clone();
+            tokio::spawn(async move { router.receive("41".to_owned()).await })
+        };
+        let second = {
+            let router = router.clone();
+            tokio::spawn(async move { router.receive("42".to_owned()).await })
+        };
+
+        sender
+            .send(json!({"requestId": 42, "answers": {"choice": "second"}}))
+            .await
+            .expect("second answer should be sent");
+        sender
+            .send(json!({"requestId": 41, "answers": {"choice": "first"}}))
+            .await
+            .expect("first answer should be sent");
+
+        assert_eq!(
+            first.await.expect("first waiter should join").unwrap()["answers"]["choice"],
+            "first"
+        );
+        assert_eq!(
+            second.await.expect("second waiter should join").unwrap()["answers"]["choice"],
+            "second"
+        );
+    }
 
     #[test]
     fn normalize_reasoning_effort_preserves_supported_codex_levels() {

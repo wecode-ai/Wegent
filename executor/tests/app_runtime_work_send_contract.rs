@@ -1152,7 +1152,13 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
         block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["id"],
         "goal"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == "flood-sentinel"
+        })
+        .is_some()
+    })
+    .await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -2180,6 +2186,7 @@ while IFS= read -r line; do
         sleep 0.002
       fi
     done
+    printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"flood-sentinel","type":"commandExecution","status":"inProgress","command":"sentinel"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
