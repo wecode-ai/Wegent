@@ -15,7 +15,16 @@ interface LocalChatStreamDeps {
 let nextLocalChatStreamSubscriptionId = 1
 let activeLocalChatStreamSubscriptions = 0
 const LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-local-chat-stream'
-const MAX_PENDING_BLOCK_EVENTS_PER_TASK = 500
+const MAX_PENDING_BLOCKS_PER_TASK = 500
+
+type PendingBlockEvent = LocalExecutorEvent & {
+  event: 'response.block.created' | 'response.block.updated'
+}
+
+interface PendingBlockState {
+  created?: PendingBlockEvent
+  updated?: PendingBlockEvent
+}
 
 export function isLocalChatStreamDebugEnabled(): boolean {
   return globalThis.localStorage?.getItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
@@ -41,13 +50,13 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
   >()
   let nativeCleanup: (() => void) | null = null
   let nativeSubscribePromise: Promise<void> | null = null
-  const pendingBlockEventsByTask = new Map<string, LocalExecutorEvent[]>()
+  const pendingBlocksByTask = new Map<string, Map<string, PendingBlockState>>()
 
   function ensureNativeListener(): void {
     if (nativeCleanup || nativeSubscribePromise) return
     nativeSubscribePromise = Promise.resolve(
       deps.subscribe(event => {
-        rememberPendingBlockEvent(pendingBlockEventsByTask, event)
+        rememberPendingBlockEvent(pendingBlocksByTask, event)
         if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
           console.warn('[Wework] Local runtime task plan event received', {
             taskId: stringField(asRecord(event.payload), 'taskId') ?? null,
@@ -153,7 +162,7 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       replayPendingBlockEvents(
         handlers,
         subscriptions.get(subscriptionId)!.state,
-        pendingBlockEventsByTask
+        pendingBlocksByTask
       )
       activeLocalChatStreamSubscriptions += 1
       logLocalChatStreamSubscription('subscribed', subscriptionId, {
@@ -181,37 +190,117 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
 }
 
 function rememberPendingBlockEvent(
-  eventsByTask: Map<string, LocalExecutorEvent[]>,
+  blocksByTask: Map<string, Map<string, PendingBlockState>>,
   event: LocalExecutorEvent
 ): void {
   const taskKey = localExecutorEventTaskKey(event)
   if (!taskKey) return
 
-  if (isTerminalResponseEvent(event.event)) {
-    eventsByTask.delete(taskKey)
+  if (isFailedResponseEvent(event.event)) {
+    blocksByTask.delete(taskKey)
     return
   }
   if (event.event !== 'response.block.created' && event.event !== 'response.block.updated') return
 
-  const events = eventsByTask.get(taskKey) ?? []
-  events.push(event)
-  if (events.length > MAX_PENDING_BLOCK_EVENTS_PER_TASK) {
-    events.splice(0, events.length - MAX_PENDING_BLOCK_EVENTS_PER_TASK)
+  const blockId = responseBlockId(event)
+  if (!blockId) return
+
+  const blocks = blocksByTask.get(taskKey) ?? new Map<string, PendingBlockState>()
+  if (isResolvedBlockStatus(responseBlockStatus(event))) {
+    blocks.delete(blockId)
+    if (blocks.size === 0) blocksByTask.delete(taskKey)
+    return
   }
-  eventsByTask.set(taskKey, events)
+
+  const previous = blocks.get(blockId) ?? {}
+  blocks.set(blockId, mergePendingBlockState(previous, event))
+  while (blocks.size > MAX_PENDING_BLOCKS_PER_TASK) {
+    const oldestBlockId = blocks.keys().next().value
+    if (typeof oldestBlockId !== 'string') break
+    blocks.delete(oldestBlockId)
+  }
+  blocksByTask.set(taskKey, blocks)
 }
 
 function replayPendingBlockEvents(
   handlers: ChatStreamHandlers,
   state: ReturnType<typeof createResponseApiStreamState>,
-  eventsByTask: ReadonlyMap<string, LocalExecutorEvent[]>
+  blocksByTask: ReadonlyMap<string, ReadonlyMap<string, PendingBlockState>>
 ): void {
-  for (const events of eventsByTask.values()) {
-    for (const event of events) {
-      if (!isLocalExecutorEventInScope(event, handlers.scope)) continue
-      emitResponseApiEvent(handlers, event.event, event.payload, state)
+  for (const blocks of blocksByTask.values()) {
+    for (const block of blocks.values()) {
+      for (const event of [block.created, block.updated]) {
+        if (!event || !isLocalExecutorEventInScope(event, handlers.scope)) continue
+        emitResponseApiEvent(handlers, event.event, event.payload, state)
+      }
     }
   }
+}
+
+function responseBlockId(event: LocalExecutorEvent): string | undefined {
+  const data = asRecord(asRecord(event.payload).data)
+  return (
+    stringField(asRecord(data.block), 'id') ??
+    stringField(data, 'blockId') ??
+    stringField(data, 'block_id')
+  )
+}
+
+function responseBlockStatus(event: LocalExecutorEvent): string | undefined {
+  const data = asRecord(asRecord(event.payload).data)
+  return (
+    stringField(asRecord(data.block), 'status') ?? stringField(asRecord(data.updates), 'status')
+  )
+}
+
+function mergePendingBlockState(
+  previous: PendingBlockState,
+  event: PendingBlockEvent
+): PendingBlockState {
+  if (event.event === 'response.block.created') {
+    return { ...previous, created: mergePendingBlockEvent(previous.created, event) }
+  }
+  return { ...previous, updated: mergePendingBlockEvent(previous.updated, event) }
+}
+
+function mergePendingBlockEvent(
+  previous: PendingBlockEvent | undefined,
+  event: PendingBlockEvent
+): PendingBlockEvent {
+  if (!previous) return event
+  const previousPayload = asRecord(previous.payload)
+  const payload = asRecord(event.payload)
+  const previousData = asRecord(previousPayload.data)
+  const data = asRecord(payload.data)
+  return {
+    event: event.event,
+    payload: {
+      ...previousPayload,
+      ...payload,
+      data: {
+        ...previousData,
+        ...data,
+        block: {
+          ...asRecord(previousData.block),
+          ...asRecord(data.block),
+        },
+        updates: {
+          ...asRecord(previousData.updates),
+          ...asRecord(data.updates),
+        },
+      },
+    },
+  }
+}
+
+function isResolvedBlockStatus(status: string | undefined): boolean {
+  return (
+    status === 'done' ||
+    status === 'completed' ||
+    status === 'error' ||
+    status === 'failed' ||
+    status === 'cancelled'
+  )
 }
 
 function localExecutorEventTaskKey(event: LocalExecutorEvent): string | null {
@@ -221,12 +310,9 @@ function localExecutorEventTaskKey(event: LocalExecutorEvent): string | null {
   return `${stringField(payload, 'deviceId') ?? ''}:${taskId}`
 }
 
-function isTerminalResponseEvent(eventName: string): boolean {
+function isFailedResponseEvent(eventName: string): boolean {
   return (
-    eventName === 'response.completed' ||
-    eventName === 'response.failed' ||
-    eventName === 'response.incomplete' ||
-    eventName === 'error'
+    eventName === 'response.failed' || eventName === 'response.incomplete' || eventName === 'error'
   )
 }
 

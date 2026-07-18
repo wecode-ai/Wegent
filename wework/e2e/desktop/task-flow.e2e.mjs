@@ -401,6 +401,9 @@ class DesktopE2EServer {
     this.requestUserInputRelease = new Promise(resolvePromise => {
       this.releaseRequestUserInput = resolvePromise
     })
+    this.requestUserInputResponseWritten = new Promise(resolvePromise => {
+      this.resolveRequestUserInputResponseWritten = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
   }
@@ -520,6 +523,7 @@ class DesktopE2EServer {
 
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
+    return this.requestUserInputResponseWritten
   }
 
   async command(action, selector, options = {}) {
@@ -743,6 +747,7 @@ class DesktopE2EServer {
         functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
         responseCompleted(responseId),
       ])
+      this.resolveRequestUserInputResponseWritten()
       return
     }
 
@@ -1217,7 +1222,7 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    control.releaseRequestUserInputResponse()
+    await control.releaseRequestUserInputResponse()
     await control.command('press', 'body', { key: 'Escape' })
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="request-user-input-card"]', {

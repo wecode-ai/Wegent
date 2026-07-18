@@ -305,7 +305,6 @@ describe('createLocalChatStream', () => {
         },
       },
     })
-
     const onBlockCreated = vi.fn()
     stream.subscribe({
       scope: { deviceId: 'local-device', taskId: 'background-task' },
@@ -324,6 +323,97 @@ describe('createLocalChatStream', () => {
         render_payload: { kind: 'request_user_input', requestId: 42 },
       },
     })
+  })
+
+  test('retains unresolved blocks across frequent updates and removes resolved blocks', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const stream = createLocalChatStream({ subscribe, request })
+
+    await Promise.resolve()
+    listener({
+      event: 'response.block.created',
+      payload: {
+        taskId: 'background-task',
+        deviceId: 'local-device',
+        data: {
+          block: {
+            id: 'request-42',
+            type: 'tool',
+            tool_name: 'request_user_input',
+            status: 'pending',
+          },
+        },
+      },
+    })
+    listener({
+      event: 'response.block.updated',
+      payload: {
+        taskId: 'background-task',
+        deviceId: 'local-device',
+        data: {
+          blockId: 'request-42',
+          updates: {
+            status: 'pending',
+            renderPayload: { kind: 'request_user_input', requestId: 42 },
+          },
+        },
+      },
+    })
+    for (let index = 0; index <= 500; index += 1) {
+      listener({
+        event: 'response.block.updated',
+        payload: {
+          taskId: 'background-task',
+          deviceId: 'local-device',
+          data: {
+            blockId: 'noisy-block',
+            updates: { status: 'streaming', content: `thinking-${index}` },
+          },
+        },
+      })
+    }
+
+    const onBlockCreated = vi.fn()
+    const onBlockUpdated = vi.fn()
+    stream.subscribe({
+      scope: { deviceId: 'local-device', taskId: 'background-task' },
+      onBlockCreated,
+      onBlockUpdated,
+    })
+    expect(onBlockCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        block: expect.objectContaining({
+          id: 'request-42',
+          tool_name: 'request_user_input',
+        }),
+      })
+    )
+    expect(onBlockUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blockId: 'request-42',
+        status: 'pending',
+        renderPayload: { kind: 'request_user_input', requestId: 42 },
+      })
+    )
+
+    listener({
+      event: 'response.block.updated',
+      payload: {
+        taskId: 'background-task',
+        deviceId: 'local-device',
+        data: { blockId: 'request-42', updates: { status: 'done' } },
+      },
+    })
+    const lateBlockCreated = vi.fn()
+    stream.subscribe({
+      scope: { deviceId: 'local-device', taskId: 'background-task' },
+      onBlockCreated: lateBlockCreated,
+    })
+    expect(lateBlockCreated).not.toHaveBeenCalled()
   })
 
   test('keeps a late native listener active when no pane is subscribed', async () => {
