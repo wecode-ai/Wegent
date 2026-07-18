@@ -115,7 +115,7 @@ async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
   const pending = new Map()
-  const waitingCommandResponses = new Set()
+  let waitingCommandResponse = null
   let ready = null
   let app = null
   const server = createServer((request, response) => {
@@ -135,9 +135,9 @@ async function runServer(sessionPath, token) {
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
         if (command) return json(response, 200, command)
-        waitingCommandResponses.add(response)
+        waitingCommandResponse = response
         response.once('close', () => {
-          waitingCommandResponses.delete(response)
+          if (waitingCommandResponse === response) waitingCommandResponse = null
         })
         return
       }
@@ -167,9 +167,9 @@ async function runServer(sessionPath, token) {
           pending.set(id, { resolve: resolvePromise, reject })
         )
         const queuedCommand = { id, ...command }
-        const commandResponse = waitingCommandResponses.values().next().value
-        if (commandResponse) {
-          waitingCommandResponses.delete(commandResponse)
+        if (waitingCommandResponse) {
+          const commandResponse = waitingCommandResponse
+          waitingCommandResponse = null
           json(commandResponse, 200, queuedCommand)
         } else {
           queue.push(queuedCommand)
