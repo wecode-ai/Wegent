@@ -1218,6 +1218,7 @@ async function main() {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     control.releaseRequestUserInputResponse()
+    await control.command('press', 'body', { key: 'Escape' })
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="request-user-input-card"]', {
       text: REQUEST_USER_INPUT_QUESTION,
