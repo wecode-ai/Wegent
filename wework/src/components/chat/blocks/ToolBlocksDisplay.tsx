@@ -150,8 +150,7 @@ export function ToolBlocksDisplay({
     }
 
     blocks.forEach(block => {
-      const approvalPayload = block.type === 'tool' ? block.renderPayload : null
-      if (isRuntimeApprovalPayload(approvalPayload)) {
+      if (block.type === 'tool' && isRuntimeApprovalPayload(block.renderPayload)) {
         flushRegularBlocks()
         items.push({ type: 'approval', id: block.id, block })
         return

@@ -119,6 +119,12 @@ const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const noopSetInput = () => undefined
 
+function isRuntimeApprovalResponse(
+  response: RequestUserInputResponse | RuntimeApprovalResponse
+): response is RuntimeApprovalResponse {
+  return !('answers' in response)
+}
+
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
     state: workbenchState,
@@ -1153,7 +1159,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      const isApproval = 'decision' in response || 'permissions' in response
+      const isApproval = isRuntimeApprovalResponse(response)
       const message = isApproval ? '' : requestUserInputResponseText(response)
       const requestUserInputKey = isApproval ? null : requestUserInputResponseKey(response)
       setSendPhase('submitting')
