@@ -104,6 +104,10 @@ The workbench owns live state that cannot be serialized reliably, including comp
 
 Do not unmount the workbench during route transitions, and do not add incomplete restoration fallbacks for Terminal or browser state. New top-level pages should join the auxiliary-page rendering branch without changing the workbench lifecycle.
 
+## Workbench Pane Cache
+
+The desktop workbench caches up to 20 regular panes so messages, composer drafts, and local UI state survive switches between parallel tasks. Once the limit is exceeded, inactive panes are evicted in least-recently-used order. Panes for running tasks and panes with pinned terminals remain mounted outside the regular cache limit until the task finishes or the terminal is unpinned. Maintain this boundary through the existing `CachedWorkbenchPaneStack` LRU and pinning mechanisms; do not add a second pane cache in the layout.
+
 ## Audit Result
 
 - Desktop and mobile layouts no longer scan `messages` directly to decide whether the assistant is streaming; they read `paneSession.status.isAssistantStreaming`.
