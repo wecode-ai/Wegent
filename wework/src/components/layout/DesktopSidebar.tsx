@@ -3061,6 +3061,7 @@ export function DesktopSidebar({
                   if (app === 'wework') onOpenWorkbench?.()
                   if (app === 'todo') onOpenTodo?.()
                   if (app === 'apps') onOpenApps?.()
+                  if (app === 'wegent') navigateTo('/app/wegent')
                 }}
               />
             </div>

@@ -70,7 +70,15 @@ export function ChromeTitlebar({
       {/* Tab strip */}
       {iconOnlyTabs ? (
         <DesktopAppSwitcher
-          activeApp={activeKey === 'apps' ? 'apps' : activeKey === 'todo' ? 'todo' : 'wework'}
+          activeApp={
+            activeKey === 'apps'
+              ? 'apps'
+              : activeKey === 'todo'
+                ? 'todo'
+                : activeKey === 'wegent'
+                  ? 'wegent'
+                  : 'wework'
+          }
           onNavigate={onNavigate}
         />
       ) : (

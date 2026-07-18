@@ -1459,7 +1459,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <DesktopAppSwitcher
             activeApp="wework"
             onNavigate={app =>
-              navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+              navigateTo(
+                app === 'wework'
+                  ? '/'
+                  : app === 'todo'
+                    ? '/todo'
+                    : app === 'wegent'
+                      ? '/app/wegent'
+                      : '/apps'
+              )
             }
           />
         </div>

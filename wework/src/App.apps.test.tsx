@@ -161,9 +161,9 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
@@ -236,11 +236,9 @@ describe('App center route', () => {
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
     const weworkTab = screen.getByTestId('chrome-tab-wework')
-    const appsTab = screen.getByTestId('chrome-tab-apps')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(
-      weworkTab.compareDocumentPosition(appsTab) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(weworkTab).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
