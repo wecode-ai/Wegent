@@ -1179,10 +1179,10 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
     assert_eq!(sent["accepted"], true);
     wait_until_task_idle(&handler, "local-task-input").await;
 
-    let calls = read_json_lines(&log_path);
-    assert!(calls.iter().any(|call| {
+    wait_for_json_call(&log_path, |call| {
         call["id"] == 99 && call["result"]["answers"]["goal"]["answers"][0] == "Work goal"
-    }));
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -2633,6 +2633,19 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("expected at least {expected_turns} turn/start calls");
+}
+
+async fn wait_for_json_call<F>(log_path: &Path, matches: F)
+where
+    F: Fn(&Value) -> bool,
+{
+    for _ in 0..50 {
+        if read_json_lines(log_path).iter().any(&matches) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("expected JSON-RPC call was not recorded");
 }
 
 fn drain_events(events: &mut broadcast::Receiver<Value>) {
