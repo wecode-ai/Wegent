@@ -15,6 +15,7 @@ interface LocalChatStreamDeps {
 let nextLocalChatStreamSubscriptionId = 1
 let activeLocalChatStreamSubscriptions = 0
 const LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-local-chat-stream'
+const MAX_PENDING_BLOCK_EVENTS_PER_TASK = 500
 
 export function isLocalChatStreamDebugEnabled(): boolean {
   return globalThis.localStorage?.getItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
@@ -40,11 +41,13 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
   >()
   let nativeCleanup: (() => void) | null = null
   let nativeSubscribePromise: Promise<void> | null = null
+  const pendingBlockEventsByTask = new Map<string, LocalExecutorEvent[]>()
 
   function ensureNativeListener(): void {
     if (nativeCleanup || nativeSubscribePromise) return
     nativeSubscribePromise = deps
       .subscribe(event => {
+        rememberPendingBlockEvent(pendingBlockEventsByTask, event)
         if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
           console.warn('[Wework] Local runtime task plan event received', {
             taskId: stringField(asRecord(event.payload), 'taskId') ?? null,
@@ -155,6 +158,11 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
         eventCount: 0,
         textDeltaCount: 0,
       })
+      replayPendingBlockEvents(
+        handlers,
+        subscriptions.get(subscriptionId)!.state,
+        pendingBlockEventsByTask
+      )
       activeLocalChatStreamSubscriptions += 1
       logLocalChatStreamSubscription('subscribed', subscriptionId, {
         activeSubscriptions: activeLocalChatStreamSubscriptions,
@@ -178,6 +186,56 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       }
     },
   }
+}
+
+function rememberPendingBlockEvent(
+  eventsByTask: Map<string, LocalExecutorEvent[]>,
+  event: LocalExecutorEvent
+): void {
+  const taskKey = localExecutorEventTaskKey(event)
+  if (!taskKey) return
+
+  if (isTerminalResponseEvent(event.event)) {
+    eventsByTask.delete(taskKey)
+    return
+  }
+  if (event.event !== 'response.block.created' && event.event !== 'response.block.updated') return
+
+  const events = eventsByTask.get(taskKey) ?? []
+  events.push(event)
+  if (events.length > MAX_PENDING_BLOCK_EVENTS_PER_TASK) {
+    events.splice(0, events.length - MAX_PENDING_BLOCK_EVENTS_PER_TASK)
+  }
+  eventsByTask.set(taskKey, events)
+}
+
+function replayPendingBlockEvents(
+  handlers: ChatStreamHandlers,
+  state: ReturnType<typeof createResponseApiStreamState>,
+  eventsByTask: ReadonlyMap<string, LocalExecutorEvent[]>
+): void {
+  for (const events of eventsByTask.values()) {
+    for (const event of events) {
+      if (!isLocalExecutorEventInScope(event, handlers.scope)) continue
+      emitResponseApiEvent(handlers, event.event, event.payload, state)
+    }
+  }
+}
+
+function localExecutorEventTaskKey(event: LocalExecutorEvent): string | null {
+  const payload = asRecord(event.payload)
+  const taskId = stringField(payload, 'taskId')
+  if (!taskId) return null
+  return `${stringField(payload, 'deviceId') ?? ''}:${taskId}`
+}
+
+function isTerminalResponseEvent(eventName: string): boolean {
+  return (
+    eventName === 'response.completed' ||
+    eventName === 'response.failed' ||
+    eventName === 'response.incomplete' ||
+    eventName === 'error'
+  )
 }
 
 function logLocalChatTerminalEvent(

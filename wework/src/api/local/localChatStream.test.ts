@@ -278,6 +278,57 @@ describe('createLocalChatStream', () => {
     expect(secondChunk).not.toHaveBeenCalled()
   })
 
+  test('replays pending tool blocks when a background pane subscribes late', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const stream = createLocalChatStream({ subscribe, request })
+
+    stream.subscribe({
+      scope: { deviceId: 'local-device', taskId: 'foreground-task' },
+      onBlockCreated: vi.fn(),
+    })
+    await Promise.resolve()
+    listener({
+      event: 'response.block.created',
+      payload: {
+        taskId: 'background-task',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: {
+          block: {
+            id: 'request-42',
+            type: 'tool',
+            tool_name: 'request_user_input',
+            status: 'pending',
+            render_payload: { kind: 'request_user_input', requestId: 42 },
+          },
+        },
+      },
+    })
+
+    const onBlockCreated = vi.fn()
+    stream.subscribe({
+      scope: { deviceId: 'local-device', taskId: 'background-task' },
+      onBlockCreated,
+    })
+
+    expect(onBlockCreated).toHaveBeenCalledWith({
+      taskId: 'background-task',
+      subtaskId: '1001',
+      deviceId: 'local-device',
+      block: {
+        id: 'request-42',
+        type: 'tool',
+        tool_name: 'request_user_input',
+        status: 'pending',
+        render_payload: { kind: 'request_user_input', requestId: 42 },
+      },
+    })
+  })
+
   test('cleans up a late native listener when all subscribers release before it is ready', async () => {
     let resolveSubscribe!: (unlisten: () => void) => void
     const unlisten = vi.fn()
