@@ -1407,6 +1407,7 @@ function FollowUpProbe() {
         set ls follow-up
       </button>
       <button
+        data-testid="follow-up-add-code-comment"
         type="button"
         onClick={() =>
           paneSession.addCodeComment({
@@ -1510,6 +1511,7 @@ function FollowUpProbe() {
         send follow-up as guidance
       </button>
       <button
+        data-testid="follow-up-interrupt-and-send"
         type="button"
         onClick={() => void paneSession.send(undefined, { interruptWhenBusy: true })}
       >
@@ -1550,6 +1552,7 @@ function FollowUpProbe() {
         guide first queued
       </button>
       <button
+        data-testid="queued-interrupt-and-send-first"
         type="button"
         onClick={() => {
           if (firstQueuedMessage) void paneSession.interruptAndSendQueued(firstQueuedMessage.id)
@@ -7829,7 +7832,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('guide first queued'))
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
 
-    await userEvent.click(screen.getByText('interrupt first queued'))
+    await userEvent.click(screen.getByTestId('queued-interrupt-and-send-first'))
     await waitFor(() => expect(interruptAndSendRuntimeMessage).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
 
@@ -7931,12 +7934,12 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
-    await userEvent.click(screen.getByText('add code comment'))
+    await userEvent.click(screen.getByTestId('follow-up-add-code-comment'))
     await userEvent.click(screen.getByText('set follow-up'))
     await userEvent.click(screen.getByText('send follow-up'))
     expect(screen.getByTestId('code-comment-context-count')).toHaveTextContent('0')
 
-    await userEvent.click(screen.getByText('interrupt first queued'))
+    await userEvent.click(screen.getByTestId('queued-interrupt-and-send-first'))
 
     await waitFor(() => expect(interruptAndSendRuntimeMessage).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
