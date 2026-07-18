@@ -213,7 +213,8 @@ function rememberPendingBlockEvent(
   }
 
   const previous = blocks.get(blockId) ?? {}
-  blocks.set(blockId, mergePendingBlockState(previous, event))
+  const pendingEvent: PendingBlockEvent = { event: event.event, payload: event.payload }
+  blocks.set(blockId, mergePendingBlockState(previous, pendingEvent))
   while (blocks.size > MAX_PENDING_BLOCKS_PER_TASK) {
     const oldestBlockId = blocks.keys().next().value
     if (typeof oldestBlockId !== 'string') break
