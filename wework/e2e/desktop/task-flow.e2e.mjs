@@ -1221,8 +1221,11 @@ async function main() {
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
     await control.command('waitFor', '[data-testid="request-user-input-card"]', {
       text: REQUEST_USER_INPUT_QUESTION,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
     await captureVerificationScreenshot(control, 'background-request-user-input.png')
     await control.command('click', '[data-testid="request-user-input-ignore-button"]')
     await control.command('waitFor', '[data-testid="chat-message-input"]', {
