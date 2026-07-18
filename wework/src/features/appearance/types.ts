@@ -23,6 +23,15 @@ export interface ThemePalette {
   codeBg: string
 }
 
+export interface WorkbenchBackgroundConfig {
+  imagePath: string | null
+  visibility: number
+  blur: number
+  inMain: boolean
+  inSidebar: boolean
+  inTopBar: boolean
+}
+
 export interface AppearanceConfig {
   mode: AppearanceMode
   accentColor: string
@@ -33,18 +42,26 @@ export interface AppearanceConfig {
   sidebarTranslucent: boolean
   contrast: number
   backgroundImagePath: string | null
+  separateBackgroundsByTheme: boolean
+  themeBackgroundsInitialized: boolean
   backgroundVisibility: number
   backgroundBlur: number
   backgroundInMain: boolean
   backgroundInSidebar: boolean
   backgroundInTopBar: boolean
+  lightBackground: WorkbenchBackgroundConfig
+  darkBackground: WorkbenchBackgroundConfig
   light: ThemePalette
   dark: ThemePalette
 }
 
-export type AppearanceUpdate = Partial<Omit<AppearanceConfig, 'light' | 'dark'>> & {
+export type AppearanceUpdate = Partial<
+  Omit<AppearanceConfig, 'light' | 'dark' | 'lightBackground' | 'darkBackground'>
+> & {
   light?: Partial<ThemePalette>
   dark?: Partial<ThemePalette>
+  lightBackground?: Partial<WorkbenchBackgroundConfig>
+  darkBackground?: Partial<WorkbenchBackgroundConfig>
 }
 
 export interface AppearanceContextValue {

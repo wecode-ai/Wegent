@@ -79,6 +79,12 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
         dark: update.dark
           ? { ...current.appearance.dark, ...update.dark }
           : current.appearance.dark,
+        lightBackground: update.lightBackground
+          ? { ...current.appearance.lightBackground, ...update.lightBackground }
+          : current.appearance.lightBackground,
+        darkBackground: update.darkBackground
+          ? { ...current.appearance.darkBackground, ...update.darkBackground }
+          : current.appearance.darkBackground,
       })
 
       return {
