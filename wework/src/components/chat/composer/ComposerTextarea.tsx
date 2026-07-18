@@ -545,8 +545,8 @@ export function ComposerTextarea({
   )
 
   const selectMentionMenuRow = useCallback(
-    (row: MentionMenuRow) => {
-      const trigger = activeMenuRef.current?.trigger
+    (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
+      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
       const editor = editorRef.current
       if (!trigger || !editor) return false
       if (row.kind === 'candidate') {
@@ -626,9 +626,9 @@ export function ComposerTextarea({
       const row = mentionMenuRows[index]
       if (!row) return
       setSelectedIndex(index)
-      selectMentionMenuRow(row)
+      selectMentionMenuRow(row, activeMenu?.trigger)
     },
-    [mentionMenuRows, selectMentionMenuRow]
+    [activeMenu?.trigger, mentionMenuRows, selectMentionMenuRow]
   )
 
   const selectHighlightedSlashCommand = useCallback(() => {

@@ -1778,18 +1778,22 @@ export function createRuntimeWorkApiFromIpc(
     async interruptAndSendRuntimeMessage(
       data: RuntimeInterruptAndSendRequest
     ): Promise<RuntimeSendResponse> {
-      const localDeviceId = await resolveDeviceId({ address: data.address })
-      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
-        .address as RuntimeTaskAddress
-      return request(
-        'runtime.tasks.interrupt_and_send',
-        {
-          ...data,
-          taskId: normalizedAddress.taskId,
-          address: normalizedAddress,
-        },
-        localDeviceId
-      )
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      if (!payload.executionRequest) {
+        console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
+          taskId: payload.taskId,
+          address: runtimeAddressDebug(payload),
+          payloadKeys: Object.keys(payload).sort(),
+        })
+        throw new Error('Runtime interrupt payload missing executionRequest')
+      }
+      console.debug('[Wework] Local runtime interrupt payload', {
+        taskId: payload.taskId,
+        address: runtimeAddressDebug(payload),
+        payloadKeys: Object.keys(payload).sort(),
+      })
+      return request('runtime.tasks.interrupt_and_send', payload, localDeviceId)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)

@@ -171,6 +171,7 @@ function QueueRow({
   canReorder = false,
   onCancel,
 }: QueueRowProps) {
+  const { t } = useTranslation('common')
   const {
     attributes,
     listeners,
@@ -235,10 +236,10 @@ function QueueRow({
             data-testid={`queue-interrupt-button-${id}`}
             onClick={() => onInterrupt?.(id)}
             className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
-            aria-label="打断并立即发送"
+            aria-label={t('workbench.interrupt_and_send')}
           >
             <Zap className="h-3.5 w-3.5" />
-            <span>打断并发送</span>
+            <span>{t('workbench.interrupt_and_send')}</span>
           </button>
         )}
         {mode === 'queue' && (
@@ -278,7 +279,7 @@ function QueueRow({
                 onSelect: () => onEdit?.(id),
               },
               {
-                label: '打断并立即发送',
+                label: t('workbench.interrupt_and_send'),
                 icon: Zap,
                 testId: `queue-interrupt-button-${id}`,
                 onSelect: () => onInterrupt?.(id),

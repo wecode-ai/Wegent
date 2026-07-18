@@ -240,7 +240,7 @@ export function CompactChatComposer({
           className={[
             'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
             'z-chrome',
-            'pr-14',
+            isStreaming && canSend ? 'pr-[92px]' : 'pr-14',
           ].join(' ')}
         >
           <ComposerTextarea
@@ -256,7 +256,10 @@ export function CompactChatComposer({
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-secondary outline-none placeholder:text-text-muted"
-            skillMenuClassName="left-[-1rem] right-[-3.5rem]"
+            skillMenuClassName={[
+              'left-[-1rem]',
+              isStreaming && canSend ? 'right-[-5.75rem]' : 'right-[-3.5rem]',
+            ].join(' ')}
             onListLocalSkills={onListLocalSkills}
             onListLocalApps={onListLocalApps}
             models={models}

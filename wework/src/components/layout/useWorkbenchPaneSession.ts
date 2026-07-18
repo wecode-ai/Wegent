@@ -778,6 +778,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!pendingEntry) return
         const [guidanceId, guidanceMessage] = pendingEntry
         pendingAppliedGuidancesRef.current.delete(guidanceId)
+        if (interruptedGuidanceIdsRef.current.delete(guidanceId)) {
+          setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+          return
+        }
         appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {
           id: guidanceMessage.id,
           createdAt: new Date(payload.appliedAtMs).toISOString(),
@@ -1060,9 +1064,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (!currentRuntimeTask) return false
       if (interruptAndSendInFlightRef.current) return false
       interruptAndSendInFlightRef.current = true
-      pendingAppliedGuidancesRef.current.forEach((_, id) =>
+      const interruptedGuidanceIds = new Set<string>()
+      pendingAppliedGuidancesRef.current.forEach((_, id) => {
         interruptedGuidanceIdsRef.current.add(id)
-      )
+        interruptedGuidanceIds.add(id)
+      })
       setQueuedMessages(messages => [
         ...messages.filter(item => item.id !== message.id),
         { ...message, status: 'sending', notice: '正在打断并发送' },
@@ -1088,15 +1094,26 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       interruptAndSendInFlightRef.current = false
       if (!sent) {
-        setQueuedMessages(messages => messages.filter(item => item.id !== message.id))
+        interruptedGuidanceIds.forEach(id => {
+          if (id !== message.id) interruptedGuidanceIdsRef.current.delete(id)
+        })
+        setQueuedMessages(messages =>
+          messages
+            .filter(item => item.id !== message.id)
+            .map(item =>
+              interruptedGuidanceIds.has(item.id) &&
+              !pendingAppliedGuidancesRef.current.has(item.id)
+                ? { ...item, status: 'queued', notice: undefined }
+                : item
+            )
+        )
         setSendPhase('idle')
         return false
       }
 
       markRuntimeTerminalAdditionalContextDelivered(additionalContext)
-      pendingAppliedGuidancesRef.current.clear()
       setQueuedMessages(messages =>
-        messages.filter(item => item.id !== message.id && !isInterruptedGuidance(item))
+        messages.filter(item => item.id !== message.id && !interruptedGuidanceIds.has(item.id))
       )
       appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
         id: message.id,
@@ -1503,6 +1520,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
         if (!result.sent) {
           pendingAppliedGuidancesRef.current.delete(id)
+          if (interruptedGuidanceIdsRef.current.delete(id)) {
+            setQueuedMessages(messages => messages.filter(message => message.id !== id))
+            return
+          }
           setQueuedMessages(messages =>
             messages.map(message =>
               message.id === id
@@ -1513,6 +1534,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
       } catch (error) {
         pendingAppliedGuidancesRef.current.delete(id)
+        if (interruptedGuidanceIdsRef.current.delete(id)) {
+          setQueuedMessages(messages => messages.filter(message => message.id !== id))
+          return
+        }
         console.error('[Wework] Queued guidance send failed', {
           id,
           error,
@@ -1994,6 +2019,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (sent) return
       scopedSetInput(combinedMessage.displayContent ?? combinedMessage.content)
       combinedMessage.attachments?.forEach(projectChat.addExistingAttachment)
+      if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
+        setCodeCommentContexts(combinedMessage.codeComments)
+      }
     },
     [input, interruptAndSendQueuedMessage, projectChat, queuedMessages, scopedSetInput, setInput]
   )

@@ -409,6 +409,7 @@ describe('ChatInput', () => {
       },
     ]
     const onSendQueuedAsGuidance = vi.fn()
+    const onInterruptAndSendQueuedMessage = vi.fn()
     const onCancelQueuedMessage = vi.fn()
     const onEditQueuedMessage = vi.fn()
 
@@ -422,6 +423,7 @@ describe('ChatInput', () => {
         queuedMessages={queuedMessages}
         guidanceMessages={guidanceMessages}
         onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+        onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
         onCancelQueuedMessage={onCancelQueuedMessage}
         onEditQueuedMessage={onEditQueuedMessage}
       />
@@ -435,11 +437,16 @@ describe('ChatInput', () => {
     ).toEqual(['conversation-queue-row-guidance-1', 'conversation-queue-row-queued-1'])
 
     await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-interrupt-button-guidance-1'))
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-interrupt-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-cancel-button-queued-1'))
 
     expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
+    expect(onInterruptAndSendQueuedMessage).toHaveBeenNthCalledWith(1, 'guidance-1')
+    expect(onInterruptAndSendQueuedMessage).toHaveBeenNthCalledWith(2, 'queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
@@ -729,6 +736,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('send-message-button')).toBeEnabled()
     expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-[92px]')
 
     await userEvent.click(screen.getByTestId('send-message-button'))
 

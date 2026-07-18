@@ -1943,6 +1943,7 @@ impl RuntimeWorkRpcHandler {
     async fn interrupt_and_send(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -2222,7 +2223,7 @@ impl RuntimeWorkRpcHandler {
                 link.completed_at = Some(link.updated_at);
             })
             .or_else(|| self.local_task_link(&local_task_id));
-        self.resolve_pending_request_user_input_for_cancel(&local_task_id);
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -2245,7 +2246,7 @@ impl RuntimeWorkRpcHandler {
         })
     }
 
-    fn resolve_pending_request_user_input_for_cancel(&self, local_task_id: &str) {
+    fn resolve_pending_request_user_input_for_stop(&self, local_task_id: &str) {
         let sender = self
             .active_request_user_inputs
             .lock()
