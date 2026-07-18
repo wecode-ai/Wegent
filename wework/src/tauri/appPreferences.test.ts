@@ -12,6 +12,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 const mergedDefaultPreferences = {
+  defaultCodexPermissionMode: 'full_access',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,

@@ -1705,6 +1705,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           <BufferedChatInput
                             insertion={conversationSelectionInsertion}
                             value={paneSession.input}
+                            permissionMode={paneSession.permissionMode}
+                            onPermissionModeChange={paneSession.setPermissionMode}
                             onChange={paneSession.setInput}
                             onSubmit={paneSession.send}
                             disabled={composerDisabled}
@@ -1821,6 +1823,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   />
                   <BufferedChatInput
                     value={paneSession.input}
+                    permissionMode={paneSession.permissionMode}
+                    onPermissionModeChange={paneSession.setPermissionMode}
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}

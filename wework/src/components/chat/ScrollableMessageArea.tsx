@@ -6,7 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
-  RequestUserInputResponse,
+  RuntimeInteractiveResponse,
   RuntimeTurnNavigationItem,
   TurnFileChangesSummary,
 } from '@/types/api'
@@ -77,7 +77,7 @@ interface ScrollableMessageAreaProps {
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
-  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputSubmit?: (response: RuntimeInteractiveResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (

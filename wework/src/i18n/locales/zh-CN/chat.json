@@ -65,6 +65,14 @@
     "submit": "提交",
     "custom_placeholder": "输入你的回答"
   },
+  "approval": {
+    "title": "需要批准",
+    "decline": "拒绝",
+    "accept_once": "允许本次",
+    "accept_session": "本会话允许",
+    "accept_rule": "始终允许此规则",
+    "submitted": "已提交"
+  },
   "plan_card": {
     "title": "计划",
     "generating": "正在生成",

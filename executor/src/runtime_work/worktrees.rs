@@ -970,6 +970,7 @@ mod tests {
             runtime_handle: Value::Null,
             parent: None,
             ephemeral: false,
+            permission_mode: "full_access".to_owned(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,

@@ -447,7 +447,11 @@ export function useWorkbenchRuntimeMessaging({
       activeDeviceId?: string,
       options?: Pick<
         SendCurrentInputOptions,
-        'clientMessageId' | 'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
+        | 'clientMessageId'
+        | 'initialGoal'
+        | 'onError'
+        | 'onRuntimeTaskOptimisticOpen'
+        | 'permissionMode'
       > & {
         ephemeral?: boolean
         openInMainPane?: boolean
@@ -557,6 +561,7 @@ export function useWorkbenchRuntimeMessaging({
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
         execution: payload.execution,
+        ...(options?.permissionMode ? { permissionMode: options.permissionMode } : {}),
         ...(options?.ephemeral ? { ephemeral: true } : {}),
         ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
@@ -885,6 +890,7 @@ export function useWorkbenchRuntimeMessaging({
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
           clientMessageId: options?.clientMessageId,
+          permissionMode: options?.permissionMode,
         }
       )
       if (sent) {

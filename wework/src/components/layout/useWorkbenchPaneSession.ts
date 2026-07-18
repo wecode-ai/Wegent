@@ -35,8 +35,10 @@ import {
 } from '@/lib/runtime-terminal-context'
 import type {
   Attachment,
+  CodexPermissionMode,
   ModelOptions,
   RequestUserInputResponse,
+  RuntimeApprovalResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
   RuntimePlanEventPayload,
@@ -59,6 +61,8 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { useWorkbenchPaneActive } from './workbenchPaneStack'
+import { getAppPreferences } from '@/tauri/appPreferences'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -143,6 +147,37 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const input = projectChat.input ?? ''
   const scopedSetInput = projectChat.setInput ?? noopSetInput
   const [error, setError] = useState<string | null>(null)
+  const [permissionMode, setPermissionMode] = useState<CodexPermissionMode>(
+    currentRuntimeTask?.permissionMode ?? 'full_access'
+  )
+  const updatePermissionMode = useCallback(
+    (mode: CodexPermissionMode) => {
+      const previous = permissionMode
+      setPermissionMode(mode)
+      if (!currentRuntimeTask) return
+      void requestLocalExecutor('runtime.tasks.permissions.update', {
+        taskId: currentRuntimeTask.taskId,
+        permissionMode: mode,
+      }).catch(updateError => {
+        console.error('[Wework] Failed to update Codex permission mode', updateError)
+        setPermissionMode(previous)
+        setError(i18n.t('common:workbench.codex_permission_update_failed'))
+      })
+    },
+    [currentRuntimeTask, permissionMode]
+  )
+  useEffect(() => {
+    let active = true
+    const nextMode = currentRuntimeTask?.permissionMode
+      ? Promise.resolve(currentRuntimeTask.permissionMode)
+      : getAppPreferences().then(preferences => preferences.defaultCodexPermissionMode)
+    void nextMode.then(mode => {
+      if (active) setPermissionMode(mode)
+    })
+    return () => {
+      active = false
+    }
+  }, [currentRuntimeTask?.permissionMode, currentRuntimeTask?.taskId])
   const setInput = useCallback(
     (value: string) => {
       scopedSetInput(value)
@@ -1113,13 +1148,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const sendRequestUserInputResponse = useCallback(
     async (
-      response: RequestUserInputResponse,
+      response: RequestUserInputResponse | RuntimeApprovalResponse,
       options: SendRequestUserInputResponseOptions = {}
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      const message = requestUserInputResponseText(response)
-      const requestUserInputKey = requestUserInputResponseKey(response)
+      const isApproval = 'decision' in response || 'permissions' in response
+      const message = isApproval ? '' : requestUserInputResponseText(response)
+      const requestUserInputKey = isApproval ? null : requestUserInputResponseKey(response)
       setSendPhase('submitting')
       const runtimeModelOverride = options.forceDefaultCollaborationMode
         ? { collaborationMode: 'default' }
@@ -1139,7 +1175,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           return next
         })
       }
-      applyLocalRequestUserInputResponse(response)
+      if (!isApproval) applyLocalRequestUserInputResponse(response)
       const runtimeModelFields = options.appendUserMessage
         ? getRuntimeModelFields(runtimeModelOverride)
         : {}
@@ -1149,7 +1185,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         message,
         ...(appendedUserMessage ? { clientMessageId: appendedUserMessage.id } : {}),
         ...runtimeModelFields,
-        ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
+        ...(options.appendUserMessage
+          ? {}
+          : isApproval
+            ? { approvalResponse: response }
+            : { requestUserInputResponse: response }),
         ...(additionalContext ? { additionalContext } : {}),
       })
       if (sent) {
@@ -1554,6 +1594,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             const sent = await sendCurrentInput(submittedInput, {
               clientMessageId: optimisticMessage.id,
               initialGoal,
+              permissionMode,
               onRuntimeTaskOptimisticOpen: (address, context) => {
                 setPendingGoalState(current =>
                   current
@@ -1640,7 +1681,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             : null
         const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
         if (!effectiveSubmittedInput && currentAttachments.length === 0 && !hasCodeComments) {
-          void sendCurrentInput('', { codeCommentContexts })
+          void sendCurrentInput('', { codeCommentContexts, permissionMode })
           return
         }
 
@@ -1665,6 +1706,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               clientMessageId: optimisticMessage.id,
               codeCommentContexts,
               initialGoal: pendingInitialGoal,
+              permissionMode,
               onError: setError,
               onRuntimeTaskOptimisticOpen: (address, context) => {
                 if (pendingInitialGoal) {
@@ -1794,6 +1836,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         input,
         pendingGoalState,
         paneStatus.isBusy,
+        permissionMode,
         projectChat,
         queuedMessages.length,
         sendCurrentInput,
@@ -2093,6 +2136,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     codeCommentContexts,
     input,
     setInput,
+    permissionMode,
+    setPermissionMode: updatePermissionMode,
     error,
     status: paneStatus,
     sending: paneStatus.isSubmitting,

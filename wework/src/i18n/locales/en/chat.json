@@ -65,6 +65,14 @@
     "submit": "Submit",
     "custom_placeholder": "Type your answer"
   },
+  "approval": {
+    "title": "Approval required",
+    "decline": "Decline",
+    "accept_once": "Allow once",
+    "accept_session": "Allow for session",
+    "accept_rule": "Always allow this rule",
+    "submitted": "Submitted"
+  },
   "plan_card": {
     "title": "Plan",
     "generating": "Generating",

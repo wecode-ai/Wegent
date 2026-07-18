@@ -24,7 +24,7 @@ import {
 import type {
   Attachment,
   DeviceInfo,
-  RequestUserInputResponse,
+  RuntimeInteractiveResponse,
   TurnFileChangesSummary,
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -89,7 +89,7 @@ interface MessageListProps {
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onOpenLocalSkillFile?: (path: string) => void
-  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputSubmit?: (response: RuntimeInteractiveResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
@@ -1604,7 +1604,7 @@ function AssistantMessage({
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputSubmit?: (response: RuntimeInteractiveResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void

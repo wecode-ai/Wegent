@@ -1,12 +1,18 @@
 import { ArrowUp, ClipboardList, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type {
+  CodexPermissionMode,
+  ModelOptions,
+  RuntimeContextUsage,
+  UnifiedModel,
+} from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { PermissionModeSelector } from './PermissionModeSelector'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -32,6 +38,8 @@ interface ComposerToolbarProps {
   isStreaming?: boolean
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
+  permissionMode?: CodexPermissionMode
+  onPermissionModeChange?: (mode: CodexPermissionMode) => void
 }
 
 export function ComposerToolbar({
@@ -58,6 +66,8 @@ export function ComposerToolbar({
   isStreaming = false,
   onPause,
   onQuickPhraseSelect,
+  permissionMode,
+  onPermissionModeChange,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
@@ -87,6 +97,13 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {permissionMode && onPermissionModeChange && (
+          <PermissionModeSelector
+            value={permissionMode}
+            disabled={disabled}
+            onChange={onPermissionModeChange}
+          />
+        )}
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}

@@ -4,6 +4,7 @@ import type {
   BindRuntimeTaskIMSessionsResponse,
   CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  CodexPermissionMode,
   DeleteDeviceWorkspaceRequest,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
@@ -77,6 +78,7 @@ export interface SendCurrentInputOptions {
   clientMessageId?: string
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
+  permissionMode?: CodexPermissionMode
   onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,

@@ -886,7 +886,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             thread_fields.push(("operation", thread_operation.to_owned()));
             log_executor_event("codex shared thread request started", &thread_fields);
             let thread = client.request(thread_operation, thread_params).await?;
-            validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_permission_profile(thread_operation, &thread, request)?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1146,7 +1146,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 rpc.request(thread_operation, thread_params, &mut state),
             )
             .await?;
-            validate_codex_permission_profile(thread_operation, &thread)?;
+            validate_codex_permission_profile(thread_operation, &thread, request)?;
             let thread_id = thread
                 .get("thread")
                 .and_then(|thread| thread.get("id"))
@@ -1397,6 +1397,16 @@ async fn read_shared_turn_notifications(
             continue;
         }
 
+        if is_codex_approval_request(&message) {
+            answer_shared_approval_request(
+                client,
+                &message,
+                &mut options.request_user_input_answers,
+            )
+            .await?;
+            continue;
+        }
+
         if message
             .get("method")
             .and_then(Value::as_str)
@@ -1535,6 +1545,32 @@ async fn answer_shared_request_user_input(
     client
         .send_response(request_id, request_user_input_result(response))
         .await
+}
+
+fn is_codex_approval_request(message: &Value) -> bool {
+    matches!(
+        message.get("method").and_then(Value::as_str),
+        Some("item/commandExecution/requestApproval")
+            | Some("item/fileChange/requestApproval")
+            | Some("item/permissions/requestApproval")
+    )
+}
+
+async fn answer_shared_approval_request(
+    client: &CodexAppServerClient,
+    message: &Value,
+    responses: &mut Option<CodexRequestUserInputReceiver>,
+) -> Result<(), String> {
+    let request_id = json_rpc_request_id(message)
+        .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
+    let Some(receiver) = responses else {
+        return Err("approval request requires a runtime response channel".to_owned());
+    };
+    let response = receiver
+        .recv()
+        .await
+        .ok_or_else(|| "approval response channel closed".to_owned())?;
+    client.send_response(request_id, response).await
 }
 
 async fn answer_shared_mcp_server_elicitation(
@@ -2019,6 +2055,12 @@ impl JsonRpcConnection {
                     .await?;
                 continue;
             }
+
+            if is_codex_approval_request(&message) {
+                self.answer_approval_request(&message, &mut request_user_input_answers)
+                    .await?;
+                continue;
+            }
             if message
                 .get("method")
                 .and_then(Value::as_str)
@@ -2054,6 +2096,27 @@ impl JsonRpcConnection {
         self.write_message(json!({
             "id": request_id,
             "result": request_user_input_result(response),
+        }))
+        .await
+    }
+
+    async fn answer_approval_request(
+        &mut self,
+        message: &Value,
+        responses: &mut Option<CodexRequestUserInputReceiver>,
+    ) -> Result<(), String> {
+        let request_id = json_rpc_request_id(message)
+            .ok_or_else(|| "approval request is missing JSON-RPC id".to_owned())?;
+        let Some(receiver) = responses else {
+            return Err("approval request requires a runtime response channel".to_owned());
+        };
+        let response = receiver
+            .recv()
+            .await
+            .ok_or_else(|| "approval response channel closed".to_owned())?;
+        self.write_message(json!({
+            "id": request_id,
+            "result": response,
         }))
         .await
     }
@@ -3952,15 +4015,75 @@ fn resolve_codex_binary(value: &str) -> String {
 }
 
 const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
+const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
-fn insert_codex_runtime_permissions(params: &mut serde_json::Map<String, Value>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexPermissionMode {
+    FullAccess,
+    RequestApproval,
+    ApproveForMe,
+}
+
+impl CodexPermissionMode {
+    fn from_request(request: &ExecutionRequest) -> Self {
+        match request
+            .extra
+            .get("permission_mode")
+            .or_else(|| request.extra.get("permissionMode"))
+            .and_then(Value::as_str)
+        {
+            Some("request_approval") => Self::RequestApproval,
+            Some("approve_for_me") => Self::ApproveForMe,
+            _ => Self::FullAccess,
+        }
+    }
+
+    fn permission_profile(self) -> &'static str {
+        match self {
+            Self::FullAccess => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+            Self::RequestApproval | Self::ApproveForMe => CODEX_WORKSPACE_PERMISSION_PROFILE,
+        }
+    }
+
+    fn approval_policy(self) -> &'static str {
+        match self {
+            Self::FullAccess => "never",
+            Self::RequestApproval | Self::ApproveForMe => "on-request",
+        }
+    }
+
+    fn approvals_reviewer(self) -> &'static str {
+        match self {
+            Self::ApproveForMe => "auto_review",
+            Self::FullAccess | Self::RequestApproval => "user",
+        }
+    }
+}
+
+fn insert_codex_runtime_permissions(
+    params: &mut serde_json::Map<String, Value>,
+    request: &ExecutionRequest,
+) {
+    let mode = CodexPermissionMode::from_request(request);
     params.insert(
         "permissions".to_owned(),
-        Value::String(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE.to_owned()),
+        Value::String(mode.permission_profile().to_owned()),
+    );
+    params.insert(
+        "approvalPolicy".to_owned(),
+        Value::String(mode.approval_policy().to_owned()),
+    );
+    params.insert(
+        "approvalsReviewer".to_owned(),
+        Value::String(mode.approvals_reviewer().to_owned()),
     );
 }
 
-fn validate_codex_permission_profile(operation: &str, response: &Value) -> Result<(), String> {
+fn validate_codex_permission_profile(
+    operation: &str,
+    response: &Value,
+    request: &ExecutionRequest,
+) -> Result<(), String> {
     let active_profile = response
         .get("activePermissionProfile")
         .and_then(|profile| profile.get("id"))
@@ -3976,9 +4099,14 @@ fn validate_codex_permission_profile(operation: &str, response: &Value) -> Resul
     if active_profile.is_none() && sandbox_type.is_none() {
         return Ok(());
     }
-    if active_profile == Some(CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE)
-        && sandbox_type == Some("dangerFullAccess")
-    {
+    let mode = CodexPermissionMode::from_request(request);
+    let expected_sandbox = match mode {
+        CodexPermissionMode::FullAccess => "dangerFullAccess",
+        CodexPermissionMode::RequestApproval | CodexPermissionMode::ApproveForMe => {
+            "workspaceWrite"
+        }
+    };
+    if active_profile == Some(mode.permission_profile()) && sandbox_type == Some(expected_sandbox) {
         return Ok(());
     }
 
@@ -3998,11 +4126,7 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -4028,11 +4152,7 @@ fn thread_fork_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if request.ephemeral {
         params.insert("ephemeral".to_owned(), Value::Bool(true));
     }
@@ -4091,11 +4211,7 @@ fn thread_resume_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
 }
 
@@ -4142,11 +4258,7 @@ fn turn_start_params(
             Value::String(client_user_message_id.to_owned()),
         );
     }
-    params.insert(
-        "approvalPolicy".to_owned(),
-        Value::String("never".to_owned()),
-    );
-    insert_codex_runtime_permissions(&mut params);
+    insert_codex_runtime_permissions(&mut params, request);
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
@@ -5465,6 +5577,8 @@ mod tests {
                 params["permissions"],
                 CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
             );
+            assert_eq!(params["approvalPolicy"], "never");
+            assert_eq!(params["approvalsReviewer"], "user");
             assert!(params.get("sandboxPolicy").is_none());
             assert!(params.get("sandbox").is_none());
         }
@@ -5477,8 +5591,12 @@ mod tests {
             "sandbox": {"type": "workspaceWrite", "networkAccess": false},
         });
 
-        let error = validate_codex_permission_profile("thread/resume", &response)
-            .expect_err("workspace-write must not be accepted");
+        let error = validate_codex_permission_profile(
+            "thread/resume",
+            &response,
+            &ExecutionRequest::default(),
+        )
+        .expect_err("workspace-write must not be accepted");
 
         assert!(error.contains("active_profile=:workspace"));
         assert!(error.contains("sandbox=workspaceWrite"));
@@ -5491,7 +5609,42 @@ mod tests {
             "sandbox": {"type": "dangerFullAccess"},
         });
 
-        validate_codex_permission_profile("thread/resume", &response).unwrap();
+        validate_codex_permission_profile("thread/resume", &response, &ExecutionRequest::default())
+            .unwrap();
+    }
+
+    #[test]
+    fn codex_interactive_permission_modes_use_workspace_profile() {
+        for (permission_mode, reviewer) in [
+            ("request_approval", "user"),
+            ("approve_for_me", "auto_review"),
+        ] {
+            let mut request = ExecutionRequest::default();
+            request.extra.insert(
+                "permission_mode".to_owned(),
+                Value::String(permission_mode.to_owned()),
+            );
+
+            let params = turn_start_params(
+                "thread-1",
+                &request,
+                &CodexLaunchConfig::default(),
+                Vec::new(),
+            );
+            assert_eq!(params["permissions"], CODEX_WORKSPACE_PERMISSION_PROFILE);
+            assert_eq!(params["approvalPolicy"], "on-request");
+            assert_eq!(params["approvalsReviewer"], reviewer);
+
+            validate_codex_permission_profile(
+                "turn/start",
+                &json!({
+                    "activePermissionProfile": {"id": ":workspace"},
+                    "sandbox": {"type": "workspaceWrite"},
+                }),
+                &request,
+            )
+            .unwrap();
+        }
     }
 
     #[test]

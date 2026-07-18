@@ -246,6 +246,7 @@ export interface DeleteProjectWorktreeResponse {
 }
 
 export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
+export type CodexPermissionMode = 'full_access' | 'request_approval' | 'approve_for_me'
 
 export interface RuntimeTaskAddress {
   deviceId: string
@@ -253,6 +254,7 @@ export interface RuntimeTaskAddress {
   threadId?: string | null
   workspacePath?: string | null
   runtimeHandle?: Record<string, unknown> | null
+  permissionMode?: CodexPermissionMode
 }
 
 export type RuntimeAdditionalContextKind = 'application' | 'untrusted'
@@ -364,6 +366,7 @@ export interface RuntimeTaskSummary {
   modelSelection?: ModelSelectionConfig | null
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
+  permissionMode?: CodexPermissionMode
 }
 
 export interface DeviceWorkspaceUpsert {
@@ -569,8 +572,11 @@ export interface RuntimeSendRequest {
   source?: RuntimeMessageSource | null
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
+  approvalResponse?: RuntimeApprovalResponse
+  approval_response?: RuntimeApprovalResponse
   additionalContext?: RuntimeAdditionalContext
   additional_context?: RuntimeAdditionalContext
+  permissionMode?: CodexPermissionMode
 }
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
@@ -592,6 +598,14 @@ export interface RequestUserInputResponse {
   item_id?: string
   answers: Record<string, RequestUserInputResponseAnswer>
 }
+
+export interface RuntimeApprovalResponse {
+  decision?: string | Record<string, unknown>
+  permissions?: Record<string, unknown>
+  scope?: 'turn' | 'session'
+}
+
+export type RuntimeInteractiveResponse = RequestUserInputResponse | RuntimeApprovalResponse
 
 export interface RuntimeSendResponse {
   accepted: boolean
@@ -1029,6 +1043,7 @@ export interface RuntimeTaskCreateRequest {
   initialGoal?: RuntimeGoalCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  permissionMode?: CodexPermissionMode
 }
 
 export interface RuntimeTaskCreateResponse {

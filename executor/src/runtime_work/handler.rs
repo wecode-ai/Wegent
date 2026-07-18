@@ -328,6 +328,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
+            "runtime.tasks.permissions.update" => self.update_task_permissions(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.compact" => self.compact_task(payload).await,
@@ -1749,6 +1750,7 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
+        link.permission_mode = request_permission_mode(&request);
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
@@ -1830,6 +1832,11 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
+        if let Some(response) = approval_response(&payload) {
+            return self
+                .send_request_user_input_response(&local_task_id, response)
+                .await;
+        }
         if existing_link
             .as_ref()
             .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
@@ -1861,6 +1868,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
+        let permission_mode = request_permission_mode(&request);
         Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -1913,6 +1921,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        self.store.update_task(&local_task_id, |link| {
+            link.permission_mode = permission_mode;
+        });
         self.schedule_worktree_prune();
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
@@ -1936,6 +1947,43 @@ impl RuntimeWorkRpcHandler {
             "deviceId": self.device_id,
             "taskId": local_task_id,
             "runtime": "codex",
+        }))
+    }
+
+    async fn update_task_permissions(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let mode = string_field(&payload, "permissionMode")
+            .or_else(|| string_field(&payload, "permission_mode"))
+            .unwrap_or_else(|| "full_access".to_owned());
+        let (profile, approval_policy, reviewer) = match mode.as_str() {
+            "request_approval" => (":workspace", "on-request", "user"),
+            "approve_for_me" => (":workspace", "on-request", "auto_review"),
+            _ => (":danger-full-access", "never", "user"),
+        };
+        let link = self
+            .store
+            .update_task(&local_task_id, |link| link.permission_mode = mode.clone())
+            .ok_or_else(|| AppIpcError::new("not_found", "runtime task not found"))?;
+        if let Some(thread_id) = runtime_session_id_from_link(&link) {
+            self.call_codex_thread_method_without_list_invalidation(
+                "thread/settings/update",
+                json!({
+                    "threadId": thread_id,
+                    "permissions": profile,
+                    "approvalPolicy": approval_policy,
+                    "approvalsReviewer": reviewer,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        }
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "taskId": local_task_id,
+            "permissionMode": mode,
+            "effective": if link.running { "next_turn" } else { "effective" },
         }))
     }
 
@@ -3978,6 +4026,28 @@ fn request_user_input_response(payload: &Value) -> Option<Value> {
         .or_else(|| payload.get("request_user_input_response"))
         .filter(|value| value.is_object())
         .cloned()
+}
+
+fn approval_response(payload: &Value) -> Option<Value> {
+    payload
+        .get("approvalResponse")
+        .or_else(|| payload.get("approval_response"))
+        .filter(|value| value.is_object())
+        .cloned()
+}
+
+fn request_permission_mode(request: &ExecutionRequest) -> String {
+    match request
+        .extra
+        .get("permission_mode")
+        .or_else(|| request.extra.get("permissionMode"))
+        .and_then(Value::as_str)
+    {
+        Some("request_approval") => "request_approval",
+        Some("approve_for_me") => "approve_for_me",
+        _ => "full_access",
+    }
+    .to_owned()
 }
 
 fn empty_request_user_input_response() -> Value {
