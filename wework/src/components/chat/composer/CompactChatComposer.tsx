@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   Attachment,
+  CodexPermissionMode,
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
@@ -27,6 +28,8 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { PermissionModeSelector } from './PermissionModeSelector'
+import styles from './CompactChatComposer.module.css'
 
 interface CompactChatComposerProps {
   value: string
@@ -61,6 +64,8 @@ interface CompactChatComposerProps {
   isModelSelectionReady?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  permissionMode?: CodexPermissionMode
+  onPermissionModeChange?: (mode: CodexPermissionMode) => void
 }
 
 export function CompactChatComposer({
@@ -96,6 +101,8 @@ export function CompactChatComposer({
   isModelSelectionReady = true,
   isStreaming = false,
   onPause,
+  permissionMode,
+  onPermissionModeChange,
 }: CompactChatComposerProps) {
   const { t } = useTranslation('common')
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -190,22 +197,8 @@ export function CompactChatComposer({
           {disabledReason}
         </div>
       )}
-      {goalDraftActive ? (
-        <GoalDraftPill onCancel={onCancelGoalDraft} className="mb-2" />
-      ) : planModeActive ? (
-        <ComposerModePill
-          label={t('workbench.plan_mode', '计划模式')}
-          icon={ClipboardList}
-          testId="plan-mode-pill"
-          cancelTestId="cancel-plan-mode-button"
-          cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
-          onCancel={onClearPlanMode}
-          className="mb-2"
-          title={t('workbench.collaboration_mode', '运行模式')}
-        />
-      ) : null}
       <form
-        className="flex w-full items-end gap-2"
+        className={`${styles.toolbar} flex w-full items-end gap-2`}
         onSubmit={event => {
           event.preventDefault()
           debugComposerEvent('compact-form-submit', {
@@ -230,7 +223,31 @@ export function CompactChatComposer({
         >
           <Plus className="h-6 w-6" />
         </button>
-        <QuickPhraseMenu compact disabled={disabled} onSelect={handleQuickPhraseSelect} />
+        <QuickPhraseMenu compact mobile disabled={disabled} onSelect={handleQuickPhraseSelect} />
+        {permissionMode && onPermissionModeChange && (
+          <PermissionModeSelector
+            value={permissionMode}
+            disabled={disabled}
+            mobile
+            className={styles.permissionControl}
+            onChange={onPermissionModeChange}
+          />
+        )}
+        {goalDraftActive ? (
+          <GoalDraftPill onCancel={onCancelGoalDraft} mobile className={styles.modeControl} />
+        ) : planModeActive ? (
+          <ComposerModePill
+            label={t('workbench.plan_mode', '计划模式')}
+            icon={ClipboardList}
+            testId="plan-mode-pill"
+            cancelTestId="cancel-plan-mode-button"
+            cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
+            onCancel={onClearPlanMode}
+            mobile
+            className={styles.modeControl}
+            title={t('workbench.collaboration_mode', '运行模式')}
+          />
+        ) : null}
         <div
           data-testid="compact-input-pill"
           className={[

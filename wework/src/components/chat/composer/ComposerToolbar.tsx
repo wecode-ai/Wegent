@@ -13,6 +13,7 @@ import { ModelSelector } from './ModelSelector'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
 import { PermissionModeSelector } from './PermissionModeSelector'
+import styles from './ComposerToolbar.module.css'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -72,17 +73,27 @@ export function ComposerToolbar({
   const { t } = useTranslation('common')
 
   return (
-    <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
-      <div className="flex min-w-0 items-center gap-2">
+    <div
+      className={`${styles.toolbar} mt-auto flex min-h-8 items-center justify-between gap-3 pt-1`}
+    >
+      <div className={`${styles.leftControls} flex min-w-0 items-center gap-2`}>
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
-        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
+        <QuickPhraseMenu compact disabled={disabled} onSelect={onQuickPhraseSelect} />
+        {permissionMode && onPermissionModeChange && (
+          <PermissionModeSelector
+            value={permissionMode}
+            disabled={disabled}
+            className={styles.permissionControl}
+            onChange={onPermissionModeChange}
+          />
+        )}
         {goalDraftActive ? (
-          <GoalDraftPill onCancel={onCancelGoalDraft} />
+          <GoalDraftPill className={styles.modeControl} onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
           <ComposerModePill
             label={t('workbench.plan_mode', '计划模式')}
@@ -93,17 +104,11 @@ export function ComposerToolbar({
             disabled={disabled}
             onCancel={onClearPlanMode}
             title={t('workbench.collaboration_mode', '运行模式')}
+            className={styles.modeControl}
           />
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        {permissionMode && onPermissionModeChange && (
-          <PermissionModeSelector
-            value={permissionMode}
-            disabled={disabled}
-            onChange={onPermissionModeChange}
-          />
-        )}
+      <div className="flex min-w-0 items-center gap-1.5">
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}

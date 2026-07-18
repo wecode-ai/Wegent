@@ -1,0 +1,43 @@
+.toolbar {
+  container-type: inline-size;
+}
+
+@container (max-width: 36rem) {
+  .permissionControl {
+    width: 2.75rem;
+    padding-inline: 0;
+    justify-content: center;
+  }
+
+  .permissionControl select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    cursor: pointer;
+    opacity: 0;
+  }
+}
+
+@container (max-width: 30rem) {
+  .modeControl {
+    width: 2.75rem;
+    padding-inline: 0;
+  }
+
+  .modeControl [data-mode-icon] {
+    margin-right: 0;
+  }
+
+  .modeControl [data-mode-label] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}

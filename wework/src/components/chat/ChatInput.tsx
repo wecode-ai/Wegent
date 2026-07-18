@@ -456,6 +456,8 @@ export function ChatInput({
       )}
       <CompactChatComposer
         {...composerProps}
+        permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
         attachments={controls.attachments}
         codeComments={codeComments}
         uploadingFiles={controls.uploadingFiles}

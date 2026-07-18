@@ -16,6 +16,7 @@ interface ComposerModePillProps {
   className?: string
   title?: string
   icon?: LucideIcon
+  mobile?: boolean
 }
 
 export function ComposerModePill({
@@ -31,6 +32,7 @@ export function ComposerModePill({
   className = '',
   title,
   icon: Icon,
+  mobile = false,
 }: ComposerModePillProps) {
   const { t } = useTranslation('common')
   const interactive = Boolean(onClick)
@@ -57,7 +59,7 @@ export function ComposerModePill({
       }}
       onKeyDown={handleKeyDown}
       className={[
-        'group relative flex h-7 w-fit shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted px-2.5 text-sm font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary',
+        `group relative flex w-fit shrink-0 items-center justify-center border border-border/70 bg-muted text-sm font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary ${mobile ? 'h-11 rounded-full px-3' : 'h-7 rounded-xl px-2.5'}`,
         interactive && !disabled ? 'cursor-pointer' : '',
         disabled ? 'cursor-not-allowed opacity-50' : '',
         className,
@@ -69,6 +71,7 @@ export function ComposerModePill({
       {Icon && (
         <Icon
           data-testid={`${testId}-icon`}
+          data-mode-icon
           className="mr-1.5 h-4 w-4 shrink-0 transition-opacity group-hover:opacity-0"
           aria-hidden="true"
         />
@@ -88,7 +91,7 @@ export function ComposerModePill({
           <CircleX className="h-4 w-4 shrink-0" />
         </button>
       )}
-      <span>{label}</span>
+      <span data-mode-label>{label}</span>
     </div>
   )
 }
@@ -96,9 +99,10 @@ export function ComposerModePill({
 interface GoalDraftPillProps {
   onCancel?: () => void
   className?: string
+  mobile?: boolean
 }
 
-export function GoalDraftPill({ onCancel, className = '' }: GoalDraftPillProps) {
+export function GoalDraftPill({ onCancel, className = '', mobile = false }: GoalDraftPillProps) {
   const { t } = useTranslation('common')
 
   return (
@@ -110,6 +114,7 @@ export function GoalDraftPill({ onCancel, className = '' }: GoalDraftPillProps) 
       cancelLabel={t('workbench.cancel_goal_draft', '取消目标')}
       onCancel={onCancel}
       className={className}
+      mobile={mobile}
       title={t('workbench.confirm_goal', '明确目标')}
     />
   )

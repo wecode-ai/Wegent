@@ -8,10 +8,11 @@ import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 interface QuickPhraseMenuProps {
   disabled?: boolean
   compact?: boolean
+  mobile?: boolean
   onSelect: (phrase: QuickPhrase) => void
 }
 
-export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenuProps) {
+export function QuickPhraseMenu({ disabled, compact, mobile, onSelect }: QuickPhraseMenuProps) {
   const { t } = useTranslation('common')
   const phrases = useQuickPhrases()
   const [open, setOpen] = useState(false)
@@ -56,7 +57,9 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
         onClick={() => setOpen(value => !value)}
         className={
           compact
-            ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted disabled:opacity-40'
+            ? `flex items-center justify-center text-text-secondary hover:bg-muted disabled:opacity-40 ${
+                mobile ? 'h-11 w-11 rounded-full' : 'h-8 w-8 rounded-lg'
+              }`
             : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40'
         }
         aria-label={t('workbench.quick_phrases', '快捷短语')}
