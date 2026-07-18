@@ -179,6 +179,8 @@ Worktree 设置是设备级状态，持久化在 `$WEGENT_EXECUTOR_HOME/runtime-
 
 Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
 
+项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
+
 在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Tauri App 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。

@@ -864,6 +864,7 @@ export interface RuntimeManagedWorktree {
   path: string
   repositoryName: string
   sourcePath?: string | null
+  permanent?: boolean
   createdAt?: number | null
   updatedAt?: number | null
   state: 'active' | 'restorable' | 'missing' | 'deleted' | string
@@ -883,6 +884,7 @@ export interface RuntimeWorktreePrepareRequest {
   sourcePath: string
   worktreeId: string
   ref?: string | null
+  permanent?: boolean
 }
 
 export interface RuntimeWorktreeMutationResponse {
