@@ -2282,11 +2282,8 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('chrome-tab-wework')
     )
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-apps')
-    )
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
-    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('h-8', 'w-8', 'text-text-secondary')
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
@@ -2360,7 +2357,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
     expect(collapsedHeaderControls.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
+    expect(collapsedHeaderControls.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
       'h-full',

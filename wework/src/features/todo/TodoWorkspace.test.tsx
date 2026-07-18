@@ -176,14 +176,9 @@ describe('TodoWorkspace V4-01', () => {
     )
     expect(screen.getByTestId('todo-expand-sidebar')).toHaveClass('h-8', 'w-8', 'rounded-lg')
     expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
-      screen.getByTestId('todo-collapsed-app-wework')
-    )
-    expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
       screen.getByTestId('todo-collapsed-app-current')
     )
-    expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
-      screen.getByTestId('todo-collapsed-app-apps')
-    )
+    expect(screen.queryByTestId('todo-collapsed-app-apps')).not.toBeInTheDocument()
   })
 
   it('opens the V4-02 project switcher and filters projects', async () => {
