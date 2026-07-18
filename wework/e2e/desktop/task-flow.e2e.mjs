@@ -20,6 +20,7 @@ const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
+const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -41,6 +42,7 @@ const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -190,33 +192,29 @@ async function triggerModelReloadUntilCloudFailure(control) {
 }
 
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
-  let lastError
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await sendPrompt(control, selector, prompt)
-    try {
-      return await withTimeout(
-        control.awaitScenarioRequest(scenario),
-        2_000,
-        `The model service did not receive the ${scenario} request`
-      )
-    } catch (error) {
-      lastError = error
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-    }
-  }
-  throw lastError
+  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  await sendPrompt(control, selector, prompt)
+  return withTimeout(
+    scenarioRequest,
+    UI_TIMEOUT_MS,
+    `The model service did not receive the ${scenario} request`
+  )
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  const selectedModelText = await control.command(
+    'waitFor',
+    '[data-testid="model-selector-button"]',
+    {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  if (selectedModelText.includes(modelLabel)) return
   await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', '[data-testid="model-control-menu-model"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
+  await control.command('hover', '[data-testid="model-control-menu-model"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
@@ -724,6 +722,14 @@ class DesktopE2EServer {
 
     if (this.scenario === 'request_user_input') {
       this.recordScenarioRequest('request_user_input', modelRequest)
+      if (JSON.stringify(body.input).includes('wework-e2e-request-user-input')) {
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(REQUEST_USER_INPUT_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
       assert.ok(
         JSON.stringify(body).includes(REQUEST_USER_INPUT_PROMPT),
         'The real Codex request did not contain the request-user-input prompt'
@@ -961,6 +967,9 @@ async function main() {
         WEGENT_EXECUTOR_LOG_DIR: resultDir,
         WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
         DEVICE_ID: `wework-e2e-device-${process.pid}`,
+        DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+        DEVICE_SESSION_GATEWAY_PORT: '0',
+        VITE_WEWORK_E2E: 'true',
         WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
         WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
@@ -992,7 +1001,6 @@ async function main() {
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control)
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
@@ -1177,33 +1185,35 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', composerSelector, {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-    await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', '[data-testid="model-selector-button"]', {
-      text: MODEL_LABEL,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
+    if (!REQUEST_INPUT_ONLY) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await control.command('click', `[data-testid="${taskRowTestId}"]`)
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: MODEL_LABEL,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
 
-    phase = 'follow-up'
-    control.setScenario('follow_up')
-    await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: FOLLOW_UP_COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const followUpRequest = await withTimeout(
-      control.awaitScenarioRequest('follow_up'),
-      UI_TIMEOUT_MS,
-      'The model service did not receive the follow-up request'
-    )
-    assert.ok(
-      JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
-      'The follow-up request did not preserve the user prompt'
-    )
+      phase = 'follow-up'
+      control.setScenario('follow_up')
+      const followUpRequest = await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        FOLLOW_UP_PROMPT,
+        'follow_up'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FOLLOW_UP_COMPLETION_TEXT,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      assert.ok(
+        JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+        'The follow-up request did not preserve the user prompt'
+      )
+    }
 
     phase = 'background-request-user-input'
     control.setScenario('request_user_input')
@@ -1222,6 +1232,7 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await captureVerificationScreenshot(control, '01-request-running-in-background.png')
     await control.releaseRequestUserInputResponse()
     await control.command('press', 'body', { key: 'Escape' })
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
@@ -1231,13 +1242,15 @@ async function main() {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-    await captureVerificationScreenshot(control, 'background-request-user-input.png')
-    await control.command('click', '[data-testid="request-user-input-ignore-button"]')
-    await control.command('waitFor', '[data-testid="chat-message-input"]', {
+    await captureVerificationScreenshot(control, '02-background-request-user-input-visible.png')
+    await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: REQUEST_USER_INPUT_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')
     await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+    if (REQUEST_INPUT_ONLY) return
 
     phase = 'cancellation'
     control.setScenario('cancellation')

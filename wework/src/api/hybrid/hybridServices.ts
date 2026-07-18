@@ -2,7 +2,7 @@ import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
-import { createLocalChatStream } from '@/api/local/localChatStream'
+import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -870,7 +870,7 @@ export function createHybridWorkbenchServices(
     },
   }
 
-  const cloudRuntimeChatStream = createLocalChatStream({
+  const cloudRuntimeChatStream = createRuntimeChatStream({
     request: (method, params) => {
       const deviceId = cloudDeviceIdFromData(params)
       return cloudRuntimeIpc.request(method, params, deviceId)

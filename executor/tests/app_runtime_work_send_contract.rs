@@ -1152,6 +1152,7 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
         block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["id"],
         "goal"
     );
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -2170,6 +2171,12 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
+    sleep 0.1
+    notification_index=0
+    while [ "$notification_index" -lt 2200 ]; do
+      printf '%s\n' '{{"method":"thread/name/updated","params":{{"threadId":"thread-noise","name":"waiting"}}}}'
+      notification_index=$((notification_index + 1))
+    done
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'

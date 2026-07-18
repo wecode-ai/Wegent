@@ -72,7 +72,7 @@ describe('developerCommandMenu', () => {
     expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.set', {
       enabled: true,
     })
-    expect(localStorage.getItem('wework:debug-local-chat-stream')).toBe('1')
+    expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBe('1')
   })
 
   test('dispatches an event to simulate an app update', () => {

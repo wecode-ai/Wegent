@@ -1302,20 +1302,29 @@ async fn read_shared_turn_notifications(
 ) -> Result<ExecutionOutcome, String> {
     let mut last_outcome: Option<ExecutionOutcome> = None;
     let mut waiting_for_initial_progress = true;
+    let request_user_input_answers = options
+        .request_user_input_answers
+        .take()
+        .map(|receiver| Arc::new(Mutex::new(receiver)));
+    let (response_error_tx, mut response_error_rx) = mpsc::unbounded_channel();
     loop {
         let receive_notification = async {
             if let Some(cancel_rx) = options.cancellation.as_mut() {
                 tokio::select! {
-                    _ = cancel_rx => None,
-                    message = notification_rx.recv() => Some(message),
+                    _ = cancel_rx => Ok(None),
+                    error = response_error_rx.recv() => Err(error.unwrap_or_else(|| "request_user_input response task closed".to_owned())),
+                    message = notification_rx.recv() => Ok(Some(message)),
                 }
             } else {
-                Some(notification_rx.recv().await)
+                tokio::select! {
+                    error = response_error_rx.recv() => Err(error.unwrap_or_else(|| "request_user_input response task closed".to_owned())),
+                    message = notification_rx.recv() => Ok(Some(message)),
+                }
             }
         };
         let received = if waiting_for_initial_progress {
             match timeout_at(startup_deadline, receive_notification).await {
-                Ok(received) => received,
+                Ok(received) => received?,
                 Err(_) => {
                     return Err(recover_stalled_shared_turn(
                         client,
@@ -1326,7 +1335,7 @@ async fn read_shared_turn_notifications(
                 }
             }
         } else {
-            receive_notification.await
+            receive_notification.await?
         };
         let Some(received) = received else {
             options.cancellation = None;
@@ -1388,12 +1397,12 @@ async fn read_shared_turn_notifications(
             .and_then(Value::as_str)
             .is_some_and(|method| method == "item/tool/requestUserInput")
         {
-            answer_shared_request_user_input(
+            spawn_shared_request_user_input_response(
                 client,
                 &message,
-                &mut options.request_user_input_answers,
-            )
-            .await?;
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
             continue;
         }
 
@@ -1402,12 +1411,12 @@ async fn read_shared_turn_notifications(
             .and_then(Value::as_str)
             .is_some_and(|method| method == "mcpServer/elicitation/request")
         {
-            answer_shared_mcp_server_elicitation(
+            spawn_shared_mcp_server_elicitation_response(
                 client,
                 &message,
-                &mut options.request_user_input_answers,
-            )
-            .await?;
+                request_user_input_answers.clone(),
+                response_error_tx.clone(),
+            )?;
             continue;
         }
 
@@ -1518,35 +1527,65 @@ async fn interrupt_shared_turn(
         .map(|_| ())
 }
 
-async fn answer_shared_request_user_input(
+fn spawn_shared_request_user_input_response(
     client: &CodexAppServerClient,
     message: &Value,
-    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    request_user_input_answers: Option<Arc<Mutex<CodexRequestUserInputReceiver>>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
     let Some(receiver) = request_user_input_answers else {
         return Err("request_user_input requires a runtime response channel".to_owned());
     };
-    let response = receiver
-        .recv()
-        .await
-        .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
-    client
-        .send_response(request_id, request_user_input_result(response))
-        .await
+    let client = client.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let response = receiver
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| "request_user_input response channel closed".to_owned())?;
+            client
+                .send_response(request_id, request_user_input_result(response))
+                .await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
 }
 
-async fn answer_shared_mcp_server_elicitation(
+fn spawn_shared_mcp_server_elicitation_response(
     client: &CodexAppServerClient,
     message: &Value,
-    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    request_user_input_answers: Option<Arc<Mutex<CodexRequestUserInputReceiver>>>,
+    response_error_tx: mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
-    let result =
-        receive_mcp_server_elicitation_response(message, request_user_input_answers).await?;
-    client.send_response(request_id, result).await
+    let client = client.clone();
+    let message = message.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let result = match request_user_input_answers {
+                Some(receiver) => {
+                    let mut receiver = receiver.lock().await;
+                    receive_mcp_server_elicitation_response(&message, Some(&mut receiver)).await?
+                }
+                None => receive_mcp_server_elicitation_response(&message, None).await?,
+            };
+            client.send_response(request_id, result).await
+        }
+        .await;
+        if let Err(error) = result {
+            let _ = response_error_tx.send(error);
+        }
+    });
+    Ok(())
 }
 
 async fn notification_belongs_to_thread(
@@ -2066,7 +2105,8 @@ impl JsonRpcConnection {
         let request_id = json_rpc_request_id(message)
             .ok_or_else(|| "mcpServer/elicitation/request is missing JSON-RPC id".to_owned())?;
         let result =
-            receive_mcp_server_elicitation_response(message, request_user_input_answers).await?;
+            receive_mcp_server_elicitation_response(message, request_user_input_answers.as_mut())
+                .await?;
         self.write_message(json!({
             "id": request_id,
             "result": result,
@@ -4446,7 +4486,7 @@ const MCP_ELICITATION_DECLINE: &str = "Decline";
 
 async fn receive_mcp_server_elicitation_response(
     message: &Value,
-    request_user_input_answers: &mut Option<CodexRequestUserInputReceiver>,
+    request_user_input_answers: Option<&mut CodexRequestUserInputReceiver>,
 ) -> Result<Value, String> {
     let params = message_params(message);
     let mode = params.get("mode").and_then(Value::as_str).unwrap_or("");
