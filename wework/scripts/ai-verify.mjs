@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { removeQueuedCommand, requestedControlPort } from './ai-verify-queue.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -144,7 +145,7 @@ async function runServer(sessionPath, token) {
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
         const waiter = pending.get(result.id)
-        if (!waiter) return json(response, 404, { error: `Unknown command ${result.id}` })
+        if (!waiter) return json(response, 200, { ok: true, expired: true })
         pending.delete(result.id)
         result.ok
           ? waiter.resolve(result.value ?? '')
@@ -181,6 +182,7 @@ async function runServer(sessionPath, token) {
           })
         } catch (error) {
           pending.delete(id)
+          removeQueuedCommand(queue, id)
           return json(response, 500, { ok: false, error: String(error.message ?? error) })
         }
       }
@@ -194,8 +196,9 @@ async function runServer(sessionPath, token) {
       json(response, 404, { error: 'Not found' })
     })().catch(error => json(response, 500, { error: String(error.message ?? error) }))
   })
+  const requestedPort = requestedControlPort(session)
   await new Promise((resolvePromise, reject) =>
-    server.listen(0, '127.0.0.1', error => (error ? reject(error) : resolvePromise()))
+    server.listen(requestedPort, '127.0.0.1', error => (error ? reject(error) : resolvePromise()))
   )
   const address = server.address()
   const controlUrl = `http://127.0.0.1:${address.port}`
