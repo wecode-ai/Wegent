@@ -1,8 +1,9 @@
-import { ChevronDown, Settings } from 'lucide-react'
+import { ChevronDown, CloudOff, Settings } from 'lucide-react'
 import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -45,17 +46,59 @@ interface RollingSuffix {
   direction: 'up' | 'down'
 }
 
+interface TooltipPosition {
+  left: number
+  top: number
+}
+
 const MENU_WIDTH = 184
 const MENU_ROW_STEP = 42
 const MENU_VIEWPORT_PADDING = 8
 const MENU_TRANSITION_MS = 160
 const SUFFIX_TRANSITION_MS = 260
 
-function Suffix({ value }: { value: string }) {
+function AvailabilityTooltip({ label, testId }: { label: string; testId: string }) {
+  const tooltipId = useId()
+  const triggerRef = useRef<HTMLSpanElement>(null)
+  const [position, setPosition] = useState<TooltipPosition | null>(null)
+
+  const showTooltip = () => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setPosition({ left: rect.right + 8, top: rect.top + rect.height / 2 })
+  }
+
   return (
     <>
-      <span className="text-[#3978c5]">{value[0]}</span>
-      {value.slice(1)}
+      <span
+        ref={triggerRef}
+        tabIndex={0}
+        role="img"
+        data-testid={testId}
+        aria-label={label}
+        aria-describedby={tooltipId}
+        onMouseEnter={showTooltip}
+        onMouseLeave={() => setPosition(null)}
+        onFocus={showTooltip}
+        onBlur={() => setPosition(null)}
+        className="inline-flex shrink-0 rounded-sm text-text-muted outline-none focus-visible:ring-2 focus-visible:ring-focus"
+      >
+        <CloudOff aria-hidden="true" className="h-3.5 w-3.5" />
+      </span>
+      {position
+        ? createPortal(
+            <span
+              id={tooltipId}
+              role="tooltip"
+              data-testid={`${testId}-tooltip`}
+              className="pointer-events-none fixed z-system-popover -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-[#2b2c2f]/95 px-2.5 py-1.5 text-xs font-medium text-white shadow-[0_8px_24px_rgba(0,0,0,0.24)] ring-1 ring-black/10 backdrop-blur-md"
+              style={{ left: position.left, top: position.top }}
+            >
+              {label}
+            </span>,
+            document.body
+          )
+        : null}
     </>
   )
 }
@@ -96,7 +139,7 @@ export function DesktopAppSwitcher({
         key: 'wework',
         suffix: 'work',
         label: 'Wework',
-        description: t('workbench.app_wework_description', '对话与本地工作台'),
+        description: t('workbench.app_wework_description', 'AI对话工作台'),
       },
       ...(experimentalFeaturesEnabled || activeApp === 'todo'
         ? [
@@ -104,7 +147,7 @@ export function DesktopAppSwitcher({
               key: 'todo' as const,
               suffix: 'loop',
               label: 'Weloop',
-              description: t('workbench.app_weloop_description', '智能体工作流面板'),
+              description: t('workbench.app_weloop_description', 'AI原生工作流'),
             },
           ]
         : []),
@@ -242,22 +285,20 @@ export function DesktopAppSwitcher({
         className
       )}
     >
-      <span className="select-none pl-1 text-sm font-semibold leading-none text-text-primary">
-        We
-      </span>
       <button
         ref={triggerRef}
         type="button"
         data-testid={triggerTestId}
         onClick={() => (open ? closeMenu() : void openMenu())}
         className={cn(
-          'ml-px flex h-8 items-center rounded-lg py-0 pl-0 pr-2 text-sm font-semibold leading-none text-text-primary transition-[color,transform] duration-150 hover:text-text-secondary',
+          'flex h-8 items-center rounded-lg py-0 pl-1 pr-2 text-sm font-semibold leading-none text-text-primary transition-[color,transform] duration-150 hover:text-text-secondary',
           open && 'pointer-events-none'
         )}
         aria-label={`${selected.label}，${t('workbench.app_navigation', '应用导航')}`}
         aria-haspopup="menu"
         aria-expanded={open}
       >
+        <span className="select-none">We</span>
         <span className="relative inline-block h-[1em] w-[2.4em] overflow-hidden align-middle leading-none">
           {rollingSuffix ? (
             <>
@@ -267,7 +308,7 @@ export function DesktopAppSwitcher({
                   rollingSuffix.direction === 'up' ? 'suffix-roll-out-up' : 'suffix-roll-out-down'
                 )}
               >
-                <Suffix value={rollingSuffix.from} />
+                {rollingSuffix.from}
               </span>
               <span
                 className={cn(
@@ -275,11 +316,11 @@ export function DesktopAppSwitcher({
                   rollingSuffix.direction === 'up' ? 'suffix-roll-in-up' : 'suffix-roll-in-down'
                 )}
               >
-                <Suffix value={rollingSuffix.to} />
+                {rollingSuffix.to}
               </span>
             </>
           ) : (
-            <Suffix value={selected.suffix} />
+            selected.suffix
           )}
         </span>
         <ChevronDown
@@ -321,7 +362,7 @@ export function DesktopAppSwitcher({
                 visibility: menuPosition ? 'visible' : 'hidden',
               }}
               className={cn(
-                'fixed z-system-popover isolate flex origin-top flex-col gap-0.5 overflow-hidden text-text-primary transition-[clip-path,opacity,transform] duration-200 ease-out',
+                'fixed z-system-popover isolate flex origin-top flex-col gap-0.5 overflow-hidden rounded-xl border border-border/70 bg-background/95 p-1 text-text-primary shadow-[0_8px_24px_rgba(0,0,0,0.1)] backdrop-blur-md transition-[clip-path,opacity,transform] duration-200 ease-out',
                 open
                   ? 'translate-y-0 opacity-100 [clip-path:inset(0_0_0_0_round_0.75rem)]'
                   : 'pointer-events-none -translate-y-1 opacity-0 [clip-path:inset(0_0_100%_0_round_0.75rem)]'
@@ -333,8 +374,8 @@ export function DesktopAppSwitcher({
                   <div
                     key={option.key}
                     className={cn(
-                      'relative z-10 flex min-h-10 w-full items-center rounded-lg py-1 pl-0 pr-2 text-left transition-[background-color,opacity,transform] duration-200 ease-out',
-                      active ? 'bg-transparent' : 'hover:bg-black/[0.035]',
+                      'relative z-10 flex min-h-10 w-full items-center rounded-lg py-1 pl-2 pr-2 text-left transition-[background-color,opacity,transform] duration-200 ease-out',
+                      active ? 'bg-black/[0.03]' : 'hover:bg-black/[0.035]',
                       open ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
                     )}
                     style={{ transitionDelay: open ? `${index * 28}ms` : '0ms' }}
@@ -349,40 +390,56 @@ export function DesktopAppSwitcher({
                       onClick={() => selectApp(option)}
                       className={cn(
                         'relative z-10 grid min-w-0 flex-1 gap-0.5 text-left',
-                        option.disabled && 'cursor-not-allowed opacity-60'
+                        option.disabled && 'cursor-not-allowed'
                       )}
                     >
                       <span
                         className={cn(
-                          'origin-left text-sm font-medium leading-4 transition-transform duration-200 ease-out',
-                          active && 'invisible -translate-y-px'
+                          'flex origin-left items-center gap-1.5 text-sm font-medium leading-4 transition-transform duration-200 ease-out',
+                          active && 'font-semibold'
                         )}
                       >
-                        <Suffix value={option.suffix} />
-                        {option.availabilityLabel ? (
-                          <span className="ml-2 text-xs font-normal text-text-muted">
-                            {option.availabilityLabel}
-                          </span>
-                        ) : null}
+                        <span>
+                          We
+                          {option.suffix}
+                        </span>
                       </span>
                       <span className="whitespace-nowrap text-xs leading-4 text-text-muted">
                         {option.description}
                       </span>
                     </button>
+                    {option.availabilityLabel ? (
+                      <AvailabilityTooltip
+                        label={option.availabilityLabel}
+                        testId={`app-switcher-unavailable-${option.key}`}
+                      />
+                    ) : null}
                     {active ? (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        data-testid="app-switcher-settings"
-                        aria-label={t('workbench.settings', '设置')}
-                        onClick={() => {
-                          closeMenu()
-                          dispatchOpenSettingsShortcut()
-                        }}
-                        className="absolute left-[calc(2.4em-0.25rem)] top-0 z-10 rounded-md p-1 text-text-muted transition-colors hover:bg-black/[0.06] hover:text-text-primary"
-                      >
-                        <Settings aria-hidden="true" className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="ml-1 flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          data-testid="app-switcher-settings"
+                          aria-label={t('workbench.settings', '设置')}
+                          onClick={() => {
+                            closeMenu()
+                            dispatchOpenSettingsShortcut()
+                          }}
+                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-black/[0.06] hover:text-text-primary"
+                        >
+                          <Settings aria-hidden="true" className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          data-testid="app-switcher-collapse"
+                          aria-label={t('workbench.app_navigation', '应用导航')}
+                          onClick={closeMenu}
+                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-black/[0.06] hover:text-text-primary"
+                        >
+                          <ChevronDown aria-hidden="true" className="h-3 w-3 rotate-180" />
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 )
