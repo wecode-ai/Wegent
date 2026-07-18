@@ -1234,6 +1234,7 @@ async function main() {
     })
     await control.command('click', composerSelector)
     await control.command('press', 'body', { key: 'Escape' })
+    await control.command('press', 'body', { key: 'Escape' })
     await captureVerificationScreenshot(control, '01-request-running-in-background.png')
     await withTimeout(
       control.releaseRequestUserInputResponse(),
