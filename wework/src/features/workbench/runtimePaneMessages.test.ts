@@ -345,6 +345,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   })
 
   test('strips Codex UI directives from completed assistant content', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
       taskId: 'runtime-task-1',
@@ -374,6 +375,40 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'subtask-9',
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
+    expect(info).toHaveBeenCalledWith(
+      '[Wework] Runtime terminal event accepted',
+      expect.objectContaining({
+        event: 'chat:done',
+        payloadTaskId: 'runtime-task-1',
+        payloadSubtaskId: 'subtask-9',
+      })
+    )
+  })
+
+  test('warns when a terminal event does not match the subscribed runtime task', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-2',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'complete' },
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped mismatched runtime terminal event',
+      expect.objectContaining({
+        event: 'chat:done',
+        payloadTaskId: 'runtime-task-2',
+        payloadSubtaskId: 'subtask-9',
+      })
+    )
   })
 
   test('settles runtime streams without forwarding empty final content', () => {
