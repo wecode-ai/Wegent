@@ -144,6 +144,7 @@ export function useResizableRightSplitChat({
 export function useResizableBottomPanel() {
   const [height, setHeight] = useState(BOTTOM_DEFAULT_HEIGHT)
   const [resizing, setResizing] = useState(false)
+  const panelRef = useRef<HTMLElement | null>(null)
   const resizeFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -161,6 +162,13 @@ export function useResizableBottomPanel() {
     const startHeight = height
     let nextHeight = startHeight
 
+    const applyHeight = () => {
+      resizeFrameRef.current = null
+      if (panelRef.current) {
+        panelRef.current.style.height = `${nextHeight}px`
+      }
+    }
+
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       nextHeight = clamp(
         startHeight + startY - moveEvent.clientY,
@@ -169,18 +177,19 @@ export function useResizableBottomPanel() {
       )
       if (resizeFrameRef.current !== null) return
 
-      resizeFrameRef.current = window.requestAnimationFrame(() => {
-        resizeFrameRef.current = null
-        setHeight(nextHeight)
-      })
+      resizeFrameRef.current = window.requestAnimationFrame(applyHeight)
     }
 
-    const handleUp = () => {
+    const finishResize = () => {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
+      document.removeEventListener('pointercancel', handleCancel)
       if (resizeFrameRef.current !== null) {
         window.cancelAnimationFrame(resizeFrameRef.current)
         resizeFrameRef.current = null
+      }
+      if (panelRef.current) {
+        panelRef.current.style.height = `${nextHeight}px`
       }
       setHeight(nextHeight)
       setResizing(false)
@@ -188,12 +197,16 @@ export function useResizableBottomPanel() {
       document.body.style.userSelect = ''
     }
 
+    const handleUp = () => finishResize()
+    const handleCancel = () => finishResize()
+
     setResizing(true)
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
+    document.addEventListener('pointercancel', handleCancel)
   }
 
-  return { height, resizing, handleResizeStart }
+  return { height, resizing, panelRef, handleResizeStart }
 }

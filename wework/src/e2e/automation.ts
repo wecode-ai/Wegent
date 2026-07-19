@@ -30,6 +30,7 @@ type DesktopControlAction =
   | 'clickWhenEnabled'
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
+  | 'drag'
   | 'fill'
   | 'getText'
   | 'hover'
@@ -373,6 +374,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
+function dragDesktopControlElement(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  if (!command.target) throw new Error('Drag requires a target selector')
+  const target = findDesktopControlElements(command.target)[0]
+  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
+
+  const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
+  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  document.dispatchEvent(new PointerEvent('pointermove', endOptions))
+  document.dispatchEvent(new PointerEvent('pointerup', { ...endOptions, buttons: 0 }))
+  return element.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -474,6 +490,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'drag':
+      return dragDesktopControlElement(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':

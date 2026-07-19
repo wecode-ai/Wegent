@@ -39,6 +39,7 @@ Any Wework UI, Tauri command, local-runtime, IPC, or desktop integration behavio
 pnpm --filter wework ai:verify start
 pnpm --filter wework ai:verify snapshot --session <session-path>
 pnpm --filter wework ai:verify click --session <session-path> --selector '[data-testid="..."]'
+pnpm --filter wework ai:verify drag --session <session-path> --selector '[data-testid="..."]' --target '[data-testid="..."]'
 pnpm --filter wework ai:verify fill --session <session-path> --selector '[data-testid="..."]' --value '...'
 pnpm --filter wework ai:verify hover --session <session-path> --selector '[data-testid="..."]'
 pnpm --filter wework ai:verify pointer-move --session <session-path> --selector 'body'
