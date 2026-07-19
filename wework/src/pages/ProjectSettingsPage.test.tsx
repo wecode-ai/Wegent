@@ -85,6 +85,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 describe('ProjectSettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.replaceState({}, '', '/')
     uninstallInstalledPlugin.mockResolvedValue(undefined)
     readPluginState.mockResolvedValue({
       installedPlugins: [
@@ -193,72 +194,14 @@ describe('ProjectSettingsPage', () => {
     )
   })
 
-  test('adds a plugin source and installs a catalog plugin for this project', async () => {
-    readPluginState.mockResolvedValue({
-      installedPlugins: [],
-      marketplaceItems: [],
-      marketplaces: [],
-      selectedMarketplaceId: '',
-      marketplacePath: '',
-      installRegistryPath: '',
-    })
-    upsertMarketplace.mockResolvedValue({
-      installedPlugins: [],
-      marketplaceItems: [
-        {
-          id: 'documents@openai',
-          name: 'Documents',
-          description: 'Create and edit documents',
-          installed: false,
-        },
-      ],
-      marketplaces: [{ id: 'openai', name: 'OpenAI', path: 'https://github.com/openai/plugins' }],
-      selectedMarketplaceId: 'openai',
-      marketplacePath: 'https://github.com/openai/plugins',
-      installRegistryPath: '',
-    })
-    installAvailablePlugin.mockResolvedValue({
-      apiVersion: 'v1',
-      kind: 'InstalledPlugin',
-      metadata: { labels: { id: 'documents@openai' } },
-      spec: {
-        source: { type: 'marketplace', providerKey: 'openai', pluginKey: 'documents' },
-        displayName: 'Documents',
-        description: 'Create and edit documents',
-        installState: 'installed',
-        enabled: true,
-        manifest: {},
-        components: {
-          skills: [],
-          commands: [],
-          agents: [],
-          hooks: [],
-          mcps: [],
-          lsps: [],
-          monitors: [],
-          bins: [],
-        },
-      },
-      status: { state: 'ready' },
-    })
+  test('opens the shared plugin marketplace with project context', async () => {
     const user = userEvent.setup()
     render(<ProjectSettingsPage projectId={7} />)
 
-    const source = await screen.findByTestId('project-plugin-marketplace-source')
-    await user.type(source, 'https://github.com/openai/plugins')
-    await user.click(screen.getByTestId('project-plugin-add-marketplace'))
+    await user.click(await screen.findByTestId('project-settings-browse-plugins-button'))
 
-    expect(upsertMarketplace).toHaveBeenCalledWith({
-      path: 'https://github.com/openai/plugins',
-    })
-    await user.click(await screen.findByTestId('project-plugin-install-documents@openai'))
-
-    await waitFor(() => {
-      expect(installAvailablePlugin).toHaveBeenCalledWith('documents@openai')
-      expect(selectMarketplace).toHaveBeenCalledWith('openai')
-      expect(updateInstalledPlugin).toHaveBeenCalledWith('documents@openai', { enabled: false })
-      expect(screen.getByTestId('project-plugin-toggle-documents@openai')).toBeChecked()
-    })
+    expect(window.location.pathname).toBe('/plugins')
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('7')
   })
 
   test('keeps native file editing available when plugin discovery fails', async () => {
@@ -271,42 +214,5 @@ describe('ProjectSettingsPage', () => {
     expect(await screen.findByTestId('project-settings-plugin-error')).toHaveTextContent(
       'plugin discovery failed'
     )
-  })
-
-  test('rolls back installation when global disablement fails', async () => {
-    readPluginState.mockResolvedValue({
-      installedPlugins: [],
-      marketplaceItems: [
-        {
-          id: 'documents@openai',
-          displayName: 'Documents',
-          description: 'Create and edit documents',
-          installed: false,
-        },
-      ],
-      marketplaces: [{ id: 'openai', name: 'OpenAI', path: '/marketplace' }],
-      selectedMarketplaceId: 'openai',
-      marketplacePath: '/marketplace',
-      installRegistryPath: '',
-    })
-    installAvailablePlugin.mockResolvedValue({
-      metadata: { labels: { id: 'documents@openai' } },
-      spec: {
-        source: { providerKey: 'openai', pluginKey: 'documents' },
-        displayName: 'Documents',
-        enabled: true,
-      },
-    })
-    updateInstalledPlugin.mockRejectedValue(new Error('disable failed'))
-    const user = userEvent.setup()
-    render(<ProjectSettingsPage projectId={7} />)
-
-    await user.click(await screen.findByTestId('project-plugin-install-documents@openai'))
-
-    await waitFor(() => {
-      expect(uninstallInstalledPlugin).toHaveBeenCalledWith('documents@openai')
-      expect(screen.getByTestId('project-settings-error')).toHaveTextContent('disable failed')
-      expect(screen.queryByTestId('project-plugin-toggle-documents@openai')).not.toBeInTheDocument()
-    })
   })
 })

@@ -3,6 +3,7 @@ import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import type { ProjectPluginScope } from '@/features/plugins/useProjectPluginScope'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -526,6 +527,7 @@ function mockSystemSkillsFetch(
       source: {
         type: 'marketplace',
         pluginKey: 'documents',
+        providerKey: 'wegent-cloud',
         catalogItemId: 'openai-documents',
       },
       displayName: 'Documents',
@@ -659,6 +661,20 @@ function mockSystemSkillsFetch(
           }, 10)
         })
       }
+      if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'PUT') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              ...installedMarketplacePlugin,
+              spec: { ...installedMarketplacePlugin.spec, enabled: false },
+            }),
+        })
+      }
+      if (requestUrl.pathname === '/api/plugins/installed/101' && init?.method === 'DELETE') {
+        return Promise.resolve({ ok: true, status: 204, json: () => Promise.resolve(null) })
+      }
       const page = Number(requestUrl.searchParams.get('page') ?? 1)
       const keyword = requestUrl.searchParams.get('keyword')
       const item = skill(page)
@@ -790,6 +806,53 @@ describe('PluginsWorkspace', () => {
     expect(fetch).toHaveBeenCalledWith(
       '/api/plugins/marketplace/101/install',
       expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  test('installs a marketplace plugin only for the selected project', async () => {
+    const addInstalledPlugin = vi.fn().mockImplementation(plugin => Promise.resolve(plugin))
+    const projectScope: ProjectPluginScope = {
+      projectId: 7,
+      projectName: 'Wegent',
+      pluginKeys: new Set(),
+      loading: false,
+      error: null,
+      addInstalledPlugin,
+    }
+    render(<PluginsWorkspace projectScope={projectScope} />)
+
+    expect(await screen.findByTestId('plugins-project-scope')).toHaveTextContent('Wegent')
+    const install = await screen.findByTestId('plugin-marketplace-install-101')
+    expect(install).toHaveTextContent('安装到项目')
+    await userEvent.click(install)
+
+    await waitFor(() => expect(addInstalledPlugin).toHaveBeenCalledTimes(1))
+    expect(addInstalledPlugin.mock.calls[0][0].spec.enabled).toBe(false)
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: false }) })
+    )
+    expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
+  })
+
+  test('rolls back a project-scoped install when project config persistence fails', async () => {
+    const projectScope: ProjectPluginScope = {
+      projectId: 7,
+      projectName: 'Wegent',
+      pluginKeys: new Set(),
+      loading: false,
+      error: null,
+      addInstalledPlugin: vi.fn().mockRejectedValue(new Error('project write failed')),
+    }
+    render(<PluginsWorkspace projectScope={projectScope} />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+
+    await waitFor(() => expect(screen.getByText('project write failed')).toBeInTheDocument())
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/plugins/installed/101',
+      expect.objectContaining({ method: 'DELETE' })
     )
   })
 

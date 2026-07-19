@@ -10,6 +10,7 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useProjectPluginScope } from '@/features/plugins/useProjectPluginScope'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -120,6 +121,10 @@ export function PluginsPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
+  const requestedProjectId = Number(new URLSearchParams(window.location.search).get('projectId'))
+  const projectPluginScope = useProjectPluginScope(
+    Number.isFinite(requestedProjectId) && requestedProjectId > 0 ? requestedProjectId : null
+  )
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
@@ -268,6 +273,7 @@ export function PluginsPage() {
       >
         <PluginsWorkspace
           cloudMarketplaceAvailable={cloudConnection.isConnected}
+          projectScope={projectPluginScope}
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={
             !isMobile && sidebarCollapsed && !isTauri ? (
