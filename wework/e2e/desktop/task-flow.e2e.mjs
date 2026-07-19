@@ -1317,14 +1317,14 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid^="plugin-marketplace-row-"]', {
-      text: 'Wework E2E Verification',
+      text: 'verification-plugin',
       timeoutMs: UI_TIMEOUT_MS,
     })
     await captureVerificationScreenshot(control, '01-project-plugin-marketplace.png')
     const marketplacePluginRowTestId = await control.command(
       'getTestIdByText',
       '[data-testid^="plugin-marketplace-row-"]',
-      { value: 'Wework E2E Verification' }
+      { value: 'verification-plugin' }
     )
     const installPluginTestId = marketplacePluginRowTestId.replace(
       'plugin-marketplace-row-',
