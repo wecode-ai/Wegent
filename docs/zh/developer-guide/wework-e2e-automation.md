@@ -59,7 +59,9 @@ node e2e/utils/mock-response-api-server.mjs
 6. 启动流式回复后通过桌面端 UI 取消，校验任务已停止、停止提示已渲染，并在发送后续消息时恢复输入。
 7. 让模型首次请求确定性失败，点击错误卡中的重试，并校验重试请求和最终回复。
 
-测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动一个 OpenAI Responses 兼容服务，作为 Codex 的自定义模型 provider。该服务会返回确定性的工具调用和最终文本；工具调用仍由真实 Codex 在隔离工作区内执行。
+测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
+
+mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
 运行环境需要 Rust、Tauri 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
 
@@ -71,10 +73,12 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 ## Responses API Mock
 
-`wework/e2e/utils/mock-response-api-server.mjs` 提供真实 HTTP 服务，用于模拟 OpenAI Responses API：
+`wework/e2e/utils/mock-response-api-server.mjs` 提供真实 HTTP 服务，用于验证本地模型能力探针请求：
 
 - `POST /v1/responses`：返回非流式 Responses API JSON。
 - `POST /v1/responses` 且 `stream: true`：返回 `text/event-stream`，事件包含 `response.created`、`response.output_text.delta` 和 `response.completed`。
+- `POST /v1/chat/completions`：校验并返回 Chat Completions function tool call。
+- `POST /v1/messages`：校验并返回 Anthropic Messages `tool_use`。
 - `GET /captured-requests`：读取已捕获请求。
 - `POST /clear-requests`：清空捕获请求。
 - `GET /health`：CI health check。

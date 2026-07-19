@@ -97,12 +97,16 @@ cloud:runtime:codex-gpt-5.5
 
 - 显示名。
 - 模型 ID。
-- OpenAI Responses 兼容模型基础 URL 和请求路径。默认请求路径是 `/responses`，特殊服务商可使用自己的请求路径。
+- 上游接口格式：OpenAI Responses、OpenAI Chat Completions 或 Anthropic Messages。
+- 模型基础 URL 和请求路径。默认路径随接口格式分别为 `/responses`、`/chat/completions` 和 `/v1/messages`，特殊服务商可使用自己的路径。
+- 工具模式：`custom`、`function` 或 `shell`。原生支持 Responses custom tools 的模型使用 `custom`；Chat/Anthropic 转换使用 `function`；会拒绝 freeform custom tools 的原生 Responses 模型使用 `shell`。
 - 可选 API Key。
 - 可选上下文窗口大小。
 - 启用状态和更新时间。
 
 API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` bearer token，用于支持无鉴权的本地 OpenAI-compatible 服务。本地模型配置和内置本机 Codex 模型都会以 `UnifiedModel(type: "runtime")` 进入现有模型选择器。
+
+“测试连接”会强制模型调用一个确定性的能力探针工具，只有模型返回对应 tool call 才通过；普通文本回复不能证明模型具备 Agent 工具能力。执行任务时，executor 会为该自定义模型生成显式 Codex model catalog：`custom` 和 `function` 模式发布 `apply_patch`，`shell` 模式仅发布 shell 编辑工具。
 
 上下文窗口大小只接受正整数。前端保存后会进入本地模型的 `config.model_context_window`，本地 IPC 创建 Codex 任务时继续写入 `model_config.model_context_window`，executor 再转为 Codex 启动配置中的 `model_context_window` 覆盖项。Wework 的背景信息窗口也必须使用当前任务自己的 `modelSelection` 解析对应模型配置，避免 Codex 对未知模型使用默认模型目录上限时把用户配置的窗口显示成默认值。
 

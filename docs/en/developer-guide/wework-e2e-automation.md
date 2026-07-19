@@ -59,7 +59,9 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
 
-The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
+The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a send → `apply_patch` → tool result → follow-up lifecycle, while real Codex executes the tool in the isolated workspace.
+
+Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
 The environment needs Rust, Tauri build dependencies, and a real Codex binary. The runner finds `codex` on `PATH` by default; an installed or `prepare:codex`-prepared real binary can also be selected explicitly:
 
@@ -71,10 +73,12 @@ Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built 
 
 ## Responses API Mock
 
-`wework/e2e/utils/mock-response-api-server.mjs` provides a real HTTP service that simulates the OpenAI Responses API:
+`wework/e2e/utils/mock-response-api-server.mjs` provides a real HTTP service that validates local-model capability probes:
 
 - `POST /v1/responses`: returns non-streaming Responses API JSON.
 - `POST /v1/responses` with `stream: true`: returns `text/event-stream` events including `response.created`, `response.output_text.delta`, and `response.completed`.
+- `POST /v1/chat/completions`: validates and returns a Chat Completions function tool call.
+- `POST /v1/messages`: validates and returns an Anthropic Messages `tool_use` block.
 - `GET /captured-requests`: reads captured requests.
 - `POST /clear-requests`: clears captured requests.
 - `GET /health`: CI health check.

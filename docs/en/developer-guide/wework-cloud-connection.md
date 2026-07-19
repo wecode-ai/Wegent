@@ -97,12 +97,16 @@ Local model configs are stored in local browser storage. They are not written to
 
 - Display name.
 - Model ID.
-- OpenAI Responses-compatible base URL and request path. The default request path is `/responses`; custom providers can use their own path.
+- Upstream API format: OpenAI Responses, OpenAI Chat Completions, or Anthropic Messages.
+- Model base URL and request path. Defaults are `/responses`, `/chat/completions`, and `/v1/messages` for the corresponding formats; custom providers can use their own path.
+- Tool profile: `custom`, `function`, or `shell`. Use `custom` for native Responses models that accept custom tools, `function` for Chat/Anthropic conversion, and `shell` for native Responses models that reject freeform custom tools.
 - Optional API Key.
 - Optional context window size.
 - Enabled state and update time.
 
 When API Key is blank, local runtime sends a `dummy` bearer token to the Codex provider config so no-auth local OpenAI-compatible services can run. Local model configs and the built-in local Codex model enter the existing model selector as `UnifiedModel(type: "runtime")`.
+
+Test Connection forces the model to call a deterministic capability probe tool and succeeds only when the matching tool call is returned; a plain text response does not prove Agent tool support. During execution, the executor generates an explicit Codex model catalog for the custom model. The `custom` and `function` profiles publish `apply_patch`, while `shell` publishes only shell-based editing.
 
 The context window size only accepts positive integers. After the frontend saves it, the value is exposed as `config.model_context_window` on the local model. Local IPC writes it into `model_config.model_context_window` when creating a Codex task, and executor forwards it as the Codex launch override `model_context_window`. The Wework background-context indicator must also resolve the model config from the current task's own `modelSelection`, so Codex's default catalog cap for unknown models does not make the UI display the default window instead of the user-configured value.
 
