@@ -16,6 +16,7 @@
     "running": "Working"
   },
   "tool_activity": {
+    "reconnecting": "Connection interrupted. Reconnecting…",
     "summary_one": "Called {{count}} tool",
     "summary_other": "Called {{count}} tools",
     "mixed_summary_one": "{{toolSummary}}, edited {{count}} file",
