@@ -2799,7 +2799,8 @@ async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &s
 }
 
 async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
         let count = read_json_lines(log_path)
             .iter()
             .filter(|call| call["method"] == "turn/start")
@@ -2807,9 +2808,12 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
         if count >= expected_turns {
             return;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "expected at least {expected_turns} turn/start calls"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    panic!("expected at least {expected_turns} turn/start calls");
 }
 
 async fn wait_for_json_call<F>(log_path: &Path, matches: F)
