@@ -1,8 +1,9 @@
 import {
   ArrowUp,
-  ArrowDownToLine,
   Camera,
+  ChevronDown,
   ClipboardList,
+  Clock3,
   CornerDownRight,
   Image,
   Maximize2,
@@ -306,12 +307,12 @@ export function CompactChatComposer({
               <ActionMenu
                 ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
                 testId="send-mode-menu-button"
-                icon={ArrowDownToLine}
+                icon={ChevronDown}
                 triggerClassName="flex h-11 w-11 items-center justify-center rounded-r-[22px] border-l border-white/20 hover:bg-[#333]"
                 items={[
                   {
                     label: t('workbench.send_after_turn', '当前回复结束后发送'),
-                    icon: ArrowUp,
+                    icon: Clock3,
                     testId: 'send-after-turn-option',
                     onSelect: () => onSubmit(value),
                   },

@@ -17,6 +17,7 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -1903,6 +1904,49 @@ async function main() {
     await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
+    await withTimeout(
+      control.awaitScenarioRequest('initial'),
+      UI_TIMEOUT_MS,
+      'The model service did not receive the initial task request'
+    )
+
+    phase = 'send-mode-menu'
+    await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', composerSelector, { value: SEND_MODE_DRAFT })
+    await control.command('waitFor', '[data-testid="send-mode-menu-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, '01-send-mode-follow-up-ready.png')
+    await control.command('click', '[data-testid="send-mode-menu-button"]')
+    await control.command('waitFor', '[data-testid="send-mode-menu-button-menu"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const sendModeMenuText = await control.command(
+      'getText',
+      '[data-testid="send-mode-menu-button-menu"]'
+    )
+    assert.match(
+      sendModeMenuText,
+      /当前回复结束后发送|Send after current response/,
+      'The send-after-turn option was not visible in the send mode menu'
+    )
+    assert.match(
+      sendModeMenuText,
+      /引导当前回复|Guide current response/,
+      'The guide-current-turn option was not visible in the send mode menu'
+    )
+    assert.match(
+      sendModeMenuText,
+      /打断并立即发送|Interrupt and send now/,
+      'The interrupt-and-send option was not visible in the send mode menu'
+    )
+    await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
+    await control.command('press', 'body', { key: 'Escape' })
+    await control.command('fill', composerSelector, { value: '' })
+
+    phase = 'initial-task-completion'
     await control.command('waitFor', '[data-testid="environment-info-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
