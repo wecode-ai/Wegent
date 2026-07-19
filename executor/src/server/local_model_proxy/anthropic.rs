@@ -210,6 +210,62 @@ where
     chat::chat_sse_to_responses(anthropic_to_chat_stream(state).fuse(), context)
 }
 
+pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls = Vec::new();
+    for block in response
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => text.push_str(block.get("text").and_then(Value::as_str).unwrap_or("")),
+            Some("thinking") => {
+                reasoning.push_str(block.get("thinking").and_then(Value::as_str).unwrap_or(""))
+            }
+            Some("tool_use") => tool_calls.push(json!({
+                "id": block.get("id").cloned().unwrap_or(Value::Null),
+                "type": "function",
+                "function": {
+                    "name": block.get("name").cloned().unwrap_or(Value::Null),
+                    "arguments": serde_json::to_string(
+                        block.get("input").unwrap_or(&Value::Null)
+                    ).unwrap_or_else(|_| "{}".to_owned())
+                }
+            })),
+            _ => {}
+        }
+    }
+    let mut message = json!({
+        "role": "assistant",
+        "content": if text.is_empty() { Value::Null } else { Value::String(text) }
+    });
+    if !reasoning.is_empty() {
+        message["reasoning_content"] = Value::String(reasoning);
+    }
+    if !tool_calls.is_empty() {
+        message["tool_calls"] = Value::Array(tool_calls);
+    }
+    let stop_reason = response
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("end_turn");
+    json!({
+        "id": response.get("id").cloned().unwrap_or_else(|| json!("msg_wework_anthropic")),
+        "model": response.get("model").cloned().unwrap_or(Value::Null),
+        "choices": [{
+            "message": message,
+            "finish_reason": if stop_reason == "max_tokens" { "length" } else if stop_reason == "tool_use" { "tool_calls" } else { "stop" }
+        }],
+        "usage": {
+            "prompt_tokens": response.pointer("/usage/input_tokens").cloned().unwrap_or_else(|| json!(0)),
+            "completion_tokens": response.pointer("/usage/output_tokens").cloned().unwrap_or_else(|| json!(0))
+        }
+    })
+}
+
 fn anthropic_to_chat_stream<S, E>(
     state: AnthropicStreamState<S>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>>

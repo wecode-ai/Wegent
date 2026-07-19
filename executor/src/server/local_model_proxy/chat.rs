@@ -129,10 +129,10 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
         .filter_map(|tool| {
             let name = tool.get("name")?.as_str()?;
             if context.is_custom(name) {
-                let description = tool
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Codex custom tool. Preserve the raw input exactly.");
+                let definition = serde_json::to_string(tool).ok()?;
+                let description = format!(
+                    "Codex custom tool. Preserve the raw input exactly and follow the original tool definition.\n\nOriginal tool definition:\n```json\n{definition}\n```"
+                );
                 return Some(json!({
                     "type": "function",
                     "function": {
@@ -408,6 +408,8 @@ struct ChatStreamState<S> {
     calls: BTreeMap<usize, CallState>,
     usage: Value,
     finish_reason: Option<String>,
+    saw_done: bool,
+    saw_choice: bool,
 }
 
 pub(super) fn chat_sse_to_responses<S, E>(
@@ -434,6 +436,8 @@ where
         calls: BTreeMap::new(),
         usage: responses_usage(None),
         finish_reason: None,
+        saw_done: false,
+        saw_choice: false,
     };
 
     futures_util::stream::unfold(state, |mut state| async move {
@@ -445,15 +449,32 @@ where
                 Some(Ok(bytes)) => {
                     state.pending.push_str(&String::from_utf8_lossy(&bytes));
                     while let Some(block) = take_sse_block(&mut state.pending) {
-                        state.handle_block(&block);
+                        state.handle_block(&block, true);
                     }
                 }
                 Some(Err(error)) => {
                     let event = state.failed_event(error.to_string());
+                    state.completed = true;
                     return Some((Ok(event), state));
                 }
                 None => {
-                    state.finish();
+                    if state.completed {
+                        return None;
+                    }
+                    if !state.pending.trim().is_empty() {
+                        let trailing = std::mem::take(&mut state.pending);
+                        state.handle_block(&trailing, false);
+                    }
+                    if state.response_started && state.finish_reason.is_none() && !state.saw_done {
+                        let event = state.failed_event(
+                            "Upstream stream ended before a finish reason or [DONE] marker"
+                                .to_owned(),
+                        );
+                        state.completed = true;
+                        state.emit(event);
+                    } else {
+                        state.finish();
+                    }
                     if let Some(output) = state.output.pop_front() {
                         return Some((output, state));
                     }
@@ -469,23 +490,51 @@ impl<S> ChatStreamState<S> {
         self.output.push_back(Ok(event));
     }
 
-    fn handle_block(&mut self, block: &str) {
-        for data in block.lines().filter_map(|line| line.strip_prefix("data:")) {
-            let data = data.trim();
-            if data == "[DONE]" {
-                self.finish();
-                continue;
+    fn handle_block(&mut self, block: &str, strict: bool) {
+        let mut event_name = None;
+        let mut data_lines = Vec::new();
+        for raw_line in block.lines() {
+            let line = raw_line.trim_start_matches('\u{feff}').trim_start();
+            if let Some(value) = line.strip_prefix("event:") {
+                event_name = Some(value.trim());
+            } else if let Some(value) = line.strip_prefix("data:") {
+                data_lines.push(value.trim_start());
             }
-            let Ok(chunk) = serde_json::from_str::<Value>(data) else {
-                continue;
-            };
-            if let Some(error) = chunk.get("error") {
-                self.emit(self.failed_event(text_value(error)));
-                self.completed = true;
-                continue;
-            }
-            self.handle_chunk(&chunk);
         }
+        if data_lines.is_empty() {
+            return;
+        }
+        let data = data_lines.join("\n");
+        let data = data.trim();
+        if data == "[DONE]" {
+            self.saw_done = true;
+            self.finish();
+            return;
+        }
+        let chunk = match serde_json::from_str::<Value>(data) {
+            Ok(chunk) => chunk,
+            Err(_) if !strict => return,
+            Err(error) => {
+                self.emit(
+                    self.failed_event(format!("Failed to parse upstream SSE chunk: {error}")),
+                );
+                self.completed = true;
+                return;
+            }
+        };
+        if event_name.is_some_and(|value| value.eq_ignore_ascii_case("error")) {
+            let message = meaningful_error_message(chunk.get("error").unwrap_or(&chunk))
+                .unwrap_or_else(|| "upstream error event in SSE stream".to_owned());
+            self.emit(self.failed_event(message));
+            self.completed = true;
+            return;
+        }
+        if let Some(message) = chunk.get("error").and_then(meaningful_error_message) {
+            self.emit(self.failed_event(message));
+            self.completed = true;
+            return;
+        }
+        self.handle_chunk(&chunk);
     }
 
     fn handle_chunk(&mut self, chunk: &Value) {
@@ -506,25 +555,63 @@ impl<S> ChatStreamState<S> {
         let Some(choice) = chunk
             .get("choices")
             .and_then(Value::as_array)
-            .and_then(|v| v.first())
+            .and_then(|choices| {
+                choices
+                    .iter()
+                    .find(|choice| choice.get("index").and_then(Value::as_u64).unwrap_or(0) == 0)
+            })
         else {
             return;
         };
-        if let Some(delta) = choice.get("delta") {
-            if let Some(reasoning) = reasoning_delta(delta) {
-                self.push_reasoning(&reasoning);
+        self.saw_choice = true;
+        let delta_nonempty = choice
+            .get("delta")
+            .and_then(Value::as_object)
+            .is_some_and(|value| !value.is_empty());
+        let (payload, is_snapshot) = if delta_nonempty {
+            (choice.get("delta"), false)
+        } else if choice.get("message").is_some() {
+            (choice.get("message"), true)
+        } else {
+            (choice.get("delta"), false)
+        };
+        if let Some(payload) = payload {
+            if let Some(reasoning) = reasoning_delta(payload) {
+                let delta = if is_snapshot {
+                    snapshot_suffix(&self.reasoning.text, &reasoning).to_owned()
+                } else {
+                    reasoning
+                };
+                self.push_reasoning(&delta);
             }
-            if let Some(content) = delta.get("content").and_then(Value::as_str) {
-                self.push_text(content);
+            if let Some(content) = content_delta(payload) {
+                let delta = if is_snapshot {
+                    snapshot_suffix(&self.text.text, &content).to_owned()
+                } else {
+                    content
+                };
+                self.push_text(&delta);
             }
-            if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
-                for call in calls {
-                    self.push_call(call);
+            if let Some(calls) = payload.get("tool_calls").and_then(Value::as_array) {
+                for (position, call) in calls.iter().enumerate() {
+                    self.push_call(call, position, is_snapshot);
                 }
+            } else if let Some(function_call) = payload.get("function_call") {
+                self.push_call(
+                    &json!({
+                        "index": 0,
+                        "id": function_call.get("id").cloned().unwrap_or(Value::Null),
+                        "function": function_call
+                    }),
+                    0,
+                    is_snapshot,
+                );
             }
         }
-        if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
-            self.finish_reason = Some(reason.to_owned());
+        if self.finish_reason.is_none() {
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                self.finish_reason = Some(reason.to_owned());
+            }
         }
     }
 
@@ -587,28 +674,39 @@ impl<S> ChatStreamState<S> {
         self.emit(sse("response.output_text.delta", json!({"type": "response.output_text.delta", "item_id": self.text.item_id, "output_index": self.text.output_index, "content_index": 0, "delta": delta})));
     }
 
-    fn push_call(&mut self, call: &Value) {
-        let index = call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+    fn push_call(&mut self, call: &Value, fallback_index: usize, is_snapshot: bool) {
+        let index = call
+            .get("index")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(fallback_index);
         let id = call.get("id").and_then(Value::as_str).unwrap_or_default();
         let function = call.get("function").unwrap_or(&Value::Null);
         let name = function
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let arguments = function
-            .get("arguments")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
+        let arguments = match function.get("arguments") {
+            Some(Value::String(value)) => value.clone(),
+            Some(value) if !value.is_null() => {
+                serde_json::to_string(value).unwrap_or_else(|_| "{}".to_owned())
+            }
+            _ => String::new(),
+        };
         let (needs_start, call_id, complete_name) = {
             let state = self.calls.entry(index).or_default();
             if !id.is_empty() {
-                state.call_id.push_str(id);
+                state.call_id = id.to_owned();
             }
             if !name.is_empty() {
-                state.name.push_str(name);
+                state.name = name.to_owned();
             }
             if !arguments.is_empty() {
-                state.arguments.push_str(arguments);
+                if is_snapshot {
+                    state.arguments = arguments.clone();
+                } else {
+                    state.arguments.push_str(&arguments);
+                }
             }
             (
                 !state.started && !state.name.is_empty(),
@@ -659,6 +757,13 @@ impl<S> ChatStreamState<S> {
 
     fn finish(&mut self) {
         if self.completed {
+            return;
+        }
+        if !self.saw_choice {
+            self.completed = true;
+            self.emit(
+                self.failed_event("Upstream stream ended without a completion choice".to_owned()),
+            );
             return;
         }
         self.ensure_started();
@@ -769,9 +874,43 @@ fn take_sse_block(buffer: &mut String) -> Option<String> {
 }
 
 fn reasoning_delta(delta: &Value) -> Option<String> {
-    ["reasoning_content", "reasoning", "reasoning_text"]
+    if let Some(value) = ["reasoning_content", "reasoning", "reasoning_text"]
         .iter()
-        .find_map(|field| delta.get(*field).and_then(Value::as_str).map(str::to_owned))
+        .find_map(|field| delta.get(*field))
+    {
+        let text = text_value(value);
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    delta
+        .get("reasoning_details")
+        .map(text_value)
+        .filter(|value| !value.is_empty())
+}
+
+fn content_delta(payload: &Value) -> Option<String> {
+    let mut content = payload.get("content").map(text_value).unwrap_or_default();
+    if let Some(refusal) = payload.get("refusal").and_then(Value::as_str) {
+        content.push_str(refusal);
+    }
+    (!content.is_empty()).then_some(content)
+}
+
+fn snapshot_suffix<'a>(existing: &str, snapshot: &'a str) -> &'a str {
+    snapshot.strip_prefix(existing).unwrap_or(snapshot)
+}
+
+fn meaningful_error_message(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => (!value.trim().is_empty()).then(|| value.clone()),
+        Value::Object(object) => ["message", "detail", "error_description", "type"]
+            .iter()
+            .find_map(|key| object.get(*key).and_then(meaningful_error_message))
+            .or_else(|| object.get("error").and_then(meaningful_error_message)),
+        Value::Array(values) => values.iter().find_map(meaningful_error_message),
+        _ => None,
+    }
 }
 
 fn custom_input(arguments: &str) -> String {
@@ -849,6 +988,9 @@ mod tests {
 
         let (converted, context) = responses_to_chat(&input).expect("request should convert");
         assert!(context.is_custom("apply_patch"));
+        assert!(converted["tools"][0]["function"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("Original tool definition:")));
         assert_eq!(converted["messages"][0]["role"], "system");
         assert_eq!(
             converted["messages"][2]["tool_calls"][0]["function"]["name"],
@@ -904,5 +1046,309 @@ mod tests {
         assert!(output.contains("\"input\":\"patch\""));
         assert!(output.contains("response.completed"));
         assert!(output.contains("\"input_tokens\":10"));
+    }
+
+    async fn convert_stream(input: &str, context: ToolContext) -> String {
+        chat_sse_to_responses(
+            futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+                input.to_owned(),
+            ))]),
+            context,
+        )
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(|item| String::from_utf8_lossy(&item.expect("stream item")).into_owned())
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn converts_legacy_function_call() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"function_call\":{\"name\":\"read_file\",\"arguments\":\"{}\"}},\"finish_reason\":\"function_call\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("\"type\":\"function_call\""));
+        assert!(output.contains("\"name\":\"read_file\""));
+    }
+
+    #[tokio::test]
+    async fn converts_complete_message_tool_calls_without_delta() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("\"call_id\":\"call_1\""));
+        assert!(output.contains("\"name\":\"read_file\""));
+    }
+
+    #[tokio::test]
+    async fn reports_truncated_stream_as_failed() {
+        let output = convert_stream(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}",
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.failed"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn restores_parallel_fragmented_tool_calls() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}},{\"index\":3,\"id\":\"call_2\",\"function\":{\"name\":\"list_files\",\"arguments\":\"{\"}}]},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"a.txt\\\"}\"}},{\"index\":3,\"function\":{\"arguments\":\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("\"call_id\":\"call_1\""));
+        assert!(output.contains("\"call_id\":\"call_2\""));
+        assert!(output.contains("a.txt"));
+        assert!(output.contains("path"));
+    }
+
+    #[tokio::test]
+    async fn serializes_object_arguments_from_non_streaming_compatible_chunks() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.txt\"}}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("a.txt"));
+        assert!(output.contains("path"));
+    }
+
+    #[tokio::test]
+    async fn ignores_repeated_complete_tool_name_and_id() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("\"name\":\"read_file\""));
+        assert!(!output.contains("read_fileread_file"));
+        assert!(!output.contains("call_1call_1"));
+    }
+
+    #[tokio::test]
+    async fn accepts_done_marker_without_finish_reason_after_a_choice() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":null}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
+    }
+
+    #[tokio::test]
+    async fn handles_crlf_stream_delimiters() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\r\n\r\n",
+                "data: [DONE]\r\n\r\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.output_text.delta"));
+        assert!(output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn rejects_done_stream_without_completion_chunks() {
+        let output =
+            convert_stream(": keepalive\n\ndata: [DONE]\n\n", ToolContext::default()).await;
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("without a completion choice"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn rejects_choiceless_usage_stream() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":0}}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.failed"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn converts_upstream_error_event_to_failed_response() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"error\":{\"message\":\"rate limited\",\"type\":\"rate_limit\"}}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("rate limited"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn sparse_large_tool_index_does_not_create_placeholder_calls() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":4000000000,\"id\":\"call_sparse\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("\"call_id\":\"call_sparse\""));
+        assert!(!output.contains("\"call_id\":\"call_0\""));
+    }
+
+    #[tokio::test]
+    async fn ignores_empty_upstream_error_placeholders() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"error\":{},\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
+    }
+
+    #[tokio::test]
+    async fn rejects_named_error_events_without_an_error_wrapper() {
+        let output = convert_stream(
+            "event: error\ndata: {\"message\":\"quota exhausted\"}\n\n",
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("quota exhausted"));
+        assert!(!output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn uses_full_message_when_delta_is_empty() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{},\"message\":{\"role\":\"assistant\",\"content\":\"full answer\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("full answer"));
+        assert!(output.contains("response.completed"));
+    }
+
+    #[tokio::test]
+    async fn uses_array_position_for_complete_calls_without_indices() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"message\":{\"tool_calls\":[{\"id\":\"call_1\",\"function\":{\"name\":\"first\",\"arguments\":\"{}\"}},{\"id\":\"call_2\",\"function\":{\"name\":\"second\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("\"call_id\":\"call_1\""));
+        assert!(output.contains("\"call_id\":\"call_2\""));
+        assert!(output.contains("\"name\":\"first\""));
+        assert!(output.contains("\"name\":\"second\""));
+    }
+
+    #[tokio::test]
+    async fn selects_choice_zero_instead_of_the_first_choice() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"index\":1,\"delta\":{\"content\":\"wrong\"},\"finish_reason\":\"stop\"},{\"index\":0,\"delta\":{\"content\":\"right\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("right"));
+        assert!(!output.contains("wrong"));
+    }
+
+    #[tokio::test]
+    async fn preserves_content_parts_refusal_and_reasoning_details() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"think\"}],\"content\":[{\"type\":\"text\",\"text\":\"visible\"}],\"refusal\":\" denied\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("think"));
+        assert!(output.contains("visible denied"));
+    }
+
+    #[tokio::test]
+    async fn accepts_bom_and_indented_sse_fields() {
+        let output = convert_stream(
+            concat!(
+                "\u{feff}  data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "  data: [DONE]\n\n"
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.completed"));
+        assert!(output.contains("ok"));
+    }
+
+    #[tokio::test]
+    async fn rejects_malformed_complete_sse_blocks() {
+        let output = convert_stream(
+            "data: {\"choices\":[{not-json}]}\n\n",
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("Failed to parse upstream SSE chunk"));
+    }
+
+    #[tokio::test]
+    async fn ignores_a_truncated_tail_after_a_finish_reason() {
+        let output = convert_stream(
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: {\"choices\":["
+            ),
+            ToolContext::default(),
+        )
+        .await;
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
     }
 }

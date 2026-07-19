@@ -16,11 +16,11 @@ import {
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
-const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
 
 type DesktopControlAction =
   | 'capture'
@@ -29,7 +29,9 @@ type DesktopControlAction =
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
   | 'fill'
+  | 'focusMainWindow'
   | 'getText'
+  | 'getValue'
   | 'hover'
   | 'pointerMove'
   | 'snapshot'
@@ -213,13 +215,39 @@ function seedDesktopE2ECloudConnection() {
     },
     connectedAt: new Date().toISOString(),
   })
-  saveLocalModelConfig({
-    id: 'desktop-e2e-local',
-    displayName: 'Desktop E2E Local',
-    modelId: 'desktop-e2e-local-model',
-    baseUrl: backendUrl,
-    enabled: true,
-  })
+  for (const model of [
+    {
+      id: 'desktop-e2e-responses',
+      displayName: 'Desktop E2E Responses',
+      modelId: 'desktop-e2e-responses-model',
+      apiFormat: 'openai-responses' as const,
+      toolProfile: 'custom' as const,
+      requestPath: '/v1/responses',
+    },
+    {
+      id: 'desktop-e2e-chat',
+      displayName: 'Desktop E2E Chat',
+      modelId: 'desktop-e2e-chat-model',
+      apiFormat: 'openai-chat-completions' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/chat/completions',
+    },
+    {
+      id: 'desktop-e2e-anthropic',
+      displayName: 'Desktop E2E Anthropic',
+      modelId: 'desktop-e2e-anthropic-model',
+      apiFormat: 'anthropic-messages' as const,
+      toolProfile: 'function' as const,
+      requestPath: '/v1/messages',
+    },
+  ]) {
+    saveLocalModelConfig({
+      ...model,
+      baseUrl: backendUrl,
+      apiKey: 'wework-e2e-test-key',
+      enabled: true,
+    })
+  }
 }
 
 export function installWeworkAutomationBridge() {
@@ -316,6 +344,15 @@ function desktopControlElementVisible(element: HTMLElement): boolean {
   )
 }
 
+async function waitForDesktopControlTick(): Promise<void> {
+  const url = desktopControlUrl()
+  if (!url) throw new Error('Desktop E2E control URL is not configured')
+  const response = await fetch(`${url}/control-tick`, { headers: desktopControlHeaders() })
+  if (response.status !== 204) {
+    throw new Error(`Desktop E2E control tick failed with ${response.status}`)
+  }
+}
+
 function desktopControlEventOptions(element: HTMLElement): MouseEventInit & PointerEventInit {
   const rect = element.getBoundingClientRect()
   const clientX = Math.max(0, Math.floor(rect.left + rect.width / 2))
@@ -386,7 +423,7 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
     } else {
       matchedAt = null
     }
-    await new Promise(resolve => window.setTimeout(resolve, 50))
+    await waitForDesktopControlTick()
   }
 
   throw new Error(
@@ -471,10 +508,27 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'focusMainWindow':
+      await getCurrentWindow().show()
+      await getCurrentWindow().unminimize()
+      await getCurrentWindow().setFocus()
+      return ''
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getValue': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement
+      ) {
+        return element.value
+      }
+      return element.textContent?.trim() ?? ''
+    }
     case 'snapshot':
       return desktopControlSnapshot()
     case 'click': {
@@ -544,7 +598,6 @@ async function runDesktopControlClient(url: string): Promise<void> {
     try {
       const response = await fetch(`${url}/commands`, { headers: desktopControlHeaders() })
       if (response.status === 204) {
-        await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_IDLE_POLL_DELAY_MS))
         continue
       }
       if (!response.ok) {

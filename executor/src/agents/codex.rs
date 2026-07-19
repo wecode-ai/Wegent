@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     future::Future,
+    hash::{DefaultHasher, Hash, Hasher},
     io::{self, Write},
     path::{Path, PathBuf},
     pin::Pin,
@@ -602,6 +603,27 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
+        let expected_catalog_signature = codex_process_model_catalog_signature(launch_config);
+        let catalog_changed = state
+            .process
+            .as_ref()
+            .is_some_and(|process| process.model_catalog_signature != expected_catalog_signature);
+        if catalog_changed {
+            if !state.active_threads.is_empty() {
+                return Err(
+                    "cannot switch the Codex model catalog while another thread is active"
+                        .to_owned(),
+                );
+            }
+            log_executor_event(
+                "codex shared app-server restarting for model catalog",
+                &[(
+                    "catalog_configured",
+                    expected_catalog_signature.is_some().to_string(),
+                )],
+            );
+            state.process = None;
+        }
         if state.process.is_none() {
             let (process, next_id) =
                 start_persistent_codex_app_server(&self.binary, state.next_id, launch_config)
@@ -662,6 +684,7 @@ struct CodexAppServerProcess {
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: broadcast::Sender<Value>,
     reader_task: tokio::task::JoinHandle<()>,
+    model_catalog_signature: Option<u64>,
 }
 
 impl CodexAppServerProcess {
@@ -719,6 +742,7 @@ async fn start_persistent_codex_app_server(
     request_launch_config: &CodexLaunchConfig,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
+    let model_catalog_signature = codex_process_model_catalog_signature(&launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
     let result: Result<(ChildStdin, BufReader<ChildStdout>, u64), String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
@@ -764,6 +788,7 @@ async fn start_persistent_codex_app_server(
                     pending,
                     notifications,
                     reader_task,
+                    model_catalog_signature,
                 },
                 next_id,
             ))
@@ -782,11 +807,35 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
+    launch_config.config_overrides.extend(
+        request_launch_config
+            .config_overrides
+            .iter()
+            .filter(|value| value.trim_start().starts_with("model_catalog_json="))
+            .cloned(),
+    );
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
     ]);
     launch_config
+}
+
+fn codex_process_model_catalog_signature(launch_config: &CodexLaunchConfig) -> Option<u64> {
+    let catalog_override = launch_config
+        .config_overrides
+        .iter()
+        .find(|value| value.trim_start().starts_with("model_catalog_json="))?;
+    let mut hasher = DefaultHasher::new();
+    catalog_override.hash(&mut hasher);
+    if let Some((_, raw_path)) = catalog_override.split_once('=') {
+        if let Value::String(path) = parse_config_override_value(raw_path.trim()) {
+            if let Ok(contents) = fs::read(path) {
+                contents.hash(&mut hasher);
+            }
+        }
+    }
+    Some(hasher.finish())
 }
 
 async fn read_persistent_codex_app_server_stdout(
@@ -2802,6 +2851,16 @@ struct CodexLaunchConfig {
     env: BTreeMap<String, String>,
     effort: Option<String>,
     summary: Option<String>,
+    local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
+}
+
+#[derive(Debug)]
+struct LocalProxyRegistration(String);
+
+impl Drop for LocalProxyRegistration {
+    fn drop(&mut self) {
+        local_model_proxy::unregister(&self.0);
+    }
 }
 
 struct PreparedCodexExecutionRequest {
@@ -2859,8 +2918,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         api_key(&request.model_config),
     ) {
         let model_provider = model_provider(&request.model_config);
-        let (provider_base_url, provider_api_key) =
+        let (provider_base_url, provider_api_key, local_proxy_token) =
             resolve_codex_provider_config(&request.model_config, &base_url, &api_key);
+        launch_config.local_proxy_registration =
+            local_proxy_token.map(|token| Arc::new(LocalProxyRegistration(token)));
         launch_config.model_provider = Some(model_provider.clone());
         launch_config.config_overrides.extend([
             "forced_login_method=api".to_owned(),
@@ -2944,6 +3005,12 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     let mut overrides = Vec::new();
+    if let Some(catalog_path) = write_local_model_catalog(model_config) {
+        overrides.push(format!(
+            "model_catalog_json={}",
+            toml_value(&catalog_path.to_string_lossy())
+        ));
+    }
     if let Some(web_search) = codex_web_search_mode(model_config) {
         overrides.push(format!("web_search={}", toml_value(&web_search)));
     }
@@ -2954,6 +3021,67 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
         overrides.push(format!("model_context_window={context_window}"));
     }
     overrides
+}
+
+fn write_local_model_catalog(model_config: &Value) -> Option<PathBuf> {
+    if !bool_value(model_config.get("codex_responses_compat_proxy")).unwrap_or(false) {
+        return None;
+    }
+    let model = non_empty_config(model_config, "model_id")?;
+    let display_name = non_empty_config(model_config, "display_name")
+        .or_else(|| non_empty_config(model_config, "provider_name"))
+        .unwrap_or_else(|| model.clone());
+    let context_window = codex_model_context_window(model_config).unwrap_or(272_000);
+    let tool_profile =
+        non_empty_config(model_config, "tool_profile").unwrap_or_else(|| "custom".to_owned());
+    let mut entry = json!({
+        "slug": model,
+        "display_name": display_name,
+        "description": "Wework custom model",
+        "default_reasoning_level": null,
+        "supported_reasoning_levels": [],
+        "shell_type": "shell_command",
+        "visibility": "list",
+        "supported_in_api": true,
+        "priority": 1000,
+        "base_instructions": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
+        "supports_reasoning_summaries": true,
+        "default_reasoning_summary": "auto",
+        "support_verbosity": false,
+        "truncation_policy": {"mode": "bytes", "limit": 10000},
+        "supports_parallel_tool_calls": false,
+        "supports_image_detail_original": false,
+        "context_window": context_window,
+        "max_context_window": context_window,
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "input_modalities": ["text", "image"],
+        "supports_search_tool": false
+    });
+    if tool_profile != "shell" {
+        entry["apply_patch_tool_type"] = Value::String("freeform".to_owned());
+    }
+    let catalog = json!({"models": [entry]});
+    let provider = explicit_model_provider(model_config).unwrap_or_else(|| "local".to_owned());
+    let file_name = format!("wegent-codex-model-catalog-{provider}.json");
+    let path = env::temp_dir().join(file_name);
+    let body = serde_json::to_vec(&catalog).ok()?;
+    if let Err(error) = fs::write(&path, body) {
+        log_executor_event(
+            "codex local model catalog write failed",
+            &[("error", error.to_string())],
+        );
+        return None;
+    }
+    log_executor_event(
+        "codex local model catalog prepared",
+        &[
+            ("model", model),
+            ("tool_profile", tool_profile),
+            ("context_window", context_window.to_string()),
+        ],
+    );
+    Some(path)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -2988,17 +3116,18 @@ fn resolve_codex_provider_config(
     model_config: &Value,
     base_url: &str,
     api_key: &str,
-) -> (String, String) {
+) -> (String, String, Option<String>) {
     let normalized_base_url = base_url.trim_end_matches('/').to_owned();
     let wire_api = wire_api(model_config);
     let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
         .unwrap_or(false)
         || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
     if wire_api != "responses" || !use_compat_proxy {
-        return (normalized_base_url, api_key.to_owned());
+        return (normalized_base_url, api_key.to_owned(), None);
     }
 
     let local_token = local_model_proxy::register(LocalModelProxyUpstream {
+        registration_id: model_provider(model_config),
         base_url: normalized_base_url,
         request_url: non_empty_config(model_config, "responses_url")
             .or_else(|| non_empty_config(model_config, "responsesUrl")),
@@ -3013,7 +3142,8 @@ fn resolve_codex_provider_config(
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
     (
         format!("{local_base_url}/v1/codex-responses-proxy"),
-        local_token,
+        local_token.clone(),
+        Some(local_token),
     )
 }
 
@@ -5217,6 +5347,47 @@ mod tests {
     }
 
     #[test]
+    fn local_model_catalog_advertises_apply_patch_for_function_profile() {
+        let model_config = json!({
+            "model_id": "kimi-for-coding",
+            "display_name": "Kimi",
+            "model_provider": "local-catalog-test-function",
+            "model_context_window": 128000,
+            "tool_profile": "function",
+            "codex_responses_compat_proxy": true
+        });
+
+        let path = write_local_model_catalog(&model_config).expect("catalog should be written");
+        let catalog: Value =
+            serde_json::from_slice(&fs::read(&path).expect("catalog should be readable"))
+                .expect("catalog should be valid JSON");
+
+        assert_eq!(catalog["models"][0]["slug"], "kimi-for-coding");
+        assert_eq!(catalog["models"][0]["context_window"], 128000);
+        assert_eq!(catalog["models"][0]["apply_patch_tool_type"], "freeform");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn local_model_catalog_uses_shell_without_apply_patch_for_shell_profile() {
+        let model_config = json!({
+            "model_id": "native-model",
+            "model_provider": "local-catalog-test-shell",
+            "tool_profile": "shell",
+            "codex_responses_compat_proxy": true
+        });
+
+        let path = write_local_model_catalog(&model_config).expect("catalog should be written");
+        let catalog: Value =
+            serde_json::from_slice(&fs::read(&path).expect("catalog should be readable"))
+                .expect("catalog should be valid JSON");
+
+        assert!(catalog["models"][0].get("apply_patch_tool_type").is_none());
+        assert_eq!(catalog["models"][0]["shell_type"], "shell_command");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn codex_launch_config_forwards_web_search_mode() {
         let request = ExecutionRequest {
             prompt: Value::String("create a file".to_owned()),
@@ -5344,6 +5515,7 @@ mod tests {
             env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
             config_overrides: vec![
                 "model_provider=wecode-openai".to_owned(),
+                "model_catalog_json=\"/tmp/wework-models.json\"".to_owned(),
                 "mcp_servers.wework.command=\"node\"".to_owned(),
             ],
             model_provider: Some("wecode-openai".to_owned()),
@@ -5360,11 +5532,38 @@ mod tests {
         );
         assert_eq!(
             launch_config.config_overrides,
-            vec!["goals=true", "features.code_mode_host=true"]
+            vec![
+                "model_catalog_json=\"/tmp/wework-models.json\"",
+                "goals=true",
+                "features.code_mode_host=true"
+            ]
         );
         assert!(launch_config.model_provider.is_none());
         assert!(launch_config.effort.is_none());
         assert!(launch_config.summary.is_none());
+    }
+
+    #[test]
+    fn codex_process_model_catalog_signature_tracks_catalog_contents() {
+        let directory = tempfile::tempdir().expect("temporary catalog directory");
+        let path = directory.path().join("models.json");
+        fs::write(&path, br#"{"models":[{"slug":"model-a"}]}"#).expect("initial catalog");
+        let launch_config = CodexLaunchConfig {
+            config_overrides: vec![format!(
+                "model_catalog_json={}",
+                toml_value(&path.to_string_lossy())
+            )],
+            ..CodexLaunchConfig::default()
+        };
+
+        let initial =
+            codex_process_model_catalog_signature(&launch_config).expect("catalog signature");
+        fs::write(&path, br#"{"models":[{"slug":"model-b"}]}"#).expect("updated catalog");
+
+        assert_ne!(
+            codex_process_model_catalog_signature(&launch_config),
+            Some(initial)
+        );
     }
 
     #[test]

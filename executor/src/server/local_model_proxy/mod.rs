@@ -11,11 +11,14 @@
 
 mod anthropic;
 mod chat;
+mod history;
 
 use std::{
     collections::{HashMap, VecDeque},
+    hash::{DefaultHasher, Hash, Hasher},
     pin::Pin,
     sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -34,6 +37,7 @@ pub(crate) const ROUTE: &str = "/v1/codex-responses-proxy/responses";
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalModelProxyUpstream {
+    pub registration_id: String,
     pub base_url: String,
     pub request_url: Option<String>,
     pub api_format: String,
@@ -42,25 +46,105 @@ pub(crate) struct LocalModelProxyUpstream {
     pub proxy_url: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct RegisteredUpstream {
+    upstream: LocalModelProxyUpstream,
+    history: std::sync::Arc<history::CodexToolHistory>,
+    last_used: Instant,
+    active_references: usize,
+}
+
+const REGISTRY_IDLE_TTL: Duration = Duration::from_secs(60 * 60);
+
 pub(crate) fn register(upstream: LocalModelProxyUpstream) -> String {
-    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
-    let token = {
-        let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
-        let mut guard = next_id
-            .lock()
-            .expect("local model proxy token counter should not be poisoned");
-        *guard += 1;
-        format!("model-{}-{}", std::process::id(), *guard)
-    };
-    registry()
+    let token = registration_token(&upstream);
+    let mut registry = registry()
         .lock()
-        .expect("local model proxy registry should not be poisoned")
-        .insert(token.clone(), upstream);
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let active_references = registry
+        .get(&token)
+        .map_or(1, |registered| registered.active_references + 1);
+    let history = registry
+        .get(&token)
+        .map(|registered| registered.history.clone())
+        .unwrap_or_default();
+    registry.insert(
+        token.clone(),
+        RegisteredUpstream {
+            upstream,
+            history,
+            last_used: Instant::now(),
+            active_references,
+        },
+    );
+    log_executor_event(
+        "local model proxy registered",
+        &[
+            ("active_registrations", registry.len().to_string()),
+            ("active_references", active_references.to_string()),
+        ],
+    );
     token
 }
 
-fn registry() -> &'static Mutex<HashMap<String, LocalModelProxyUpstream>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, LocalModelProxyUpstream>>> = OnceLock::new();
+pub(crate) fn unregister(token: &str) {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let (retained_idle, active_references) = match registry.get_mut(token) {
+        Some(registered) => {
+            registered.active_references = registered.active_references.saturating_sub(1);
+            registered.last_used = Instant::now();
+            (
+                registered.active_references == 0,
+                registered.active_references,
+            )
+        }
+        None => (false, 0),
+    };
+    log_executor_event(
+        "local model proxy unregistered",
+        &[
+            ("retained_idle", retained_idle.to_string()),
+            ("active_references", active_references.to_string()),
+            ("active_registrations", registry.len().to_string()),
+        ],
+    );
+}
+
+fn registration_token(upstream: &LocalModelProxyUpstream) -> String {
+    let mut hasher = DefaultHasher::new();
+    std::process::id().hash(&mut hasher);
+    upstream.registration_id.hash(&mut hasher);
+    upstream.base_url.hash(&mut hasher);
+    upstream.request_url.hash(&mut hasher);
+    upstream.api_format.hash(&mut hasher);
+    upstream.api_key.hash(&mut hasher);
+    upstream.default_headers.hash(&mut hasher);
+    upstream.proxy_url.hash(&mut hasher);
+    format!("model-{}-{:016x}", std::process::id(), hasher.finish())
+}
+
+fn prune_registry(registry: &mut HashMap<String, RegisteredUpstream>) {
+    let before = registry.len();
+    registry.retain(|_, entry| {
+        entry.active_references > 0 || entry.last_used.elapsed() < REGISTRY_IDLE_TTL
+    });
+    let removed = before.saturating_sub(registry.len());
+    if removed > 0 {
+        log_executor_event(
+            "local model proxy registrations expired",
+            &[
+                ("removed", removed.to_string()),
+                ("active_registrations", registry.len().to_string()),
+            ],
+        );
+    }
+}
+
+fn registry() -> &'static Mutex<HashMap<String, RegisteredUpstream>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, RegisteredUpstream>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -69,20 +153,24 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         status: StatusCode::UNAUTHORIZED,
         detail: "missing local model proxy token".to_owned(),
     })?;
-    let upstream = registry()
-        .lock()
-        .expect("local model proxy registry should not be poisoned")
-        .get(&token)
-        .cloned()
-        .ok_or_else(|| HttpError {
+    let (upstream, history) = {
+        let mut registry = registry()
+            .lock()
+            .expect("local model proxy registry should not be poisoned");
+        prune_registry(&mut registry);
+        let registered = registry.get_mut(&token).ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
-            detail: "unknown local model proxy token".to_owned(),
+            detail: "unknown or expired local model proxy token".to_owned(),
         })?;
+        registered.last_used = Instant::now();
+        (registered.upstream.clone(), registered.history.clone())
+    };
     let request_url = upstream
         .request_url
         .clone()
         .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
-    let (request_body, conversion) = prepare_request(&upstream.api_format, &body)?;
+    let (request_body, conversion) =
+        prepare_request_with_history(&upstream.api_format, &body, history.as_ref()).await?;
     log_executor_event(
         "local model proxy request started",
         &[
@@ -124,14 +212,85 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    if !status.is_success() {
+        let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to read local model error response: {error}"),
+        })?;
+        log_executor_event(
+            "local model proxy upstream rejected request",
+            &[
+                ("api_format", upstream.api_format),
+                ("status", status.as_u16().to_string()),
+                ("body_bytes", response_body.len().to_string()),
+            ],
+        );
+        let mut response = Response::new(Body::from(response_body));
+        *response.status_mut() = status;
+        if let Some(value) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+            response.headers_mut().insert(header::CONTENT_TYPE, value);
+        }
+        return Ok(response);
+    }
+    if conversion.is_some()
+        && !content_type
+            .as_deref()
+            .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    {
+        let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to read non-streaming local model response: {error}"),
+        })?;
+        let value = serde_json::from_slice::<Value>(&response_body).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Upstream returned invalid non-SSE JSON: {error}"),
+        })?;
+        log_executor_event(
+            "local model proxy converting non-sse response",
+            &[
+                ("api_format", upstream.api_format),
+                ("content_type", content_type.unwrap_or_default()),
+                ("body_bytes", response_body.len().to_string()),
+            ],
+        );
+        let chat_value = match conversion.expect("conversion checked above") {
+            Conversion::Chat(context) => (value, context),
+            Conversion::Anthropic(context) => {
+                (anthropic::anthropic_response_to_chat(&value), context)
+            }
+        };
+        let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+            format!("data: {}\n\ndata: [DONE]\n\n", chat_value.0),
+        ))]);
+        let responses_stream = chat::chat_sse_to_responses(source, chat_value.1);
+        let mut response = Response::new(Body::from_stream(history::record_responses_stream(
+            responses_stream,
+            history,
+        )));
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/event-stream"),
+        );
+        return Ok(response);
+    }
     let is_converted = conversion.is_some();
     let mut response = match conversion {
-        Some(Conversion::Chat(context)) => Response::new(Body::from_stream(
-            chat::chat_sse_to_responses(upstream_response.bytes_stream(), context),
-        )),
-        Some(Conversion::Anthropic(context)) => Response::new(Body::from_stream(
-            anthropic::anthropic_sse_to_responses(upstream_response.bytes_stream(), context),
-        )),
+        Some(Conversion::Chat(context)) => {
+            let responses_stream =
+                chat::chat_sse_to_responses(upstream_response.bytes_stream(), context);
+            Response::new(Body::from_stream(history::record_responses_stream(
+                responses_stream,
+                history,
+            )))
+        }
+        Some(Conversion::Anthropic(context)) => {
+            let responses_stream =
+                anthropic::anthropic_sse_to_responses(upstream_response.bytes_stream(), context);
+            Response::new(Body::from_stream(history::record_responses_stream(
+                responses_stream,
+                history,
+            )))
+        }
         None => Response::new(Body::from_stream(normalize_responses_stream(
             upstream_response.bytes_stream(),
         ))),
@@ -146,6 +305,35 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
     Ok(response)
+}
+
+async fn prepare_request_with_history(
+    api_format: &str,
+    body: &[u8],
+    history: &history::CodexToolHistory,
+) -> Result<(Vec<u8>, Option<Conversion>), HttpError> {
+    if api_format == "openai-responses" {
+        return Ok((body.to_vec(), None));
+    }
+    let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("Invalid Codex Responses request: {error}"),
+    })?;
+    let restored = history.enrich_request(&mut responses_body).await;
+    if restored > 0 {
+        log_executor_event(
+            "local model proxy restored tool history",
+            &[
+                ("api_format", api_format.to_owned()),
+                ("restored_items", restored.to_string()),
+            ],
+        );
+    }
+    let enriched = serde_json::to_vec(&responses_body).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("Failed to serialize enriched Codex request: {error}"),
+    })?;
+    prepare_request(api_format, &enriched)
 }
 
 fn prepare_request(
@@ -249,9 +437,7 @@ where
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
                     state.pending.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(index) = state.pending.find("\n\n") {
-                        let event = state.pending[..index].to_owned();
-                        state.pending.drain(..index + 2);
+                    while let Some(event) = take_sse_block(&mut state.pending) {
                         state.output.push_back(Ok(Bytes::from(format!(
                             "{}\n\n",
                             normalize_responses_event(&event)
@@ -261,10 +447,32 @@ where
                 Some(Err(error)) => {
                     return Some((Err(std::io::Error::other(error.to_string())), state));
                 }
-                None => return None,
+                None => {
+                    if state.pending.trim().is_empty() {
+                        return None;
+                    }
+                    let trailing = std::mem::take(&mut state.pending);
+                    return Some((
+                        Ok(Bytes::from(format!(
+                            "{}\n\n",
+                            normalize_responses_event(trailing.trim_end())
+                        ))),
+                        state,
+                    ));
+                }
             }
         }
     })
+}
+
+fn take_sse_block(buffer: &mut String) -> Option<String> {
+    let (index, delimiter_len) = buffer
+        .find("\r\n\r\n")
+        .map(|index| (index, 4))
+        .or_else(|| buffer.find("\n\n").map(|index| (index, 2)))?;
+    let block = buffer[..index].to_owned();
+    buffer.drain(..index + delimiter_len);
+    Some(block)
 }
 
 fn normalize_responses_event(event: &str) -> String {
@@ -322,7 +530,7 @@ mod tests {
     use super::*;
     use std::{env, fs};
 
-    use axum::{routing::post, Router};
+    use axum::{body::to_bytes, routing::post, Json, Router};
     use serde_json::json;
 
     #[test]
@@ -360,6 +568,172 @@ mod tests {
         assert_eq!(normalize_responses_event(event), event);
     }
 
+    #[test]
+    fn registration_is_stable_and_reference_counted_for_persistent_threads() {
+        let upstream = LocalModelProxyUpstream {
+            registration_id: "unregister-test".to_owned(),
+            base_url: "https://example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+        };
+        let token = register(upstream.clone());
+        let repeated_token = register(upstream.clone());
+        assert_eq!(repeated_token, token);
+        assert!(registry()
+            .lock()
+            .expect("registry lock")
+            .contains_key(&token));
+
+        unregister(&token);
+        assert!(registry()
+            .lock()
+            .expect("registry lock")
+            .contains_key(&token));
+
+        unregister(&token);
+
+        {
+            let mut entries = registry().lock().expect("registry lock");
+            let entry = entries.get_mut(&token).expect("idle registration retained");
+            assert_eq!(entry.active_references, 0);
+            entry.last_used = Instant::now() - REGISTRY_IDLE_TTL - Duration::from_secs(1);
+            prune_registry(&mut entries);
+            assert!(!entries.contains_key(&token));
+        }
+
+        let resumed_token = register(upstream);
+        assert_eq!(resumed_token, token);
+        unregister(&resumed_token);
+    }
+
+    #[test]
+    fn registration_token_changes_when_the_upstream_changes() {
+        let upstream = LocalModelProxyUpstream {
+            registration_id: "upstream-change-test".to_owned(),
+            base_url: "https://one.example.com".to_owned(),
+            request_url: None,
+            api_format: "openai-responses".to_owned(),
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+        };
+        let first = registration_token(&upstream);
+        let mut changed = upstream;
+        changed.base_url = "https://two.example.com".to_owned();
+
+        assert_ne!(registration_token(&changed), first);
+    }
+
+    #[tokio::test]
+    async fn preserves_non_success_status_and_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/chat/completions",
+                    post(|| async {
+                        (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"error": {"message": "tools are unsupported"}})),
+                        )
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(LocalModelProxyUpstream {
+            registration_id: "non-success-test".to_owned(),
+            base_url: format!("http://{address}"),
+            request_url: Some(format!("http://{address}/chat/completions")),
+            api_format: "openai-chat-completions".to_owned(),
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("authorization"),
+        );
+
+        let response = handle(
+            headers,
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("proxy response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        assert!(String::from_utf8_lossy(&body).contains("tools are unsupported"));
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn converts_successful_non_sse_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/chat/completions",
+                    post(|| async { Json(json!({"choices": [{"message": {"content": "hi"}}]})) }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(LocalModelProxyUpstream {
+            registration_id: "non-sse-test".to_owned(),
+            base_url: format!("http://{address}"),
+            request_url: Some(format!("http://{address}/chat/completions")),
+            api_format: "openai-chat-completions".to_owned(),
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("authorization"),
+        );
+
+        let response = handle(
+            headers,
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("non-SSE JSON should be converted");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/event-stream"))
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("converted response body");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("response.output_text.delta"));
+        assert!(body.contains("response.completed"));
+
+        unregister(&token);
+        server.abort();
+    }
+
     #[tokio::test]
     #[ignore = "requires an external model and Codex binary"]
     async fn external_model_completes_a_codex_tool_loop() {
@@ -377,6 +751,7 @@ mod tests {
         };
         let request_url = format!("{}{default_path}", base_url.trim_end_matches('/'));
         let token = register(LocalModelProxyUpstream {
+            registration_id: "external-model-test".to_owned(),
             base_url,
             request_url: Some(request_url),
             api_format,

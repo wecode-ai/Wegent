@@ -26,6 +26,7 @@ import { testLocalModelConnection } from '@/features/model-settings/localModelCo
 import {
   buildLocalModelRequestUrl,
   defaultLocalModelRequestPath,
+  defaultLocalModelToolProfile,
   deleteLocalModelConfig,
   DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   listLocalModelConfigs,
@@ -36,6 +37,7 @@ import {
   splitLocalModelRequestUrl,
   type LocalModelConfig,
   type LocalModelApiFormat,
+  type LocalModelToolProfile,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -184,6 +186,7 @@ interface LocalModelFormState {
   modelId: string
   baseUrl: string
   apiFormat: LocalModelApiFormat
+  toolProfile: LocalModelToolProfile
   requestPath: string
   apiKey: string
   contextWindow: string
@@ -214,6 +217,7 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   modelId: '',
   baseUrl: '',
   apiFormat: 'openai-responses',
+  toolProfile: 'custom',
   requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
   contextWindow: '',
@@ -339,6 +343,7 @@ function isLocalModelFormDirty(
     form.modelId !== editingModel.modelId ||
     form.baseUrl !== editingModel.baseUrl ||
     form.apiFormat !== editingModel.apiFormat ||
+    form.toolProfile !== editingModel.toolProfile ||
     form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
     form.contextWindow !== (editingModel.contextWindow?.toString() ?? '') ||
@@ -657,6 +662,7 @@ function LocalModelSettingsSection({
       modelId: model.modelId,
       baseUrl: model.baseUrl,
       apiFormat: model.apiFormat,
+      toolProfile: model.toolProfile,
       requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
       contextWindow: model.contextWindow?.toString() ?? '',
@@ -745,6 +751,7 @@ function LocalModelSettingsSection({
         displayName: form.displayName,
         group: form.group,
         modelId: form.modelId,
+        toolProfile: form.toolProfile,
         baseUrl: form.baseUrl,
         apiFormat: form.apiFormat,
         requestPath: form.requestPath,
@@ -770,6 +777,7 @@ function LocalModelSettingsSection({
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
         apiFormat: editingModel.apiFormat,
+        toolProfile: editingModel.toolProfile,
         requestPath: editingModel.requestPath,
         apiKey: null,
         contextWindow: editingModel.contextWindow,
@@ -798,6 +806,7 @@ function LocalModelSettingsSection({
         apiFormat: form.apiFormat,
         requestPath: form.requestPath,
         modelId: form.modelId,
+        toolProfile: form.toolProfile,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
       })
       setTestResult({
@@ -878,6 +887,7 @@ function LocalModelSettingsSection({
                     const previousDefault = defaultLocalModelRequestPath(form.apiFormat)
                     updateForm({
                       apiFormat,
+                      toolProfile: defaultLocalModelToolProfile(apiFormat),
                       ...(form.requestPath === previousDefault
                         ? { requestPath: defaultLocalModelRequestPath(apiFormat) }
                         : {}),
@@ -895,6 +905,33 @@ function LocalModelSettingsSection({
                   {t(
                     'workbench.local_model_api_format_hint',
                     'Chat Completions 会在本机转换为 Codex 所需的 Responses 格式。'
+                  )}
+                </span>
+              </label>
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                {t('workbench.local_model_tool_profile_label', '工具模式')}
+                <select
+                  data-testid="local-model-tool-profile-select"
+                  value={form.toolProfile}
+                  onChange={event =>
+                    updateForm({ toolProfile: event.target.value as LocalModelToolProfile })
+                  }
+                  className={LOCAL_MODEL_FIELD_CLASS}
+                >
+                  <option value="custom" disabled={form.apiFormat !== 'openai-responses'}>
+                    {t('workbench.local_model_tool_profile_custom', '原生 Custom tools')}
+                  </option>
+                  <option value="function" disabled={form.apiFormat === 'openai-responses'}>
+                    {t('workbench.local_model_tool_profile_function', 'Function tools 转换')}
+                  </option>
+                  <option value="shell">
+                    {t('workbench.local_model_tool_profile_shell', '仅 Shell 编辑')}
+                  </option>
+                </select>
+                <span className="text-xs font-normal leading-5 text-text-muted">
+                  {t(
+                    'workbench.local_model_tool_profile_hint',
+                    '决定 Codex 是否发布 freeform apply_patch，以及是否通过普通函数转换。'
                   )}
                 </span>
               </label>

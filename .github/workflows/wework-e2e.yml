@@ -11,6 +11,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "executor/**"
       - "packages/chat-core/**"
       - "wework/**"
   pull_request:
@@ -23,6 +24,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "executor/**"
       - "packages/chat-core/**"
       - "wework/**"
   workflow_dispatch:

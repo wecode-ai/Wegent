@@ -5,6 +5,7 @@ export interface LocalModelConfig {
   modelId: string
   baseUrl: string
   apiFormat: LocalModelApiFormat
+  toolProfile: LocalModelToolProfile
   requestPath?: string
   apiKey?: string
   contextWindow?: number
@@ -21,6 +22,8 @@ export type LocalModelApiFormat =
 
 export type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
 
+export type LocalModelToolProfile = 'custom' | 'function' | 'shell'
+
 export interface SaveLocalModelConfigInput {
   id?: string | null
   displayName?: string | null
@@ -28,6 +31,7 @@ export interface SaveLocalModelConfigInput {
   modelId: string
   baseUrl: string
   apiFormat?: LocalModelApiFormat | null
+  toolProfile?: LocalModelToolProfile | null
   requestPath?: string | null
   apiKey?: string | null
   contextWindow?: number | string | null
@@ -63,6 +67,33 @@ export function normalizeLocalModelApiFormat(value?: string | null): LocalModelA
     : 'openai-responses'
 }
 
+export function defaultLocalModelToolProfile(
+  apiFormat: LocalModelApiFormat
+): LocalModelToolProfile {
+  return apiFormat === 'openai-responses' ? 'custom' : 'function'
+}
+
+export function normalizeLocalModelToolProfile(
+  value: string | null | undefined,
+  apiFormat: LocalModelApiFormat
+): LocalModelToolProfile {
+  return value === 'custom' || value === 'function' || value === 'shell'
+    ? value
+    : defaultLocalModelToolProfile(apiFormat)
+}
+
+function validateLocalModelToolProfile(
+  toolProfile: LocalModelToolProfile,
+  apiFormat: LocalModelApiFormat
+): void {
+  if (toolProfile === 'custom' && apiFormat !== 'openai-responses') {
+    throw new Error('Native custom tools require the OpenAI Responses API format')
+  }
+  if (toolProfile === 'function' && apiFormat === 'openai-responses') {
+    throw new Error('Function tool conversion requires Chat Completions or Anthropic Messages')
+  }
+}
+
 function readStoredConfigs(): LocalModelConfig[] {
   try {
     const raw = globalThis.localStorage?.getItem(LOCAL_MODEL_SETTINGS_STORAGE_KEY)
@@ -88,6 +119,10 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
       record.apiFormat === 'openai-responses' ||
       record.apiFormat === 'openai-chat-completions' ||
       record.apiFormat === 'anthropic-messages') &&
+    (record.toolProfile === undefined ||
+      record.toolProfile === 'custom' ||
+      record.toolProfile === 'function' ||
+      record.toolProfile === 'shell') &&
     (record.requestPath === undefined || typeof record.requestPath === 'string') &&
     (record.requestUrlMode === undefined ||
       record.requestUrlMode === 'responses_path' ||
@@ -125,6 +160,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     modelId: legacyConfig.modelId,
     baseUrl: legacyConfig.baseUrl,
     apiFormat,
+    toolProfile: normalizeLocalModelToolProfile(legacyConfig.toolProfile, apiFormat),
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     ...(legacyConfig.contextWindow ? { contextWindow: legacyConfig.contextWindow } : {}),
     webSearchMode: normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
@@ -301,6 +337,8 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
   const contextWindow = normalizeLocalModelContextWindow(input.contextWindow)
+  const toolProfile = normalizeLocalModelToolProfile(input.toolProfile, apiFormat)
+  validateLocalModelToolProfile(toolProfile, apiFormat)
   const id = input.id?.trim() || nextConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
@@ -317,6 +355,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     modelId,
     baseUrl,
     apiFormat,
+    toolProfile,
     requestPath,
     apiKey,
     ...(contextWindow ? { contextWindow } : {}),

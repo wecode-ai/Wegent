@@ -68,31 +68,72 @@ test('serves browser-accessible OpenAI Responses API mock responses', async ({ p
   })
 })
 
-test('sends local model connection tests through the Wework Responses API path', async ({
-  page,
-}) => {
-  const app = new WeworkApp(page)
+for (const protocol of [
+  {
+    name: 'Responses custom tools',
+    apiFormat: 'openai-responses' as const,
+    toolProfile: 'custom' as const,
+    path: '/v1/responses',
+    modelId: 'mock-response-model',
+    expectedToolType: 'custom',
+  },
+  {
+    name: 'Responses shell profile function capability',
+    apiFormat: 'openai-responses' as const,
+    toolProfile: 'shell' as const,
+    path: '/v1/responses',
+    modelId: 'mock-response-shell-model',
+    expectedToolType: 'function',
+  },
+  {
+    name: 'Chat Completions function tools',
+    apiFormat: 'openai-chat-completions' as const,
+    toolProfile: 'function' as const,
+    path: '/v1/chat/completions',
+    modelId: 'mock-chat-model',
+    expectedToolType: 'function',
+  },
+  {
+    name: 'Anthropic Messages function tools',
+    apiFormat: 'anthropic-messages' as const,
+    toolProfile: 'function' as const,
+    path: '/v1/messages',
+    modelId: 'mock-anthropic-model',
+    expectedToolType: undefined,
+  },
+]) {
+  test(`runs a forced Agent capability probe through ${protocol.name}`, async ({ page }) => {
+    const app = new WeworkApp(page)
+    await app.goto('/')
 
-  await app.goto('/')
+    const [request, result] = await Promise.all([
+      page.waitForRequest(
+        candidate =>
+          candidate.method() === 'POST' &&
+          candidate.url().startsWith(responseApiMockUrl) &&
+          candidate.url().endsWith(protocol.path.split('/').at(-1) ?? protocol.path)
+      ),
+      app.testLocalModelConnection({
+        baseUrl: `${responseApiMockUrl}/v1`,
+        apiFormat: protocol.apiFormat,
+        toolProfile: protocol.toolProfile,
+        modelId: protocol.modelId,
+        apiKey: 'test-token',
+      }),
+    ])
 
-  const [request, result] = await Promise.all([
-    page.waitForRequest(
-      candidate =>
-        candidate.method() === 'POST' && candidate.url() === `${responseApiMockUrl}/v1/responses`
-    ),
-    app.testLocalModelConnection({
-      baseUrl: `${responseApiMockUrl}/v1`,
-      modelId: 'mock-response-model',
-      apiKey: 'test-token',
-    }),
-  ])
-
-  expect(result).toEqual({ status: 200 })
-  expect(request.postDataJSON()).toMatchObject({
-    model: 'mock-response-model',
+    expect(result).toEqual({ status: 200, toolCalling: true })
+    const body = request.postDataJSON()
+    expect(body.model).toBe(protocol.modelId)
+    expect(request.postData()).toContain('wework_capability_probe')
+    if (protocol.expectedToolType) {
+      expect(body.tools[0].type).toBe(protocol.expectedToolType)
+    } else {
+      expect(body.tools[0].name).toBe('wework_capability_probe')
+      expect(body.tools[0].input_schema).toBeTruthy()
+    }
   })
-  expect(request.postData()).toContain('Reply with ok.')
-})
+}
 
 test('surfaces local model send circuit breaker failures', async ({ page }) => {
   const app = new WeworkApp(page)
