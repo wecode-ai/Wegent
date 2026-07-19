@@ -187,6 +187,7 @@ async fn running_session_gateway_proxies_http_and_websocket_to_code_server() {
     let _lock = env_lock();
     let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
     let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
     let _password = EnvGuard::set("CODE_SERVER_PASSWORD", "configured-secret");
     let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_addr = upstream_listener.local_addr().unwrap();
@@ -220,10 +221,15 @@ async fn running_session_gateway_proxies_http_and_websocket_to_code_server() {
             9999999999,
         ),
     );
-    let gateway = start_session_gateway(Arc::new(Mutex::new(handler)))
+    let handler = Arc::new(Mutex::new(handler));
+    let gateway = start_session_gateway(Arc::clone(&handler))
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(
+        handler.lock().unwrap().public_base_url,
+        format!("http://127.0.0.1:{}", gateway.local_addr.port())
+    );
     let http_base = format!("http://{}", gateway.local_addr);
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -315,6 +321,7 @@ async fn running_session_gateway_supports_code_server_without_auth_cookie() {
     let _lock = env_lock();
     let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
     let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let _public_base_url = EnvGuard::set("DEVICE_PUBLIC_BASE_URL", "");
     let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_addr = upstream_listener.local_addr().unwrap();
     let upstream = Router::new()
@@ -361,6 +368,38 @@ async fn running_session_gateway_supports_code_server_without_auth_cookie() {
 
     drop(gateway);
     upstream_task.abort();
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // Serializes process-wide gateway environment overrides.
+async fn dynamic_session_gateway_preserves_explicit_public_base_url() {
+    let _lock = env_lock();
+    let _gateway_host = EnvGuard::set("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1");
+    let _gateway_port = EnvGuard::set("DEVICE_SESSION_GATEWAY_PORT", "0");
+    let _public_base_url = EnvGuard::set(
+        "DEVICE_PUBLIC_BASE_URL",
+        "https://gateway.example.com/sessions",
+    );
+    let handler = Arc::new(Mutex::new(LocalSessionHandler::new(
+        "https://gateway.example.com/sessions",
+        true,
+        18080,
+        temp_root("gateway-explicit-public-url"),
+        Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+            RecordingTerminal::default(),
+        )))),
+    )));
+
+    let gateway = start_session_gateway(Arc::clone(&handler))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        handler.lock().unwrap().public_base_url,
+        "https://gateway.example.com/sessions"
+    );
+    drop(gateway);
 }
 
 #[test]

@@ -33,6 +33,10 @@ const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
 const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
+const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
+const SESSION_GATEWAY_HOST_ENV: &str = "DEVICE_SESSION_GATEWAY_HOST";
+const SESSION_GATEWAY_PORT_ENV: &str = "DEVICE_SESSION_GATEWAY_PORT";
+const SESSION_GATEWAY_PUBLIC_BASE_URL_ENV: &str = "DEVICE_PUBLIC_BASE_URL";
 const DEFAULT_FILE_EDIT_LOG_ENDPOINT: &str = "http://127.0.0.1:3456/api/file-edit-log";
 const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
@@ -751,10 +755,34 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
     let executor_home = path_or_error(local_executor_runtime_home_path());
     let codex_home = path_or_error(wework_codex_home_path(&executor_home));
     let log_dir = path_or_error(local_executor_log_dir_path());
+    let app_ipc_device_id = inner
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(LOCAL_EXECUTOR_DEVICE_ID)
+        .to_string();
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
         (CODEX_HOME_ENV.to_string(), codex_home),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
+        (APP_IPC_DEVICE_ID_ENV.to_string(), app_ipc_device_id.clone()),
+        ("DEVICE_ID".to_string(), app_ipc_device_id.clone()),
+        (
+            "DEVICE_NAME".to_string(),
+            format!("{app_ipc_device_id} app"),
+        ),
+        ("DEVICE_TYPE".to_string(), "app".to_string()),
+        ("BIND_SHELL".to_string(), "claudecode".to_string()),
+        (
+            SESSION_GATEWAY_HOST_ENV.to_string(),
+            "127.0.0.1".to_string(),
+        ),
+        (SESSION_GATEWAY_PORT_ENV.to_string(), "0".to_string()),
+        (
+            SESSION_GATEWAY_PUBLIC_BASE_URL_ENV.to_string(),
+            String::new(),
+        ),
         (
             "PATH".to_string(),
             process_environment::normalized_current_path(),
@@ -770,13 +798,6 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
     let Some(connection) = &inner.backend_connection else {
         return envs;
     };
-    let app_ipc_device_id = inner
-        .device_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(LOCAL_EXECUTOR_DEVICE_ID)
-        .to_string();
 
     envs.extend([
         (
@@ -787,14 +808,6 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
             "WEGENT_AUTH_TOKEN".to_string(),
             connection.auth_token.clone(),
         ),
-        ("DEVICE_ID".to_string(), app_ipc_device_id.clone()),
-        (
-            "DEVICE_NAME".to_string(),
-            format!("{app_ipc_device_id} app"),
-        ),
-        ("DEVICE_TYPE".to_string(), "app".to_string()),
-        ("BIND_SHELL".to_string(), "claudecode".to_string()),
-        ("WEGENT_APP_IPC_DEVICE_ID".to_string(), app_ipc_device_id),
     ]);
     envs
 }
@@ -2751,6 +2764,38 @@ command = "example"
             assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
+    }
+
+    #[test]
+    fn sidecar_env_forces_stdio_and_dynamic_gateway_without_backend_connection() {
+        let _guard = env_lock();
+        let envs = local_executor_backend_env(&LocalExecutorInner::default())
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(
+            envs.get(APP_IPC_DEVICE_ID_ENV).map(String::as_str),
+            Some(LOCAL_EXECUTOR_DEVICE_ID)
+        );
+        assert_eq!(
+            envs.get("DEVICE_ID").map(String::as_str),
+            Some(LOCAL_EXECUTOR_DEVICE_ID)
+        );
+        assert_eq!(
+            envs.get(SESSION_GATEWAY_HOST_ENV).map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            envs.get(SESSION_GATEWAY_PORT_ENV).map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            envs.get(SESSION_GATEWAY_PUBLIC_BASE_URL_ENV)
+                .map(String::as_str),
+            Some("")
+        );
+        assert!(!envs.contains_key("WEGENT_BACKEND_URL"));
+        assert!(!envs.contains_key("WEGENT_AUTH_TOKEN"));
     }
 
     #[test]
