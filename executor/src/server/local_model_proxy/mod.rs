@@ -429,26 +429,44 @@ struct ResponsesStreamState<S> {
     stream: Pin<Box<S>>,
     pending: String,
     output: VecDeque<Result<Bytes, std::io::Error>>,
+    source_done: bool,
+    terminal_seen: bool,
 }
 
-fn normalize_responses_stream<S>(stream: S) -> impl Stream<Item = Result<Bytes, std::io::Error>>
+fn normalize_responses_stream<S, E>(stream: S) -> impl Stream<Item = Result<Bytes, std::io::Error>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: ToString,
 {
     let state = ResponsesStreamState {
         stream: Box::pin(stream),
         pending: String::new(),
         output: VecDeque::new(),
+        source_done: false,
+        terminal_seen: false,
     };
     futures_util::stream::unfold(state, |mut state| async move {
         loop {
             if let Some(output) = state.output.pop_front() {
                 return Some((output, state));
             }
+            if state.terminal_seen {
+                return None;
+            }
+            if state.source_done {
+                state.terminal_seen = true;
+                return Some((
+                    Ok(responses_failed_event(
+                        "Upstream Responses stream ended before a terminal event",
+                    )),
+                    state,
+                ));
+            }
             match state.stream.next().await {
                 Some(Ok(bytes)) => {
                     state.pending.push_str(&String::from_utf8_lossy(&bytes));
                     while let Some(event) = take_sse_block(&mut state.pending) {
+                        state.terminal_seen |= is_responses_terminal_event(&event);
                         state.output.push_back(Ok(Bytes::from(format!(
                             "{}\n\n",
                             normalize_responses_event(&event)
@@ -456,24 +474,71 @@ where
                     }
                 }
                 Some(Err(error)) => {
-                    return Some((Err(std::io::Error::other(error.to_string())), state));
+                    state.source_done = true;
+                    state.terminal_seen = true;
+                    return Some((Ok(responses_failed_event(&error.to_string())), state));
                 }
                 None => {
-                    if state.pending.trim().is_empty() {
-                        return None;
-                    }
-                    let trailing = std::mem::take(&mut state.pending);
-                    return Some((
-                        Ok(Bytes::from(format!(
+                    state.source_done = true;
+                    if !state.pending.trim().is_empty() {
+                        let trailing = std::mem::take(&mut state.pending);
+                        let trailing = trailing.trim_end();
+                        state.terminal_seen |= is_responses_terminal_event(trailing);
+                        state.output.push_back(Ok(Bytes::from(format!(
                             "{}\n\n",
-                            normalize_responses_event(trailing.trim_end())
-                        ))),
-                        state,
-                    ));
+                            normalize_responses_event(trailing)
+                        ))));
+                    }
                 }
             }
         }
     })
+}
+
+fn is_responses_terminal_event(event: &str) -> bool {
+    let mut event_name = None;
+    let mut data_lines = Vec::new();
+    for line in event.lines() {
+        let line = line.trim_start_matches('\u{feff}').trim_start();
+        if let Some(value) = line.strip_prefix("event:") {
+            event_name = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data_lines.push(value.trim_start());
+        }
+    }
+    if event_name.is_some_and(|value| {
+        matches!(
+            value,
+            "response.completed" | "response.failed" | "response.incomplete"
+        )
+    }) {
+        return true;
+    }
+    serde_json::from_str::<Value>(&data_lines.join("\n"))
+        .ok()
+        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
+        .is_some_and(|event_type| {
+            matches!(
+                event_type.as_str(),
+                "response.completed" | "response.failed" | "response.incomplete"
+            )
+        })
+}
+
+fn responses_failed_event(message: &str) -> Bytes {
+    Bytes::from(format!(
+        "event: response.failed\ndata: {}\n\n",
+        json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_wework_proxy_failed",
+                "object": "response",
+                "status": "failed",
+                "output": [],
+                "error": {"type": "upstream_error", "message": message}
+            }
+        })
+    ))
 }
 
 fn take_sse_block(buffer: &mut String) -> Option<String> {
@@ -577,6 +642,68 @@ mod tests {
     fn leaves_non_completed_events_unchanged() {
         let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
         assert_eq!(normalize_responses_event(event), event);
+    }
+
+    async fn collect_responses_stream<S, E>(stream: S) -> String
+    where
+        S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+        E: ToString,
+    {
+        normalize_responses_stream(stream)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|chunk| String::from_utf8_lossy(&chunk.expect("normalized chunk")).into_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn reports_truncated_native_responses_stream_as_failed() {
+        let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from_static(
+            b"event: response.created\ndata: {\"type\":\"response.created\"}\n\n",
+        ))]);
+        let output = collect_responses_stream(stream).await;
+
+        assert!(output.contains("response.created"));
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("ended before a terminal event"));
+    }
+
+    #[tokio::test]
+    async fn accepts_native_responses_terminal_event_without_blank_tail() {
+        let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from_static(
+            b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{}}",
+        ))]);
+        let output = collect_responses_stream(stream).await;
+
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
+    }
+
+    #[tokio::test]
+    async fn converts_native_responses_read_error_to_failed_event() {
+        let stream = futures_util::stream::iter(vec![Err::<Bytes, _>(std::io::Error::other(
+            "connection reset",
+        ))]);
+        let output = collect_responses_stream(stream).await;
+
+        assert!(output.contains("response.failed"));
+        assert!(output.contains("connection reset"));
+    }
+
+    #[tokio::test]
+    async fn ignores_transport_error_after_native_terminal_event() {
+        let stream = futures_util::stream::iter(vec![
+            Ok(Bytes::from_static(
+                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+            )),
+            Err(std::io::Error::other("late connection reset")),
+        ]);
+        let output = collect_responses_stream(stream).await;
+
+        assert!(output.contains("response.completed"));
+        assert!(!output.contains("response.failed"));
+        assert!(!output.contains("late connection reset"));
     }
 
     #[test]
