@@ -172,6 +172,16 @@ async function sendPrompt(control, selector, prompt) {
   })
 }
 
+async function prepareCompletedTurnScreenshot(control) {
+  await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+    enabled: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('press', 'body', { key: 'Escape' })
+  await control.command('press', 'body', { key: 'Escape' })
+}
+
 async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -2022,6 +2032,7 @@ async function main() {
           localState.requests.length >= 3,
           `${localModel.protocol} did not send the full model request sequence`
         )
+        await prepareCompletedTurnScreenshot(control)
         await captureVerificationScreenshot(
           control,
           `${String(index + 3).padStart(2, '0')}-local-model-${localModel.protocol}-follow-up.png`

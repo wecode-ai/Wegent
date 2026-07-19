@@ -167,6 +167,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-e2e-diagnostics
-          path: wework/test-results/desktop-e2e/
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7
