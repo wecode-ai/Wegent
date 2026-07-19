@@ -8,7 +8,9 @@ Wework 内置一个默认关闭的前端性能诊断开关，用于定位 releas
 
 ## 多实例调试
 
-使用 `pnpm --filter wework dev:mac` 启动 debug 应用时，每个 Wework 进程都会使用独立的本地 executor runtime 目录和 IPC 地址文件。可以同时启动多个调试窗口，不同窗口不会连接到同一个 executor 实例。
+使用 `pnpm --filter wework dev:mac` 启动日常 debug 应用时，默认直接使用正式版的 Executor Home，因此项目和任务会与本机正式版 Wework 共享；debug 进程仍使用独立的 IPC 地址文件，避免误连其他运行中的 executor。需要临时隔离项目和任务时，使用 `pnpm --filter wework dev:mac -- --executor-isolation`。
+
+`ai:verify` 和桌面 E2E 不使用上述共享默认值。它们会显式创建临时 Executor Home、项目目录、设备 ID、IPC socket 和唯一 Tauri identifier，使任务、项目、应用数据以及单实例锁都与正式版和其他验证会话隔离。
 
 开发环境默认让这些实例复用同一个 Cargo target 目录，以便 executor 源码变化后继续使用增量编译产物。需要排查共享构建缓存问题时，可以设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`，让当前启动过程使用项目内的默认 target 目录。
 

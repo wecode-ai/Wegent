@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
 WEWORK_RELEASE_UI="false"
-EXECUTOR_ISOLATION_OVERRIDE=""
+EXECUTOR_ISOLATION_OVERRIDE="${WEWORK_EXECUTOR_ISOLATION_OVERRIDE:-}"
 
 usage() {
   cat <<'EOF'
@@ -27,9 +27,11 @@ Options:
   --release-ui          Run a production frontend bundle through tauri dev.
   --shared-executor-home
                         Alias for --no-executor-isolation.
-  --executor-isolation  Force an instance-specific Executor Home.
+  --executor-isolation  Use an instance-specific Executor Home instead of the
+                        release app's persisted projects and tasks.
   --no-executor-isolation
-                        Force direct use of WEGENT_EXECUTOR_HOME.
+                        Use the release app's persisted projects and tasks
+                        (the default).
   -h, --help            Show this help message.
 
 Environment:
@@ -140,6 +142,13 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+# Interactive development should use the same persisted projects and tasks as
+# the release app. Verification and E2E launchers provide their own isolated
+# executor homes and do not use this default.
+if [ -z "$EXECUTOR_ISOLATION_OVERRIDE" ]; then
+  EXECUTOR_ISOLATION_OVERRIDE="false"
+fi
 
 if [ -n "$EXECUTOR_ISOLATION_OVERRIDE" ]; then
   export WEWORK_EXECUTOR_ISOLATION_OVERRIDE="$EXECUTOR_ISOLATION_OVERRIDE"
@@ -272,6 +281,7 @@ trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
 WEWORK_PORT_VALUE="$WEWORK_PORT" \
 BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
 WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
+WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
 TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
 python3 - <<'PY'
 import json
@@ -283,6 +293,10 @@ config = {
         "beforeDevCommand": os.environ["BEFORE_DEV_COMMAND_VALUE"],
     },
 }
+
+app_identifier = os.environ["WEWORK_APP_IDENTIFIER_VALUE"].strip()
+if app_identifier:
+    config["identifier"] = app_identifier
 
 if os.environ["WEWORK_RELEASE_UI_VALUE"] != "true":
     config["bundle"] = {
@@ -303,6 +317,7 @@ echo "  WEWORK_PORT=$WEWORK_PORT"
 echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
 echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
 echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
 echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"

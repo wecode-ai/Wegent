@@ -79,7 +79,6 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "app"
 version = "0.0.22"
 dependencies = [
- "block2",
  "core-foundation 0.10.1",
  "core-graphics",
  "ctrlc",
@@ -89,7 +88,6 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
- "objc2-web-kit",
  "portable-pty",
  "reqwest 0.13.4",
  "serde",
