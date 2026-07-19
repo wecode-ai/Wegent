@@ -101,6 +101,7 @@ import {
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { getAppPreferences, type CodexPermissionMode } from '@/tauri/appPreferences'
 import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -1057,6 +1058,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   newSession: boolean
   clientMessageId?: string
   ephemeral?: boolean
+  permissionMode?: CodexPermissionMode
 }
 
 function buildLocalRuntimeExecutionRequest(
@@ -1132,6 +1134,7 @@ function buildLocalRuntimeExecutionRequest(
     task_mode: 'code',
     attachments: localRuntimeAttachments(input.attachments, subtaskId),
     reasoning_config: reasoning,
+    permission_mode: input.permissionMode ?? 'full_access',
   }
 }
 
@@ -1237,6 +1240,8 @@ async function createLocalRuntimeTaskPayload(
   }
   if (execution) normalizedData.execution = execution
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
+  const permissionMode =
+    normalizedData.permissionMode ?? (await getAppPreferences()).defaultCodexPermissionMode
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
 
@@ -1264,6 +1269,7 @@ async function createLocalRuntimeTaskPayload(
       newSession: true,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: normalizedData.ephemeral,
+      permissionMode,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1297,7 +1303,12 @@ function createLocalRuntimeSendPayload(
     ...(workspacePath ? { workspacePath } : {}),
   }
 
-  if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
+  if (
+    normalizedData.requestUserInputResponse ||
+    normalizedData.request_user_input_response ||
+    normalizedData.approvalResponse ||
+    normalizedData.approval_response
+  ) {
     const payload = { ...normalizedData } as Record<string, unknown>
     delete payload.modelId
     delete payload.modelType
@@ -1324,6 +1335,7 @@ function createLocalRuntimeSendPayload(
         newSession: false,
         clientMessageId: normalizedData.clientMessageId,
         ephemeral: data.ephemeral,
+        permissionMode: normalizedData.permissionMode ?? normalizedAddress.permissionMode,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1354,6 +1366,7 @@ function createLocalRuntimeSendPayload(
       newSession: false,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: data.ephemeral,
+      permissionMode: normalizedData.permissionMode ?? normalizedAddress.permissionMode,
     }),
   } as unknown as Record<string, unknown>
 }

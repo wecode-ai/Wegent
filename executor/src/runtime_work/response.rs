@@ -36,6 +36,7 @@ pub(crate) struct RuntimeTaskLink {
     pub runtime_handle: Value,
     pub parent: Option<Value>,
     pub ephemeral: bool,
+    pub permission_mode: String,
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
@@ -66,6 +67,7 @@ impl RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            permission_mode: "full_access".to_owned(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -98,6 +100,7 @@ impl RuntimeTaskLink {
             runtime_handle,
             parent: Some(parent),
             ephemeral: false,
+            permission_mode: "full_access".to_owned(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -168,6 +171,10 @@ impl RuntimeTaskLink {
                 .unwrap_or_else(|| json!({})),
             parent: local_link.as_ref().and_then(|link| link.parent.clone()),
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
+            permission_mode: local_link
+                .as_ref()
+                .map(|link| link.permission_mode.clone())
+                .unwrap_or_else(|| "full_access".to_owned()),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -193,6 +200,7 @@ impl RuntimeTaskLink {
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
             parent: self.parent.clone(),
             ephemeral: self.ephemeral,
+            permission_mode: self.permission_mode.clone(),
             list_order: self.list_order,
             group_workspace_path: self.group_workspace_path.clone(),
             group_project_key: self.group_project_key.clone(),
@@ -241,6 +249,7 @@ impl Default for RuntimeTaskLink {
             runtime_handle: json!({}),
             parent: None,
             ephemeral: false,
+            permission_mode: "full_access".to_owned(),
             list_order: None,
             group_workspace_path: None,
             group_project_key: None,
@@ -523,6 +532,10 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     );
     task.insert("title".to_owned(), Value::String(link.title));
     task.insert("runtime".to_owned(), Value::String(link.runtime));
+    task.insert(
+        "permissionMode".to_owned(),
+        Value::String(link.permission_mode.clone()),
+    );
     task.insert(
         "workspaceKind".to_owned(),
         Value::String(infer_workspace_kind(&link.workspace_path).to_owned()),

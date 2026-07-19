@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
+  CodexPermissionMode,
   Attachment,
   DeviceInfo,
   LocalDeviceApp,
@@ -131,6 +132,8 @@ export interface ChatInputProps {
   onPauseGoal?: () => void
   onResumeGoal?: () => void
   onClearGoal?: () => void
+  permissionMode?: CodexPermissionMode
+  onPermissionModeChange?: (mode: CodexPermissionMode) => void
 }
 
 export interface ChatSubmitOptions {
@@ -234,6 +237,8 @@ export function ChatInput({
   onPauseGoal,
   onResumeGoal,
   onClearGoal,
+  permissionMode,
+  onPermissionModeChange,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
   const { t: tChat } = useTranslation('chat')
@@ -376,6 +381,8 @@ export function ChatInput({
         )}
         <ProjectChatComposer
           {...composerProps}
+          permissionMode={permissionMode}
+          onPermissionModeChange={onPermissionModeChange}
           models={controls.models}
           selectedModel={controls.selectedModel}
           selectedModelOptions={controls.selectedModelOptions}
@@ -453,6 +460,8 @@ export function ChatInput({
       )}
       <CompactChatComposer
         {...composerProps}
+        permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
         attachments={controls.attachments}
         codeComments={codeComments}
         uploadingFiles={controls.uploadingFiles}

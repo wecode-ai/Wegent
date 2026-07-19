@@ -1391,6 +1391,7 @@ function FollowUpProbe() {
       <span data-testid="follow-up-collaboration-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
       </span>
+      <span data-testid="follow-up-permission-mode">{paneSession.permissionMode}</span>
       <span data-testid="guidance-messages">
         {paneSession.guidanceMessages
           .map(message => `${message.status}:${message.content}`)
@@ -1400,6 +1401,19 @@ function FollowUpProbe() {
         {paneSession.messages.map(message => `${message.role}:${message.content}`).join('|')}
       </span>
       <span data-testid="follow-up-pane-busy">{paneSession.status.isBusy ? 'busy' : 'idle'}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+            permissionMode: 'request_approval',
+          })
+        }
+      >
+        open approval runtime a
+      </button>
       <button type="button" onClick={() => paneSession.setInput('继续修')}>
         set follow-up
       </button>
@@ -2734,6 +2748,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
       taskId: request.taskId,
+      permissionMode: 'full_access',
       limit: 50,
     })
     expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
@@ -6385,6 +6400,79 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).toHaveBeenCalledWith(
       expect.not.objectContaining({
         requestUserInputResponse: expect.anything(),
+      })
+    )
+  })
+
+  test('preserves the permission mode when sending a runtime follow-up', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      permissionMode: 'request_approval',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [{ id: 'runtime-a:assistant:1', role: 'assistant', content: 'done' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open approval runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-permission-mode')).toHaveTextContent('request_approval')
+    )
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '继续修',
+        permissionMode: 'request_approval',
       })
     )
   })

@@ -23,10 +23,10 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        combined_codex_developer_instructions, strip_wework_browser_instructions,
+        combined_codex_developer_instructions, strip_wework_developer_instructions,
         CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexAppServerTurnOptions, CodexPermissionMode, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::{log_executor_event, wework_debug_log},
@@ -328,6 +328,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
+            "runtime.tasks.permissions.update" => self.update_task_permissions(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
@@ -819,7 +820,8 @@ impl RuntimeWorkRpcHandler {
             .get("developer_instructions")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let user_developer_instructions = strip_wework_browser_instructions(developer_instructions);
+        let user_developer_instructions =
+            strip_wework_developer_instructions(developer_instructions);
         let legacy_instructions = config
             .get("instructions")
             .and_then(Value::as_str)
@@ -1750,6 +1752,7 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
+        link.permission_mode = request_permission_mode(&request, None);
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
@@ -1831,6 +1834,11 @@ impl RuntimeWorkRpcHandler {
                 .send_request_user_input_response(&local_task_id, response)
                 .await;
         }
+        if let Some(response) = approval_response(&payload) {
+            return self
+                .send_request_user_input_response(&local_task_id, response)
+                .await;
+        }
         if existing_link
             .as_ref()
             .is_some_and(|link| link.running && self.is_active_local_task(&link.local_task_id))
@@ -1862,6 +1870,16 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
+        let permission_mode = request_permission_mode(
+            &request,
+            existing_link
+                .as_ref()
+                .map(|link| link.permission_mode.as_str()),
+        );
+        request.extra.insert(
+            "permission_mode".to_owned(),
+            Value::String(permission_mode.clone()),
+        );
         Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -1914,6 +1932,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        self.store.update_task(&local_task_id, |link| {
+            link.permission_mode = permission_mode;
+        });
         self.schedule_worktree_prune();
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
@@ -1937,6 +1958,41 @@ impl RuntimeWorkRpcHandler {
             "deviceId": self.device_id,
             "taskId": local_task_id,
             "runtime": "codex",
+        }))
+    }
+
+    async fn update_task_permissions(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let requested_mode = string_field(&payload, "permissionMode")
+            .or_else(|| string_field(&payload, "permission_mode"));
+        let mode = CodexPermissionMode::from_value(requested_mode.as_deref());
+        let mode_label = mode.as_str().to_owned();
+        let link = self
+            .store
+            .update_task(&local_task_id, |link| {
+                link.permission_mode = mode_label.clone()
+            })
+            .ok_or_else(|| AppIpcError::new("not_found", "runtime task not found"))?;
+        if let Some(thread_id) = runtime_session_id_from_link(&link) {
+            self.call_codex_thread_method_without_list_invalidation(
+                "thread/settings/update",
+                json!({
+                    "threadId": thread_id,
+                    "permissions": mode.permission_profile(),
+                    "approvalPolicy": mode.approval_policy(),
+                    "approvalsReviewer": mode.approvals_reviewer(),
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_error", error))?;
+        }
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "taskId": local_task_id,
+            "permissionMode": mode_label,
+            "effective": if link.running { "next_turn" } else { "effective" },
         }))
     }
 
@@ -3998,6 +4054,27 @@ fn request_user_input_response(payload: &Value) -> Option<Value> {
         .cloned()
 }
 
+fn approval_response(payload: &Value) -> Option<Value> {
+    payload
+        .get("approvalResponse")
+        .or_else(|| payload.get("approval_response"))
+        .filter(|value| value.is_object())
+        .cloned()
+}
+
+fn request_permission_mode(request: &ExecutionRequest, fallback: Option<&str>) -> String {
+    CodexPermissionMode::from_value(
+        request
+            .extra
+            .get("permission_mode")
+            .or_else(|| request.extra.get("permissionMode"))
+            .and_then(Value::as_str)
+            .or(fallback),
+    )
+    .as_str()
+    .to_owned()
+}
+
 fn empty_request_user_input_response() -> Value {
     json!({ "answers": {} })
 }
@@ -5702,6 +5779,20 @@ mod tests {
     }
 
     #[test]
+    fn request_permission_mode_uses_existing_mode_when_request_omits_it() {
+        let request = ExecutionRequest::default();
+
+        assert_eq!(
+            request_permission_mode(&request, Some("request_approval")),
+            "request_approval"
+        );
+        assert_eq!(
+            request_permission_mode(&request, Some("unsupported")),
+            "full_access"
+        );
+    }
+
+    #[test]
     fn cached_user_message_does_not_fallback_to_prompt() {
         let request = ExecutionRequest {
             subtask_id: "42".to_owned(),
@@ -5825,9 +5916,10 @@ mod tests {
         let combined = combined_codex_developer_instructions("用中文回复");
 
         assert!(combined.contains("用中文回复"));
+        assert!(combined.contains("retry that necessary action once"));
         assert!(combined.contains("browser_navigate"));
         assert!(combined.contains("Wework built-in browser"));
-        assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
+        assert_eq!(strip_wework_developer_instructions(&combined), "用中文回复");
     }
 
     #[tokio::test]

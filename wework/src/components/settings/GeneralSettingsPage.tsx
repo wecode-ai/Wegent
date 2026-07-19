@@ -17,6 +17,7 @@ import {
   type AppLanguagePreference,
   type AppPreferences,
   type AppPreferencesPatch,
+  type CodexPermissionMode,
 } from '@/tauri/appPreferences'
 
 type BooleanPreferenceKey = keyof AppPreferencesPatch
@@ -159,6 +160,29 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const handleCodexPermissionModeChange = async (mode: CodexPermissionMode) => {
+    if (mode === preferences.defaultCodexPermissionMode) return
+    const previousMode = preferences.defaultCodexPermissionMode
+    setPreferences(current => ({ ...current, defaultCodexPermissionMode: mode }))
+    setSaving(true)
+    setError(null)
+    try {
+      setPreferences(await updateAppPreferences({ defaultCodexPermissionMode: mode }))
+    } catch (saveError) {
+      console.error('[Wework] Failed to update default Codex permission mode', saveError)
+      setPreferences(current => ({ ...current, defaultCodexPermissionMode: previousMode }))
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const codexPermissionModes: CodexPermissionMode[] = [
+    'full_access',
+    'request_approval',
+    'approve_for_me',
+  ]
+
   return (
     <SettingsPage data-testid="general-settings-page">
       <SettingsPageHeader
@@ -197,6 +221,38 @@ export function GeneralSettingsPage() {
                       ].join(' ')}
                     >
                       <span className="truncate">{t(`workbench.${option.shortLabelKey}`)}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
+          <SettingsRow
+            label={t('workbench.general_settings_codex_permissions')}
+            description={t('workbench.general_settings_codex_permissions_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[360px]">
+                {codexPermissionModes.map(mode => {
+                  const active = preferences.defaultCodexPermissionMode === mode
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      data-testid={`general-codex-permission-${mode}-button`}
+                      disabled={loading || saving}
+                      title={t(`workbench.codex_permission_${mode}_description`)}
+                      aria-pressed={active}
+                      onClick={() => void handleCodexPermissionModeChange(mode)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">{t(`workbench.codex_permission_${mode}`)}</span>
                     </button>
                   )
                 })}

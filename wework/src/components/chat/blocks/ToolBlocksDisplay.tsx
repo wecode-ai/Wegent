@@ -12,7 +12,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { RequestUserInputResponse } from '@/types/api'
+import type { RuntimeInteractiveResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
   isAnsweredRequestUserInputBlock,
@@ -27,6 +27,8 @@ import {
   type RequestUserInputPayload,
 } from '../RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from '../AssistantPlanCard'
+import { ApprovalCard } from '../ApprovalCard'
+import { isRuntimeApprovalPayload } from '../runtimeApproval'
 import {
   buildProcessingDisplayRows,
   getToolActivityFilePaths,
@@ -52,6 +54,11 @@ type ProcessingDisplayItem =
       id: string
       block: RequestUserInputBlock
     }
+  | {
+      type: 'approval'
+      id: string
+      block: ToolBlock
+    }
 
 interface ToolBlocksDisplayProps {
   blocks: ProcessingBlock[]
@@ -67,7 +74,7 @@ interface ToolBlocksDisplayProps {
   showSummary?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
-  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
+  onRequestUserInputSubmit?: (response: RuntimeInteractiveResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void
@@ -143,6 +150,11 @@ export function ToolBlocksDisplay({
     }
 
     blocks.forEach(block => {
+      if (block.type === 'tool' && isRuntimeApprovalPayload(block.renderPayload)) {
+        flushRegularBlocks()
+        items.push({ type: 'approval', id: block.id, block })
+        return
+      }
       if (!isRequestUserInputBlock(block)) {
         pendingRegularBlocks.push(block)
         return
@@ -169,12 +181,15 @@ export function ToolBlocksDisplay({
   const rows = useMemo(
     () =>
       displayItems.filter(
-        (item): item is ProcessingDisplayRow => item.type !== 'request_user_input'
+        (item): item is ProcessingDisplayRow =>
+          item.type !== 'request_user_input' && item.type !== 'approval'
       ),
     [displayItems]
   )
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
-  const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
+  const hasRequestUserInput = displayItems.some(
+    item => item.type === 'request_user_input' || item.type === 'approval'
+  )
   const hasActiveContextCompaction = blocks.some(
     block =>
       isContextCompactionToolBlock(block) && block.status !== 'done' && block.status !== 'error'
@@ -267,6 +282,16 @@ export function ToolBlocksDisplay({
                   disabled={item.block.status === 'error'}
                   onSubmit={onRequestUserInputSubmit}
                   onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
+                />
+              )
+            }
+            if (item.type === 'approval' && isRuntimeApprovalPayload(item.block.renderPayload)) {
+              return (
+                <ApprovalCard
+                  key={item.id}
+                  payload={item.block.renderPayload}
+                  disabled={item.block.status === 'error'}
+                  onSubmit={onRequestUserInputSubmit}
                 />
               )
             }

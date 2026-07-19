@@ -374,6 +374,8 @@ fn env_flag_enabled(key: &str) -> bool {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppPreferences {
+    #[serde(default = "default_codex_permission_mode")]
+    default_codex_permission_mode: String,
     #[serde(default = "default_true")]
     close_to_tray_enabled: bool,
     #[serde(default = "default_true")]
@@ -461,9 +463,15 @@ fn default_browser_local_link_target() -> String {
 }
 
 #[cfg(desktop)]
+fn default_codex_permission_mode() -> String {
+    "full_access".to_string()
+}
+
+#[cfg(desktop)]
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
+            default_codex_permission_mode: default_codex_permission_mode(),
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             close_to_tray_hint_seen: false,
@@ -488,6 +496,7 @@ impl Default for AppPreferences {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppPreferencesPatch {
+    default_codex_permission_mode: Option<String>,
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -640,6 +649,11 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
 
 #[cfg(desktop)]
 fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences {
+    preferences.default_codex_permission_mode =
+        match preferences.default_codex_permission_mode.as_str() {
+            "request_approval" | "approve_for_me" => preferences.default_codex_permission_mode,
+            _ => default_codex_permission_mode(),
+        };
     preferences.browser_external_link_target = normalized_browser_link_target(
         preferences.browser_external_link_target,
         &default_browser_external_link_target(),
@@ -869,6 +883,9 @@ fn update_app_preferences(
     patch: AppPreferencesPatch,
 ) -> Result<AppPreferences, String> {
     let mut preferences = read_app_preferences_impl(&app);
+    if let Some(value) = patch.default_codex_permission_mode {
+        preferences.default_codex_permission_mode = value;
+    }
     if let Some(value) = patch.close_to_tray_enabled {
         preferences.close_to_tray_enabled = value;
     }
@@ -926,6 +943,7 @@ fn update_app_preferences(
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppPreferences {
+    default_codex_permission_mode: String,
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     close_to_tray_hint_seen: bool,
@@ -948,6 +966,7 @@ struct AppPreferences {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppPreferencesPatch {
+    default_codex_permission_mode: Option<String>,
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
@@ -970,6 +989,7 @@ struct AppPreferencesPatch {
 #[tauri::command]
 fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String> {
     Ok(AppPreferences {
+        default_codex_permission_mode: "full_access".to_string(),
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         close_to_tray_hint_seen: false,
@@ -996,6 +1016,9 @@ fn update_app_preferences(
     patch: AppPreferencesPatch,
 ) -> Result<AppPreferences, String> {
     Ok(AppPreferences {
+        default_codex_permission_mode: patch
+            .default_codex_permission_mode
+            .unwrap_or_else(|| "full_access".to_string()),
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),

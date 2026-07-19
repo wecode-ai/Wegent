@@ -414,6 +414,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 ) : (
                   <BufferedChatInput
                     value={paneSession.input}
+                    permissionMode={paneSession.permissionMode}
+                    onPermissionModeChange={paneSession.setPermissionMode}
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}
@@ -518,6 +520,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               />
               <BufferedChatInput
                 value={paneSession.input}
+                permissionMode={paneSession.permissionMode}
+                onPermissionModeChange={paneSession.setPermissionMode}
                 onChange={paneSession.setInput}
                 onSubmit={paneSession.send}
                 disabled={composerDisabled}

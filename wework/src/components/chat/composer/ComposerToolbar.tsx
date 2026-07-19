@@ -2,13 +2,20 @@ import { ArrowDownToLine, ArrowUp, ClipboardList, CornerDownRight, Zap } from 'l
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type {
+  CodexPermissionMode,
+  ModelOptions,
+  RuntimeContextUsage,
+  UnifiedModel,
+} from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { PermissionModeSelector } from './PermissionModeSelector'
+import styles from './ComposerToolbar.module.css'
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -34,6 +41,8 @@ interface ComposerToolbarProps {
   isStreaming?: boolean
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
+  permissionMode?: CodexPermissionMode
+  onPermissionModeChange?: (mode: CodexPermissionMode) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
 }
 
@@ -61,22 +70,34 @@ export function ComposerToolbar({
   isStreaming = false,
   onPause,
   onQuickPhraseSelect,
+  permissionMode,
+  onPermissionModeChange,
   onSubmit,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
   return (
-    <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
-      <div className="flex min-w-0 items-center gap-2">
+    <div
+      className={`${styles.toolbar} mt-auto flex min-h-8 items-center justify-between gap-3 pt-1`}
+    >
+      <div className={`${styles.leftControls} flex min-w-0 items-center gap-2`}>
         <AddContextMenu
           disabled={disabled}
           onFileSelect={onFileSelect}
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
-        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
+        <QuickPhraseMenu compact disabled={disabled} onSelect={onQuickPhraseSelect} />
+        {permissionMode && onPermissionModeChange && (
+          <PermissionModeSelector
+            value={permissionMode}
+            disabled={disabled}
+            className={styles.permissionControl}
+            onChange={onPermissionModeChange}
+          />
+        )}
         {goalDraftActive ? (
-          <GoalDraftPill onCancel={onCancelGoalDraft} />
+          <GoalDraftPill className={styles.modeControl} onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
           <ComposerModePill
             label={t('workbench.plan_mode', '计划模式')}
@@ -87,10 +108,11 @@ export function ComposerToolbar({
             disabled={disabled}
             onCancel={onClearPlanMode}
             title={t('workbench.collaboration_mode', '运行模式')}
+            className={styles.modeControl}
           />
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}

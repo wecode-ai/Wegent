@@ -5,6 +5,7 @@ import type {
   ModelOptions,
   RuntimeContextUsage,
   UnifiedModel,
+  CodexPermissionMode,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { invoke } from '@tauri-apps/api/core'
@@ -64,6 +65,8 @@ interface ProjectChatComposerProps {
   showProjectWorkBar?: boolean
   isStreaming?: boolean
   onPause?: () => void
+  permissionMode?: CodexPermissionMode
+  onPermissionModeChange?: (mode: CodexPermissionMode) => void
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
@@ -186,6 +189,8 @@ export function ProjectChatComposer({
   showProjectWorkBar = true,
   isStreaming = false,
   onPause,
+  permissionMode,
+  onPermissionModeChange,
 }: ProjectChatComposerProps) {
   const formRef = useRef<HTMLFormElement>(null)
   const disabledRef = useRef(disabled)
@@ -387,6 +392,8 @@ export function ProjectChatComposer({
           isStreaming={isStreaming}
           onPause={onPause}
           onQuickPhraseSelect={handleQuickPhraseSelect}
+          permissionMode={permissionMode}
+          onPermissionModeChange={onPermissionModeChange}
           onSubmit={options => onSubmit(value, options)}
         />
       </form>

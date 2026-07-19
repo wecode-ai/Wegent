@@ -240,6 +240,19 @@ impl CodexNotificationEventMapper {
                     message.get("id"),
                 );
             }
+            "item/commandExecution/requestApproval"
+            | "item/fileChange/requestApproval"
+            | "item/permissions/requestApproval" => {
+                emit_approval_request(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    notification.params,
+                    message.get("id"),
+                );
+            }
             "mcpServer/elicitation/request" => {
                 if let Some(params) =
                     mcp_server_elicitation_request_user_input_params(notification.params)
@@ -1284,6 +1297,48 @@ fn emit_request_user_input(
                 "id": block_id,
                 "type": "tool",
                 "tool_name": "request_user_input",
+                "status": "pending",
+                "timestamp": now_ms(),
+                "render_payload": render_payload,
+            }
+        }),
+    );
+}
+
+fn emit_approval_request(
+    event_tx: &Option<broadcast::Sender<Value>>,
+    device_id: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    method: &str,
+    params: &Value,
+    message_request_id: Option<&Value>,
+) {
+    let request_id = message_request_id.and_then(value_identifier);
+    let item_id = params
+        .get("itemId")
+        .or_else(|| params.get("item_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("approval");
+    let mut render_payload = params.clone();
+    if let Some(object) = render_payload.as_object_mut() {
+        object.insert("kind".to_owned(), Value::String("approval".to_owned()));
+        object.insert("method".to_owned(), Value::String(method.to_owned()));
+        if let Some(request_id) = &request_id {
+            object.insert("requestId".to_owned(), Value::String(request_id.clone()));
+        }
+    }
+    emit_response_event(
+        event_tx,
+        device_id,
+        "response.block.created",
+        local_task_id,
+        request,
+        json!({
+            "block": {
+                "id": format!("approval-{}", request_id.as_deref().unwrap_or(item_id)),
+                "type": "tool",
+                "tool_name": "approval",
                 "status": "pending",
                 "timestamp": now_ms(),
                 "render_payload": render_payload,
@@ -3271,6 +3326,39 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+    }
+
+    #[test]
+    fn maps_codex_approval_to_interactive_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest::default();
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "id": 17,
+                "method": "item/commandExecution/requestApproval",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "item-1",
+                    "command": "git push",
+                    "reason": "Requires network access"
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("approval event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(block["id"], "approval-17");
+        assert_eq!(block["tool_name"], "approval");
+        assert_eq!(block["render_payload"]["kind"], "approval");
+        assert_eq!(block["render_payload"]["command"], "git push");
     }
 
     #[test]

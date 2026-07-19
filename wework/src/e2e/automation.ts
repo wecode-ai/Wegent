@@ -36,6 +36,7 @@ type DesktopControlAction =
   | 'waitFor'
   | 'press'
   | 'selectText'
+  | 'selectValue'
 
 interface DesktopControlCommand {
   id: string
@@ -416,6 +417,33 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
       return
     }
 
+    if (element.isContentEditable) {
+      element.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          code: 'KeyA',
+          key: 'a',
+          metaKey: true,
+        })
+      )
+      element.dispatchEvent(
+        new KeyboardEvent('keyup', {
+          bubbles: true,
+          cancelable: true,
+          code: 'KeyA',
+          key: 'a',
+          metaKey: true,
+        })
+      )
+      const clipboardData = new DataTransfer()
+      clipboardData.setData('text/plain', value)
+      element.dispatchEvent(
+        new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData })
+      )
+      return
+    }
+
     const selection = window.getSelection()
     const range = document.createRange()
     range.selectNodeContents(element)
@@ -519,6 +547,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
+    case 'selectValue': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!(element instanceof HTMLSelectElement)) {
+        throw new Error(`Selector "${command.selector}" is not a select element`)
+      }
+      element.value = command.value ?? ''
+      element.dispatchEvent(new Event('change', { bubbles: true }))
+      return element.value
+    }
   }
 }
 

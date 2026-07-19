@@ -310,6 +310,33 @@ describe('ChatInput', () => {
     expect(setSelectedModelOption).toHaveBeenCalledWith('collaborationMode', 'default')
   })
 
+  test('orders desktop quick phrases, permissions, and active mode before model controls', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        permissionMode="full_access"
+        onPermissionModeChange={vi.fn()}
+        projectChat={projectChatControls({
+          selectedModelOptions: { collaborationMode: 'plan' },
+        })}
+      />
+    )
+
+    const quickPhrase = screen.getByTestId('quick-phrase-button')
+    const permissions = screen.getByTestId('codex-permission-mode-selector')
+    const planMode = screen.getByTestId('plan-mode-pill')
+    const modelSelector = screen.getByTestId('model-selector-button')
+
+    expect(quickPhrase).not.toHaveTextContent('workbench.quick_phrases')
+    expect(quickPhrase.compareDocumentPosition(permissions)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(permissions.compareDocumentPosition(planMode)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(planMode.compareDocumentPosition(modelSelector)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
   test('hides the plan mode pill while goal draft mode is active', () => {
     render(
       <ChatInput
@@ -853,6 +880,33 @@ describe('ChatInput', () => {
 
     expect(onSetGoal).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('orders compact quick phrases, permissions, and active mode before the input', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        permissionMode="request_approval"
+        onPermissionModeChange={vi.fn()}
+        projectChat={projectChatControls({
+          selectedModelOptions: { collaborationMode: 'plan' },
+        })}
+      />
+    )
+
+    const quickPhrase = screen.getByTestId('quick-phrase-button')
+    const permissions = screen.getByTestId('codex-permission-mode-selector')
+    const planMode = screen.getByTestId('plan-mode-pill')
+    const input = screen.getByTestId('compact-input-pill')
+
+    expect(quickPhrase.compareDocumentPosition(permissions)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(permissions.compareDocumentPosition(planMode)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(planMode.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(permissions).toHaveValue('request_approval')
+    expect(planMode).toHaveClass('h-11')
   })
 
   test('desktop file picker does not restrict attachment file types', async () => {

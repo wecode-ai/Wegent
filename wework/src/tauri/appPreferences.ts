@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 export interface AppPreferences {
+  defaultCodexPermissionMode: CodexPermissionMode
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
   closeToTrayHintSeen: boolean
@@ -31,8 +32,10 @@ export interface QuickPhrase {
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 export type BrowserLinkTarget = 'system' | 'wework'
+export type CodexPermissionMode = 'full_access' | 'request_approval' | 'approve_for_me'
 
 export interface AppPreferencesPatch {
+  defaultCodexPermissionMode?: CodexPermissionMode
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   closeToTrayHintSeen?: boolean
@@ -73,6 +76,7 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 ]
 
 export const defaultAppPreferences: AppPreferences = {
+  defaultCodexPermissionMode: 'full_access',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,
@@ -95,6 +99,11 @@ export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
 const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
+const supportedCodexPermissionModes = new Set<CodexPermissionMode>([
+  'full_access',
+  'request_approval',
+  'approve_for_me',
+])
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -117,6 +126,11 @@ function mergeAppPreferences(value: unknown): AppPreferences {
 
   const record = value as Partial<AppPreferences>
   return {
+    defaultCodexPermissionMode:
+      typeof record.defaultCodexPermissionMode === 'string' &&
+      supportedCodexPermissionModes.has(record.defaultCodexPermissionMode as CodexPermissionMode)
+        ? (record.defaultCodexPermissionMode as CodexPermissionMode)
+        : defaultAppPreferences.defaultCodexPermissionMode,
     closeToTrayEnabled:
       typeof record.closeToTrayEnabled === 'boolean'
         ? record.closeToTrayEnabled
