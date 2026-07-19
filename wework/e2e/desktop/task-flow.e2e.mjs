@@ -1319,12 +1319,16 @@ async function main() {
     await control.command('waitFor', '[data-testid^="plugin-marketplace-install-"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
-    const marketplaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     await captureVerificationScreenshot(control, '01-project-plugin-marketplace.png')
-    const installPluginTestId = marketplaceSnapshot.testIds.find(testId =>
-      testId.startsWith('plugin-marketplace-install-')
+    const marketplacePluginRowTestId = await control.command(
+      'getTestIdByText',
+      '[data-testid^="plugin-marketplace-row-"]',
+      { value: 'Wework E2E Verification' }
     )
-    assert.ok(installPluginTestId, 'The plugin marketplace did not expose an install action')
+    const installPluginTestId = marketplacePluginRowTestId.replace(
+      'plugin-marketplace-row-',
+      'plugin-marketplace-install-'
+    )
     await control.command('clickWhenEnabled', `[data-testid="${installPluginTestId}"]`, {
       timeoutMs: UI_TIMEOUT_MS,
     })
