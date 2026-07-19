@@ -93,6 +93,25 @@ describe('localModelConnectionTest', () => {
     )
   })
 
+  test('surfaces a friendly error when a successful response is not JSON', async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response('<html>proxy landing page</html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      })
+    )
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://models.local/v1',
+          modelId: 'misconfigured-proxy',
+        },
+        { fetcher }
+      )
+    ).rejects.toThrow('Model returned a non-JSON response body')
+  })
+
   test('accepts a full responses endpoint without duplicating the path', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(

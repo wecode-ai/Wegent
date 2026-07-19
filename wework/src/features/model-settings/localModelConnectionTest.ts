@@ -2,6 +2,7 @@ import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { shouldUseTauriFetch } from '@/api/http'
 import {
   buildLocalModelRequestUrl,
+  defaultLocalModelToolProfile,
   normalizeLocalModelApiFormat,
   normalizeLocalModelId,
   type LocalModelApiFormat,
@@ -173,8 +174,7 @@ export async function testLocalModelConnection(
   const requestUrl = buildLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat)
   const modelId = normalizeLocalModelId(input.modelId)
   const apiKey = input.apiKey?.trim() || DUMMY_API_KEY
-  const toolProfile =
-    input.toolProfile ?? (apiFormat === 'openai-responses' ? 'custom' : 'function')
+  const toolProfile = input.toolProfile ?? defaultLocalModelToolProfile(apiFormat)
   const fetcher = options.fetcher ?? defaultFetcher()
   const controller = new AbortController()
   const timeout = window.setTimeout(
@@ -201,7 +201,12 @@ export async function testLocalModelConnection(
       throw new Error(`HTTP ${response.status}: ${message}`)
     }
 
-    const body = await response.json()
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch (parseError) {
+      throw new Error('Model returned a non-JSON response body', { cause: parseError })
+    }
     if (!hasProbeToolCall(apiFormat, body)) {
       throw new Error('Model did not return the required capability probe tool call')
     }

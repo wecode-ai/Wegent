@@ -3063,7 +3063,10 @@ fn write_local_model_catalog(model_config: &Value) -> Option<PathBuf> {
     }
     let catalog = json!({"models": [entry]});
     let provider = explicit_model_provider(model_config).unwrap_or_else(|| "local".to_owned());
-    let file_name = format!("wegent-codex-model-catalog-{provider}.json");
+    let file_name = format!(
+        "wegent-codex-model-catalog-{provider}-{}.json",
+        std::process::id()
+    );
     let path = env::temp_dir().join(file_name);
     let body = serde_json::to_vec(&catalog).ok()?;
     if let Err(error) = fs::write(&path, body) {
@@ -5365,6 +5368,14 @@ mod tests {
         assert_eq!(catalog["models"][0]["slug"], "kimi-for-coding");
         assert_eq!(catalog["models"][0]["context_window"], 128000);
         assert_eq!(catalog["models"][0]["apply_patch_tool_type"], "freeform");
+        let expected_file_name = format!(
+            "wegent-codex-model-catalog-local-catalog-test-function-{}.json",
+            std::process::id()
+        );
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(expected_file_name.as_str())
+        );
         let _ = fs::remove_file(path);
     }
 
