@@ -66,8 +66,21 @@ import {
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
+import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
+
+function hasTauriIpc() {
+  const internals = (
+    window as typeof window & {
+      __TAURI_INTERNALS__?: { invoke?: unknown; transformCallback?: unknown }
+    }
+  ).__TAURI_INTERNALS__
+  return (
+    typeof internals?.invoke === 'function' && typeof internals.transformCallback === 'function'
+  )
+}
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -154,6 +167,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   return (
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {onOpenWeworkForAppshot ? <AppshotBridge onOpenWework={onOpenWeworkForAppshot} /> : null}
+      {hasTauriIpc() && <SystemDragBridge />}
       {(!isAuxiliaryRoute || hasMountedWorkbench) && (
         <div className={cn('h-full', isAuxiliaryRoute && 'hidden')} aria-hidden={isAuxiliaryRoute}>
           <WorkbenchPage />
@@ -174,6 +188,15 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 }
 
 export default function App() {
+  const path = useCurrentPath()
+  if (isTauriRuntime() && path === '/system-drag') {
+    return <SystemDragPanel />
+  }
+
+  return <MainApp />
+}
+
+function MainApp() {
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])
