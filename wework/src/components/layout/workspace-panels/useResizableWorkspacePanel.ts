@@ -146,9 +146,11 @@ export function useResizableBottomPanel() {
   const [resizing, setResizing] = useState(false)
   const panelRef = useRef<HTMLElement | null>(null)
   const resizeFrameRef = useRef<number | null>(null)
+  const activeResizeCleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     return () => {
+      activeResizeCleanupRef.current?.()
       if (resizeFrameRef.current !== null) {
         window.cancelAnimationFrame(resizeFrameRef.current)
       }
@@ -157,6 +159,16 @@ export function useResizableBottomPanel() {
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
+    activeResizeCleanupRef.current?.()
+
+    const resizeHandle = event.currentTarget
+    if (typeof resizeHandle.setPointerCapture === 'function') {
+      try {
+        resizeHandle.setPointerCapture(event.pointerId)
+      } catch {
+        // Synthetic verification events do not create an active browser pointer.
+      }
+    }
 
     const startY = event.clientY
     const startHeight = height
@@ -180,7 +192,7 @@ export function useResizableBottomPanel() {
       resizeFrameRef.current = window.requestAnimationFrame(applyHeight)
     }
 
-    const finishResize = () => {
+    const cleanupResize = () => {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
       document.removeEventListener('pointercancel', handleCancel)
@@ -188,13 +200,21 @@ export function useResizableBottomPanel() {
         window.cancelAnimationFrame(resizeFrameRef.current)
         resizeFrameRef.current = null
       }
+      if (resizeHandle.hasPointerCapture?.(event.pointerId)) {
+        resizeHandle.releasePointerCapture(event.pointerId)
+      }
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      activeResizeCleanupRef.current = null
+    }
+
+    const finishResize = () => {
+      cleanupResize()
       if (panelRef.current) {
         panelRef.current.style.height = `${nextHeight}px`
       }
       setHeight(nextHeight)
       setResizing(false)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
     }
 
     const handleUp = () => finishResize()
@@ -206,6 +226,7 @@ export function useResizableBottomPanel() {
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
     document.addEventListener('pointercancel', handleCancel)
+    activeResizeCleanupRef.current = cleanupResize
   }
 
   return { height, resizing, panelRef, handleResizeStart }

@@ -342,7 +342,7 @@ function desktopControlEventOptions(element: HTMLElement): MouseEventInit & Poin
 }
 
 function dispatchDesktopControlPointerEvent(
-  element: HTMLElement,
+  element: EventTarget,
   type: string,
   options: MouseEventInit & PointerEventInit
 ) {
@@ -384,8 +384,8 @@ function dragDesktopControlElement(command: DesktopControlCommand): string {
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
   const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
   dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
-  document.dispatchEvent(new PointerEvent('pointermove', endOptions))
-  document.dispatchEvent(new PointerEvent('pointerup', { ...endOptions, buttons: 0 }))
+  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
   return element.textContent?.trim() ?? ''
 }
 
