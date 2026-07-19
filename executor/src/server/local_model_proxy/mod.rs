@@ -27,7 +27,7 @@ use axum::{
     response::Response,
 };
 use futures_util::{Stream, StreamExt};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
 
@@ -232,10 +232,9 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         }
         return Ok(response);
     }
-    if conversion.is_some()
-        && !content_type
-            .as_deref()
-            .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    if !content_type
+        .as_deref()
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
     {
         let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -253,20 +252,32 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
                 ("body_bytes", response_body.len().to_string()),
             ],
         );
-        let chat_value = match conversion.expect("conversion checked above") {
-            Conversion::Chat(context) => (value, context),
-            Conversion::Anthropic(context) => {
-                (anthropic::anthropic_response_to_chat(&value), context)
-            }
-        };
-        let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            format!("data: {}\n\ndata: [DONE]\n\n", chat_value.0),
-        ))]);
-        let responses_stream = chat::chat_sse_to_responses(source, chat_value.1);
-        let mut response = Response::new(Body::from_stream(history::record_responses_stream(
-            responses_stream,
-            history,
-        )));
+        if let Some(conversion) = conversion {
+            let chat_value = match conversion {
+                Conversion::Chat(context) => (value, context),
+                Conversion::Anthropic(context) => {
+                    (anthropic::anthropic_response_to_chat(&value), context)
+                }
+            };
+            let source = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
+                format!("data: {}\n\ndata: [DONE]\n\n", chat_value.0),
+            ))]);
+            let responses_stream = chat::chat_sse_to_responses(source, chat_value.1);
+            let mut response = Response::new(Body::from_stream(history::record_responses_stream(
+                responses_stream,
+                history,
+            )));
+            response.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/event-stream"),
+            );
+            return Ok(response);
+        }
+        let event = normalize_responses_event(&format!(
+            "event: response.completed\ndata: {}",
+            json!({"type": "response.completed", "response": value})
+        ));
+        let mut response = Response::new(Body::from(format!("{event}\n\n")));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/event-stream"),
@@ -729,6 +740,78 @@ mod tests {
         let body = String::from_utf8_lossy(&body);
         assert!(body.contains("response.output_text.delta"));
         assert!(body.contains("response.completed"));
+
+        unregister(&token);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn wraps_native_responses_non_sse_response() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("upstream listener");
+        let address = listener.local_addr().expect("upstream address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/responses",
+                    post(|| async {
+                        Json(json!({
+                            "id": "resp_non_sse",
+                            "object": "response",
+                            "status": "completed",
+                            "output": [{
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "hi"}]
+                            }],
+                            "usage": {
+                                "input_tokens": 1,
+                                "output_tokens": 1,
+                                "input_tokens_details": {},
+                                "output_tokens_details": {}
+                            }
+                        }))
+                    }),
+                ),
+            )
+            .await
+            .expect("upstream server");
+        });
+        let token = register(LocalModelProxyUpstream {
+            registration_id: "native-non-sse-test".to_owned(),
+            base_url: format!("http://{address}"),
+            request_url: Some(format!("http://{address}/responses")),
+            api_format: "openai-responses".to_owned(),
+            api_key: "secret".to_owned(),
+            default_headers: Vec::new(),
+            proxy_url: None,
+        });
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("authorization"),
+        );
+
+        let response = handle(
+            headers,
+            Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
+        )
+        .await
+        .expect("native non-SSE JSON should be wrapped");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("text/event-stream"))
+        );
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("wrapped response body");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("event: response.completed"));
+        assert!(body.contains("resp_non_sse"));
+        assert!(body.contains("input_tokens_details"), "{body}");
 
         unregister(&token);
         server.abort();
