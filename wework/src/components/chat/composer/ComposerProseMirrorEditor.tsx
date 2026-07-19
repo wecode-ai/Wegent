@@ -152,7 +152,10 @@ export const ComposerProseMirrorEditor = forwardRef<
         if (!text) return false
         const paragraph = createComposerDocument(text).firstChild
         if (!paragraph) return false
-        view.dispatch(view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0)))
+        const transaction = view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0))
+        view.dispatch(
+          transaction.setMeta('paste', true).setMeta('uiEvent', 'paste').scrollIntoView()
+        )
         return true
       },
       handleDOMEvents: {
