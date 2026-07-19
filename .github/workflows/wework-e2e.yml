@@ -116,6 +116,7 @@ jobs:
             libayatana-appindicator3-dev \
             libssl-dev \
             libwebkit2gtk-4.1-dev \
+            imagemagick \
             librsvg2-dev \
             xvfb
 

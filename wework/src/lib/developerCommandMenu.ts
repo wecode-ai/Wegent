@@ -1,9 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import {
-  isLocalChatStreamDebugEnabled,
-  setLocalChatStreamDebugEnabled,
-} from '@/api/local/localChatStream'
+  isRuntimeChatStreamDebugEnabled,
+  setRuntimeChatStreamDebugEnabled,
+} from '@/api/runtime/runtimeChatStream'
 import {
   clearWorkbenchDebugLogs,
   getWorkbenchDebugSnapshot,
@@ -146,7 +146,7 @@ function renderDeveloperCommandList(list: HTMLElement) {
 function getDeveloperCommands(): DeveloperCommand[] {
   const diagnosticsEnabled = isPerformanceDiagnosticsEnabled()
   const streamDebugKnown = codexStreamDebugEnabled !== null
-  const streamLogsEnabled = isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false)
+  const streamLogsEnabled = isRuntimeChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false)
   return [
     {
       id: 'open-debug-panel',
@@ -256,9 +256,9 @@ async function refreshCodexStreamDebugStatus(onLoaded?: () => void) {
 
 async function toggleCodexStreamDebug() {
   if (!isTauriRuntime()) {
-    setLocalChatStreamDebugEnabled(!isLocalChatStreamDebugEnabled())
+    setRuntimeChatStreamDebugEnabled(!isRuntimeChatStreamDebugEnabled())
     console.info(
-      `[Wework dev] Frontend stream logs ${isLocalChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`
+      `[Wework dev] Frontend stream logs ${isRuntimeChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`
     )
     return
   }
@@ -266,8 +266,9 @@ async function toggleCodexStreamDebug() {
   if (codexStreamDebugEnabled === null) {
     await refreshCodexStreamDebugStatus()
   }
-  const enabled = !(isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false))
-  setLocalChatStreamDebugEnabled(enabled)
+  const frontendWasEnabled = isRuntimeChatStreamDebugEnabled()
+  const enabled = !(frontendWasEnabled || (codexStreamDebugEnabled ?? false))
+  setRuntimeChatStreamDebugEnabled(enabled)
   try {
     const state = await requestLocalExecutor<CodexStreamDebugState>(CODEX_STREAM_DEBUG_SET_METHOD, {
       enabled,
@@ -275,7 +276,7 @@ async function toggleCodexStreamDebug() {
     codexStreamDebugEnabled = state.enabled
     console.info(`[Wework dev] Stream logs ${state.enabled ? 'enabled' : 'disabled'}.`)
   } catch (error) {
-    setLocalChatStreamDebugEnabled(!enabled)
+    setRuntimeChatStreamDebugEnabled(frontendWasEnabled)
     console.error('[Wework dev] Failed to toggle Codex stream logs', error)
   }
 }

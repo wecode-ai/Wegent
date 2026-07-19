@@ -1152,6 +1152,13 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
         block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["id"],
         "goal"
     );
+    recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == "flood-sentinel"
+        })
+        .is_some()
+    })
+    .await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -1178,10 +1185,10 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
     assert_eq!(sent["accepted"], true);
     wait_until_task_idle(&handler, "local-task-input").await;
 
-    let calls = read_json_lines(&log_path);
-    assert!(calls.iter().any(|call| {
+    wait_for_json_call(&log_path, |call| {
         call["id"] == 99 && call["result"]["answers"]["goal"]["answers"][0] == "Work goal"
-    }));
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -2170,6 +2177,16 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
+    sleep 0.1
+    notification_index=0
+    while [ "$notification_index" -lt 2200 ]; do
+      printf '%s\n' '{{"method":"thread/name/updated","params":{{"threadId":"thread-noise","name":"waiting"}}}}'
+      notification_index=$((notification_index + 1))
+      if [ $((notification_index % 50)) -eq 0 ]; then
+        sleep 0.002
+      fi
+    done
+    printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"flood-sentinel","type":"commandExecution","status":"inProgress","command":"sentinel"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
@@ -2626,6 +2643,19 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     panic!("expected at least {expected_turns} turn/start calls");
+}
+
+async fn wait_for_json_call<F>(log_path: &Path, matches: F)
+where
+    F: Fn(&Value) -> bool,
+{
+    for _ in 0..50 {
+        if read_json_lines(log_path).iter().any(&matches) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("expected JSON-RPC call was not recorded");
 }
 
 fn drain_events(events: &mut broadcast::Receiver<Value>) {
