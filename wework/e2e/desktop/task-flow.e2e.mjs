@@ -177,8 +177,19 @@ async function prepareCompletedTurnScreenshot(control) {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('press', 'body', { key: 'Escape' })
-  await control.command('press', 'body', { key: 'Escape' })
+
+  let snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (snapshot.testIds.includes('model-selector-menu')) {
+    await control.command('click', '[data-testid="model-selector-button"]')
+  }
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (!snapshot.testIds.includes('model-selector-menu')) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The model selector menu remained open before the verification screenshot')
 }
 
 async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
