@@ -29,6 +29,7 @@ const PERMISSION_COMPLETIONS = {
   approve_for_me_initial: 'WEWORK_DESKTOP_E2E_PERMISSION_AI_INITIAL_COMPLETE',
   approve_for_me_follow_up: 'WEWORK_DESKTOP_E2E_PERMISSION_AI_FOLLOW_UP_COMPLETE',
 }
+const PERMISSION_ESCALATION_INSTRUCTION = 'retry that necessary action once'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -808,6 +809,10 @@ class DesktopE2EServer {
         assert.ok(
           JSON.stringify(body).includes(PERMISSION_PROMPTS[scenario]),
           `The real Codex request did not contain the ${scenario} permission prompt`
+        )
+        assert.ok(
+          JSON.stringify(body).includes(PERMISSION_ESCALATION_INSTRUCTION),
+          'The real Codex request did not instruct the model to request narrowly scoped approval after a required sandbox denial'
         )
         const tool = selectEscalatedShellTool(body, this.workspacePath)
         this.permissionScenarioStages.set(scenario, 'awaiting_tool_output')

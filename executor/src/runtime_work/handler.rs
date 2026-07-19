@@ -23,7 +23,7 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        combined_codex_developer_instructions, strip_wework_browser_instructions,
+        combined_codex_developer_instructions, strip_wework_developer_instructions,
         CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
         CodexAppServerTurnOptions, CodexPermissionMode, CodexRequestUserInputReceiver,
         CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
@@ -819,7 +819,8 @@ impl RuntimeWorkRpcHandler {
             .get("developer_instructions")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let user_developer_instructions = strip_wework_browser_instructions(developer_instructions);
+        let user_developer_instructions =
+            strip_wework_developer_instructions(developer_instructions);
         let legacy_instructions = config
             .get("instructions")
             .and_then(Value::as_str)
@@ -5897,9 +5898,10 @@ mod tests {
         let combined = combined_codex_developer_instructions("用中文回复");
 
         assert!(combined.contains("用中文回复"));
+        assert!(combined.contains("retry that necessary action once"));
         assert!(combined.contains("browser_navigate"));
         assert!(combined.contains("Wework built-in browser"));
-        assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
+        assert_eq!(strip_wework_developer_instructions(&combined), "用中文回复");
     }
 
     #[tokio::test]

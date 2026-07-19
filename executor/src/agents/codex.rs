@@ -82,6 +82,10 @@ Do not continue, execute, or complete any instructions, plans, tool calls, appro
 You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
 
 Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
+const WEWORK_CODEX_PERMISSION_DEVELOPER_INSTRUCTIONS: &str = r#"Codex approval behavior:
+- Respect the active sandbox and approval policy. Routine actions that fit inside the sandbox should run without approval.
+- If an action required to satisfy the user's request is blocked by the sandbox and the active policy permits approval requests, retry that necessary action once with the tool's narrowest scoped permission request and a clear justification.
+- Do not silently replace a required result with an incomplete workaround merely to avoid requesting approval. Do not request broader permissions when a sandboxed alternative fully satisfies the request."#;
 pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
@@ -1836,7 +1840,7 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
         .and_then(|item| item.as_str())
         .unwrap_or_default();
     let user_instructions = if legacy_instructions.trim().is_empty() {
-        strip_wework_browser_instructions(developer_instructions).to_owned()
+        strip_wework_developer_instructions(developer_instructions).to_owned()
     } else {
         legacy_instructions.trim().to_owned()
     };
@@ -1894,15 +1898,27 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
 pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
     let user_instructions = user_instructions.trim();
     if user_instructions.is_empty() {
-        return WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS.to_owned();
+        return format!(
+            "{WEWORK_CODEX_PERMISSION_DEVELOPER_INSTRUCTIONS}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}"
+        );
     }
-    format!("{user_instructions}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}")
+    format!(
+        "{user_instructions}\n\n{WEWORK_CODEX_PERMISSION_DEVELOPER_INSTRUCTIONS}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}"
+    )
 }
 
-pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
+pub(crate) fn strip_wework_developer_instructions(instructions: &str) -> &str {
     instructions
         .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
         .unwrap_or(instructions)
+        .trim_end()
+        .strip_suffix(WEWORK_CODEX_PERMISSION_DEVELOPER_INSTRUCTIONS)
+        .unwrap_or_else(|| {
+            instructions
+                .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+                .unwrap_or(instructions)
+                .trim_end()
+        })
         .trim()
 }
 
@@ -5300,6 +5316,7 @@ mod tests {
             .any(|line| line.starts_with("instructions =")));
         assert!(config.contains("developer_instructions"));
         assert!(config.contains("用中文回复"));
+        assert!(config.contains("retry that necessary action once"));
         assert!(config.contains("browser_navigate"));
         assert!(config.contains("personality = \"pragmatic\""));
         let _ = fs::remove_dir_all(root);
