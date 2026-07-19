@@ -17,6 +17,18 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const PERMISSION_PROMPTS = {
+  request_approval_accept: 'WEWORK_DESKTOP_E2E_PERMISSION_USER_ACCEPT: run the host query.',
+  request_approval_decline: 'WEWORK_DESKTOP_E2E_PERMISSION_USER_DECLINE: run the host query.',
+  approve_for_me_initial: 'WEWORK_DESKTOP_E2E_PERMISSION_AI_INITIAL: run the host query.',
+  approve_for_me_follow_up: 'WEWORK_DESKTOP_E2E_PERMISSION_AI_FOLLOW_UP: run the host query.',
+}
+const PERMISSION_COMPLETIONS = {
+  request_approval_accept: 'WEWORK_DESKTOP_E2E_PERMISSION_USER_ACCEPT_COMPLETE',
+  request_approval_decline: 'WEWORK_DESKTOP_E2E_PERMISSION_USER_DECLINE_COMPLETE',
+  approve_for_me_initial: 'WEWORK_DESKTOP_E2E_PERMISSION_AI_INITIAL_COMPLETE',
+  approve_for_me_follow_up: 'WEWORK_DESKTOP_E2E_PERMISSION_AI_FOLLOW_UP_COMPLETE',
+}
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -230,6 +242,13 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   })
 }
 
+async function selectPermissionMode(control, mode) {
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="codex-permission-mode-selector"]`
+  await control.command('waitFor', selector, { timeoutMs: UI_TIMEOUT_MS })
+  const selected = await control.command('selectValue', selector, { value: mode })
+  assert.equal(selected, mode, `Permission selector did not switch to ${mode}`)
+}
+
 function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -380,6 +399,30 @@ function selectShellTool(request, workspacePath) {
   throw new Error('Real Codex did not advertise a supported shell tool')
 }
 
+function selectEscalatedShellTool(request, workspacePath) {
+  const command = 'ps -Ao pid,command | head -n 3'
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  if (tools.some(tool => tool?.name === 'exec_command')) {
+    return selectTool(request, 'exec_command', {
+      cmd: command,
+      workdir: workspacePath,
+      yield_time_ms: 1000,
+      sandbox_permissions: 'require_escalated',
+      justification: 'Allow the desktop E2E host process query?',
+    })
+  }
+  if (tools.some(tool => tool?.name === 'shell_command')) {
+    return selectTool(request, 'shell_command', {
+      command,
+      workdir: workspacePath,
+      timeout_ms: 10_000,
+      sandbox_permissions: 'require_escalated',
+      justification: 'Allow the desktop E2E host process query?',
+    })
+  }
+  throw new Error('Real Codex did not advertise a supported shell tool')
+}
+
 function selectApplyPatchTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   assert.ok(
@@ -433,6 +476,7 @@ class DesktopE2EServer {
     })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
+    this.permissionScenarioStages = new Map()
   }
 
   async start() {
@@ -515,6 +559,7 @@ class DesktopE2EServer {
         'cancellation',
         'retry',
         'fresh_chat',
+        ...Object.keys(PERMISSION_PROMPTS),
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -746,6 +791,70 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (Object.hasOwn(PERMISSION_PROMPTS, this.scenario)) {
+      const scenario = this.scenario
+      this.recordScenarioRequest(scenario, modelRequest)
+      const stage = this.permissionScenarioStages.get(scenario) ?? 'request_tool'
+      if (stage === 'request_tool') {
+        assert.ok(
+          JSON.stringify(body).includes(PERMISSION_PROMPTS[scenario]),
+          `The real Codex request did not contain the ${scenario} permission prompt`
+        )
+        const tool = selectEscalatedShellTool(body, this.workspacePath)
+        this.permissionScenarioStages.set(scenario, 'awaiting_tool_output')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          functionCall(`wework-e2e-${scenario}`, tool.name, tool.arguments),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (!requestContainsToolOutput(body)) {
+        assert.match(
+          scenario,
+          /^approve_for_me_/,
+          `User approval scenario ${scenario} unexpectedly invoked automatic review`
+        )
+        assert.ok(
+          JSON.stringify(body).includes('risk_level'),
+          `The ${scenario} intermediate request was not an automatic approval review`
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(
+            JSON.stringify({
+              risk_level: 'low',
+              user_authorization: 'high',
+              outcome: 'allow',
+              rationale: 'The E2E host query is read-only and explicitly requested.',
+            })
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        `The ${scenario} permission decision did not return tool output to Codex`
+      )
+      if (scenario === 'request_approval_decline') {
+        const toolOutput = JSON.stringify(body.input).toLowerCase()
+        assert.match(
+          toolOutput,
+          /declin|denied|reject|not approved|permission/,
+          'The rejected approval did not return a denial result to Codex'
+        )
+      }
+      this.permissionScenarioStages.set(scenario, 'complete')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PERMISSION_COMPLETIONS[scenario]),
         responseCompleted(responseId),
       ])
       return
@@ -1131,6 +1240,7 @@ async function main() {
     })
 
     await selectE2EModel(control)
+    await selectPermissionMode(control, 'full_access')
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
     await control.command('waitFor', '[data-testid="environment-info-button"]', {
@@ -1155,6 +1265,7 @@ async function main() {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await captureVerificationScreenshot(control, 'permission-01-full-access-initial.png')
     await control.command('click', '[data-testid="final-processing-toggle"]')
     await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
       timeoutMs: UI_TIMEOUT_MS,
@@ -1266,10 +1377,110 @@ async function main() {
         text: FOLLOW_UP_COMPLETION_TEXT,
         timeoutMs: UI_TIMEOUT_MS,
       })
+      await captureVerificationScreenshot(control, 'permission-02-full-access-follow-up.png')
       assert.ok(
         JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
         'The follow-up request did not preserve the user prompt'
       )
+      const fullAccessSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.equal(
+        fullAccessSnapshot.testIds.includes('runtime-approval-card'),
+        false,
+        'Full access unexpectedly requested user approval'
+      )
+
+      phase = 'request-approval-initial-accept'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+      await selectE2EModel(control)
+      await selectPermissionMode(control, 'request_approval')
+      control.setScenario('request_approval_accept')
+      await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        PERMISSION_PROMPTS.request_approval_accept,
+        'request_approval_accept'
+      )
+      await control.command('waitFor', '[data-testid="runtime-approval-card"]', {
+        visible: true,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, 'permission-03-user-approval-pending.png')
+      await control.command('click', '[data-testid="runtime-approval-accept-button"]')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: PERMISSION_COMPLETIONS.request_approval_accept,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, 'permission-04-user-approval-accepted.png')
+
+      phase = 'request-approval-follow-up-decline'
+      control.setScenario('request_approval_decline')
+      await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        PERMISSION_PROMPTS.request_approval_decline,
+        'request_approval_decline'
+      )
+      await control.command('waitFor', '[data-testid="runtime-approval-card"]', {
+        visible: true,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, 'permission-05-user-approval-reject-pending.png')
+      await control.command('click', '[data-testid="runtime-approval-decline-button"]')
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: PERMISSION_COMPLETIONS.request_approval_decline,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, 'permission-06-user-approval-rejected.png')
+
+      phase = 'approve-for-me-initial'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+      await selectE2EModel(control)
+      await selectPermissionMode(control, 'approve_for_me')
+      control.setScenario('approve_for_me_initial')
+      await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        PERMISSION_PROMPTS.approve_for_me_initial,
+        'approve_for_me_initial'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: PERMISSION_COMPLETIONS.approve_for_me_initial,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, 'permission-07-ai-approval-initial.png')
+      let approveForMeSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.equal(
+        approveForMeSnapshot.testIds.includes('runtime-approval-card'),
+        false,
+        'AI auto approval unexpectedly rendered a user approval card'
+      )
+
+      phase = 'approve-for-me-follow-up'
+      control.setScenario('approve_for_me_follow_up')
+      await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        PERMISSION_PROMPTS.approve_for_me_follow_up,
+        'approve_for_me_follow_up'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: PERMISSION_COMPLETIONS.approve_for_me_follow_up,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, 'permission-08-ai-approval-follow-up.png')
+      approveForMeSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      assert.equal(
+        approveForMeSnapshot.testIds.includes('runtime-approval-card'),
+        false,
+        'AI auto approval follow-up unexpectedly rendered a user approval card'
+      )
+      await control.command('click', `[data-testid="${taskRowTestId}"]`)
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: MODEL_LABEL,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
     }
 
     phase = 'background-request-user-input'
@@ -1474,6 +1685,11 @@ async function main() {
     )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
+    await writeFile(
+      join(resultDir, 'model-requests.json'),
+      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+      'utf8'
+    )
     await writeFile(
       join(resultDir, 'scenario-state.json'),
       `${JSON.stringify(

@@ -580,6 +580,7 @@ export function useWorkbenchRuntimeMessaging({
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         taskId,
+        ...(createRequest.permissionMode ? { permissionMode: createRequest.permissionMode } : {}),
         workspacePath:
           'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
@@ -645,6 +646,7 @@ export function useWorkbenchRuntimeMessaging({
           taskId: response.taskId || optimisticAddress.taskId,
           workspacePath: response.workspacePath || optimisticAddress.workspacePath,
           runtimeHandle: response.runtimeHandle ?? optimisticAddress.runtimeHandle,
+          ...(createRequest.permissionMode ? { permissionMode: createRequest.permissionMode } : {}),
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }
             : {}),

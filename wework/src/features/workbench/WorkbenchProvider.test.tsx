@@ -2709,6 +2709,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       workspacePath: '/workspace/project-alpha',
       taskId: request.taskId,
+      permissionMode: 'full_access',
       limit: 50,
     })
     expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({

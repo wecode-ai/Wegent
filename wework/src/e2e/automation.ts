@@ -36,6 +36,7 @@ type DesktopControlAction =
   | 'waitFor'
   | 'press'
   | 'selectText'
+  | 'selectValue'
 
 interface DesktopControlCommand {
   id: string
@@ -516,6 +517,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
+    case 'selectValue': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!(element instanceof HTMLSelectElement)) {
+        throw new Error(`Selector "${command.selector}" is not a select element`)
+      }
+      element.value = command.value ?? ''
+      element.dispatchEvent(new Event('change', { bubbles: true }))
+      return element.value
+    }
   }
 }
 
