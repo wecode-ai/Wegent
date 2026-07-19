@@ -81,6 +81,7 @@ interface SendRequestUserInputResponseOptions {
 
 interface RuntimePaneSendOptions {
   guideWhenBusy?: boolean
+  interruptWhenBusy?: boolean
 }
 
 interface SendRuntimeMessageOptions {
@@ -127,6 +128,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     markRuntimeTaskStarted,
     markRuntimeTaskSettled,
     sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance,
     compactRuntimePaneTask,
     editLastUserMessage,
@@ -189,6 +191,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const guidanceSplitBoundariesRef = useRef(new Map<string, GuidanceSplitBoundary>())
   const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
+  const interruptedGuidanceIdsRef = useRef(new Set<string>())
+  const interruptAndSendInFlightRef = useRef(false)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -774,6 +778,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!pendingEntry) return
         const [guidanceId, guidanceMessage] = pendingEntry
         pendingAppliedGuidancesRef.current.delete(guidanceId)
+        if (interruptedGuidanceIdsRef.current.delete(guidanceId)) {
+          setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+          return
+        }
         appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {
           id: guidanceMessage.id,
           createdAt: new Date(payload.appliedAtMs).toISOString(),
@@ -788,6 +796,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     appendGuidanceLocalUserMessage,
     commitThreadGoal,
     dispatchMessages,
+    markRuntimeTaskSettled,
+    markRuntimeTaskStarted,
     runtimeTaskStreamTargetKey,
   ])
 
@@ -1047,6 +1057,75 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       return sent
     },
     [appendLocalUserMessage, currentRuntimeTask, sendRuntimePaneMessage]
+  )
+
+  const interruptAndSendQueuedMessage = useCallback(
+    async (message: RuntimePaneQueuedMessage): Promise<boolean> => {
+      if (!currentRuntimeTask) return false
+      if (interruptAndSendInFlightRef.current) return false
+      interruptAndSendInFlightRef.current = true
+      const interruptedGuidanceIds = new Set<string>()
+      pendingAppliedGuidancesRef.current.forEach((_, id) => {
+        interruptedGuidanceIdsRef.current.add(id)
+        interruptedGuidanceIds.add(id)
+      })
+      setQueuedMessages(messages => [
+        ...messages.filter(item => item.id !== message.id),
+        { ...message, status: 'sending', notice: '正在打断并发送' },
+      ])
+      setStreamSettled(false)
+      setSendPhase('submitting')
+      const messageAttachments = message.attachments ?? []
+      const attachmentIds = remoteAttachmentIds(messageAttachments)
+      const attachments = localRuntimeAttachments(messageAttachments)
+      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+      appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
+        id: message.id,
+        createdAt: message.createdAt,
+        runtimeGoalRequest: message.runtimeGoalRequest,
+        codeComments: message.codeComments,
+      })
+      const sent = await interruptAndSendRuntimePaneMessage(
+        {
+          address: currentRuntimeTask,
+          message: message.content,
+          clientMessageId: message.id,
+          ...(message.modelId ? { modelId: message.modelId, modelType: message.modelType } : {}),
+          ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
+          ...(additionalContext ? { additionalContext } : {}),
+        },
+        { onError: setError }
+      )
+      interruptAndSendInFlightRef.current = false
+      if (!sent) {
+        interruptedGuidanceIds.forEach(id => {
+          if (id !== message.id) interruptedGuidanceIdsRef.current.delete(id)
+        })
+        setQueuedMessages(messages =>
+          messages
+            .filter(item => item.id !== message.id)
+            .map(item =>
+              interruptedGuidanceIds.has(item.id) &&
+              !pendingAppliedGuidancesRef.current.has(item.id)
+                ? { ...item, status: 'queued', notice: undefined }
+                : item
+            )
+        )
+        setMessages(messages => messages.filter(item => item.id !== message.id))
+        setSendPhase('idle')
+        return false
+      }
+
+      markRuntimeTerminalAdditionalContextDelivered(additionalContext)
+      setQueuedMessages(messages =>
+        messages.filter(item => item.id !== message.id && !interruptedGuidanceIds.has(item.id))
+      )
+      setSendPhase('awaiting_assistant')
+      return true
+    },
+    [appendLocalUserMessage, currentRuntimeTask, interruptAndSendRuntimePaneMessage]
   )
 
   const retryFailedMessageInPane = useCallback(
@@ -1424,6 +1503,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         })
         if (!result.sent && result.code === 'no_active_turn') {
           pendingAppliedGuidancesRef.current.delete(id)
+          if (interruptedGuidanceIdsRef.current.delete(id)) return
           const sent = await sendRuntimeMessage(queuedMessage)
           setQueuedMessages(messages =>
             sent
@@ -1441,6 +1521,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
         if (!result.sent) {
           pendingAppliedGuidancesRef.current.delete(id)
+          if (interruptedGuidanceIdsRef.current.delete(id)) {
+            setQueuedMessages(messages => messages.filter(message => message.id !== id))
+            return
+          }
           setQueuedMessages(messages =>
             messages.map(message =>
               message.id === id
@@ -1451,6 +1535,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
       } catch (error) {
         pendingAppliedGuidancesRef.current.delete(id)
+        if (interruptedGuidanceIdsRef.current.delete(id)) {
+          setQueuedMessages(messages => messages.filter(message => message.id !== id))
+          return
+        }
         console.error('[Wework] Queued guidance send failed', {
           id,
           error,
@@ -1483,6 +1571,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           hasCodeComments,
           goalDraftActive,
           guideWhenBusy: options.guideWhenBusy === true,
+          interruptWhenBusy: options.interruptWhenBusy === true,
           hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
           paneBusy: paneStatus.isBusy,
         })
@@ -1744,6 +1833,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (paneStatus.isBusy) {
               projectChat.resetAttachments()
               setCodeCommentContexts([])
+              if (options.interruptWhenBusy) {
+                const sent = await interruptAndSendQueuedMessage(queuedMessage)
+                if (!sent) {
+                  scopedSetInput(visibleSubmittedInput)
+                  currentAttachments.forEach(projectChat.addExistingAttachment)
+                  setCodeCommentContexts(codeCommentContexts)
+                }
+                return
+              }
               setQueuedMessages(messages => [...messages, queuedMessage])
               return
             }
@@ -1767,6 +1865,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
           projectChat.resetAttachments()
           if (paneStatus.isBusy) {
+            if (options.interruptWhenBusy) {
+              const sent = await interruptAndSendQueuedMessage(queuedMessage)
+              if (!sent) {
+                scopedSetInput(submittedInput)
+                currentAttachments.forEach(projectChat.addExistingAttachment)
+              }
+              return
+            }
             setQueuedMessages(messages => [...messages, queuedMessage])
             if (options.guideWhenBusy) {
               await sendQueuedMessageAsGuidance(queuedMessage)
@@ -1792,6 +1898,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         goalDraftActive,
         getRuntimeModelFields,
         input,
+        interruptAndSendQueuedMessage,
         pendingGoalState,
         paneStatus.isBusy,
         projectChat,
@@ -1890,6 +1997,34 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       await sendQueuedMessageAsGuidance(queuedMessage)
     },
     [queuedMessages, sendQueuedMessageAsGuidance]
+  )
+
+  const interruptAndSendQueued = useCallback(
+    async (id: string) => {
+      const queuedMessage = queuedMessages.find(message => message.id === id)
+      if (!queuedMessage) return
+      const submittedInput = input.trim()
+      const currentAttachments = projectChat.attachments
+      const combinedMessage: RuntimePaneQueuedMessage = {
+        ...queuedMessage,
+        content: [queuedMessage.content, submittedInput].filter(Boolean).join('\n\n'),
+        displayContent: [queuedMessage.displayContent ?? queuedMessage.content, submittedInput]
+          .filter(Boolean)
+          .join('\n\n'),
+        attachments: [...(queuedMessage.attachments ?? []), ...currentAttachments],
+        notice: undefined,
+      }
+      setInput('')
+      projectChat.resetAttachments()
+      const sent = await interruptAndSendQueuedMessage(combinedMessage)
+      if (sent) return
+      scopedSetInput(combinedMessage.displayContent ?? combinedMessage.content)
+      combinedMessage.attachments?.forEach(projectChat.addExistingAttachment)
+      if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {
+        setCodeCommentContexts(combinedMessage.codeComments)
+      }
+    },
+    [input, interruptAndSendQueuedMessage, projectChat, queuedMessages, scopedSetInput, setInput]
   )
 
   const compactContext = useCallback(async () => {
@@ -2126,6 +2261,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     clearQueuedMessages,
     reorderQueuedMessages,
     sendQueuedAsGuidance,
+    interruptAndSendQueued,
     editQueuedMessage,
     cancelGuidanceMessage,
     pauseCurrentResponse,
