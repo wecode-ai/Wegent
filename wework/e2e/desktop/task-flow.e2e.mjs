@@ -33,6 +33,8 @@ const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
 const MODEL_LABEL = 'GPT 5.4'
+const CUSTOM_TOOL_INPUT_DESCRIPTION =
+  'Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
 const LOCAL_MODEL_CASES = [
@@ -1236,11 +1238,13 @@ class DesktopE2EServer {
     }
     if (model.protocol === 'chat') {
       assert.equal(tool.type, 'function', 'Chat apply_patch was not converted to function')
+      const description = tool.function?.description ?? ''
       assert.match(
-        tool.function?.description ?? '',
+        description,
         /Original tool definition:[\s\S]*"syntax":"lark"/,
         'Chat apply_patch lost its custom grammar'
       )
+      this.assertApplyPatchOutputContract(model, description)
       assert.deepEqual(
         tool.function?.parameters,
         {
@@ -1248,7 +1252,7 @@ class DesktopE2EServer {
           properties: {
             input: {
               type: 'string',
-              description: 'Raw input for the Codex custom tool.',
+              description: CUSTOM_TOOL_INPUT_DESCRIPTION,
             },
           },
           required: ['input'],
@@ -1259,11 +1263,13 @@ class DesktopE2EServer {
       return
     }
     assert.ok(tool.input_schema, 'Anthropic apply_patch input_schema was missing')
+    const description = tool.description ?? ''
     assert.match(
-      tool.description ?? '',
+      description,
       /Original tool definition:[\s\S]*"syntax":"lark"/,
       'Anthropic apply_patch lost its custom grammar'
     )
+    this.assertApplyPatchOutputContract(model, description)
     assert.deepEqual(
       tool.input_schema,
       {
@@ -1271,7 +1277,7 @@ class DesktopE2EServer {
         properties: {
           input: {
             type: 'string',
-            description: 'Raw input for the Codex custom tool.',
+            description: CUSTOM_TOOL_INPUT_DESCRIPTION,
           },
         },
         required: ['input'],
@@ -1279,6 +1285,21 @@ class DesktopE2EServer {
       },
       'Anthropic apply_patch wrapper schema was not preserved'
     )
+  }
+
+  assertApplyPatchOutputContract(model, description) {
+    for (const instruction of [
+      'Critical apply_patch input contract:',
+      'exactly `*** Begin Patch\\n`',
+      'with no blank line',
+      'Do not include Markdown code fences',
+      'every added-file content line must start with `+`',
+    ]) {
+      assert.ok(
+        description.includes(instruction),
+        `${model.protocol} apply_patch wrapper omitted instruction: ${instruction}`
+      )
+    }
   }
 
   assertLocalToolOutput(model, body) {

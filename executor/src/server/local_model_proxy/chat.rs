@@ -15,6 +15,8 @@ use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
 
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
+const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.";
+const APPLY_PATCH_OUTPUT_CONTRACT: &str = "Critical apply_patch input contract:\n- Set the function's `input` field to the patch text itself. JSON escaping is handled by the function-call protocol.\n- The first characters must be exactly `*** Begin Patch\\n`; put the first file hunk immediately on the next line with no blank line.\n- The final marker must be `*** End Patch`, optionally followed by one newline, with no text after it.\n- Do not include Markdown code fences, prose, labels, or any characters before `*** Begin Patch` or after `*** End Patch`.\n- Follow the embedded Lark grammar exactly; every added-file content line must start with `+`.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ToolKind {
@@ -130,9 +132,13 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
             let name = tool.get("name")?.as_str()?;
             if context.is_custom(name) {
                 let definition = serde_json::to_string(tool).ok()?;
-                let description = format!(
-                    "Codex custom tool. Preserve the raw input exactly and follow the original tool definition.\n\nOriginal tool definition:\n```json\n{definition}\n```"
-                );
+                let contract = if name == "apply_patch" {
+                    format!("{APPLY_PATCH_OUTPUT_CONTRACT}\n\n")
+                } else {
+                    "Put only the custom tool's raw input in the function's `input` field. Do not add Markdown fences or explanatory text.\n\n".to_owned()
+                };
+                let description =
+                    format!("{contract}Original tool definition:\n```json\n{definition}\n```");
                 return Some(json!({
                     "type": "function",
                     "function": {
@@ -143,7 +149,7 @@ fn chat_tools(body: &Value, context: &ToolContext) -> Vec<Value> {
                             "properties": {
                                 CUSTOM_TOOL_INPUT_FIELD: {
                                     "type": "string",
-                                    "description": "Raw input for the Codex custom tool."
+                                    "description": CUSTOM_TOOL_INPUT_DESCRIPTION
                                 }
                             },
                             "required": [CUSTOM_TOOL_INPUT_FIELD],
@@ -991,6 +997,18 @@ mod tests {
         assert!(converted["tools"][0]["function"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("Original tool definition:")));
+        let description = converted["tools"][0]["function"]["description"]
+            .as_str()
+            .expect("custom tool description");
+        assert!(description.starts_with("Critical apply_patch input contract:"));
+        assert!(description.contains("exactly `*** Begin Patch\\n`"));
+        assert!(description.contains("with no blank line"));
+        assert!(description.contains("Do not include Markdown code fences"));
+        assert!(description.contains("every added-file content line must start with `+`"));
+        assert_eq!(
+            converted["tools"][0]["function"]["parameters"]["properties"]["input"]["description"],
+            CUSTOM_TOOL_INPUT_DESCRIPTION
+        );
         assert_eq!(converted["messages"][0]["role"], "system");
         assert_eq!(
             converted["messages"][2]["tool_calls"][0]["function"]["name"],
