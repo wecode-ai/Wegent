@@ -231,19 +231,7 @@ function QueueRow({
         )}
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        {showInlineInterrupt && (
-          <button
-            type="button"
-            data-testid={`queue-interrupt-button-${id}`}
-            onClick={() => onInterrupt?.(id)}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg bg-text-primary px-3 text-xs font-medium text-background shadow-sm hover:bg-text-primary/90 sm:h-8 sm:min-w-0"
-            aria-label={t('workbench.interrupt_and_send')}
-          >
-            <Zap className="h-3.5 w-3.5" />
-            <span>{t('workbench.interrupt_and_send')}</span>
-          </button>
-        )}
-        {mode === 'queue' && !isBusy && (
+        {mode === 'queue' && (
           <button
             type="button"
             data-testid={`queue-guidance-button-${id}`}
@@ -254,6 +242,18 @@ function QueueRow({
           >
             <CornerDownRight className="h-3.5 w-3.5" />
             <span>引导</span>
+          </button>
+        )}
+        {showInlineInterrupt && (
+          <button
+            type="button"
+            data-testid={`queue-interrupt-button-${id}`}
+            onClick={() => onInterrupt?.(id)}
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg border border-border bg-base px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
+            aria-label={t('workbench.interrupt_and_send')}
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>{t('workbench.interrupt_and_send')}</span>
           </button>
         )}
         <button

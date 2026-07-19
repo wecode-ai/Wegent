@@ -475,8 +475,9 @@ describe('ChatInput', () => {
     )
 
     const interruptButton = screen.getByTestId('queue-interrupt-button-sending-guidance')
-    expect(interruptButton).toHaveClass('bg-text-primary', 'text-background')
-    expect(screen.queryByTestId('queue-guidance-button-sending-guidance')).not.toBeInTheDocument()
+    expect(interruptButton).toHaveClass('border-border', 'bg-base', 'text-text-secondary')
+    expect(interruptButton).not.toHaveClass('bg-text-primary')
+    expect(screen.getByTestId('queue-guidance-button-sending-guidance')).toBeDisabled()
     expect(screen.queryByTestId('queue-more-button-sending-guidance')).not.toBeInTheDocument()
 
     await userEvent.click(interruptButton)
