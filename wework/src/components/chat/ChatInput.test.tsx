@@ -438,7 +438,6 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-interrupt-button-guidance-1'))
-    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-interrupt-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))

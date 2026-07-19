@@ -183,7 +183,7 @@ function QueueRow({
   } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
   const isSendingGuidance = isBusy && notice === '正在引导当前对话'
-  const showInlineInterrupt = mode === 'guidance' || isBusy
+  const showInlineInterrupt = mode === 'guidance' || mode === 'queue'
   const statusText =
     status === 'failed'
       ? (error ?? '发送失败')
@@ -283,12 +283,6 @@ function QueueRow({
                 icon: Pencil,
                 testId: `queue-edit-button-${id}`,
                 onSelect: () => onEdit?.(id),
-              },
-              {
-                label: t('workbench.interrupt_and_send'),
-                icon: Zap,
-                testId: `queue-interrupt-button-${id}`,
-                onSelect: () => onInterrupt?.(id),
               },
             ]}
           />
