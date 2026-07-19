@@ -1079,6 +1079,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
       const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+      appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
+        id: message.id,
+        createdAt: message.createdAt,
+        runtimeGoalRequest: message.runtimeGoalRequest,
+        codeComments: message.codeComments,
+      })
       const sent = await interruptAndSendRuntimePaneMessage(
         {
           address: currentRuntimeTask,
@@ -1107,6 +1113,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 : item
             )
         )
+        setMessages(messages => messages.filter(item => item.id !== message.id))
         setSendPhase('idle')
         return false
       }
@@ -1115,12 +1122,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       setQueuedMessages(messages =>
         messages.filter(item => item.id !== message.id && !interruptedGuidanceIds.has(item.id))
       )
-      appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
-        id: message.id,
-        createdAt: message.createdAt,
-        runtimeGoalRequest: message.runtimeGoalRequest,
-        codeComments: message.codeComments,
-      })
       setSendPhase('awaiting_assistant')
       return true
     },

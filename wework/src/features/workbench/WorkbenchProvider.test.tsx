@@ -7749,9 +7749,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     const guidanceResult = deferred<RuntimeGuidanceResponse>()
     const guideRuntimeTask = vi.fn().mockReturnValue(guidanceResult.promise)
     const sendRuntimeMessage = vi.fn().mockResolvedValue({ accepted: true, taskId: 'runtime-a' })
-    const interruptAndSendRuntimeMessage = vi
-      .fn()
-      .mockResolvedValue({ accepted: true, taskId: 'runtime-a' })
+    const interruptResult = deferred<{ accepted: boolean; taskId: string }>()
+    const interruptAndSendRuntimeMessage = vi.fn().mockReturnValue(interruptResult.promise)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -7834,7 +7833,32 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByTestId('queued-interrupt-and-send-first'))
     await waitFor(() => expect(interruptAndSendRuntimeMessage).toHaveBeenCalledTimes(1))
-    expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
+
+    await act(async () => {
+      streamHandlers.onChatStart?.({
+        taskId: 'runtime-a',
+        subtaskId: '102',
+        shellType: 'Chat',
+        deviceId: 'device-1',
+      })
+      streamHandlers.onChatChunk?.({
+        taskId: 'runtime-a',
+        subtaskId: '102',
+        content: 'replacement',
+        offset: 0,
+        deviceId: 'device-1',
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
+        'first message|working||继续修|replacement'
+      )
+    )
+
+    await act(async () => {
+      interruptResult.resolve({ accepted: true, taskId: 'runtime-a' })
+    })
+    await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
 
     await act(async () => {
       guidanceResult.resolve({
