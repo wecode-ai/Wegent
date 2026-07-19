@@ -182,6 +182,7 @@ function QueueRow({
     isDragging,
   } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
+  const showInlineInterrupt = mode === 'guidance' || isBusy
   const statusText =
     status === 'failed'
       ? (error ?? '发送失败')
@@ -230,19 +231,19 @@ function QueueRow({
         )}
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        {mode === 'guidance' && (
+        {showInlineInterrupt && (
           <button
             type="button"
             data-testid={`queue-interrupt-button-${id}`}
             onClick={() => onInterrupt?.(id)}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg bg-text-primary px-3 text-xs font-medium text-background shadow-sm hover:bg-text-primary/90 sm:h-8 sm:min-w-0"
             aria-label={t('workbench.interrupt_and_send')}
           >
             <Zap className="h-3.5 w-3.5" />
             <span>{t('workbench.interrupt_and_send')}</span>
           </button>
         )}
-        {mode === 'queue' && (
+        {mode === 'queue' && !isBusy && (
           <button
             type="button"
             data-testid={`queue-guidance-button-${id}`}
@@ -265,7 +266,7 @@ function QueueRow({
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
-        {mode === 'queue' && (
+        {mode === 'queue' && !isBusy && (
           <ActionMenu
             ariaLabel="更多队列操作"
             testId={`queue-more-button-${id}`}

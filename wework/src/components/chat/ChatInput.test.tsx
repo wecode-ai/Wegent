@@ -451,6 +451,39 @@ describe('ChatInput', () => {
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
+  test('surfaces interrupt as the primary action while guidance is sending', async () => {
+    const onInterruptAndSendQueuedMessage = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'sending-guidance',
+            content: '请停止等待并检查目录',
+            status: 'sending',
+            notice: '正在引导当前对话',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
+      />
+    )
+
+    const interruptButton = screen.getByTestId('queue-interrupt-button-sending-guidance')
+    expect(interruptButton).toHaveClass('bg-text-primary', 'text-background')
+    expect(screen.queryByTestId('queue-guidance-button-sending-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-more-button-sending-guidance')).not.toBeInTheDocument()
+
+    await userEvent.click(interruptButton)
+
+    expect(onInterruptAndSendQueuedMessage).toHaveBeenCalledWith('sending-guidance')
+  })
+
   test('provides left-side drag handles to reorder multiple queued messages', () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
