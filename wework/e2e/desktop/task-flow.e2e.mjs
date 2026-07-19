@@ -204,6 +204,16 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
   throw new Error(message)
 }
 
+async function waitForScenarioRequestCount(control, scenario, expectedCount) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const requestCount = control.scenarioRequests.get(scenario)?.length ?? 0
+    if (requestCount >= expectedCount) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The model service did not receive ${expectedCount} ${scenario} requests`)
+}
+
 async function waitForFolderPathReady(control, expectedPath) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < UI_TIMEOUT_MS) {
@@ -2144,13 +2154,7 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
+    await waitForScenarioRequestCount(control, 'retry', 2)
     control.releaseRetryResponse()
     await control.command(
       'waitFor',
