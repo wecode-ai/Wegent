@@ -122,7 +122,9 @@ export function PluginsPage({ search = window.location.search }: { search?: stri
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
-  const requestedProjectId = Number(new URLSearchParams(search).get('projectId'))
+  const requestedProjectIdParam = new URLSearchParams(search).get('projectId')
+  const requestedProjectId =
+    requestedProjectIdParam === null ? null : Number(requestedProjectIdParam)
   const installTargetProjects = useMemo(() => {
     const projects = new Map(state.projects.map(project => [project.id, project]))
     for (const runtimeProject of state.runtimeWork?.projects ?? []) {
