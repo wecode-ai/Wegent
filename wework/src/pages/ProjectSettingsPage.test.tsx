@@ -137,10 +137,13 @@ describe('ProjectSettingsPage', () => {
     const user = userEvent.setup()
     render(<ProjectSettingsPage projectId={7} />)
 
-    const instructions = await screen.findByTestId('project-settings-editor-instructions')
+    const instructions = await screen.findByTestId('project-settings-instructions-input')
     expect(instructions).toHaveValue('Run focused tests.')
     await user.clear(instructions)
     await user.type(instructions, 'Run all tests before pushing.')
+    await user.selectOptions(screen.getByTestId('project-settings-sandbox-mode'), 'workspace-write')
+    await user.selectOptions(screen.getByTestId('project-settings-approval-policy'), 'on-request')
+    await user.selectOptions(screen.getByTestId('project-settings-web-search'), 'live')
     await user.click(screen.getByTestId('project-plugin-toggle-sites@openai-bundled'))
     await user.click(screen.getByTestId('project-settings-save-button'))
 
@@ -154,7 +157,7 @@ describe('ProjectSettingsPage', () => {
     expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
       'local-device',
       '/work/Wegent/.codex/config.toml',
-      'model = "gpt-5"\n\n[plugins."sites@openai-bundled"]\nenabled = true\n',
+      'model = "gpt-5"\nsandbox_mode = "workspace-write"\napproval_policy = "on-request"\nweb_search = "live"\n\n[plugins."sites@openai-bundled"]\nenabled = true\n',
       'sha256:config'
     )
   })
@@ -180,7 +183,7 @@ describe('ProjectSettingsPage', () => {
     const user = userEvent.setup()
     render(<ProjectSettingsPage projectId={7} />)
 
-    await screen.findByTestId('project-settings-editor-instructions')
+    await screen.findByTestId('project-settings-instructions-input')
     await user.click(screen.getByTestId('project-plugin-toggle-sites@openai-bundled'))
     await user.click(screen.getByTestId('project-settings-save-button'))
 
@@ -204,11 +207,11 @@ describe('ProjectSettingsPage', () => {
     expect(new URLSearchParams(window.location.search).get('projectId')).toBe('7')
   })
 
-  test('keeps native file editing available when plugin discovery fails', async () => {
+  test('keeps graphical project settings available when plugin discovery fails', async () => {
     readPluginState.mockRejectedValue(new Error('plugin discovery failed'))
     render(<ProjectSettingsPage projectId={7} />)
 
-    expect(await screen.findByTestId('project-settings-editor-instructions')).toHaveValue(
+    expect(await screen.findByTestId('project-settings-instructions-input')).toHaveValue(
       'Run focused tests.'
     )
     expect(await screen.findByTestId('project-settings-plugin-error')).toHaveTextContent(

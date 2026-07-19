@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -15,6 +15,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
@@ -122,9 +123,18 @@ export function PluginsPage({ search = window.location.search }: { search?: stri
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
   const requestedProjectId = Number(new URLSearchParams(search).get('projectId'))
-  const projectPluginScope = useProjectPluginScope(
-    Number.isFinite(requestedProjectId) && requestedProjectId > 0 ? requestedProjectId : null
-  )
+  const installTargetProjects = useMemo(() => {
+    const projects = new Map(state.projects.map(project => [project.id, project]))
+    for (const runtimeProject of state.runtimeWork?.projects ?? []) {
+      const project = runtimeProjectToProject(runtimeProject)
+      if (!projects.has(project.id)) projects.set(project.id, project)
+    }
+    return Array.from(projects.values()).map(project => ({ id: project.id, name: project.name }))
+  }, [state.projects, state.runtimeWork])
+  const selectedProjectId = installTargetProjects.some(project => project.id === requestedProjectId)
+    ? requestedProjectId
+    : null
+  const projectPluginScope = useProjectPluginScope(selectedProjectId)
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
@@ -273,6 +283,11 @@ export function PluginsPage({ search = window.location.search }: { search?: stri
       >
         <PluginsWorkspace
           cloudMarketplaceAvailable={cloudConnection.isConnected}
+          installTargetProjects={installTargetProjects}
+          selectedInstallProjectId={selectedProjectId}
+          onInstallTargetChange={projectId =>
+            navigateTo(projectId ? `/plugins?projectId=${projectId}` : '/plugins')
+          }
           projectScope={projectPluginScope}
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={

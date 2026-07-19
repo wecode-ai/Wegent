@@ -9,6 +9,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   MISSING_WORKSPACE_FILE_REVISION,
   enabledProjectPluginKeys,
+  projectConfigStringValue,
+  setProjectConfigStringValue,
   setProjectPluginEnabled,
 } from '@/lib/project-codex-config'
 import { resolveProjectWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
@@ -16,14 +18,49 @@ import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { InstalledPlugin } from '@/types/api'
 
-type ConfigTab = 'instructions' | 'config'
-
 interface EditableFile {
   content: string
   revision: string
 }
 
 const EMPTY_FILE: EditableFile = { content: '', revision: MISSING_WORKSPACE_FILE_REVISION }
+
+function ProjectConfigSelect({
+  testId,
+  label,
+  description,
+  value,
+  options,
+  onChange,
+}: {
+  testId: string
+  label: string
+  description: string
+  value: string
+  options: Array<[string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-text-primary">{label}</span>
+        <span className="mt-1 block text-xs leading-5 text-text-secondary">{description}</span>
+      </span>
+      <select
+        data-testid={testId}
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        className="h-11 w-full shrink-0 rounded-lg border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-focus sm:w-48 md:h-9"
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
 
 export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const { t } = useTranslation()
@@ -56,7 +93,6 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const [savedInstructions, setSavedInstructions] = useState('')
   const [savedConfig, setSavedConfig] = useState('')
   const [plugins, setPlugins] = useState<InstalledPlugin[]>([])
-  const [tab, setTab] = useState<ConfigTab>('instructions')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -68,6 +104,17 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
     () => enabledProjectPluginKeys(config.content),
     [config.content]
   )
+  const approvalPolicy = projectConfigStringValue(config.content, 'approval_policy') ?? ''
+  const sandboxMode = projectConfigStringValue(config.content, 'sandbox_mode') ?? ''
+  const webSearch = projectConfigStringValue(config.content, 'web_search') ?? ''
+
+  const updateConfigChoice = (key: string, value: string) => {
+    setConfig(current => ({
+      ...current,
+      content: setProjectConfigStringValue(current.content, key, value || null),
+    }))
+    setSaved(false)
+  }
 
   const applyPluginState = useCallback((pluginState: LocalCodexPluginsState) => {
     setPlugins(pluginState.installedPlugins)
@@ -217,7 +264,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
           type="button"
           className="mb-5 flex h-11 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary hover:bg-surface-secondary hover:text-text-primary md:h-8"
           data-testid="project-settings-back-button"
-          onClick={() => navigateTo('/')}
+          onClick={() => window.history.back()}
         >
           <ArrowLeft className="h-4 w-4" />
           {t('workbench.project_settings_back')}
@@ -229,7 +276,7 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
             <button
               type="button"
               data-testid="project-settings-save-button"
-              disabled={!dirty || saving || !target}
+              disabled={!dirty || saving || !target || !writeWorkspaceTextFile}
               onClick={() => void save()}
               className="flex h-11 items-center gap-2 rounded-lg bg-text-primary px-3 text-sm text-surface disabled:opacity-40 md:h-8"
             >
@@ -253,11 +300,6 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
           </div>
         ) : (
           <div className="space-y-6">
-            {target ? (
-              <p className="rounded-lg bg-surface-secondary px-3 py-2 text-xs text-text-secondary">
-                {target.root}
-              </p>
-            ) : null}
             {error ? (
               <p
                 className="rounded-lg border border-danger/20 bg-danger/5 px-3 py-2 text-sm text-danger"
@@ -275,7 +317,78 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
               </p>
             ) : null}
 
-            <section>
+            <section className="space-y-3">
+              <h2 className="heading-sm text-text-primary">
+                {t('workbench.project_settings_instructions_title')}
+              </h2>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t('workbench.project_settings_instructions_description')}
+              </p>
+              <textarea
+                data-testid="project-settings-instructions-input"
+                value={instructions.content}
+                onChange={event => {
+                  setSaved(false)
+                  setInstructions(current => ({ ...current, content: event.target.value }))
+                }}
+                className="min-h-36 w-full resize-y rounded-xl border border-border bg-background p-4 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted focus:border-focus"
+                placeholder={t('workbench.project_settings_instructions_placeholder')}
+              />
+            </section>
+
+            <section className="space-y-3">
+              <div>
+                <h2 className="heading-sm text-text-primary">
+                  {t('workbench.project_settings_runtime_title')}
+                </h2>
+                <p className="mt-1 text-sm text-text-secondary">
+                  {t('workbench.project_settings_runtime_description')}
+                </p>
+              </div>
+              <div className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-background">
+                <ProjectConfigSelect
+                  testId="project-settings-sandbox-mode"
+                  label={t('workbench.project_settings_sandbox_label')}
+                  description={t('workbench.project_settings_sandbox_description')}
+                  value={sandboxMode}
+                  onChange={value => updateConfigChoice('sandbox_mode', value)}
+                  options={[
+                    ['', t('workbench.project_settings_inherit_global')],
+                    ['read-only', t('workbench.project_settings_sandbox_read_only')],
+                    ['workspace-write', t('workbench.project_settings_sandbox_workspace')],
+                    ['danger-full-access', t('workbench.project_settings_sandbox_full')],
+                  ]}
+                />
+                <ProjectConfigSelect
+                  testId="project-settings-approval-policy"
+                  label={t('workbench.project_settings_approval_label')}
+                  description={t('workbench.project_settings_approval_description')}
+                  value={approvalPolicy}
+                  onChange={value => updateConfigChoice('approval_policy', value)}
+                  options={[
+                    ['', t('workbench.project_settings_inherit_global')],
+                    ['untrusted', t('workbench.project_settings_approval_untrusted')],
+                    ['on-request', t('workbench.project_settings_approval_on_request')],
+                    ['never', t('workbench.project_settings_approval_never')],
+                  ]}
+                />
+                <ProjectConfigSelect
+                  testId="project-settings-web-search"
+                  label={t('workbench.project_settings_web_search_label')}
+                  description={t('workbench.project_settings_web_search_description')}
+                  value={webSearch}
+                  onChange={value => updateConfigChoice('web_search', value)}
+                  options={[
+                    ['', t('workbench.project_settings_inherit_global')],
+                    ['disabled', t('workbench.project_settings_web_search_disabled')],
+                    ['cached', t('workbench.project_settings_web_search_cached')],
+                    ['live', t('workbench.project_settings_web_search_live')],
+                  ]}
+                />
+              </div>
+            </section>
+
+            <section data-testid="project-settings-plugins-section">
               <h2 className="heading-sm text-text-primary">
                 {t('workbench.project_settings_plugins_title')}
               </h2>
@@ -340,43 +453,6 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
               </button>
             </section>
 
-            <section>
-              <div className="flex gap-1 border-b border-border">
-                {(['instructions', 'config'] as const).map(item => (
-                  <button
-                    key={item}
-                    type="button"
-                    data-testid={`project-settings-tab-${item}`}
-                    onClick={() => setTab(item)}
-                    className={`h-11 border-b-2 px-3 text-sm md:h-9 ${tab === item ? 'border-text-primary text-text-primary' : 'border-transparent text-text-secondary'}`}
-                  >
-                    {item === 'instructions' ? 'AGENTS.md' : '.codex/config.toml'}
-                  </button>
-                ))}
-              </div>
-              <p className="my-3 text-sm text-text-secondary">
-                {tab === 'instructions'
-                  ? t('workbench.project_settings_instructions_description')
-                  : t('workbench.project_settings_config_description')}
-              </p>
-              <textarea
-                data-testid={`project-settings-editor-${tab}`}
-                value={tab === 'instructions' ? instructions.content : config.content}
-                onChange={event => {
-                  setSaved(false)
-                  if (tab === 'instructions')
-                    setInstructions(current => ({ ...current, content: event.target.value }))
-                  else setConfig(current => ({ ...current, content: event.target.value }))
-                }}
-                spellCheck={false}
-                className="min-h-80 w-full resize-y rounded-xl border border-border bg-surface-secondary p-3 font-mono text-code text-text-primary outline-none focus:border-focus"
-                placeholder={
-                  tab === 'instructions'
-                    ? t('workbench.project_settings_instructions_placeholder')
-                    : '[plugins."example@marketplace"]\nenabled = true'
-                }
-              />
-            </section>
             <p className="text-xs text-text-secondary">
               {t('workbench.project_settings_restart_hint')}
             </p>

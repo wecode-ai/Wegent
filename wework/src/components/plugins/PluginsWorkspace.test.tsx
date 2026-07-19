@@ -819,9 +819,16 @@ describe('PluginsWorkspace', () => {
       error: null,
       addInstalledPlugin,
     }
-    render(<PluginsWorkspace projectScope={projectScope} />)
+    render(
+      <PluginsWorkspace
+        projectScope={projectScope}
+        installTargetProjects={[{ id: 7, name: 'Wegent' }]}
+        selectedInstallProjectId={7}
+        onInstallTargetChange={vi.fn()}
+      />
+    )
 
-    expect(await screen.findByTestId('plugins-project-scope')).toHaveTextContent('Wegent')
+    expect(await screen.findByTestId('plugins-install-target-select')).toHaveValue('7')
     const install = await screen.findByTestId('plugin-marketplace-install-101')
     expect(install).toHaveTextContent('安装到项目')
     await userEvent.click(install)
@@ -845,7 +852,14 @@ describe('PluginsWorkspace', () => {
       error: null,
       addInstalledPlugin: vi.fn().mockRejectedValue(new Error('project write failed')),
     }
-    render(<PluginsWorkspace projectScope={projectScope} />)
+    render(
+      <PluginsWorkspace
+        projectScope={projectScope}
+        installTargetProjects={[{ id: 7, name: 'Wegent' }]}
+        selectedInstallProjectId={7}
+        onInstallTargetChange={vi.fn()}
+      />
+    )
 
     await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
 
@@ -854,6 +868,26 @@ describe('PluginsWorkspace', () => {
       '/api/plugins/installed/101',
       expect.objectContaining({ method: 'DELETE' })
     )
+  })
+
+  test('lets the user explicitly choose the plugin install location', async () => {
+    const onInstallTargetChange = vi.fn()
+    render(
+      <PluginsWorkspace
+        installTargetProjects={[
+          { id: 7, name: 'Wegent' },
+          { id: 8, name: 'cc-switch' },
+        ]}
+        selectedInstallProjectId={null}
+        onInstallTargetChange={onInstallTargetChange}
+      />
+    )
+
+    const target = await screen.findByTestId('plugins-install-target-select')
+    expect(target).toHaveValue('')
+    await userEvent.selectOptions(target, '8')
+
+    expect(onInstallTargetChange).toHaveBeenCalledWith(8)
   })
 
   test('opens installed marketplace plugin actions and uninstalls from the row menu', async () => {

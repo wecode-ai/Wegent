@@ -5,6 +5,9 @@ import {
   BookOpen,
   Boxes,
   Check,
+  ChevronDown,
+  Folder,
+  Globe2,
   ImageIcon,
   MoreHorizontal,
   Pencil,
@@ -672,6 +675,9 @@ interface PluginsWorkspaceProps {
   topBarLeftActions?: ReactNode
   cloudMarketplaceAvailable?: boolean
   projectScope?: ProjectPluginScope | null
+  installTargetProjects?: Array<{ id: number; name: string }>
+  selectedInstallProjectId?: number | null
+  onInstallTargetChange?: (projectId: number | null) => void
 }
 
 export function PluginsWorkspace({
@@ -679,6 +685,9 @@ export function PluginsWorkspace({
   topBarLeftActions,
   cloudMarketplaceAvailable = true,
   projectScope = null,
+  installTargetProjects = [],
+  selectedInstallProjectId = null,
+  onInstallTargetChange,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -1803,29 +1812,59 @@ export function PluginsWorkspace({
           </p>
         </section>
 
-        {projectScope ? (
+        {onInstallTargetChange ? (
           <section
-            data-testid="plugins-project-scope"
-            className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            data-testid="plugins-install-target"
+            className="flex min-h-9 flex-wrap items-center justify-between gap-2"
           >
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-text-primary">
-                {t('workbench.plugins_installing_for_project', '正在为项目安装插件')}
-              </p>
-              <p className="mt-0.5 truncate text-sm text-text-secondary">
-                {projectScope.projectName}
-                {projectScope.error ? ` · ${projectScope.error}` : ''}
-              </p>
+            <div className="flex min-w-0 items-center gap-2">
+              <label
+                htmlFor="plugins-install-target-select"
+                className="shrink-0 text-sm font-medium text-text-primary"
+              >
+                {t('workbench.plugins_install_target', '安装到')}
+              </label>
+              <div className="relative">
+                {projectScope ? (
+                  <Folder className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+                ) : (
+                  <Globe2 className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+                )}
+                <select
+                  id="plugins-install-target-select"
+                  data-testid="plugins-install-target-select"
+                  value={selectedInstallProjectId ?? ''}
+                  onChange={event =>
+                    onInstallTargetChange(event.target.value ? Number(event.target.value) : null)
+                  }
+                  className="h-11 min-w-44 appearance-none rounded-lg border border-border bg-background py-0 pl-8 pr-8 text-sm text-text-primary outline-none transition-colors hover:bg-surface-secondary focus:border-focus md:h-8"
+                >
+                  <option value="">{t('workbench.plugins_install_target_global', '全局')}</option>
+                  {installTargetProjects.map(project => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+              </div>
+              <span className="hidden text-sm text-text-secondary sm:inline">
+                {projectScope
+                  ? t('workbench.plugins_install_target_project_hint', '仅当前项目')
+                  : t('workbench.plugins_install_target_global_hint', '所有项目')}
+              </span>
             </div>
-            <button
-              type="button"
-              data-testid="plugins-project-scope-back"
-              className="flex h-11 shrink-0 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary transition-colors hover:bg-background hover:text-text-primary md:h-8"
-              onClick={() => navigateTo(`/projects/${projectScope.projectId}/settings`)}
-            >
-              <ArrowLeft className="h-4 w-4" />
-              {t('workbench.plugins_back_to_project_settings', '返回项目设置')}
-            </button>
+            {projectScope ? (
+              <button
+                type="button"
+                data-testid="plugins-project-scope-back"
+                className="flex h-11 shrink-0 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary transition-colors hover:bg-background hover:text-text-primary md:h-8"
+                onClick={() => window.history.back()}
+              >
+                <ArrowLeft className="h-4 w-4" />
+                {t('workbench.plugins_back_to_project_settings', '返回项目设置')}
+              </button>
+            ) : null}
           </section>
         ) : null}
 
