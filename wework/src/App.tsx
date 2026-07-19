@@ -71,15 +71,22 @@ import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
 function useCurrentPath() {
-  const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
+  const [location, setLocation] = useState(() => ({
+    path: stripAppBasePath(window.location.pathname),
+    search: window.location.search,
+  }))
 
   useEffect(() => {
-    const handlePopState = () => setPath(stripAppBasePath(window.location.pathname))
+    const handlePopState = () =>
+      setLocation({
+        path: stripAppBasePath(window.location.pathname),
+        search: window.location.search,
+      })
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  return path
+  return location
 }
 
 interface AppRoutesProps {
@@ -88,7 +95,7 @@ interface AppRoutesProps {
 }
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
-  const path = useCurrentPath()
+  const { path, search } = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
   const activeIframeTab =
@@ -146,7 +153,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   ) : path === '/plugins/create' ? (
     <PluginCreatePage />
   ) : path === '/plugins' ? (
-    <PluginsPage />
+    <PluginsPage search={search} />
   ) : path === '/sites' ? (
     <SitesPage />
   ) : path === '/apps' ? (
@@ -219,7 +226,7 @@ export default function App() {
 }
 
 function AppShell() {
-  const path = useCurrentPath()
+  const { path } = useCurrentPath()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {

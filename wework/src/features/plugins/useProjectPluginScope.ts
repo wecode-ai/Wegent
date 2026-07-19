@@ -27,7 +27,7 @@ export interface ProjectPluginScope {
   addInstalledPlugin: (plugin: InstalledPlugin) => Promise<InstalledPlugin>
 }
 
-function joinPath(root: string, child: string): string {
+export function joinPath(root: string, child: string): string {
   return `${root.replace(/[\\/]$/, '')}/${child}`
 }
 
@@ -68,6 +68,7 @@ export function useProjectPluginScope(projectId: number | null): ProjectPluginSc
   }, [getProjectWorkspaceRoot, listWorkspaceEntries, project, readWorkspaceTextFile, t])
   const [target, setTarget] = useState<ProjectConfigTarget | null>(null)
   const targetRef = useRef<ProjectConfigTarget | null>(null)
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve())
   const [loading, setLoading] = useState(projectId !== null)
   const [error, setError] = useState<string | null>(null)
 
@@ -141,34 +142,41 @@ export function useProjectPluginScope(projectId: number | null): ProjectPluginSc
   }, [project?.id, projectId])
 
   const addInstalledPlugin = useCallback(
-    async (plugin: InstalledPlugin) => {
-      let current = targetRef.current
-      if (!current) throw new Error(error ?? t('workbench.plugins_project_config_loading'))
-      if (!writeWorkspaceTextFile)
-        throw new Error(t('workbench.project_settings_workspace_missing'))
-      const id = installedPluginId(plugin)
-      if (id == null) throw new Error(t('workbench.plugins_install_missing_id'))
-      const content = setProjectPluginEnabled(current.content, installedPluginKey(plugin), true)
-      if (!current.codexDirectoryExists) {
-        await createDeviceDirectory(current.deviceId, joinPath(current.root, '.codex'))
-        current = { ...current, codexDirectoryExists: true }
-        targetRef.current = current
-        setTarget(current)
-      }
-      const response = await writeWorkspaceTextFile(
-        current.deviceId,
-        joinPath(current.root, '.codex/config.toml'),
-        content,
-        current.revision
+    (plugin: InstalledPlugin) => {
+      const operation = writeQueueRef.current.then(async () => {
+        let current = targetRef.current
+        if (!current) throw new Error(error ?? t('workbench.plugins_project_config_loading'))
+        if (!writeWorkspaceTextFile)
+          throw new Error(t('workbench.project_settings_workspace_missing'))
+        const id = installedPluginId(plugin)
+        if (id == null) throw new Error(t('workbench.plugins_install_missing_id'))
+        const content = setProjectPluginEnabled(current.content, installedPluginKey(plugin), true)
+        if (!current.codexDirectoryExists) {
+          await createDeviceDirectory(current.deviceId, joinPath(current.root, '.codex'))
+          current = { ...current, codexDirectoryExists: true }
+          targetRef.current = current
+          setTarget(current)
+        }
+        const response = await writeWorkspaceTextFile(
+          current.deviceId,
+          joinPath(current.root, '.codex/config.toml'),
+          content,
+          current.revision
+        )
+        const next = {
+          ...current,
+          content: response.content,
+          revision: response.revision,
+        }
+        targetRef.current = next
+        setTarget(next)
+        return plugin
+      })
+      writeQueueRef.current = operation.then(
+        () => undefined,
+        () => undefined
       )
-      const next = {
-        ...current,
-        content: response.content,
-        revision: response.revision,
-      }
-      targetRef.current = next
-      setTarget(next)
-      return plugin
+      return operation
     },
     [createDeviceDirectory, error, t, writeWorkspaceTextFile]
   )

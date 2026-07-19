@@ -80,7 +80,7 @@ function PluginsWorkspaceRouteFallback({
   )
 }
 
-export function PluginsPage() {
+export function PluginsPage({ search = window.location.search }: { search?: string }) {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useOptionalCloudConnection()
@@ -121,7 +121,7 @@ export function PluginsPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
-  const requestedProjectId = Number(new URLSearchParams(window.location.search).get('projectId'))
+  const requestedProjectId = Number(new URLSearchParams(search).get('projectId'))
   const projectPluginScope = useProjectPluginScope(
     Number.isFinite(requestedProjectId) && requestedProjectId > 0 ? requestedProjectId : null
   )

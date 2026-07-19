@@ -37,14 +37,14 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => workbenchValue,
 }))
 
-function plugin(): InstalledPlugin {
+function plugin(name = 'documents'): InstalledPlugin {
   return {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'InstalledPlugin',
-    metadata: { name: 'documents', namespace: 'default', labels: { id: 'documents@openai' } },
+    metadata: { name, namespace: 'default', labels: { id: `${name}@openai` } },
     spec: {
-      source: { type: 'marketplace', providerKey: 'openai', pluginKey: 'documents' },
-      displayName: 'Documents',
+      source: { type: 'marketplace', providerKey: 'openai', pluginKey: name },
+      displayName: name,
       description: 'Create documents',
       installState: 'installed',
       enabled: false,
@@ -122,5 +122,37 @@ describe('useProjectPluginScope', () => {
     )
     expect(result.current?.pluginKeys).toEqual(new Set(['documents@openai']))
     expect(createDeviceDirectory).not.toHaveBeenCalled()
+  })
+
+  test('serializes project config writes so concurrent installs keep both plugins', async () => {
+    let revision = 0
+    writeWorkspaceTextFile.mockImplementation((_deviceId: string, path: string, content: string) =>
+      Promise.resolve({
+        path,
+        name: 'config.toml',
+        content,
+        editable: true,
+        revision: `sha256:${++revision}`,
+        truncated: false,
+        size: content.length,
+      })
+    )
+    const { result } = renderHook(() => useProjectPluginScope(7))
+    await waitFor(() => expect(result.current?.loading).toBe(false))
+
+    await act(async () => {
+      await Promise.all([
+        result.current?.addInstalledPlugin(plugin('documents')),
+        result.current?.addInstalledPlugin(plugin('github')),
+      ])
+    })
+
+    const secondWrite = writeWorkspaceTextFile.mock.calls[1]
+    expect(secondWrite[0]).toBe('local-device')
+    expect(secondWrite[1]).toBe('/work/Wegent/.codex/config.toml')
+    expect(secondWrite[2]).toContain('[plugins."documents@openai"]')
+    expect(secondWrite[2]).toContain('[plugins."github@openai"]')
+    expect(secondWrite[3]).toBe('sha256:1')
+    expect(result.current?.pluginKeys).toEqual(new Set(['documents@openai', 'github@openai']))
   })
 })

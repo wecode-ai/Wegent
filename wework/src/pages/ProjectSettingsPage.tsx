@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, ExternalLink, Loader2, Save } from 'lucide-react'
 import { createLocalCodexPluginApi, type LocalCodexPluginsState } from '@/api/local/codexPlugins'
 import { SettingsPage, SettingsPageHeader } from '@/components/settings/settings-ui'
+import { installedPluginKey, joinPath } from '@/features/plugins/useProjectPluginScope'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { findSelectableProject } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,15 +24,6 @@ interface EditableFile {
 }
 
 const EMPTY_FILE: EditableFile = { content: '', revision: MISSING_WORKSPACE_FILE_REVISION }
-
-function joinPath(root: string, child: string): string {
-  return `${root.replace(/[\\/]$/, '')}/${child}`
-}
-
-function installedPluginKey(plugin: InstalledPlugin): string {
-  const { pluginKey, providerKey } = plugin.spec.source
-  return pluginKey.includes('@') ? pluginKey : `${pluginKey}@${providerKey}`
-}
 
 export function ProjectSettingsPage({ projectId }: { projectId: number }) {
   const { t } = useTranslation()
