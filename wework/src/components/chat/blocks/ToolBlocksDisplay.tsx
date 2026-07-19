@@ -39,6 +39,7 @@ import {
   isWebSearchActivityGroup,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
+import { isImageViewToolName } from './toolBlockKinds'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
@@ -883,6 +884,12 @@ function ToolActivityDetails({
   return (
     <>
       {blocks.map(block => {
+        if (isImageViewToolName(block.toolName)) {
+          return (
+            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+          )
+        }
+
         const item = getToolActivitySearchItem(block)
         if (item) {
           return <CodeSearchActivityRow key={item.id} label={item.label} />

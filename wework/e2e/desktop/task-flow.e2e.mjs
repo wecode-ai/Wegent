@@ -28,6 +28,9 @@ const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
+const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
+const IMAGE_ARTIFACT_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
 const GIT_SEED_CONTENT = '# Desktop E2E workspace\n'
 const MODEL_API_KEY = 'wework-e2e-test-key'
@@ -43,6 +46,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
 const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
+const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -622,6 +626,12 @@ function selectApplyPatchTool(request) {
   ].join('\n')
 }
 
+function selectViewImageTool(request, workspacePath) {
+  return selectTool(request, 'view_image', {
+    path: join(workspacePath, IMAGE_ARTIFACT_NAME),
+  })
+}
+
 class DesktopE2EServer {
   constructor(workspacePath) {
     this.workspacePath = workspacePath
@@ -1017,11 +1027,13 @@ class DesktopE2EServer {
       )
       const tool = selectShellTool(body, this.workspacePath)
       const patch = selectApplyPatchTool(body)
+      const image = selectViewImageTool(body, this.workspacePath)
       this.modelStage = 'awaiting_tool_output'
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
         functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        functionCall('wework-e2e-view-image', image.name, image.arguments),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -1321,12 +1333,18 @@ async function main() {
   ])
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
   await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = true\n')
+  await writeFile(
+    join(workspacePath, IMAGE_ARTIFACT_NAME),
+    Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
+  )
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
   })
-  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts'], { cwd: workspacePath })
+  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts', IMAGE_ARTIFACT_NAME], {
+    cwd: workspacePath,
+  })
   await runChecked('git', ['commit', '-m', 'test: initialize desktop e2e workspace'], {
     cwd: workspacePath,
   })
@@ -1542,41 +1560,45 @@ async function main() {
       'The model service did not receive the initial task request'
     )
 
-    phase = 'send-mode-menu'
-    await control.command('waitFor', '[data-testid="pause-response-button"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('fill', composerSelector, { value: SEND_MODE_DRAFT })
-    await control.command('waitFor', '[data-testid="send-mode-menu-button"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await captureVerificationScreenshot(control, '01-send-mode-follow-up-ready.png')
-    await control.command('click', '[data-testid="send-mode-menu-button"]')
-    await control.command('waitFor', '[data-testid="send-mode-menu-button-menu"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const sendModeMenuText = await control.command(
-      'getText',
-      '[data-testid="send-mode-menu-button-menu"]'
-    )
-    assert.match(
-      sendModeMenuText,
-      /当前回复结束后发送|Send after current response/,
-      'The send-after-turn option was not visible in the send mode menu'
-    )
-    assert.match(
-      sendModeMenuText,
-      /引导当前回复|Guide current response/,
-      'The guide-current-turn option was not visible in the send mode menu'
-    )
-    assert.match(
-      sendModeMenuText,
-      /打断并立即发送|Interrupt and send now/,
-      'The interrupt-and-send option was not visible in the send mode menu'
-    )
-    await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('fill', composerSelector, { value: '' })
+    if (VIEW_IMAGE_ONLY) {
+      control.releaseInitialToolExecution()
+    } else {
+      phase = 'send-mode-menu'
+      await control.command('waitFor', '[data-testid="pause-response-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await control.command('fill', composerSelector, { value: SEND_MODE_DRAFT })
+      await control.command('waitFor', '[data-testid="send-mode-menu-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, '01-send-mode-follow-up-ready.png')
+      await control.command('click', '[data-testid="send-mode-menu-button"]')
+      await control.command('waitFor', '[data-testid="send-mode-menu-button-menu"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      const sendModeMenuText = await control.command(
+        'getText',
+        '[data-testid="send-mode-menu-button-menu"]'
+      )
+      assert.match(
+        sendModeMenuText,
+        /当前回复结束后发送|Send after current response/,
+        'The send-after-turn option was not visible in the send mode menu'
+      )
+      assert.match(
+        sendModeMenuText,
+        /引导当前回复|Guide current response/,
+        'The guide-current-turn option was not visible in the send mode menu'
+      )
+      assert.match(
+        sendModeMenuText,
+        /打断并立即发送|Interrupt and send now/,
+        'The interrupt-and-send option was not visible in the send mode menu'
+      )
+      await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('fill', composerSelector, { value: '' })
+    }
 
     phase = 'initial-task-completion'
     await control.command('waitFor', '[data-testid="environment-info-button"]', {
@@ -1611,7 +1633,7 @@ async function main() {
     )
     assert.match(
       processingSummaryText,
-      /调用 1 个工具，编辑 1 个文件|Called 1 tool, edited 1 file/,
+      /调用 2 个工具，编辑 1 个文件|Called 2 tools, edited 1 file/,
       'The processing summary did not report tool calls and edited files separately'
     )
     await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
@@ -1626,6 +1648,28 @@ async function main() {
         join(resultDir, 'processing-summary.png'),
         Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
       )
+    }
+    await control.command('click', '[data-testid="processing-summary-toggle"]')
+    await control.command('waitFor', '[data-processing-block-id="wework-e2e-view-image"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, '03-view-image-collapsed.png')
+    await control.command(
+      'click',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
+    )
+    await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, '04-view-image-expanded.png')
+    if (VIEW_IMAGE_ONLY) {
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework view_image desktop E2E passed. Evidence: ${resultDir}`)
+      return
     }
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',
