@@ -101,7 +101,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { getAppPreferences, type CodexPermissionMode } from '@/tauri/appPreferences'
-import { createLocalChatStream } from './localChatStream'
+import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
@@ -2225,6 +2225,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       uploadRuntimeAuthJson: () => cloudConnectionRequired('uploadRuntimeAuthJson'),
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
-    chatStream: createLocalChatStream({ subscribe, request }),
+    chatStream: createRuntimeChatStream({ subscribe, request }),
   } as unknown as WorkbenchServices
 }

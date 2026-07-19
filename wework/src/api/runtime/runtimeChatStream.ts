@@ -7,28 +7,28 @@ import {
   RESPONSE_API_STREAM_EVENTS,
 } from '@/stream/responseApiStream'
 
-interface LocalChatStreamDeps {
+interface RuntimeChatStreamDeps {
   subscribe: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
   request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
 }
 
-let nextLocalChatStreamSubscriptionId = 1
-let activeLocalChatStreamSubscriptions = 0
-const LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-local-chat-stream'
+let nextRuntimeChatStreamSubscriptionId = 1
+let activeRuntimeChatStreamSubscriptions = 0
+const RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-runtime-chat-stream'
 
-export function isLocalChatStreamDebugEnabled(): boolean {
-  return globalThis.localStorage?.getItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
+export function isRuntimeChatStreamDebugEnabled(): boolean {
+  return globalThis.localStorage?.getItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
 }
 
-export function setLocalChatStreamDebugEnabled(enabled: boolean): void {
+export function setRuntimeChatStreamDebugEnabled(enabled: boolean): void {
   if (enabled) {
-    globalThis.localStorage?.setItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY, '1')
+    globalThis.localStorage?.setItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY, '1')
     return
   }
-  globalThis.localStorage?.removeItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY)
+  globalThis.localStorage?.removeItem(RUNTIME_CHAT_STREAM_DEBUG_STORAGE_KEY)
 }
 
-export function createLocalChatStream(deps: LocalChatStreamDeps) {
+export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
   const subscriptions = new Map<
     number,
     {
@@ -40,23 +40,22 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
   >()
   let nativeCleanup: (() => void) | null = null
   let nativeSubscribePromise: Promise<void> | null = null
-
   function ensureNativeListener(): void {
     if (nativeCleanup || nativeSubscribePromise) return
-    nativeSubscribePromise = deps
-      .subscribe(event => {
+    nativeSubscribePromise = Promise.resolve(
+      deps.subscribe(event => {
         if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
-          console.warn('[Wework] Local runtime task plan event received', {
+          console.warn('[Wework] Runtime task plan event received', {
             taskId: stringField(asRecord(event.payload), 'taskId') ?? null,
             deviceId: stringField(asRecord(event.payload), 'deviceId') ?? null,
           })
         }
         const subscriptionEntries = Array.from(subscriptions)
-        if (shouldLogLocalChatStreamEvent(event.event)) {
+        if (shouldLogRuntimeChatStreamEvent(event.event)) {
           const matchedSubscriptionCount = subscriptionEntries.filter(([, subscription]) =>
             isLocalExecutorEventInScope(event, subscription.handlers.scope)
           ).length
-          logLocalChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
+          logRuntimeChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
         }
         for (const [subscriptionId, subscription] of subscriptionEntries) {
           if (event.event === 'executor.runtime_replaced') {
@@ -72,18 +71,15 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
             continue
           }
           if (!inScope && import.meta.env.DEV) {
-            console.warn(
-              '[Wework] Local runtime task plan event cached outside subscription scope',
-              {
-                subscriptionId,
-              }
-            )
+            console.warn('[Wework] Runtime task plan event forwarded outside subscription scope', {
+              subscriptionId,
+            })
           }
           subscription.eventCount += 1
           if (event.event === 'response.output_text.delta') {
             subscription.textDeltaCount += 1
           }
-          logLocalChatStreamEvent(
+          logRuntimeChatStreamEvent(
             subscriptionId,
             event,
             subscription.eventCount,
@@ -100,35 +96,27 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
           globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
         }
       })
+    )
       .then(unlisten => {
         nativeSubscribePromise = null
-        if (subscriptions.size === 0) {
-          logLocalChatStreamNativeSubscription('late-native-listener-cleanup')
-          unlisten()
-          return
-        }
         nativeCleanup = unlisten
-        logLocalChatStreamNativeSubscription('native-listener-ready')
+        logRuntimeChatStreamNativeSubscription('native-listener-ready')
       })
       .catch(error => {
         nativeSubscribePromise = null
-        console.error('[Wework] Local chat stream native listener failed', {
+        console.error('[Wework] Runtime chat stream native listener failed', {
           error: error instanceof Error ? error.message : String(error),
-          activeSubscriptions: activeLocalChatStreamSubscriptions,
+          activeSubscriptions: activeRuntimeChatStreamSubscriptions,
         })
-        logLocalChatStreamNativeSubscription('native-listener-failed', {
+        logRuntimeChatStreamNativeSubscription('native-listener-failed', {
           error: error instanceof Error ? error.message : String(error),
         })
       })
   }
 
-  function releaseNativeListenerIfIdle(): void {
-    if (subscriptions.size > 0) return
-    if (!nativeCleanup) return
-    nativeCleanup()
-    nativeCleanup = null
-    logLocalChatStreamNativeSubscription('native-listener-released')
-  }
+  // Start listening before a task pane exists. Local task creation and the
+  // first tool event can otherwise race the pane's asynchronous subscription.
+  ensureNativeListener()
 
   return {
     sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
@@ -147,7 +135,7 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       if (!hasLocalExecutorResponseHandlers(handlers)) {
         return () => undefined
       }
-      const subscriptionId = nextLocalChatStreamSubscriptionId++
+      const subscriptionId = nextRuntimeChatStreamSubscriptionId++
       let released = false
       subscriptions.set(subscriptionId, {
         handlers,
@@ -155,11 +143,12 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
         eventCount: 0,
         textDeltaCount: 0,
       })
-      activeLocalChatStreamSubscriptions += 1
-      logLocalChatStreamSubscription('subscribed', subscriptionId, {
-        activeSubscriptions: activeLocalChatStreamSubscriptions,
+      activeRuntimeChatStreamSubscriptions += 1
+      logRuntimeChatStreamSubscription('subscribed', subscriptionId, {
+        activeSubscriptions: activeRuntimeChatStreamSubscriptions,
         ...streamScopeDebug(handlers.scope),
       })
+      // Retry setup if the eager native subscription failed.
       ensureNativeListener()
 
       return () => {
@@ -167,26 +156,25 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
         released = true
         const subscription = subscriptions.get(subscriptionId)
         subscriptions.delete(subscriptionId)
-        activeLocalChatStreamSubscriptions = Math.max(0, activeLocalChatStreamSubscriptions - 1)
-        logLocalChatStreamSubscription('unsubscribed', subscriptionId, {
-          activeSubscriptions: activeLocalChatStreamSubscriptions,
+        activeRuntimeChatStreamSubscriptions = Math.max(0, activeRuntimeChatStreamSubscriptions - 1)
+        logRuntimeChatStreamSubscription('unsubscribed', subscriptionId, {
+          activeSubscriptions: activeRuntimeChatStreamSubscriptions,
           eventCount: subscription?.eventCount ?? 0,
           textDeltaCount: subscription?.textDeltaCount ?? 0,
           ...streamScopeDebug(subscription?.handlers.scope),
         })
-        releaseNativeListenerIfIdle()
       }
     },
   }
 }
 
-function logLocalChatTerminalEvent(
+function logRuntimeChatTerminalEvent(
   event: LocalExecutorEvent,
   matchedSubscriptionCount: number,
   subscriptionCount: number
 ): void {
   const payload = asRecord(event.payload)
-  console.info('[Wework] Local chat stream terminal event received', {
+  console.info('[Wework] Runtime chat stream terminal event received', {
     event: event.event,
     taskId: stringField(payload, 'taskId') ?? null,
     subtaskId: stringField(payload, 'subtaskId') ?? null,
@@ -230,44 +218,44 @@ function streamScopeDebug(scope: ChatStreamHandlers['scope']): Record<string, un
   }
 }
 
-function logLocalChatStreamSubscription(
+function logRuntimeChatStreamSubscription(
   action: string,
   subscriptionId: number,
   details: Record<string, unknown>
 ): void {
-  if (!isLocalChatStreamDebugEnabled()) return
-  console.debug('[Wework] Local chat stream subscription', {
+  if (!isRuntimeChatStreamDebugEnabled()) return
+  console.debug('[Wework] Runtime chat stream subscription', {
     action,
     subscriptionId,
     ...details,
   })
 }
 
-function logLocalChatStreamNativeSubscription(
+function logRuntimeChatStreamNativeSubscription(
   action: string,
   details: Record<string, unknown> = {}
 ): void {
-  if (!isLocalChatStreamDebugEnabled()) return
-  console.debug('[Wework] Local chat stream native subscription', {
+  if (!isRuntimeChatStreamDebugEnabled()) return
+  console.debug('[Wework] Runtime chat stream native subscription', {
     action,
-    activeSubscriptions: activeLocalChatStreamSubscriptions,
+    activeSubscriptions: activeRuntimeChatStreamSubscriptions,
     ...details,
   })
 }
 
-function logLocalChatStreamEvent(
+function logRuntimeChatStreamEvent(
   subscriptionId: number,
   event: LocalExecutorEvent,
   eventCount: number,
   textDeltaCount: number
 ): void {
-  if (!isLocalChatStreamDebugEnabled()) return
-  if (!shouldLogLocalChatStreamEvent(event.event)) return
+  if (!isRuntimeChatStreamDebugEnabled()) return
+  if (!shouldLogRuntimeChatStreamEvent(event.event)) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
-  console.debug('[Wework] Local chat stream event', {
+  console.debug('[Wework] Runtime chat stream event', {
     subscriptionId,
-    activeSubscriptions: activeLocalChatStreamSubscriptions,
+    activeSubscriptions: activeRuntimeChatStreamSubscriptions,
     event: event.event,
     mapped: isMappedResponseApiEvent(event.event),
     eventCount,
@@ -293,7 +281,7 @@ function isLocalExecutorEventInScope(
   return true
 }
 
-function shouldLogLocalChatStreamEvent(eventName: string): boolean {
+function shouldLogRuntimeChatStreamEvent(eventName: string): boolean {
   return (
     eventName === 'response.completed' ||
     eventName === 'response.failed' ||

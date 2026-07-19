@@ -12,6 +12,8 @@ export function buildAiVerifyEnvironment(
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
     DEVICE_ID: deviceId,
+    DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+    DEVICE_SESSION_GATEWAY_PORT: '0',
     WEGENT_EXECUTOR_APP_IPC_SOCKET: socketPath,
     WEGENT_EXECUTOR_HOME: executorHome,
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),

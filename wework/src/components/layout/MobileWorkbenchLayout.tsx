@@ -34,7 +34,7 @@ import {
 import { TaskForkDialog } from './TaskForkDialog'
 import {
   CachedWorkbenchPaneStack,
-  getRunningRuntimeWorkbenchPaneKeys,
+  getRuntimeWorkbenchPaneKeys,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
@@ -64,7 +64,7 @@ export function MobileWorkbenchLayout() {
     standaloneChatKey: state.standaloneChatKey,
   }
   const pinnedPaneKeys = useMemo(
-    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
 
