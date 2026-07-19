@@ -112,4 +112,69 @@ describe('localModelConnectionTest', () => {
 
     expect(fetcher).toHaveBeenCalledWith('https://models.local/api/respond', expect.any(Object))
   })
+
+  test('tests Chat Completions endpoints with the matching request format', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }))
+      )
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          apiFormat: 'openai-chat-completions',
+          modelId: 'kimi-for-coding',
+          apiKey: 'secret',
+        },
+        { fetcher }
+      )
+    ).resolves.toEqual({ status: 200 })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://api.kimi.com/coding/v1/chat/completions',
+      expect.any(Object)
+    )
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
+      model: 'kimi-for-coding',
+      messages: [{ role: 'user', content: 'Reply with ok.' }],
+      max_tokens: 16,
+      stream: false,
+    })
+  })
+
+  test('tests Anthropic Messages endpoints with the matching headers and body', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] })))
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://api.kimi.com/coding/',
+          apiFormat: 'anthropic-messages',
+          modelId: 'kimi-for-coding',
+          apiKey: 'secret',
+        },
+        { fetcher }
+      )
+    ).resolves.toEqual({ status: 200 })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://api.kimi.com/coding/v1/messages',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'x-api-key': 'secret',
+          'anthropic-version': '2023-06-01',
+        }),
+      })
+    )
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
+      model: 'kimi-for-coding',
+      messages: [{ role: 'user', content: 'Reply with ok.' }],
+      max_tokens: 16,
+      stream: false,
+    })
+  })
 })

@@ -400,7 +400,10 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+  if (element instanceof HTMLSelectElement) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+    setter?.call(element, value)
+  } else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     const prototype =
       element instanceof HTMLInputElement
         ? HTMLInputElement.prototype
