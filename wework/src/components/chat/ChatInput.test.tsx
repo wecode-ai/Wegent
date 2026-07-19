@@ -385,7 +385,14 @@ describe('ChatInput', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    const menuButton = screen.getByTestId('send-mode-menu-button')
+    expect(menuButton).toHaveAttribute('title', '选择发送方式')
+    expect(menuButton.querySelector('.lucide-chevron-down')).toBeInTheDocument()
+
+    await userEvent.click(menuButton)
+    expect(
+      screen.getByTestId('send-after-turn-option').querySelector('.lucide-clock-3')
+    ).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })

@@ -168,6 +168,7 @@ export function ActionMenu({
           'flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]'
         }
         aria-label={ariaLabel}
+        title={ariaLabel}
         aria-expanded={menuOpen}
         aria-haspopup="menu"
       >
