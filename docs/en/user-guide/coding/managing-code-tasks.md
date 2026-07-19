@@ -180,7 +180,7 @@ While a Wework task is running, you can choose among three send modes:
 - **Guide current response**: keeps the current turn running and lets Codex apply the instruction at its next safe input boundary. Press `Command/Ctrl + Enter`.
 - **Interrupt and send now**: stops the current turn and immediately sends the message as a new turn in the same conversation. Press `Command/Ctrl + Shift + Enter`.
 
-After entering a message, open the menu beside the send button to choose a mode. Interrupting does not roll back file changes or other tool side effects that already occurred. Regular queued messages remain queued.
+After entering a message, use the down arrow on the right side of the send button to open the menu. The clock means wait for the current response, the turning arrow means guide the current response, and the lightning bolt means interrupt and send immediately. Interrupting does not roll back file changes or other tool side effects that already occurred. Regular queued messages remain queued.
 
 ---
 

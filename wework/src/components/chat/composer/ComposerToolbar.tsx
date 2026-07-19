@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUp, ClipboardList, CornerDownRight, Zap } from 'lucide-react'
+import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -135,12 +135,12 @@ export function ComposerToolbar({
             <ActionMenu
               ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
               testId="send-mode-menu-button"
-              icon={ArrowDownToLine}
+              icon={ChevronDown}
               triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-white/20 hover:bg-[#333]"
               items={[
                 {
                   label: t('workbench.send_after_turn', '当前回复结束后发送'),
-                  icon: ArrowUp,
+                  icon: Clock3,
                   testId: 'send-after-turn-option',
                   onSelect: () => onSubmit(),
                 },
