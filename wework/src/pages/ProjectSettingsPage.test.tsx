@@ -113,6 +113,30 @@ describe('ProjectSettingsPage', () => {
           },
           status: { state: 'ready' },
         },
+        {
+          apiVersion: 'v1',
+          kind: 'InstalledPlugin',
+          metadata: {},
+          spec: {
+            source: { type: 'marketplace', providerKey: 'openai', pluginKey: 'documents' },
+            displayName: 'Documents',
+            description: 'Create documents',
+            installState: 'installed',
+            enabled: true,
+            manifest: {},
+            components: {
+              skills: [],
+              commands: [],
+              agents: [],
+              hooks: [],
+              mcps: [],
+              lsps: [],
+              monitors: [],
+              bins: [],
+            },
+          },
+          status: { state: 'ready' },
+        },
       ],
       marketplaceItems: [],
       marketplaces: [{ id: 'openai-bundled', name: 'OpenAI', path: '/marketplace' }],
@@ -160,6 +184,26 @@ describe('ProjectSettingsPage', () => {
       'model = "gpt-5"\nsandbox_mode = "workspace-write"\napproval_policy = "on-request"\nweb_search = "live"\n\n[plugins."sites@openai-bundled"]\nenabled = true\n',
       'sha256:config'
     )
+  })
+
+  test('renders standard project plugin switches and disables inherited plugins', async () => {
+    const user = userEvent.setup()
+    render(<ProjectSettingsPage projectId={7} />)
+
+    const projectSwitch = await screen.findByTestId('project-plugin-toggle-sites@openai-bundled')
+    const inheritedSwitch = screen.getByTestId('project-plugin-toggle-documents@openai')
+
+    expect(projectSwitch).toHaveAttribute('role', 'switch')
+    expect(projectSwitch).toHaveAttribute('aria-checked', 'false')
+    expect(projectSwitch.querySelector('span')).toHaveClass('h-5', 'w-8', 'overflow-hidden')
+    expect(projectSwitch.querySelector('span span')).toHaveClass('translate-x-0.5')
+    expect(inheritedSwitch).toHaveAttribute('aria-checked', 'true')
+    expect(inheritedSwitch).toBeDisabled()
+
+    await user.click(projectSwitch)
+
+    expect(projectSwitch).toHaveAttribute('aria-checked', 'true')
+    expect(projectSwitch.querySelector('span span')).toHaveClass('translate-x-[14px]')
   })
 
   test('does not recreate an existing .codex directory when config is missing', async () => {

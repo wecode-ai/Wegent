@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, ExternalLink, Loader2, Save } from 'lucide-react'
 import { createLocalCodexPluginApi, type LocalCodexPluginsState } from '@/api/local/codexPlugins'
-import { SettingsPage, SettingsPageHeader } from '@/components/settings/settings-ui'
+import { SettingsPage, SettingsPageHeader, SettingsSwitch } from '@/components/settings/settings-ui'
 import { installedPluginKey, joinPath } from '@/features/plugins/useProjectPluginScope'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { findSelectableProject } from '@/features/workbench/workbenchRuntimeHelpers'
@@ -420,23 +420,14 @@ export function ProjectSettingsPage({ projectId }: { projectId: number }) {
                               : t('workbench.project_settings_plugin_project')}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={checked}
+                        <SettingsSwitch
+                          checked={checked}
                           disabled={inherited}
                           data-testid={`project-plugin-toggle-${key}`}
-                          onClick={() => toggleProjectPlugin(plugin)}
-                          className="flex h-11 w-11 items-center justify-center disabled:opacity-55 md:h-8"
-                        >
-                          <span
-                            className={`relative h-6 w-10 rounded-full transition-colors ${checked ? 'bg-text-primary' : 'bg-border'}`}
-                          >
-                            <span
-                              className={`absolute top-1 h-4 w-4 rounded-full bg-surface transition-transform ${checked ? 'translate-x-5' : 'translate-x-1'}`}
-                            />
-                          </span>
-                        </button>
+                          aria-label={plugin.spec.displayName}
+                          onCheckedChange={() => toggleProjectPlugin(plugin)}
+                          className="h-11 min-w-11 justify-center md:h-8"
+                        />
                       </div>
                     )
                   })
