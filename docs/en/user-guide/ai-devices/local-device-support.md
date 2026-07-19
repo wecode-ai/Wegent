@@ -211,7 +211,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also starts the local socket and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also provides local JSONL IPC through the current process stdin/stdout and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend. Wework App communicates only with the executor child process it starts directly; it does not discover or attach to an executor started manually outside the App. A full App exit also terminates only the child it owns. Stdout carries protocol frames only, while diagnostics are written to stderr and `~/.wegent-executor/logs/executor.log`.
 
 #### Claude Code Execution Timeout
 

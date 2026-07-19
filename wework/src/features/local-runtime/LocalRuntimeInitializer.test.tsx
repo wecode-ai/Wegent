@@ -201,13 +201,11 @@ describe('LocalRuntimeInitializer', () => {
     )
     readLogMock.mockResolvedValue({
       path: '~/.wegent-executor/logs/executor.log',
-      content: 'executor waiting for socket via Tauri runtime detail',
+      content: 'executor waiting for stdio via Tauri runtime detail',
       truncated: true,
       lineCount: 20,
-      socketPath: '~/.wegent-executor/app-ipc.sock',
-      socketExists: true,
-      socketFileType: 'socket',
-      socketConnected: false,
+      transport: 'stdio',
+      transportConnected: false,
       processPids: [1234],
       processPaths: ['/Applications/Wework.app/Contents/MacOS/wegent-executor'],
       sidecarSource: 'configured',
@@ -266,12 +264,8 @@ describe('LocalRuntimeInitializer', () => {
     expect(readLogMock).toHaveBeenCalledTimes(1)
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Startup phase: starting'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Startup check: pending'))
-    expect(writeText).toHaveBeenCalledWith(
-      expect.stringContaining('Socket path: ~/.wegent-executor/app-ipc.sock')
-    )
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Socket exists: true'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Socket type: socket'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Socket connected: false'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('IPC transport: stdio'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('IPC connected: false'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Executor PID(s): 1234'))
     expect(writeText).toHaveBeenCalledWith(
       expect.stringContaining(
@@ -305,7 +299,7 @@ describe('LocalRuntimeInitializer', () => {
       )
     )
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Executor log lines: last 20'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('executor waiting for socket'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('executor waiting for stdio'))
     expect(writeText).toHaveBeenCalledWith(expect.not.stringMatching(/tauri/i))
     expect(screen.getByTestId('local-runtime-copy-debug-button')).toHaveTextContent('已复制')
 
@@ -323,10 +317,8 @@ describe('LocalRuntimeInitializer', () => {
       content: 'executor native clipboard path',
       truncated: false,
       lineCount: 1,
-      socketPath: '~/.wegent-executor/app-ipc.sock',
-      socketExists: false,
-      socketFileType: 'missing',
-      socketConnected: false,
+      transport: 'stdio',
+      transportConnected: false,
       processPids: [],
       processPaths: [],
       sidecarSource: 'bundled',
@@ -428,7 +420,7 @@ describe('LocalRuntimeInitializer', () => {
 
   test('shows startup error and retries initialization', async () => {
     ensureMock
-      .mockRejectedValueOnce(new Error('socket unavailable'))
+      .mockRejectedValueOnce(new Error('stdio unavailable'))
       .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
 
     render(
@@ -437,7 +429,7 @@ describe('LocalRuntimeInitializer', () => {
       </LocalRuntimeInitializer>
     )
 
-    expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('socket unavailable')
+    expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
     expect(screen.getByText('~/.wegent-executor/logs/executor.log')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))

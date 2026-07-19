@@ -11,12 +11,13 @@ import {
   normalizeCloudBackendUrl,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
+import { invoke } from '@tauri-apps/api/core'
 import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
-import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { saveLocalUserPreferences } from '@/api/local/localSession'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -25,6 +26,7 @@ const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 type DesktopControlAction =
   | 'capture'
   | 'click'
+  | 'deferredClick'
   | 'clickWhenEnabled'
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
@@ -249,6 +251,13 @@ function seedDesktopE2ECloudConnection() {
       enabled: true,
     })
   }
+  saveLocalUserPreferences({
+    wework_new_chat_model_selection: {
+      modelName: 'gpt-5.4',
+      modelType: 'runtime',
+      options: {},
+    },
+  })
 }
 
 export function installWeworkAutomationBridge() {
@@ -287,7 +296,6 @@ function desktopControlSnapshot(): string {
 async function captureDesktopControlScreenshot(selector: string): Promise<string> {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-
   const snapshot = await invoke<string>('capture_main_webview')
   if (element === document.body) return snapshot
   return cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
@@ -461,16 +469,16 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
     if (valueSetter) {
       valueSetter.call(element, value)
       return
+    } else {
+      const selection = window.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.collapse(false)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      document.execCommand('selectAll', false)
+      document.execCommand('insertText', false, value)
     }
-
-    const selection = window.getSelection()
-    const range = document.createRange()
-    range.selectNodeContents(element)
-    range.collapse(false)
-    selection?.removeAllRanges()
-    selection?.addRange(range)
-    document.execCommand('selectAll', false)
-    document.execCommand('insertText', false, value)
   }
 
   element.dispatchEvent(
@@ -509,11 +517,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
     case 'closeMainWindowToTray':
-      window.setTimeout(() => {
-        void closeMainWindowToTray().catch(error => {
-          console.error('[Wework] Failed to close the main window during E2E verification:', error)
-        })
-      }, 100)
       return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
@@ -548,6 +551,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         throw new Error(`Selector "${command.selector}" is disabled`)
       }
       element.click()
+      return element.textContent?.trim() ?? ''
+    }
+    case 'deferredClick': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      if (!desktopControlElementEnabled(element)) {
+        throw new Error(`Selector "${command.selector}" is disabled`)
+      }
+      window.setTimeout(() => element.click(), 100)
       return element.textContent?.trim() ?? ''
     }
     case 'clickWhenEnabled': {
@@ -619,6 +631,9 @@ async function runDesktopControlClient(url: string): Promise<void> {
       try {
         const value = await executeDesktopControlCommand(command)
         await postDesktopControlResult(url, { id: command.id, ok: true, value })
+        if (command.action === 'closeMainWindowToTray') {
+          await closeMainWindowToTray()
+        }
       } catch (error) {
         await postDesktopControlResult(url, {
           id: command.id,

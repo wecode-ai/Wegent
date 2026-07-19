@@ -5,8 +5,11 @@
 pub mod cli;
 
 use crate::config::device::{load_device_config, DeviceConfig};
-use crate::local::{app_ipc::normalize_device_id, backend::serve_local_sidecar};
-use crate::logging::init_executor_logging;
+use crate::local::{
+    app_ipc::normalize_device_id,
+    backend::{serve_local_app_sidecar, serve_remote_local_backend},
+};
+use crate::logging::{init_executor_logging, reserve_executor_stdout_for_protocol};
 use crate::server::{self, ServerConfig};
 use crate::services::updater::UpdaterService;
 use crate::version::get_version;
@@ -69,7 +72,7 @@ impl From<crate::server::ServerConfigError> for AppError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartupPlan {
     pub http_server: Option<HttpServerPlan>,
-    pub socket_sidecar: Option<SocketSidecarPlan>,
+    pub local_sidecar: Option<LocalSidecarPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,9 +82,16 @@ pub struct HttpServerPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SocketSidecarPlan {
+pub struct LocalSidecarPlan {
     pub backend_enabled: bool,
     pub device_id: String,
+    pub transport: LocalSidecarTransport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalSidecarTransport {
+    RemoteBackend,
+    Stdio,
 }
 
 impl HttpServerPlan {
@@ -122,20 +132,27 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
     let plan = startup_plan_for_config(&config)?;
+    if plan
+        .local_sidecar
+        .as_ref()
+        .is_some_and(|sidecar| sidecar.transport == LocalSidecarTransport::Stdio)
+    {
+        reserve_executor_stdout_for_protocol();
+    }
 
-    match (plan.http_server, plan.socket_sidecar) {
+    match (plan.http_server, plan.local_sidecar) {
         (Some(http_server), None) => server::serve(http_server.server_config())
             .await
             .map_err(AppError::Server),
-        (None, Some(socket_sidecar)) => serve_socket_sidecar(config, socket_sidecar)
+        (None, Some(local_sidecar)) => serve_local_sidecar(config, local_sidecar)
             .await
             .map_err(AppError::Server),
-        (Some(http_server), Some(socket_sidecar)) => {
+        (Some(http_server), Some(local_sidecar)) => {
             let server_config = http_server.server_config();
-            let socket_sidecar_future = serve_socket_sidecar(config, socket_sidecar);
+            let local_sidecar_future = serve_local_sidecar(config, local_sidecar);
             tokio::select! {
                 result = server::serve(server_config) => result.map_err(AppError::Server),
-                result = socket_sidecar_future => result.map_err(AppError::Server),
+                result = local_sidecar_future => result.map_err(AppError::Server),
             }
         }
         (None, None) => Err(AppError::Server(
@@ -144,11 +161,14 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
     }
 }
 
-async fn serve_socket_sidecar(
+async fn serve_local_sidecar(
     config: crate::config::device::DeviceConfig,
-    _plan: SocketSidecarPlan,
+    plan: LocalSidecarPlan,
 ) -> Result<(), String> {
-    serve_local_sidecar(config).await
+    match plan.transport {
+        LocalSidecarTransport::RemoteBackend => serve_remote_local_backend(config).await,
+        LocalSidecarTransport::Stdio => serve_local_app_sidecar(config).await,
+    }
 }
 
 async fn run_upgrade(
@@ -193,18 +213,27 @@ fn startup_plan_for_config(
                 host: server.host,
                 port: server.port,
             }),
-            socket_sidecar: None,
+            local_sidecar: None,
         });
     }
 
+    let backend_enabled = !config.connection.backend_url.trim().is_empty();
+    let app_ipc_enabled = env::var("WEGENT_APP_IPC_DEVICE_ID")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
     Ok(StartupPlan {
         http_server: Some(HttpServerPlan {
             host: "127.0.0.1".to_owned(),
             port: 0,
         }),
-        socket_sidecar: Some(SocketSidecarPlan {
-            backend_enabled: !config.connection.backend_url.trim().is_empty(),
+        local_sidecar: Some(LocalSidecarPlan {
+            backend_enabled,
             device_id: normalize_device_id(config.device_id.clone()),
+            transport: if backend_enabled && !app_ipc_enabled {
+                LocalSidecarTransport::RemoteBackend
+            } else {
+                LocalSidecarTransport::Stdio
+            },
         }),
     })
 }

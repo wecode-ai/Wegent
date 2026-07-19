@@ -51,15 +51,15 @@ flowchart LR
     end
 
     UI --> TAURI
-    TAURI <-->|"本机 socket JSON"| EX
+    TAURI <-->|"stdio JSONL"| EX
     EX --> FS
 ```
 
-Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Tauri 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
 
-Tauri 每 10 秒通过同一连接发送一次 `executor.health` 请求，以同时验证 IPC 的读写方向。请求在 5 秒内没有响应或传输失败时，App 会显式关闭旧 socket，并连接仍在运行的 executor sidecar；该恢复过程不会重启 executor，也不会终止正在后台执行的任务。新连接建立后，任务事件会继续转发给 WebView。这一机制用于恢复系统休眠或其他传输异常后仍保留句柄、但已无法接收事件的半失效连接。
+stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
 
-Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本机 socket 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
+Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过 stdio 服务 Wework App，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
 ### 运行时任务与目标状态
 
@@ -409,9 +409,9 @@ flowchart LR
 
 ### 本地执行器连接配置
 
-本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server；非 `docker` 模式还会启动本机 App IPC socket，并在设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL` 后连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。Wework App 只管理自己启动的 executor；如果用户在 App 外手动启动 executor，App 会优先连接已有 socket，不会在退出时终止该外部进程。不要让多个手动启动的 executor 复用同一个 executor home 或 socket 路径，否则后启动的进程可能替换 socket 路径并造成连接归属不清。
+本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server。Wework 启动子进程时会设置 `WEGENT_APP_IPC_DEVICE_ID`，由此明确启用当前进程 stdin/stdout 上的本机 App JSONL IPC；如果同时设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL`，同一进程还会连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。独立启动且只提供 Backend 连接信息的 Local Executor 不启用 stdio 控制面，继续沿用原有 Socket.IO 远端设备链路。Wework App 只管理并连接自己直接启动的 executor 子进程，不会发现或附着 App 外手动启动的 executor；完整退出 App 时也只终止自己持有的子进程。
 
-`EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server，不启动 socket；其他值保持本地默认行为，即同时启动 HTTP server 和 socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规启动脚本不需要强制传入 executor home；只要设备配置文件中已有有效模式和连接信息，executor 就可以直接启动。
+`EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
 
 ### 云设备启动身份变量
 

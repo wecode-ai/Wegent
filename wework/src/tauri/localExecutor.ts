@@ -27,10 +27,8 @@ export interface LocalExecutorLog {
   content: string
   truncated: boolean
   lineCount: number
-  socketPath: string
-  socketExists: boolean
-  socketFileType: string
-  socketConnected: boolean
+  transport: 'stdio'
+  transportConnected: boolean
   processPids: number[]
   processPaths: string[]
   sidecarSource: string

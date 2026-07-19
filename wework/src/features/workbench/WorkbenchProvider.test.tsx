@@ -6772,6 +6772,90 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
+  test('reconciles a running task from its transcript when the renderer missed terminal events', async () => {
+    const runningWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    })
+    const getRuntimeTranscript = vi
+      .fn()
+      .mockResolvedValueOnce({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: true,
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: '继续后台任务' }],
+      })
+      .mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: false,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '继续后台任务' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '后台任务已完成',
+            status: 'done',
+            subtaskId: '101',
+          },
+        ],
+      })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(runningWork),
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
+    )
+    await waitFor(() => expect(screen.getByText('后台任务已完成')).toBeInTheDocument(), {
+      timeout: 5_000,
+    })
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+      deviceId: 'device-1',
+      taskId: 'runtime-a',
+      workspacePath: '/workspace/project-alpha',
+      limit: 50,
+      refresh: true,
+    })
+  })
+
   test('restores partial output only after the local runtime transport is replaced', async () => {
     const runningWork = createRuntimeWork({
       projects: [

@@ -213,7 +213,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server；非 `docker` 模式还会启动本机 socket，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后连接 Backend。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 executor home 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server；非 `docker` 模式还会通过当前进程的 stdin/stdout 提供本地 JSONL IPC，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后连接 Backend。Wework App 只与自己直接启动的 executor 子进程通信，不会发现或附着 App 外手动启动的 executor；完整退出 App 时也只回收自己管理的子进程。stdout 只承载协议帧，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。
 
 #### Claude Code 执行超时
 

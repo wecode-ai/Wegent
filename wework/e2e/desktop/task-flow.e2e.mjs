@@ -2,11 +2,10 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tmpdir } from 'node:os'
 
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -17,11 +16,14 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
-const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
+const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
+const WINDOW_LIFECYCLE_PROMPT =
+  'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
+const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -63,7 +65,9 @@ const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new 
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+const MACOS_LAUNCH_SERVICES_REGISTER =
+  '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -168,11 +172,13 @@ async function appendProcessOutput(stream, destination) {
 
 async function sendPrompt(control, selector, prompt) {
   await control.command('focusMainWindow', 'body')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('pause-response-button'),
+    'The active task did not become idle before sending the next prompt'
+  )
   await control.command('fill', selector, { value: prompt })
-  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
+  await control.command('press', selector, { key: 'Enter' })
 }
 
 async function prepareCompletedTurnScreenshot(control) {
@@ -249,7 +255,13 @@ async function waitForFolderPickerInitialized(control) {
   throw new Error('The device folder picker did not finish loading its initial path')
 }
 
-async function captureVerificationScreenshot(control, name) {
+async function captureVerificationScreenshot(control, name, selector = 'body') {
+  if (
+    process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
+    !name.endsWith('04-task-completed-after-reopen.png')
+  ) {
+    return null
+  }
   const screenshotPath = join(resultDir, name)
   if (process.platform === 'linux') {
     await runChecked('import', ['-window', 'root', screenshotPath])
@@ -257,11 +269,56 @@ async function captureVerificationScreenshot(control, name) {
   }
   await control.command('focusMainWindow', 'body')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
-  const dataUrl = await control.command('capture', 'body')
+  let dataUrl
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      dataUrl = await control.command('capture', selector, { timeoutMs: 30_000 })
+      break
+    } catch (error) {
+      if (attempt === 2) throw error
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+  }
   const prefix = 'data:image/png;base64,'
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
   await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
   return screenshotPath
+}
+
+function processIsAlive(processId) {
+  try {
+    process.kill(processId, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function waitForExecutorReadyEvidence(logPath, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(logPath, 'utf8').catch(() => '')
+    const processIds = [...content.matchAll(/app IPC stdio ready[^\n]*process_id=(\d+)/g)].map(
+      match => Number(match[1])
+    )
+    if (processIds.length > 0) return { processIds, content }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
+}
+
+async function waitForLogPattern(logPath, pattern, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(logPath, 'utf8').catch(() => '')
+    if (pattern.test(content)) return content
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for ${pattern} in ${logPath}`)
+}
+
+async function reactivateMacApplication(appIdentifier) {
+  await runChecked('open', ['-b', appIdentifier])
 }
 
 async function triggerModelReloadUntilCloudFailure(control) {
@@ -294,9 +351,7 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   const selectedModelText = await control.command(
     'waitFor',
     '[data-testid="model-selector-button"]',
-    {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    }
+    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
   )
   if (selectedModelText.includes(modelLabel)) return
 
@@ -308,7 +363,6 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
       optionVisible = true
       break
     }
-
     if (menu.testIds.includes('model-control-menu-model')) {
       await control.command('hover', '[data-testid="model-control-menu-model"]', {
         timeoutMs: UI_TIMEOUT_MS,
@@ -322,7 +376,6 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
         timeoutMs: UI_TIMEOUT_MS,
       })
     }
-
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
     optionVisible = menu.testIds.includes(targetOptionId)
@@ -342,6 +395,152 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     text: modelLabel,
     timeoutMs: UI_TIMEOUT_MS,
   })
+}
+
+async function verifyBackgroundTaskWindowLifecycle({
+  app,
+  appIdentifier,
+  composerSelector,
+  control,
+  executorLogPath,
+  setPhase,
+}) {
+  const lifecycleScreenshotName = name => (LIFECYCLE_ONLY ? name : `window-lifecycle-${name}`)
+  setPhase('background-streaming-task')
+  control.setScenario('window_lifecycle')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    WINDOW_LIFECYCLE_PROMPT,
+    'window_lifecycle'
+  )
+  await withTimeout(
+    control.awaitWindowLifecycleResponseStarted(),
+    UI_TIMEOUT_MS,
+    'Timed out waiting for the streaming response to start'
+  )
+  const runningTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-running-')),
+    'The running task was not available before closing the window'
+  )
+  const runningTaskTestId = runningTaskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-running-')
+  )
+  assert.ok(runningTaskTestId, 'The running task indicator was not found')
+  const taskRowTestId = runningTaskTestId.replace(
+    'runtime-local-task-running-',
+    'runtime-local-task-row-'
+  )
+
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('01-task-running-before-window-close.png')
+  )
+
+  if (process.platform === 'darwin') {
+    setPhase('close-to-tray-and-reopen')
+    const readyCountBeforeClose = control.readyCount
+    const readyEvidenceBeforeClose = await waitForExecutorReadyEvidence(executorLogPath)
+    const executorProcessId = readyEvidenceBeforeClose.processIds.at(-1)
+    assert.ok(executorProcessId, 'The executor stdio-ready log did not include a process ID')
+    assert.equal(processIsAlive(app.pid), true, 'The Wework process was not alive before close')
+    assert.equal(
+      processIsAlive(executorProcessId),
+      true,
+      'The executor process was not alive before close'
+    )
+
+    await control.command('closeMainWindowToTray', 'body')
+    await waitForLogPattern(join(resultDir, `wework-tauri-${app.pid}.log`), /windowWillClose:/)
+    assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
+    assert.equal(
+      processIsAlive(executorProcessId),
+      true,
+      'Closing to tray terminated the executor process'
+    )
+
+    await reactivateMacApplication(appIdentifier)
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeClose),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The reopened Wework WebView did not reconnect to the desktop controller'
+    )
+    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    const readyEvidenceAfterReopen = await waitForExecutorReadyEvidence(executorLogPath)
+    assert.deepEqual(
+      readyEvidenceAfterReopen.processIds,
+      [executorProcessId],
+      'Reopening the window spawned or attached to a different executor process'
+    )
+    assert.equal(
+      processIsAlive(executorProcessId),
+      true,
+      'The original executor process was not alive after reopening the window'
+    )
+    await writeFile(
+      join(resultDir, 'stdio-lifecycle-verification.json'),
+      `${JSON.stringify(
+        {
+          appProcessId: app.pid,
+          executorProcessId,
+          executorReadyLogCount: readyEvidenceAfterReopen.processIds.length,
+          webviewReadyCountBeforeClose: readyCountBeforeClose,
+          webviewReadyCountAfterReopen: control.readyCount,
+          appAliveAfterReopen: processIsAlive(app.pid),
+          executorAliveAfterReopen: processIsAlive(executorProcessId),
+        },
+        null,
+        2
+      )}\n`
+    )
+    await captureVerificationScreenshot(
+      control,
+      lifecycleScreenshotName('02-window-reopened-task-still-running.png')
+    )
+  }
+
+  const reopenedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!reopenedSnapshot.text.includes(WINDOW_LIFECYCLE_PROMPT)) {
+    await control.command('deferredClick', `[data-testid="${taskRowTestId}"]`)
+  }
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: WINDOW_LIFECYCLE_PROMPT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('03-running-task-after-reopen.png')
+  )
+  control.releaseWindowLifecycleResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
+    visible: true,
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  if (process.platform === 'darwin') {
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        !snapshot.testIds.includes('thinking-indicator') &&
+        !snapshot.testIds.includes(runningTaskTestId),
+      'The reopened task did not settle after its persisted transcript completed'
+    )
+  }
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('04-task-completed-after-reopen.png')
+  )
 }
 
 function createSse(events) {
@@ -542,6 +741,9 @@ class DesktopE2EServer {
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
+    this.controlServer = createServer((request, response) => {
+      void this.handleControl(request, response).catch(error => this.fail(error, response))
+    })
     this.fatalError = null
     this.fatalErrorPromise = new Promise((_, reject) => {
       this.rejectFatalError = reject
@@ -551,8 +753,9 @@ class DesktopE2EServer {
     void this.fatalErrorPromise.catch(() => {})
     this.ready = null
     this.readyResolver = null
+    this.readyCount = 0
+    this.readyWaiters = []
     this.commandQueue = []
-    this.commandPolls = []
     this.commandResults = new Map()
     this.commandHistory = []
     this.modelRequests = []
@@ -578,6 +781,12 @@ class DesktopE2EServer {
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
     })
+    this.windowLifecycleRelease = new Promise(resolvePromise => {
+      this.releaseWindowLifecycle = resolvePromise
+    })
+    this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
+      this.resolveWindowLifecycleResponseStarted = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.localProtocolStates = new Map(
@@ -586,33 +795,37 @@ class DesktopE2EServer {
   }
 
   async start() {
-    const configuredPort = Number(process.env.WEWORK_E2E_CONTROL_PORT ?? 0)
+    await Promise.all([this.listen(this.server), this.listen(this.controlServer)])
+    const address = this.server.address()
+    const controlAddress = this.controlServer.address()
+    assert.ok(address && typeof address !== 'string', 'Desktop E2E server did not bind a TCP port')
     assert.ok(
-      Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535,
-      'WEWORK_E2E_CONTROL_PORT must be a valid TCP port'
+      controlAddress && typeof controlAddress !== 'string',
+      'Desktop E2E control server did not bind a TCP port'
     )
+    this.url = `http://127.0.0.1:${address.port}`
+    this.controlUrl = `http://127.0.0.1:${controlAddress.port}`
+  }
+
+  async listen(server) {
     await new Promise((resolvePromise, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(configuredPort, '127.0.0.1', () => {
-        this.server.off('error', reject)
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject)
         resolvePromise()
       })
     })
-    const address = this.server.address()
-    assert.ok(address && typeof address !== 'string', 'Desktop E2E server did not bind a TCP port')
-    this.url = `http://127.0.0.1:${address.port}`
   }
 
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
-    for (const poll of this.commandPolls) {
-      clearTimeout(poll.timeout)
-      poll.response.destroy()
-    }
-    this.commandPolls = []
     this.server.closeAllConnections?.()
-    await new Promise(resolvePromise => this.server.close(resolvePromise))
+    this.controlServer.closeAllConnections?.()
+    await Promise.all([
+      new Promise(resolvePromise => this.server.close(resolvePromise)),
+      new Promise(resolvePromise => this.controlServer.close(resolvePromise)),
+    ])
   }
 
   awaitReady() {
@@ -622,6 +835,13 @@ class DesktopE2EServer {
         this.readyResolver = resolvePromise
       })
     )
+  }
+
+  awaitReadyAfter(readyCount) {
+    if (this.readyCount > readyCount) return Promise.resolve(this.ready)
+    return new Promise(resolvePromise => {
+      this.readyWaiters.push({ readyCount, resolve: resolvePromise })
+    })
   }
 
   awaitBlockedCloudRequest(pathname) {
@@ -702,6 +922,7 @@ class DesktopE2EServer {
         'initial',
         'follow_up',
         'request_user_input',
+        'window_lifecycle',
         'cancellation',
         'retry',
         'fresh_chat',
@@ -745,6 +966,14 @@ class DesktopE2EServer {
     return this.requestUserInputResponseWritten
   }
 
+  awaitWindowLifecycleResponseStarted() {
+    return this.windowLifecycleResponseStarted
+  }
+
+  releaseWindowLifecycleResponse() {
+    this.releaseWindowLifecycle()
+  }
+
   async command(action, selector, options = {}) {
     const id = randomUUID()
     const command = { id, action, selector, ...options }
@@ -752,7 +981,6 @@ class DesktopE2EServer {
       this.commandResults.set(id, { resolve: resolvePromise, reject })
     })
     this.commandQueue.push(command)
-    this.deliverQueuedCommands()
     return withTimeout(
       this.guard(result),
       options.timeoutMs ?? UI_TIMEOUT_MS,
@@ -760,30 +988,19 @@ class DesktopE2EServer {
     )
   }
 
-  deliverQueuedCommands() {
-    while (this.commandQueue.length > 0 && this.commandPolls.length > 0) {
-      const command = this.commandQueue.shift()
-      const poll = this.commandPolls.shift()
-      clearTimeout(poll.timeout)
-      this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
-      json(poll.response, 200, command)
-    }
-  }
-
-  holdCommandPoll(response) {
-    const poll = { response, timeout: null }
-    poll.timeout = setTimeout(() => {
-      const index = this.commandPolls.indexOf(poll)
-      if (index >= 0) this.commandPolls.splice(index, 1)
+  async handleControl(request, response) {
+    cors(response)
+    if (request.method === 'OPTIONS') {
       response.writeHead(204)
       response.end()
-    }, 10_000)
-    response.once('close', () => {
-      clearTimeout(poll.timeout)
-      const index = this.commandPolls.indexOf(poll)
-      if (index >= 0) this.commandPolls.splice(index, 1)
+      return
+    }
+
+    const url = new URL(request.url ?? '/', this.controlUrl)
+    if (await this.handleControlRoute(request, response, url)) return
+    json(response, 404, {
+      error: `No Desktop E2E control route for ${request.method} ${url.pathname}`,
     })
-    this.commandPolls.push(poll)
   }
 
   async handle(request, response) {
@@ -795,50 +1012,7 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
-    if (request.method === 'POST' && url.pathname === '/ready') {
-      const ready = await readRequestBody(request)
-      this.ready = ready
-      this.readyResolver?.(ready)
-      this.readyResolver = null
-      json(response, 200, { ok: true })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/commands') {
-      if (this.commandQueue.length > 0) {
-        const command = this.commandQueue.shift()
-        this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
-        json(response, 200, command)
-        return
-      }
-      this.holdCommandPoll(response)
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/control-tick') {
-      setTimeout(() => {
-        response.writeHead(204)
-        response.end()
-      }, 50)
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/results') {
-      const result = await readRequestBody(request)
-      const pending = this.commandResults.get(result.id)
-      if (!pending) {
-        json(response, 404, { error: `Unknown command ${result.id}` })
-        return
-      }
-      this.commandResults.delete(result.id)
-      if (result.ok) {
-        pending.resolve(result.value ?? '')
-      } else {
-        pending.reject(new Error(result.error ?? `UI action ${result.id} failed`))
-      }
-      json(response, 200, { ok: true })
-      return
-    }
+    if (await this.handleControlRoute(request, response, url)) return
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -886,6 +1060,57 @@ class DesktopE2EServer {
     }
 
     json(response, 404, { error: `No Desktop E2E route for ${request.method} ${url.pathname}` })
+  }
+
+  async handleControlRoute(request, response, url) {
+    if (request.method === 'POST' && url.pathname === '/ready') {
+      const ready = await readRequestBody(request)
+      this.ready = ready
+      this.readyCount += 1
+      this.readyResolver?.(ready)
+      this.readyResolver = null
+      const remainingWaiters = []
+      for (const waiter of this.readyWaiters) {
+        if (this.readyCount > waiter.readyCount) {
+          waiter.resolve(ready)
+        } else {
+          remainingWaiters.push(waiter)
+        }
+      }
+      this.readyWaiters = remainingWaiters
+      json(response, 200, { ok: true })
+      return true
+    }
+
+    if (request.method === 'GET' && url.pathname === '/commands') {
+      if (this.commandQueue.length > 0) {
+        const command = this.commandQueue.shift()
+        this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
+        json(response, 200, command)
+        return true
+      }
+      response.writeHead(204)
+      response.end()
+      return true
+    }
+
+    if (request.method === 'POST' && url.pathname === '/results') {
+      const result = await readRequestBody(request)
+      const pending = this.commandResults.get(result.id)
+      if (!pending) {
+        json(response, 404, { error: `Unknown command ${result.id}` })
+        return true
+      }
+      this.commandResults.delete(result.id)
+      if (result.ok) {
+        pending.resolve(result.value ?? '')
+      } else {
+        pending.reject(new Error(result.error ?? `UI action ${result.id} failed`))
+      }
+      json(response, 200, { ok: true })
+      return true
+    }
+    return false
   }
 
   async handleModelResponse(request, response, protocol) {
@@ -990,6 +1215,30 @@ class DesktopE2EServer {
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'window_lifecycle') {
+      this.recordScenarioRequest('window_lifecycle', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(WINDOW_LIFECYCLE_PROMPT),
+        'The real Codex request did not contain the window-lifecycle prompt'
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      this.resolveWindowLifecycleResponseStarted()
+      await this.windowLifecycleRelease
+      response.end(
+        createSse([
+          assistantMessage(WINDOW_LIFECYCLE_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
       return
     }
 
@@ -1611,9 +1860,44 @@ async function readTauriE2EWindowConfig() {
   }))
 }
 
-async function buildDesktopApp(controlUrl, appIdentifier) {
+async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
+  if (process.platform !== 'darwin') return { binaryPath, appBundlePath: null }
+
+  const appBundlePath = join(resultDir, `WeWork-E2E-${process.pid}.app`)
+  const contentsPath = join(appBundlePath, 'Contents')
+  const bundledBinaryPath = join(contentsPath, 'MacOS', binaryName)
+  await mkdir(join(contentsPath, 'MacOS'), { recursive: true })
+  await symlink(binaryPath, bundledBinaryPath)
+  await writeFile(
+    join(contentsPath, 'Info.plist'),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleExecutable</key><string>${binaryName}</string>
+  <key>CFBundleIdentifier</key><string>${appIdentifier}</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>WeWork E2E ${process.pid}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+`,
+    'utf8'
+  )
+  commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
+  return { binaryPath: bundledBinaryPath, appBundlePath }
+}
+
+async function buildDesktopApp(controlUrl, cloudBackendUrl, appIdentifier) {
   const configured = process.env.WEWORK_E2E_APP_BIN
-  if (configured) return resolveExecutable(configured, 'app', 'Configured Wework desktop app')
+  if (configured) {
+    const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
+    return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier)
+  }
 
   const windows = await readTauriE2EWindowConfig()
   await runChecked(
@@ -1652,7 +1936,7 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
       env: {
         ...process.env,
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: controlUrl,
+        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
@@ -1676,7 +1960,9 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
     ),
   ]
   for (const candidate of candidates) {
-    if (await isExecutable(candidate)) return candidate
+    if (await isExecutable(candidate)) {
+      return wrapMacDesktopApp(candidate, binaryName, appIdentifier)
+    }
   }
   throw new Error(
     `Tauri build did not produce an executable app. Checked: ${candidates.join(', ')}`
@@ -1689,7 +1975,7 @@ async function main() {
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
   const appLogPath = join(resultDir, 'app.log')
-  const executorSocketPath = join(tmpdir(), `wework-e2e-${process.pid}.sock`)
+  const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
@@ -1708,6 +1994,7 @@ async function main() {
 
   const control = new DesktopE2EServer(workspacePath)
   let app
+  let appBundlePath
   let phase = 'startup'
   try {
     await control.start()
@@ -1721,10 +2008,12 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
 
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
-    const [executorBinary, appBinary] = await Promise.all([
+    const [executorBinary, desktopApp] = await Promise.all([
       buildExecutor(),
-      buildDesktopApp(control.url, appIdentifier),
+      buildDesktopApp(control.controlUrl, control.url, appIdentifier),
     ])
+    const appBinary = desktopApp.binaryPath
+    appBundlePath = desktopApp.appBundlePath
     await writeCodexConfig(join(executorHome, 'codex'), control.url)
 
     app = spawn(appBinary, [], {
@@ -1736,7 +2025,6 @@ async function main() {
         WEGENT_CODEX_HOME: join(executorHome, 'codex'),
         WEGENT_EXECUTOR_HOME: executorHome,
         WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
-        WEGENT_EXECUTOR_APP_IPC_SOCKET: executorSocketPath,
         WEGENT_EXECUTOR_LOG_DIR: resultDir,
         WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
         DEVICE_ID: `wework-e2e-device-${process.pid}`,
@@ -1901,7 +2189,30 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
-    await selectE2EModel(control)
+    if (LIFECYCLE_ONLY) {
+      await verifyBackgroundTaskWindowLifecycle({
+        app,
+        appIdentifier,
+        composerSelector,
+        control,
+        executorLogPath,
+        setPhase: value => {
+          phase = value
+        },
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop lifecycle E2E passed. Diagnostics: ${resultDir}`)
+      return
+    }
+
+    const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+    const initialModelLabel = await control.command('waitFor', activeModelSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
     await withTimeout(
@@ -2010,11 +2321,6 @@ async function main() {
     )
 
     phase = 'workspace-mention'
-    await control.command('fill', composerSelector, { value: '@' })
-    await control.command('waitFor', '[data-testid="mention-files-action"]', {
-      enabled: true,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
     await control.command('fill', composerSelector, { value: '@auth' })
     await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
       timeoutMs: UI_TIMEOUT_MS,
@@ -2178,6 +2484,17 @@ async function main() {
     await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')
     await control.command('click', '[data-testid="cancel-plan-mode-button"]')
     if (REQUEST_INPUT_ONLY) return
+
+    await verifyBackgroundTaskWindowLifecycle({
+      app,
+      appIdentifier,
+      composerSelector,
+      control,
+      executorLogPath,
+      setPhase: value => {
+        phase = value
+      },
+    })
 
     phase = 'cancellation'
     control.setScenario('cancellation')
@@ -2376,6 +2693,9 @@ async function main() {
   } finally {
     await stopProcess(app)
     await control.close()
+    if (appBundlePath) {
+      spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+    }
   }
 }
 
