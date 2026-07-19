@@ -1,5 +1,3 @@
-const SNAPSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
 #[tauri::command]
 pub async fn capture_main_webview(app: tauri::AppHandle) -> Result<String, String> {
     if std::env::var("VITE_WEWORK_E2E").as_deref() != Ok("true") {
@@ -18,18 +16,13 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
         .get_webview_window("main")
         .ok_or_else(|| "Main webview is unavailable".to_string())?;
     let (sender, mut receiver) = tauri::async_runtime::channel(1);
-    let timeout_sender = sender.clone();
 
     webview
         .with_webview(move |platform_webview| {
-            start_macos_snapshot(platform_webview, sender);
+            let result = unsafe { capture_macos_webview(platform_webview) };
+            let _ = sender.try_send(result);
         })
         .map_err(|error| format!("Failed to access main webview: {error}"))?;
-
-    std::thread::spawn(move || {
-        std::thread::sleep(SNAPSHOT_TIMEOUT);
-        let _ = timeout_sender.try_send(Err("Main webview snapshot timed out".to_string()));
-    });
 
     receiver
         .recv()
@@ -38,46 +31,19 @@ async fn capture_main_webview_impl(app: tauri::AppHandle) -> Result<String, Stri
 }
 
 #[cfg(target_os = "macos")]
-fn start_macos_snapshot(
+unsafe fn capture_macos_webview(
     platform_webview: tauri::webview::PlatformWebview,
-    sender: tauri::async_runtime::Sender<Result<String, String>>,
-) {
-    use block2::RcBlock;
-    use objc2_app_kit::NSImage;
-    use objc2_foundation::NSError;
-    use objc2_web_kit::WKWebView;
-
-    let completion = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
-        let result = unsafe { encode_snapshot(image, error) };
-        let _ = sender.try_send(result);
-    });
-
-    unsafe {
-        let webview: &WKWebView = &*platform_webview.inner().cast();
-        webview.takeSnapshotWithConfiguration_completionHandler(None, &completion);
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe fn encode_snapshot(
-    image: *mut objc2_app_kit::NSImage,
-    error: *mut objc2_foundation::NSError,
 ) -> Result<String, String> {
     use objc2::runtime::AnyObject;
-    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep};
+    use objc2_app_kit::{NSBitmapImageFileType, NSView};
     use objc2_foundation::NSDictionary;
 
-    if !error.is_null() {
-        return Err((*error).localizedDescription().to_string());
-    }
-    let image = image
-        .as_ref()
-        .ok_or_else(|| "WebKit returned an empty snapshot".to_string())?;
-    let tiff = image
-        .TIFFRepresentation()
-        .ok_or_else(|| "Failed to encode WebKit snapshot as TIFF".to_string())?;
-    let bitmap = NSBitmapImageRep::imageRepWithData(&tiff)
-        .ok_or_else(|| "Failed to create bitmap from WebKit snapshot".to_string())?;
+    let webview: &NSView = &*platform_webview.inner().cast();
+    let bounds = webview.bounds();
+    let bitmap = webview
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .ok_or_else(|| "Failed to create bitmap for main webview".to_string())?;
+    webview.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     let properties: objc2::rc::Retained<
         NSDictionary<objc2_app_kit::NSBitmapImageRepPropertyKey, AnyObject>,
     > = NSDictionary::new();

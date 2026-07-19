@@ -205,6 +205,28 @@ export function useWorkbenchRuntimeMessaging({
     [dispatch, executorClient, refreshWorkLists, reportError]
   )
 
+  const interruptAndSendRuntimePaneMessage = useCallback(
+    async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
+      dispatch({ type: 'runtime_task_started', address: request.address })
+      try {
+        const response = await executorClient.runtime.interruptAndSendRuntimeMessage(request)
+        if (!response.accepted) throw new Error(response.error || '打断并发送失败')
+        void refreshWorkLists().catch(error => {
+          console.warn('[Wework] Interrupt-and-send accepted but work list refresh failed', {
+            taskId: response.taskId ?? request.address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+        return true
+      } catch (error) {
+        dispatch({ type: 'runtime_task_settled', address: request.address })
+        reportError(error instanceof Error ? error.message : '打断并发送失败', options)
+        return false
+      }
+    },
+    [dispatch, executorClient, refreshWorkLists, reportError]
+  )
+
   const editLastUserMessage = useCallback(
     async (request: RuntimeRollbackRequest): Promise<boolean> => {
       try {
@@ -1220,6 +1242,7 @@ export function useWorkbenchRuntimeMessaging({
 
   return {
     sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance,
     compactRuntimePaneTask,
     editLastUserMessage,

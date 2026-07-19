@@ -20,6 +20,7 @@ import type {
   RuntimeFileChangesRevertResponse,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -1774,6 +1775,26 @@ export function createRuntimeWorkApiFromIpc(
         },
         localDeviceId
       )
+    },
+    async interruptAndSendRuntimeMessage(
+      data: RuntimeInterruptAndSendRequest
+    ): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      if (!payload.executionRequest) {
+        console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
+          taskId: payload.taskId,
+          address: runtimeAddressDebug(payload),
+          payloadKeys: Object.keys(payload).sort(),
+        })
+        throw new Error('Runtime interrupt payload missing executionRequest')
+      }
+      console.debug('[Wework] Local runtime interrupt payload', {
+        taskId: payload.taskId,
+        address: runtimeAddressDebug(payload),
+        payloadKeys: Object.keys(payload).sort(),
+      })
+      return request('runtime.tasks.interrupt_and_send', payload, localDeviceId)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)

@@ -573,6 +573,8 @@ export interface RuntimeSendRequest {
   additional_context?: RuntimeAdditionalContext
 }
 
+export type RuntimeInterruptAndSendRequest = RuntimeSendRequest
+
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
 }

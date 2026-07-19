@@ -208,6 +208,7 @@ async function runServer(sessionPath, token) {
       token,
       codexHome,
       deviceId: session.deviceId,
+      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
       socketPath: updated.socketPath,
       executorHome,
       sessionDirectory: session.directory,
