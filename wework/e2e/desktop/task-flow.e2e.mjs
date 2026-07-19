@@ -1094,6 +1094,14 @@ class DesktopE2EServer {
       return true
     }
 
+    if (request.method === 'GET' && url.pathname === '/control-tick') {
+      setTimeout(() => {
+        response.writeHead(204)
+        response.end()
+      }, 50)
+      return true
+    }
+
     if (request.method === 'POST' && url.pathname === '/results') {
       const result = await readRequestBody(request)
       const pending = this.commandResults.get(result.id)
