@@ -17,6 +17,10 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const REQUEST_USER_INPUT_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
+const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
+const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -38,6 +42,7 @@ const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -157,6 +162,19 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
   throw new Error(message)
 }
 
+async function captureVerificationScreenshot(control, name) {
+  const screenshotPath = join(resultDir, name)
+  if (process.platform === 'linux') {
+    await runChecked('import', ['-window', 'root', screenshotPath])
+    return screenshotPath
+  }
+  const dataUrl = await control.command('capture', 'body')
+  const prefix = 'data:image/png;base64,'
+  assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
+  await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
+  return screenshotPath
+}
+
 async function triggerModelReloadUntilCloudFailure(control) {
   const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
   for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
@@ -174,33 +192,29 @@ async function triggerModelReloadUntilCloudFailure(control) {
 }
 
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
-  let lastError
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await sendPrompt(control, selector, prompt)
-    try {
-      return await withTimeout(
-        control.awaitScenarioRequest(scenario),
-        2_000,
-        `The model service did not receive the ${scenario} request`
-      )
-    } catch (error) {
-      lastError = error
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-    }
-  }
-  throw lastError
+  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  await sendPrompt(control, selector, prompt)
+  return withTimeout(
+    scenarioRequest,
+    UI_TIMEOUT_MS,
+    `The model service did not receive the ${scenario} request`
+  )
 }
 
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  const selectedModelText = await control.command(
+    'waitFor',
+    '[data-testid="model-selector-button"]',
+    {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    }
+  )
+  if (selectedModelText.includes(modelLabel)) return
   await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', '[data-testid="model-control-menu-model"]', {
-    stableMs: COMPOSER_READY_STABILITY_MS,
+  await control.command('hover', '[data-testid="model-control-menu-model"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
@@ -274,6 +288,18 @@ function functionCall(callId, name, argumentsValue) {
   }
 }
 
+function customToolCall(callId, name, input) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'custom_tool_call',
+      call_id: callId,
+      name,
+      input,
+    },
+  }
+}
+
 function assistantMessage(text) {
   return {
     type: 'response.output_item.done',
@@ -335,7 +361,7 @@ function selectTool(request, name, argumentsValue) {
 }
 
 function selectShellTool(request, workspacePath) {
-  const command = `printf '%s\\n' '${ARTIFACT_CONTENT}' > ${ARTIFACT_NAME}`
+  const command = 'pwd'
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
@@ -352,6 +378,23 @@ function selectShellTool(request, workspacePath) {
     })
   }
   throw new Error('Real Codex did not advertise a supported shell tool')
+}
+
+function selectApplyPatchTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    tools.some(tool => tool?.name === 'apply_patch'),
+    `Real Codex did not advertise apply_patch: ${tools
+      .map(tool => tool?.name)
+      .filter(Boolean)
+      .join(', ')}`
+  )
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${ARTIFACT_NAME}`,
+    `+${ARTIFACT_CONTENT}`,
+    '*** End Patch',
+  ].join('\n')
 }
 
 class DesktopE2EServer {
@@ -381,6 +424,12 @@ class DesktopE2EServer {
     })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
+    })
+    this.requestUserInputRelease = new Promise(resolvePromise => {
+      this.releaseRequestUserInput = resolvePromise
+    })
+    this.requestUserInputResponseWritten = new Promise(resolvePromise => {
+      this.resolveRequestUserInputResponseWritten = resolvePromise
     })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -459,7 +508,14 @@ class DesktopE2EServer {
 
   setScenario(scenario) {
     assert.ok(
-      ['initial', 'follow_up', 'cancellation', 'retry', 'fresh_chat'].includes(scenario),
+      [
+        'initial',
+        'follow_up',
+        'request_user_input',
+        'cancellation',
+        'retry',
+        'fresh_chat',
+      ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
@@ -490,6 +546,11 @@ class DesktopE2EServer {
 
   releaseRetryResponse() {
     this.releaseRetryCompletion()
+  }
+
+  releaseRequestUserInputResponse() {
+    this.releaseRequestUserInput()
+    return this.requestUserInputResponseWritten
   }
 
   async command(action, selector, options = {}) {
@@ -642,11 +703,13 @@ class DesktopE2EServer {
         'The real Codex request did not contain the UI task prompt'
       )
       const tool = selectShellTool(body, this.workspacePath)
+      const patch = selectApplyPatchTool(body)
       this.modelStage = 'awaiting_tool_output'
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
         functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
       return
@@ -685,6 +748,43 @@ class DesktopE2EServer {
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'request_user_input') {
+      this.recordScenarioRequest('request_user_input', modelRequest)
+      if (JSON.stringify(body.input).includes('wework-e2e-request-user-input')) {
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(REQUEST_USER_INPUT_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(
+        JSON.stringify(body).includes(REQUEST_USER_INPUT_PROMPT),
+        'The real Codex request did not contain the request-user-input prompt'
+      )
+      const tool = selectTool(body, 'request_user_input', {
+        questions: [
+          {
+            header: 'Direction',
+            id: 'direction',
+            question: REQUEST_USER_INPUT_QUESTION,
+            options: [
+              { label: 'Minimal', description: 'Make the smallest focused change.' },
+              { label: 'Complete', description: 'Cover the full interaction flow.' },
+            ],
+          },
+        ],
+      })
+      await this.requestUserInputRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      this.resolveRequestUserInputResponseWritten()
       return
     }
 
@@ -898,6 +998,9 @@ async function main() {
         WEGENT_EXECUTOR_LOG_DIR: resultDir,
         WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
         DEVICE_ID: `wework-e2e-device-${process.pid}`,
+        DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+        DEVICE_SESSION_GATEWAY_PORT: '0',
+        VITE_WEWORK_E2E: 'true',
         WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
         WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
@@ -929,7 +1032,6 @@ async function main() {
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control)
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
@@ -1053,6 +1155,32 @@ async function main() {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('click', '[data-testid="final-processing-toggle"]')
+    await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const processingSummaryText = await control.command(
+      'getText',
+      '[data-testid="processing-summary-toggle"]'
+    )
+    assert.match(
+      processingSummaryText,
+      /调用 1 个工具，编辑 1 个文件|Called 1 tool, edited 1 file/,
+      'The processing summary did not report tool calls and edited files separately'
+    )
+    await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    if (process.platform === 'darwin') {
+      const processingSummaryScreenshot = await control.command(
+        'capture',
+        '[data-testid="processing-summary-header"]'
+      )
+      await writeFile(
+        join(resultDir, 'processing-summary.png'),
+        Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
+      )
+    }
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',
       timeoutMs: UI_TIMEOUT_MS,
@@ -1114,33 +1242,81 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
+    if (!REQUEST_INPUT_ONLY) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await control.command('click', `[data-testid="${taskRowTestId}"]`)
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: MODEL_LABEL,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+
+      phase = 'follow-up'
+      control.setScenario('follow_up')
+      const followUpRequest = await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        FOLLOW_UP_PROMPT,
+        'follow_up'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FOLLOW_UP_COMPLETION_TEXT,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      assert.ok(
+        JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+        'The follow-up request did not preserve the user prompt'
+      )
+    }
+
+    phase = 'background-request-user-input'
+    control.setScenario('request_user_input')
+    await control.command('click', '[data-testid="add-context-button"]')
+    await control.command('click', '[data-testid="set-plan-mode-button"]')
+    await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      REQUEST_USER_INPUT_PROMPT,
+      'request_user_input'
+    )
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-    await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', '[data-testid="model-selector-button"]', {
-      text: MODEL_LABEL,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-
-    phase = 'follow-up'
-    control.setScenario('follow_up')
-    await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: FOLLOW_UP_COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const followUpRequest = await withTimeout(
-      control.awaitScenarioRequest('follow_up'),
+    await control.command('click', composerSelector)
+    await control.command('press', 'body', { key: 'Escape' })
+    await captureVerificationScreenshot(control, '01-request-running-in-background.png')
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
       UI_TIMEOUT_MS,
-      'The model service did not receive the follow-up request'
+      'Timed out waiting for the request-user-input SSE response'
     )
-    assert.ok(
-      JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
-      'The follow-up request did not preserve the user prompt'
-    )
+    await control.command('press', 'body', { key: 'Escape' })
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+      text: REQUEST_USER_INPUT_QUESTION,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, '02-background-request-user-input-visible.png')
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 3_000))
+    await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+    if (REQUEST_INPUT_ONLY) return
 
     phase = 'cancellation'
     control.setScenario('cancellation')

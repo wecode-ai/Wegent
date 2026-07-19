@@ -47,6 +47,7 @@ interface DesktopControlCommand {
   text?: string
   timeoutMs?: number
   enabled?: boolean
+  visible?: boolean
   stableMs?: number
   key?: string
 }
@@ -301,6 +302,21 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
   return !('disabled' in element) || !(element as HTMLButtonElement).disabled
 }
 
+function desktopControlElementVisible(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element)
+  const rect = element.getBoundingClientRect()
+  return (
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    rect.width > 0 &&
+    rect.height > 0 &&
+    rect.bottom > 0 &&
+    rect.right > 0 &&
+    rect.top < window.innerHeight &&
+    rect.left < window.innerWidth
+  )
+}
+
 function desktopControlEventOptions(element: HTMLElement): MouseEventInit & PointerEventInit {
   const rect = element.getBoundingClientRect()
   const clientX = Math.max(0, Math.floor(rect.left + rect.width / 2))
@@ -357,10 +373,13 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 
   while (Date.now() - startedAt < timeoutMs) {
     const elements = findDesktopControlElements(command.selector)
-    const text = elements.map(element => element.textContent?.trim() ?? '').join('\n')
+    const matchingElements = command.visible
+      ? elements.filter(desktopControlElementVisible)
+      : elements
+    const text = matchingElements.map(element => element.textContent?.trim() ?? '').join('\n')
     const hasExpectedText = !command.text || text.includes(command.text)
-    const isEnabled = !command.enabled || elements.some(desktopControlElementEnabled)
-    if (elements.length > 0 && hasExpectedText && isEnabled) {
+    const isEnabled = !command.enabled || matchingElements.some(desktopControlElementEnabled)
+    if (matchingElements.length > 0 && hasExpectedText && isEnabled) {
       matchedAt ??= Date.now()
       if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
         return text
@@ -381,7 +400,10 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
 function fillDesktopControlElement(element: HTMLElement, value: string) {
   element.focus()
 
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+  if (element instanceof HTMLSelectElement) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+    setter?.call(element, value)
+  } else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     const prototype =
       element instanceof HTMLInputElement
         ? HTMLInputElement.prototype

@@ -77,7 +77,7 @@ import {
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   CachedWorkbenchPaneStack,
-  getRunningRuntimeWorkbenchPaneKeys,
+  getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
   useWorkbenchPaneActive,
   WorkbenchPaneActiveOnly,
@@ -100,7 +100,7 @@ import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
-import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
@@ -123,7 +123,7 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
-const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
+const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 20
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
@@ -175,29 +175,6 @@ function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | nu
   latestBlankBrowserMigration = null
   markEmbeddedBrowserLabelTransferred(migration.browserLabel)
   return migration
-}
-
-function getRuntimeWorkbenchPaneKeys(
-  runtimeWork: RuntimeWorkListResponse | null | undefined
-): string[] {
-  if (!runtimeWork) return []
-
-  const workspaces = [
-    ...runtimeWork.chats,
-    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
-  ]
-
-  return workspaces.flatMap(workspace =>
-    workspace.tasks.map(task =>
-      getWorkbenchPaneKey({
-        currentRuntimeTask: {
-          deviceId: workspace.deviceId,
-          taskId: task.taskId,
-        },
-        currentProject: null,
-      })
-    )
-  )
 }
 
 function createBottomPanelWorkspaceKey({
@@ -289,22 +266,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [state.runtimeWork]
   )
   const validRuntimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
-  const runningPaneKeys = useMemo(
-    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
-    [state.runtimeWork]
-  )
-  const validTerminalPinnedPaneKeys = useMemo(
-    () => terminalPinnedPaneKeys.filter(key => validRuntimePaneKeySet.has(key)),
-    [terminalPinnedPaneKeys, validRuntimePaneKeySet]
-  )
   const prunedPaneKeys = useMemo(
     () => terminalPinnedPaneKeys.filter(key => !validRuntimePaneKeySet.has(key)),
     [terminalPinnedPaneKeys, validRuntimePaneKeySet]
   )
-  const pinnedPaneKeys = useMemo(
-    () => Array.from(new Set([...runningPaneKeys, ...validTerminalPinnedPaneKeys])),
-    [runningPaneKeys, validTerminalPinnedPaneKeys]
-  )
+  const pinnedPaneKeys = runtimePaneKeys
   const pinTerminalPane = useCallback((paneKey: string) => {
     setTerminalPinnedPaneKeys(current =>
       current.includes(paneKey) ? current : [...current, paneKey]

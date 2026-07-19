@@ -72,7 +72,20 @@ describe('developerCommandMenu', () => {
     expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.set', {
       enabled: true,
     })
-    expect(localStorage.getItem('wework:debug-local-chat-stream')).toBe('1')
+    expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBe('1')
+  })
+
+  test('restores the frontend stream flag when the executor toggle fails', async () => {
+    requestLocalExecutorMock
+      .mockResolvedValueOnce({ enabled: true })
+      .mockRejectedValueOnce(new Error('executor unavailable'))
+    dispatchDeveloperShortcut()
+    await flushPromises()
+
+    screenCommand('toggle-stream-logs').click()
+    await flushPromises()
+
+    expect(localStorage.getItem('wework:debug-runtime-chat-stream')).toBeNull()
   })
 
   test('dispatches an event to simulate an app update', () => {

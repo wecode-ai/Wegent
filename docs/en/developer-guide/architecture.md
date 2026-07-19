@@ -370,6 +370,8 @@ Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-se
 
 When Codex uses a shared app-server thread, cancelling an active turn must await acknowledgement of `turn/interrupt` before reporting cancellation to the caller. A retry can then start only after the previous turn has stopped, preventing an interrupt and a new request from interleaving and replaying cancelled input or dropping the retry message.
 
+Wework local model calls enter the executor through the Codex Responses protocol. The local model proxy forwards native Responses endpoints directly, while dedicated protocol modules convert requests, streaming events, reasoning, tool calls, tool results, and usage for OpenAI Chat Completions and Anthropic Messages endpoints. API keys, additional headers, and outbound proxy settings remain inside the executor proxy boundary and are not passed to the Codex process. This boundary lets Wework use `/chat/completions` or `/v1/messages` models without changing the Codex app-server protocol.
+
 **Core Features**:
 - 🔒 Fully isolated execution environment
 - 💼 Independent workspace
