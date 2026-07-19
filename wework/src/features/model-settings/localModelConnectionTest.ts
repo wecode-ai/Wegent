@@ -1,12 +1,18 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { shouldUseTauriFetch } from '@/api/http'
-import { buildLocalModelRequestUrl, normalizeLocalModelId } from './localModelSettings'
+import {
+  buildLocalModelRequestUrl,
+  normalizeLocalModelApiFormat,
+  normalizeLocalModelId,
+  type LocalModelApiFormat,
+} from './localModelSettings'
 
 const DEFAULT_TEST_TIMEOUT_MS = 15_000
 const DUMMY_API_KEY = 'dummy'
 
 export interface TestLocalModelConnectionInput {
   baseUrl: string
+  apiFormat?: LocalModelApiFormat | null
   requestPath?: string | null
   modelId: string
   apiKey?: string | null
@@ -46,7 +52,8 @@ export async function testLocalModelConnection(
   input: TestLocalModelConnectionInput,
   options: TestLocalModelConnectionOptions = {}
 ): Promise<TestLocalModelConnectionResult> {
-  const requestUrl = buildLocalModelRequestUrl(input.baseUrl, input.requestPath)
+  const apiFormat = normalizeLocalModelApiFormat(input.apiFormat)
+  const requestUrl = buildLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat)
   const modelId = normalizeLocalModelId(input.modelId)
   const apiKey = input.apiKey?.trim() || DUMMY_API_KEY
   const fetcher = options.fetcher ?? defaultFetcher()
@@ -62,23 +69,37 @@ export async function testLocalModelConnection(
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
+        ...(apiFormat === 'anthropic-messages'
+          ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+          : {}),
       },
-      body: JSON.stringify({
-        model: modelId,
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: 'Reply with ok.',
-              },
-            ],
-          },
-        ],
-        max_output_tokens: 16,
-        store: false,
-      }),
+      body: JSON.stringify(
+        apiFormat === 'anthropic-messages'
+          ? {
+              model: modelId,
+              messages: [{ role: 'user', content: 'Reply with ok.' }],
+              max_tokens: 16,
+              stream: false,
+            }
+          : apiFormat === 'openai-chat-completions'
+            ? {
+                model: modelId,
+                messages: [{ role: 'user', content: 'Reply with ok.' }],
+                max_tokens: 16,
+                stream: false,
+              }
+            : {
+                model: modelId,
+                input: [
+                  {
+                    role: 'user',
+                    content: [{ type: 'input_text', text: 'Reply with ok.' }],
+                  },
+                ],
+                max_output_tokens: 16,
+                store: false,
+              }
+      ),
       signal: controller.signal,
     })
 

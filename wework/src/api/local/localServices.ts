@@ -220,7 +220,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     modelId: config.modelId,
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
-      apiFormat: RESPONSES_API_FORMAT,
+      apiFormat: config.apiFormat,
+      upstreamApiFormat: config.apiFormat,
       ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
       ui: {
         family,
@@ -639,11 +640,16 @@ function localRuntimeModelConfig(
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
-    const requestUrl = buildLocalModelRequestUrl(localModel.baseUrl, localModel.requestPath)
+    const requestUrl = buildLocalModelRequestUrl(
+      localModel.baseUrl,
+      localModel.requestPath,
+      localModel.apiFormat
+    )
     return {
       model: 'openai',
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: localModel.apiFormat,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
       responses_url: requestUrl,
