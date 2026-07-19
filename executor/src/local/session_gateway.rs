@@ -42,6 +42,7 @@ use crate::{
 
 const DEFAULT_GATEWAY_HOST: &str = "0.0.0.0";
 const DEFAULT_GATEWAY_PORT: u16 = 17888;
+const PUBLIC_BASE_URL_ENV: &str = "DEVICE_PUBLIC_BASE_URL";
 const MAX_PROXY_BODY_BYTES: usize = 64 * 1024 * 1024;
 const SESSION_PROBE_QUERY_KEY: &str = "__wegent_probe";
 
@@ -90,12 +91,16 @@ pub async fn start_session_gateway(
                 .and_then(|url| url.port())
         })
         .unwrap_or(DEFAULT_GATEWAY_PORT);
+    let uses_dynamic_public_url = port == 0 && !has_explicit_public_base_url();
     let listener = TcpListener::bind((host.as_str(), port))
         .await
         .map_err(|error| format!("Failed to bind session gateway on {host}:{port}: {error}"))?;
     let local_addr = listener
         .local_addr()
         .map_err(|error| format!("Failed to read session gateway address: {error}"))?;
+    if uses_dynamic_public_url {
+        update_dynamic_public_base_url(&session_handler, local_addr.port())?;
+    }
     let client = reqwest::Client::builder()
         .redirect(Policy::none())
         .build()
@@ -121,6 +126,28 @@ pub async fn start_session_gateway(
         &[("address", local_addr.to_string())],
     ));
     Ok(Some(SessionGatewayHandle { local_addr, task }))
+}
+
+fn has_explicit_public_base_url() -> bool {
+    env::var(PUBLIC_BASE_URL_ENV)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn update_dynamic_public_base_url(
+    session_handler: &Arc<Mutex<LocalSessionHandler>>,
+    port: u16,
+) -> Result<(), String> {
+    let mut handler = session_handler
+        .lock()
+        .map_err(|_| "Session handler lock is poisoned".to_owned())?;
+    let mut public_url = url::Url::parse(&handler.public_base_url)
+        .map_err(|error| format!("Invalid session gateway public base URL: {error}"))?;
+    public_url
+        .set_port(Some(port))
+        .map_err(|_| "Session gateway public base URL cannot contain a port".to_owned())?;
+    handler.public_base_url = public_url.as_str().trim_end_matches('/').to_owned();
+    Ok(())
 }
 
 async fn handle_gateway_request(

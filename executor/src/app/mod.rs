@@ -128,6 +128,9 @@ pub async fn run(args: CliArgs) -> Result<(), AppError> {
         return run_upgrade(config.update, args.yes).await;
     }
 
+    if app_ipc_enabled() {
+        reserve_executor_stdout_for_protocol();
+    }
     init_executor_logging(&DeviceConfig::default());
     let config = load_device_config(args.config_path.as_deref())?;
     init_executor_logging(&config);
@@ -218,9 +221,7 @@ fn startup_plan_for_config(
     }
 
     let backend_enabled = !config.connection.backend_url.trim().is_empty();
-    let app_ipc_enabled = env::var("WEGENT_APP_IPC_DEVICE_ID")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty());
+    let app_ipc_enabled = app_ipc_enabled();
     Ok(StartupPlan {
         http_server: Some(HttpServerPlan {
             host: "127.0.0.1".to_owned(),
@@ -236,4 +237,10 @@ fn startup_plan_for_config(
             },
         }),
     })
+}
+
+fn app_ipc_enabled() -> bool {
+    env::var("WEGENT_APP_IPC_DEVICE_ID")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
 }
