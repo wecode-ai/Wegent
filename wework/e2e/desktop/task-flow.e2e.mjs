@@ -174,7 +174,6 @@ async function sendPrompt(control, selector, prompt) {
 
 async function prepareCompletedTurnScreenshot(control) {
   await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
-    enabled: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
