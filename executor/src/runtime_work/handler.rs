@@ -25,8 +25,8 @@ use crate::{
     agents::{
         combined_codex_developer_instructions, strip_wework_browser_instructions,
         CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
-        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-        CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexAppServerTurnOptions, CodexPermissionMode, CodexRequestUserInputReceiver,
+        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::{log_executor_event, wework_debug_log},
@@ -1750,7 +1750,7 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
-        link.permission_mode = request_permission_mode(&request);
+        link.permission_mode = request_permission_mode(&request, None);
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
@@ -1868,7 +1868,16 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
-        let permission_mode = request_permission_mode(&request);
+        let permission_mode = request_permission_mode(
+            &request,
+            existing_link
+                .as_ref()
+                .map(|link| link.permission_mode.as_str()),
+        );
+        request.extra.insert(
+            "permission_mode".to_owned(),
+            Value::String(permission_mode.clone()),
+        );
         Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
@@ -1953,26 +1962,24 @@ impl RuntimeWorkRpcHandler {
     async fn update_task_permissions(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
-        let mode = string_field(&payload, "permissionMode")
-            .or_else(|| string_field(&payload, "permission_mode"))
-            .unwrap_or_else(|| "full_access".to_owned());
-        let (profile, approval_policy, reviewer) = match mode.as_str() {
-            "request_approval" => (":workspace", "on-request", "user"),
-            "approve_for_me" => (":workspace", "on-request", "auto_review"),
-            _ => (":danger-full-access", "never", "user"),
-        };
+        let requested_mode = string_field(&payload, "permissionMode")
+            .or_else(|| string_field(&payload, "permission_mode"));
+        let mode = CodexPermissionMode::from_value(requested_mode.as_deref());
+        let mode_label = mode.as_str().to_owned();
         let link = self
             .store
-            .update_task(&local_task_id, |link| link.permission_mode = mode.clone())
+            .update_task(&local_task_id, |link| {
+                link.permission_mode = mode_label.clone()
+            })
             .ok_or_else(|| AppIpcError::new("not_found", "runtime task not found"))?;
         if let Some(thread_id) = runtime_session_id_from_link(&link) {
             self.call_codex_thread_method_without_list_invalidation(
                 "thread/settings/update",
                 json!({
                     "threadId": thread_id,
-                    "permissions": profile,
-                    "approvalPolicy": approval_policy,
-                    "approvalsReviewer": reviewer,
+                    "permissions": mode.permission_profile(),
+                    "approvalPolicy": mode.approval_policy(),
+                    "approvalsReviewer": mode.approvals_reviewer(),
                 }),
             )
             .await
@@ -1982,7 +1989,7 @@ impl RuntimeWorkRpcHandler {
             "success": true,
             "accepted": true,
             "taskId": local_task_id,
-            "permissionMode": mode,
+            "permissionMode": mode_label,
             "effective": if link.running { "next_turn" } else { "effective" },
         }))
     }
@@ -4036,17 +4043,16 @@ fn approval_response(payload: &Value) -> Option<Value> {
         .cloned()
 }
 
-fn request_permission_mode(request: &ExecutionRequest) -> String {
-    match request
-        .extra
-        .get("permission_mode")
-        .or_else(|| request.extra.get("permissionMode"))
-        .and_then(Value::as_str)
-    {
-        Some("request_approval") => "request_approval",
-        Some("approve_for_me") => "approve_for_me",
-        _ => "full_access",
-    }
+fn request_permission_mode(request: &ExecutionRequest, fallback: Option<&str>) -> String {
+    CodexPermissionMode::from_value(
+        request
+            .extra
+            .get("permission_mode")
+            .or_else(|| request.extra.get("permissionMode"))
+            .and_then(Value::as_str)
+            .or(fallback),
+    )
+    .as_str()
     .to_owned()
 }
 
@@ -5751,6 +5757,20 @@ mod tests {
         .expect("payload content should create a cached user message");
 
         assert_eq!(content_message["content"], "visible content text");
+    }
+
+    #[test]
+    fn request_permission_mode_uses_existing_mode_when_request_omits_it() {
+        let request = ExecutionRequest::default();
+
+        assert_eq!(
+            request_permission_mode(&request, Some("request_approval")),
+            "request_approval"
+        );
+        assert_eq!(
+            request_permission_mode(&request, Some("unsupported")),
+            "full_access"
+        );
     }
 
     #[test]

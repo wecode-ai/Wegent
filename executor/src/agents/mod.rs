@@ -37,7 +37,7 @@ use claude_code::{
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{
     combined_codex_developer_instructions, mcp_server_elicitation_request_user_input_params,
-    strip_wework_browser_instructions,
+    strip_wework_browser_instructions, CodexPermissionMode,
 };
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,

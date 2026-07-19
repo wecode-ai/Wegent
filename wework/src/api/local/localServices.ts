@@ -1328,7 +1328,7 @@ function createLocalRuntimeSendPayload(
         newSession: false,
         clientMessageId: normalizedData.clientMessageId,
         ephemeral: data.ephemeral,
-        permissionMode: normalizedData.permissionMode,
+        permissionMode: normalizedData.permissionMode ?? normalizedAddress.permissionMode,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1359,7 +1359,7 @@ function createLocalRuntimeSendPayload(
       newSession: false,
       clientMessageId: normalizedData.clientMessageId,
       ephemeral: data.ephemeral,
-      permissionMode: normalizedData.permissionMode,
+      permissionMode: normalizedData.permissionMode ?? normalizedAddress.permissionMode,
     }),
   } as unknown as Record<string, unknown>
 }

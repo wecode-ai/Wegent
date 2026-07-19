@@ -4,6 +4,12 @@ import { describe, expect, test, vi } from 'vitest'
 import { ApprovalCard } from './ApprovalCard'
 
 describe('ApprovalCard', () => {
+  test('renders a reason-only approval once', () => {
+    render(<ApprovalCard payload={{ kind: 'approval', reason: 'Allow host CPU query?' }} />)
+
+    expect(screen.getAllByText('Allow host CPU query?')).toHaveLength(1)
+  })
+
   test('submits a one-time approval', async () => {
     const onSubmit = vi.fn()
     render(

@@ -697,6 +697,7 @@ describe('createLocalAppServices', () => {
         deviceId: 'local-device',
         workspacePath: '/Users/me/project',
         taskId: 'task-1',
+        permissionMode: 'request_approval',
       },
       message: 'continue',
       clientMessageId: 'runtime-local-pane-1',
@@ -731,6 +732,7 @@ describe('createLocalAppServices', () => {
           deviceId: 'device-uuid',
           workspacePath: '/Users/me/project',
           taskId: 'task-1',
+          permissionMode: 'request_approval',
         },
         message: 'continue',
         clientMessageId: 'runtime-local-pane-1',
@@ -788,6 +790,7 @@ describe('createLocalAppServices', () => {
           execution_target_type: 'local',
           workspace_source: 'local_path',
           new_session: false,
+          permission_mode: 'request_approval',
           collaborationMode: 'default',
           attachments: [
             {

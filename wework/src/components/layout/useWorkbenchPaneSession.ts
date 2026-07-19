@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
+import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   compareMessageStyles,
@@ -126,6 +127,7 @@ function isRuntimeApprovalResponse(
 }
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
+  const { t } = useTranslation('common')
   const {
     state: workbenchState,
     projectChat,
@@ -166,11 +168,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         permissionMode: mode,
       }).catch(updateError => {
         console.error('[Wework] Failed to update Codex permission mode', updateError)
-        setPermissionMode(previous)
-        setError(i18n.t('common:workbench.codex_permission_update_failed'))
+        setPermissionMode(current => (current === mode ? previous : current))
+        setError(t('workbench.codex_permission_update_failed'))
       })
     },
-    [currentRuntimeTask, permissionMode]
+    [currentRuntimeTask, permissionMode, t]
   )
   useEffect(() => {
     let active = true

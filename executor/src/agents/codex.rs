@@ -4146,41 +4146,54 @@ const CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE: &str = ":danger-full-access";
 const CODEX_WORKSPACE_PERMISSION_PROFILE: &str = ":workspace";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodexPermissionMode {
+pub(crate) enum CodexPermissionMode {
     FullAccess,
     RequestApproval,
     ApproveForMe,
 }
 
 impl CodexPermissionMode {
-    fn from_request(request: &ExecutionRequest) -> Self {
-        match request
-            .extra
-            .get("permission_mode")
-            .or_else(|| request.extra.get("permissionMode"))
-            .and_then(Value::as_str)
-        {
+    pub(crate) fn from_request(request: &ExecutionRequest) -> Self {
+        Self::from_value(
+            request
+                .extra
+                .get("permission_mode")
+                .or_else(|| request.extra.get("permissionMode"))
+                .and_then(Value::as_str),
+        )
+    }
+
+    pub(crate) fn from_value(value: Option<&str>) -> Self {
+        match value {
             Some("request_approval") => Self::RequestApproval,
             Some("approve_for_me") => Self::ApproveForMe,
             _ => Self::FullAccess,
         }
     }
 
-    fn permission_profile(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::FullAccess => "full_access",
+            Self::RequestApproval => "request_approval",
+            Self::ApproveForMe => "approve_for_me",
+        }
+    }
+
+    pub(crate) fn permission_profile(self) -> &'static str {
         match self {
             Self::FullAccess => CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
             Self::RequestApproval | Self::ApproveForMe => CODEX_WORKSPACE_PERMISSION_PROFILE,
         }
     }
 
-    fn approval_policy(self) -> &'static str {
+    pub(crate) fn approval_policy(self) -> &'static str {
         match self {
             Self::FullAccess => "never",
             Self::RequestApproval | Self::ApproveForMe => "on-request",
         }
     }
 
-    fn approvals_reviewer(self) -> &'static str {
+    pub(crate) fn approvals_reviewer(self) -> &'static str {
         match self {
             Self::ApproveForMe => "auto_review",
             Self::FullAccess | Self::RequestApproval => "user",

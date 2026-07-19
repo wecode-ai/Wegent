@@ -14,7 +14,7 @@ function approvalDescription(payload: RuntimeApprovalPayload): string {
   if (payload.command) return payload.command
   if (payload.grantRoot) return payload.grantRoot
   if (payload.cwd) return payload.cwd
-  return payload.reason || ''
+  return ''
 }
 
 export function ApprovalCard({ payload, disabled = false, onSubmit }: ApprovalCardProps) {
