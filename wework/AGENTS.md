@@ -48,7 +48,7 @@ pnpm --filter wework ai:verify close-to-tray --session <session-path>
 pnpm --filter wework ai:verify stop --session <session-path>
 ```
 
-- `start` waits for the WebView, creates an isolated executor home, links local Codex authentication only for that session, and uses a short temporary IPC socket path.
+- `start` waits for the WebView, creates an isolated executor home, links local Codex authentication only for that session, and gives the app its own stdio-managed executor child.
 - Session files and credentials are secrets: never print their contents. Always stop the session; it removes the auth link and terminates the isolated process group.
 - Begin with `snapshot`, use existing `data-testid` selectors, and assert a visible text or stable element after each critical action.
 - Execute the complete QA test plan in the isolated Tauri session, including the primary path, relevant boundary and error cases, and recovery. Document the environment, cases run, actual results, and evidence in the change handoff or pull request.

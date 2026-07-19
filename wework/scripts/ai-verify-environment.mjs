@@ -2,16 +2,7 @@ import { join } from 'node:path'
 
 export function buildAiVerifyEnvironment(
   processEnvironment,
-  {
-    controlUrl,
-    token,
-    codexHome,
-    deviceId,
-    appIdentifier,
-    socketPath,
-    executorHome,
-    sessionDirectory,
-  }
+  { controlUrl, token, codexHome, deviceId, appIdentifier, executorHome, sessionDirectory }
 ) {
   return {
     ...processEnvironment,
@@ -24,7 +15,6 @@ export function buildAiVerifyEnvironment(
     WEWORK_APP_IDENTIFIER: appIdentifier,
     DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
     DEVICE_SESSION_GATEWAY_PORT: '0',
-    WEGENT_EXECUTOR_APP_IPC_SOCKET: socketPath,
     WEGENT_EXECUTOR_HOME: executorHome,
     WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
