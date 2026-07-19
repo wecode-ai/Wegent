@@ -417,6 +417,33 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
       return
     }
 
+    if (element.isContentEditable) {
+      element.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          code: 'KeyA',
+          key: 'a',
+          metaKey: true,
+        })
+      )
+      element.dispatchEvent(
+        new KeyboardEvent('keyup', {
+          bubbles: true,
+          cancelable: true,
+          code: 'KeyA',
+          key: 'a',
+          metaKey: true,
+        })
+      )
+      const clipboardData = new DataTransfer()
+      clipboardData.setData('text/plain', value)
+      element.dispatchEvent(
+        new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData })
+      )
+      return
+    }
+
     const selection = window.getSelection()
     const range = document.createRange()
     range.selectNodeContents(element)

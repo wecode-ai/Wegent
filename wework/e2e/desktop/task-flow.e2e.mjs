@@ -158,6 +158,7 @@ async function appendProcessOutput(stream, destination) {
 
 async function sendPrompt(control, selector, prompt) {
   await control.command('fill', selector, { value: prompt })
+  await control.command('waitFor', selector, { text: prompt, timeoutMs: UI_TIMEOUT_MS })
   await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
@@ -224,6 +225,9 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   if (selectedModelText.includes(modelLabel)) return
   await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="model-control-menu-model"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('hover', '[data-testid="model-control-menu-model"]', {
