@@ -1662,6 +1662,11 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
     await captureVerificationScreenshot(control, '04-view-image-expanded.png')
+    await control.command('click', '[data-testid="processing-summary-toggle"]')
+    await control.command('waitFor', '[data-testid="environment-changes-button"]', {
+      text: '+1',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     if (VIEW_IMAGE_ONLY) {
       await writeFile(
         join(resultDir, 'model-requests.json'),
@@ -1671,10 +1676,6 @@ async function main() {
       console.log(`Wework view_image desktop E2E passed. Evidence: ${resultDir}`)
       return
     }
-    await control.command('waitFor', '[data-testid="environment-changes-button"]', {
-      text: '+1',
-      timeoutMs: UI_TIMEOUT_MS,
-    })
     const changedEnvironmentText = await control.command(
       'getText',
       '[data-testid="environment-changes-button"]'
