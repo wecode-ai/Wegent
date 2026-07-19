@@ -1316,7 +1316,8 @@ async function main() {
     await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await control.command('waitFor', '[data-testid^="plugin-marketplace-install-"]', {
+    await control.command('waitFor', '[data-testid^="plugin-marketplace-row-"]', {
+      text: 'Wework E2E Verification',
       timeoutMs: UI_TIMEOUT_MS,
     })
     await captureVerificationScreenshot(control, '01-project-plugin-marketplace.png')
