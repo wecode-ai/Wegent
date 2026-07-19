@@ -669,6 +669,9 @@ export function createHybridWorkbenchServices(
     sendRuntimeMessage(data: RuntimeSendRequest) {
       return routeByAddress(data.address).sendRuntimeMessage(data)
     },
+    interruptAndSendRuntimeMessage(data) {
+      return routeByAddress(data.address).interruptAndSendRuntimeMessage(data)
+    },
     rollbackRuntimeTask(data: RuntimeRollbackRequest) {
       return routeByAddress(data.address).rollbackRuntimeTask(data)
     },

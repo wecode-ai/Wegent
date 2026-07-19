@@ -12,7 +12,7 @@ Wework can start an isolated development verification session so an AI can opera
 pnpm --filter wework ai:verify start
 ```
 
-The command prints a session file path and a local control URL. It creates separate Executor and diagnostic directories, then starts the real `dev-mac-app.sh`. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
+The command prints a session file path and a local control URL. It creates a separate Executor Home, projects directory, device ID, IPC socket, Tauri identifier, and diagnostics directory, then starts the real `dev-mac-app.sh`. Tasks, projects, application data, and the single-instance lock are not shared with release or other verification sessions. Logs are stored in `wework/test-results/ai-verify/<run-id>/`.
 
 ## Operate and assert
 

@@ -398,6 +398,26 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledWith('继续修复')
   })
 
+  test('offers interrupt-and-send while the assistant is streaming', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="立即改方向"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
+
+    expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
@@ -416,6 +436,7 @@ describe('ChatInput', () => {
       },
     ]
     const onSendQueuedAsGuidance = vi.fn()
+    const onInterruptAndSendQueuedMessage = vi.fn()
     const onCancelQueuedMessage = vi.fn()
     const onEditQueuedMessage = vi.fn()
 
@@ -429,6 +450,7 @@ describe('ChatInput', () => {
         queuedMessages={queuedMessages}
         guidanceMessages={guidanceMessages}
         onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+        onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
         onCancelQueuedMessage={onCancelQueuedMessage}
         onEditQueuedMessage={onEditQueuedMessage}
       />
@@ -442,13 +464,54 @@ describe('ChatInput', () => {
     ).toEqual(['conversation-queue-row-guidance-1', 'conversation-queue-row-queued-1'])
 
     await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-interrupt-button-guidance-1'))
+    await userEvent.click(screen.getByTestId('queue-interrupt-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-cancel-button-queued-1'))
 
     expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
+    expect(onInterruptAndSendQueuedMessage).toHaveBeenNthCalledWith(1, 'guidance-1')
+    expect(onInterruptAndSendQueuedMessage).toHaveBeenNthCalledWith(2, 'queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
+  test('shows lightweight interrupt action while guidance is sending', async () => {
+    const onInterruptAndSendQueuedMessage = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'sending-guidance',
+            content: '请停止等待并检查目录',
+            status: 'sending',
+            notice: '正在引导当前对话',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
+      />
+    )
+
+    const interruptButton = screen.getByTestId('queue-interrupt-button-sending-guidance')
+    expect(screen.getByText('引导中')).toBeInTheDocument()
+    expect(interruptButton).toHaveTextContent('workbench.interrupt_and_send_short')
+    expect(interruptButton).toHaveClass('text-text-secondary', 'hover:bg-muted')
+    expect(interruptButton).not.toHaveClass('border', 'bg-base', 'shadow-sm')
+    expect(screen.queryByTestId('queue-guidance-button-sending-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-cancel-button-sending-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-more-button-sending-guidance')).not.toBeInTheDocument()
+
+    await userEvent.click(interruptButton)
+
+    expect(onInterruptAndSendQueuedMessage).toHaveBeenCalledWith('sending-guidance')
   })
 
   test('provides left-side drag handles to reorder multiple queued messages', () => {
@@ -736,6 +799,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('send-message-button')).toBeEnabled()
     expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-[92px]')
 
     await userEvent.click(screen.getByTestId('send-message-button'))
 

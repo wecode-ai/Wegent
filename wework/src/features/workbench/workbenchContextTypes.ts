@@ -285,6 +285,10 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  interruptAndSendRuntimePaneMessage: (
+    request: RuntimeSendRequest,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   sendRuntimePaneGuidance: (request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>
   compactRuntimePaneTask: (
     address: RuntimeTaskAddress,

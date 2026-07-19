@@ -394,6 +394,7 @@ export function ProjectChatComposer({
           onQuickPhraseSelect={handleQuickPhraseSelect}
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          onSubmit={options => onSubmit(value, options)}
         />
       </form>
     </div>

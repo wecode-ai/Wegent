@@ -579,6 +579,8 @@ export interface RuntimeSendRequest {
   permissionMode?: CodexPermissionMode
 }
 
+export type RuntimeInterruptAndSendRequest = RuntimeSendRequest
+
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
 }

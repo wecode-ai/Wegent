@@ -1,4 +1,6 @@
-import { ArrowUp, ClipboardList, Square } from 'lucide-react'
+import { ArrowDownToLine, ArrowUp, ClipboardList, CornerDownRight, Zap } from 'lucide-react'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CodexPermissionMode,
@@ -41,6 +43,7 @@ interface ComposerToolbarProps {
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   permissionMode?: CodexPermissionMode
   onPermissionModeChange?: (mode: CodexPermissionMode) => void
+  onSubmit: (options?: ComposerSubmitOptions) => void
 }
 
 export function ComposerToolbar({
@@ -69,6 +72,7 @@ export function ComposerToolbar({
   onQuickPhraseSelect,
   permissionMode,
   onPermissionModeChange,
+  onSubmit,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
@@ -138,8 +142,45 @@ export function ComposerToolbar({
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1f1f1f] p-0 text-white hover:bg-[#333]"
             aria-label={t('workbench.pause_response', '暂停回复')}
           >
-            <Square className="h-3.5 w-3.5 fill-current" />
+            <span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" />
           </button>
+        ) : isStreaming && canSend ? (
+          <div className="flex items-center rounded-full bg-[#1f1f1f] text-white">
+            <button
+              type="submit"
+              data-testid="send-message-button"
+              className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-[#333]"
+              aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
+            >
+              <ArrowUp className="h-4 w-4" />
+            </button>
+            <ActionMenu
+              ariaLabel={t('workbench.choose_send_mode', '选择发送方式')}
+              testId="send-mode-menu-button"
+              icon={ArrowDownToLine}
+              triggerClassName="flex h-8 w-7 items-center justify-center rounded-r-full border-l border-white/20 hover:bg-[#333]"
+              items={[
+                {
+                  label: t('workbench.send_after_turn', '当前回复结束后发送'),
+                  icon: ArrowUp,
+                  testId: 'send-after-turn-option',
+                  onSelect: () => onSubmit(),
+                },
+                {
+                  label: t('workbench.guide_current_turn', '引导当前回复'),
+                  icon: CornerDownRight,
+                  testId: 'guide-current-turn-option',
+                  onSelect: () => onSubmit({ guideWhenBusy: true }),
+                },
+                {
+                  label: t('workbench.interrupt_and_send', '打断并立即发送'),
+                  icon: Zap,
+                  testId: 'interrupt-and-send-option',
+                  onSelect: () => onSubmit({ interruptWhenBusy: true }),
+                },
+              ]}
+            />
+          </div>
         ) : (
           <button
             type="submit"
