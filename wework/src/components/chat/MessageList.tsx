@@ -1679,6 +1679,11 @@ function AssistantMessage({
                 ? 'intermediate'
                 : getProcessingPhase(processingSegments, index, hasVisibleContent)
           }
+          showInterToolThinking={
+            isStreaming &&
+            segment.kind === 'tool' &&
+            !processingSegments.slice(index + 1).some(candidate => candidate.kind === 'tool')
+          }
           showSummary={segment.kind === 'tool'}
           stateKey={`${processingStateKey}:${index}`}
           onOpenWorkspaceFile={onOpenWorkspaceFile}

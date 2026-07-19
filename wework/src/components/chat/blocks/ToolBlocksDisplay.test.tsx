@@ -819,7 +819,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText('1 分 0 秒')).toBeInTheDocument()
   })
 
-  test('keeps ticking while streaming even when all tool blocks are done', () => {
+  test('keeps the segment ticking but shows thinking after all tool blocks are done', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
 
@@ -838,10 +838,11 @@ describe('ToolBlocksDisplay', () => {
     })
 
     expect(screen.getByText('5 秒')).toBeInTheDocument()
-    expect(screen.getByText('5.0s')).toBeInTheDocument()
+    expect(screen.queryByText('5.0s')).not.toBeInTheDocument()
+    expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
   })
 
-  test('keeps the last row ticking after that tool finishes while the segment stays live', () => {
+  test('stops the tool duration and shows thinking while waiting for the next tool', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-05T00:00:00.000Z'))
 
@@ -865,7 +866,9 @@ describe('ToolBlocksDisplay', () => {
     act(() => vi.advanceTimersByTime(2300))
 
     expect(screen.getByText('3 秒')).toBeInTheDocument()
-    expect(screen.getByText('3.5s')).toBeInTheDocument()
+    expect(screen.getByText('1.2s')).toBeInTheDocument()
+    expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
   test('stops ticking once a streaming tool segment becomes intermediate', () => {
@@ -893,6 +896,20 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByText('7 秒')).not.toBeInTheDocument()
   })
 
+  test('keeps thinking inside the latest tool block when a narrative segment follows', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[completedCommandBlock]}
+        isStreaming={true}
+        processingPhase="intermediate"
+        showInterToolThinking
+      />
+    )
+
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
+  })
+
   test('uses the sum of concrete tool durations for the segment duration', () => {
     const firstBlock: ProcessingBlock = {
       ...completedCommandBlock,
@@ -918,6 +935,27 @@ describe('ToolBlocksDisplay', () => {
     fireEvent.click(screen.getByTestId('processing-summary-toggle'))
     expect(screen.getByText('1.2s')).toBeInTheDocument()
     expect(screen.getByText('2.3s')).toBeInTheDocument()
+  })
+
+  test('does not include the gap before the next tool in the previous tool duration', () => {
+    const firstBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      completedAt: completedCommandBlock.createdAt + 1200,
+    }
+    const secondBlock: ProcessingBlock = {
+      ...completedCommandBlock,
+      id: 'call-2',
+      createdAt: completedCommandBlock.createdAt + 5000,
+      completedAt: completedCommandBlock.createdAt + 7300,
+      toolInput: { command: 'git status' },
+    }
+
+    render(<ToolBlocksDisplay blocks={[firstBlock, secondBlock]} isStreaming={false} />)
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+
+    expect(screen.getByText('1.2s')).toBeInTheDocument()
+    expect(screen.getByText('2.3s')).toBeInTheDocument()
+    expect(screen.queryByText('5.0s')).not.toBeInTheDocument()
   })
 
   test('keeps a compact live preview with full processing details collapsed', async () => {
@@ -1052,7 +1090,7 @@ describe('ToolBlocksDisplay', () => {
     )
   })
 
-  test('shimmers only the latest completed row in a live tool segment', () => {
+  test('shimmers the thinking row instead of a completed tool in a live segment', () => {
     const latestBlock: ProcessingBlock = {
       ...completedCommandBlock,
       id: 'call-2',
@@ -1063,7 +1101,8 @@ describe('ToolBlocksDisplay', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock, latestBlock]} isStreaming={true} />)
 
     expect(screen.getByText('运行 pwd')).not.toHaveClass('tool-activity-shimmer')
-    expect(screen.getByText('运行 git status --short')).toHaveClass('tool-activity-shimmer')
+    expect(screen.getByText('运行 git status --short')).not.toHaveClass('tool-activity-shimmer')
+    expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
   test('keeps all live rows in a scroll area sized for three rows', () => {

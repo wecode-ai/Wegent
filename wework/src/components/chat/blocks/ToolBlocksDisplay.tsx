@@ -64,6 +64,7 @@ interface ToolBlocksDisplayProps {
   startedAt?: number
   forceExpanded?: boolean
   processingPhase?: 'live' | 'intermediate' | 'final'
+  showInterToolThinking?: boolean
   showSummary?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
@@ -82,6 +83,7 @@ export function ToolBlocksDisplay({
   startedAt,
   forceExpanded = false,
   processingPhase = 'live',
+  showInterToolThinking = false,
   showSummary = true,
   stateKey,
   onOpenWorkspaceFile,
@@ -95,7 +97,8 @@ export function ToolBlocksDisplay({
 }: ToolBlocksDisplayProps) {
   const { t } = useTranslation('chat')
   const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
-  const isRunning = (isStreaming && processingPhase === 'live') || hasRunningBlock
+  const isRunning =
+    (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
     stateKey ? `${stateKey}:processing` : undefined
   )
@@ -198,7 +201,10 @@ export function ToolBlocksDisplay({
   const canToggleSummary =
     showSummary && !isLockedOpen && !hasRunningToolActivity && rows.length > 0
   const hasLivePreview =
-    isRunning && (!hasClosedToolSegment || hasRunningToolActivity) && !expanded && rows.length > 0
+    isRunning &&
+    (!hasClosedToolSegment || hasRunningToolActivity || showInterToolThinking) &&
+    !expanded &&
+    rows.length > 0
   const previewRows = useMemo(
     () =>
       !expanded &&
@@ -335,11 +341,12 @@ export function ToolBlocksDisplay({
       {previewRows.length > 0 ? (
         <LiveProcessingPreview
           rows={previewRows}
-          highlightLatest={processingPhase === 'live'}
-          startedAt={turnStartedAt}
-          completedAt={completedAt}
-          now={now}
-          running={isRunning}
+          showThinking={
+            isStreaming &&
+            hasToolActivity &&
+            !hasRunningToolActivity &&
+            (processingPhase === 'live' || showInterToolThinking)
+          }
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       ) : null}
@@ -467,21 +474,14 @@ function ToolActivityStats({
 
 function LiveProcessingPreview({
   rows,
-  highlightLatest,
-  startedAt,
-  completedAt,
-  now,
-  running,
+  showThinking,
   onOpenWorkspaceFile,
 }: {
   rows: ProcessingDisplayRow[]
-  highlightLatest: boolean
-  startedAt: number
-  completedAt: number | null
-  now: number
-  running: boolean
+  showThinking: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }) {
+  const { t } = useTranslation('chat')
   const scrollRef = useRef<HTMLDivElement>(null)
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
   const hasExpandedDetail = rows.some(row => expandedRowIds.has(row.id))
@@ -523,18 +523,16 @@ function LiveProcessingPreview({
           <LiveProcessingPreviewRow
             key={row.id}
             row={row}
-            shimmer={highlightLatest && index === rows.length - 1}
-            durationStartedAt={index === 0 ? startedAt : getProcessingRowStartedAt(row)}
-            durationEndAt={
-              getProcessingRowStartedAt(rows[index + 1]) ??
-              (running ? now : row.type === 'block' ? row.block.completedAt : undefined) ??
-              completedAt ??
-              getProcessingRowStartedAt(row)
-            }
+            shimmer={isProcessingRowRunning(row) && index === rows.length - 1}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             onExpandedChange={updateExpandedRow}
           />
         ))}
+        {showThinking ? (
+          <div className="flex min-h-8 items-center py-1 text-sm" data-testid="tool-block-thinking">
+            <span className="waiting-thinking-text">{t('thinking.running')}</span>
+          </div>
+        ) : null}
       </div>
     </div>
   )
@@ -601,9 +599,11 @@ function LiveProcessingPreviewRow({
   )
 }
 
-function getProcessingRowStartedAt(row: ProcessingDisplayRow | undefined): number | undefined {
-  if (!row) return undefined
-  return row.type === 'activity_group' ? row.blocks[0]?.createdAt : row.block.createdAt
+function isProcessingRowRunning(row: ProcessingDisplayRow): boolean {
+  if (row.type === 'activity_group') {
+    return row.blocks.some(block => block.status !== 'done' && block.status !== 'error')
+  }
+  return row.block.status !== 'done' && row.block.status !== 'error'
 }
 
 function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {
