@@ -812,6 +812,7 @@ export function useWorkbenchRuntimeMessaging({
             message: payloadMessage,
             ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
             ...runtimeModelFields,
+            ...(options?.permissionMode ? { permissionMode: options.permissionMode } : {}),
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
           },
@@ -963,6 +964,9 @@ export function useWorkbenchRuntimeMessaging({
           message: previousUserMessage.content,
           clientMessageId: previousUserMessage.id,
           ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
+          ...(state.currentRuntimeTask.permissionMode
+            ? { permissionMode: state.currentRuntimeTask.permissionMode }
+            : {}),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
         })

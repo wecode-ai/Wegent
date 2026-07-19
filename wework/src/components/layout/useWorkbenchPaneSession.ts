@@ -1068,6 +1068,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         address: currentRuntimeTask,
         message: message.content,
         clientMessageId: message.id,
+        ...(permissionMode !== 'full_access' ? { permissionMode } : {}),
         ...(message.modelId
           ? {
               modelId: message.modelId,
@@ -1087,7 +1088,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
       return sent
     },
-    [appendLocalUserMessage, currentRuntimeTask, sendRuntimePaneMessage]
+    [appendLocalUserMessage, currentRuntimeTask, permissionMode, sendRuntimePaneMessage]
   )
 
   const retryFailedMessageInPane = useCallback(
@@ -1189,6 +1190,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message,
+        ...(permissionMode !== 'full_access' ? { permissionMode } : {}),
         ...(appendedUserMessage ? { clientMessageId: appendedUserMessage.id } : {}),
         ...runtimeModelFields,
         ...(options.appendUserMessage
@@ -1219,6 +1221,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       currentRuntimeTask,
       dispatchMessages,
       getRuntimeModelFields,
+      permissionMode,
       projectChat,
       sendRuntimePaneMessage,
     ]

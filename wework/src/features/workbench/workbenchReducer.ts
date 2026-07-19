@@ -665,6 +665,7 @@ function findRuntimeTaskAddressByTaskId(
       workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
+      ...(task.permissionMode ? { permissionMode: task.permissionMode } : {}),
     }
     if (match && match.deviceId !== address.deviceId) {
       return null
