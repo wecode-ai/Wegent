@@ -8,7 +8,9 @@ Wework includes an opt-in frontend performance diagnostics switch for investigat
 
 ## Debugging Multiple Instances
 
-When `pnpm --filter wework dev:mac` starts a debug app, each Wework process uses its own local executor runtime directory and IPC address file. Multiple debug windows can run concurrently without connecting to the same executor instance.
+For everyday development, `pnpm --filter wework dev:mac` uses the release app's Executor Home by default, so projects and tasks are shared with the locally installed release Wework. The debug process still uses its own IPC address file to avoid attaching to another running executor. Use `pnpm --filter wework dev:mac -- --executor-isolation` when projects and tasks must be isolated temporarily.
+
+`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, IPC socket, and unique Tauri identifier, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
 
 Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
 

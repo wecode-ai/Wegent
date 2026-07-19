@@ -1079,6 +1079,7 @@ async function main() {
         HOME: homePath,
         WEGENT_CODEX_HOME: join(executorHome, 'codex'),
         WEGENT_EXECUTOR_HOME: executorHome,
+        WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
         WEGENT_EXECUTOR_APP_IPC_SOCKET: executorSocketPath,
         WEGENT_EXECUTOR_LOG_DIR: resultDir,
         WEGENT_EXECUTOR_LOG_FILE: 'executor.log',

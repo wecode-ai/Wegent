@@ -16,6 +16,7 @@ import type {
   RuntimeCompactRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -95,6 +96,9 @@ export interface ExecutorRuntimeClient {
     data: RuntimeFileChangesRevertRequest
   ) => Promise<RuntimeFileChangesRevertResponse>
   sendRuntimeMessage: (data: RuntimeSendRequest) => Promise<RuntimeSendResponse>
+  interruptAndSendRuntimeMessage: (
+    data: RuntimeInterruptAndSendRequest
+  ) => Promise<RuntimeSendResponse>
   rollbackRuntimeTask: (data: RuntimeRollbackRequest) => Promise<RuntimeSendResponse>
   compactRuntimeTask: (data: RuntimeCompactRequest) => Promise<RuntimeSendResponse>
   guideRuntimeTask: (data: RuntimeGuidanceRequest) => Promise<RuntimeGuidanceResponse>

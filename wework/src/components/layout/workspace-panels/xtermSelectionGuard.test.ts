@@ -60,20 +60,44 @@ describe('installXtermSelectionGuard', () => {
     guard.dispose()
   })
 
-  test('clears abandoned drag selection when the window loses focus', () => {
+  test('releases and clears abandoned drag selection when the window loses focus', () => {
     const container = document.createElement('div')
     const clearSelection = vi.fn()
+    const mouseUpListener = vi.fn()
     const guard = installXtermSelectionGuard({
       container,
       terminal: { clearSelection },
     })
+    container.addEventListener('mouseup', mouseUpListener)
 
     dispatchMouseEvent(container, 'mousedown', { button: 0, buttons: 1 })
     window.dispatchEvent(new Event('blur'))
 
+    expect(mouseUpListener).toHaveBeenCalledTimes(1)
     expect(clearSelection).toHaveBeenCalledTimes(1)
 
     guard.dispose()
+  })
+
+  test('releases and clears abandoned drag selection when the document becomes hidden', () => {
+    const container = document.createElement('div')
+    const clearSelection = vi.fn()
+    const mouseUpListener = vi.fn()
+    const visibilityState = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const guard = installXtermSelectionGuard({
+      container,
+      terminal: { clearSelection },
+    })
+    container.addEventListener('mouseup', mouseUpListener)
+
+    dispatchMouseEvent(container, 'mousedown', { button: 0, buttons: 1 })
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    expect(mouseUpListener).toHaveBeenCalledTimes(1)
+    expect(clearSelection).toHaveBeenCalledTimes(1)
+
+    guard.dispose()
+    visibilityState.mockRestore()
   })
 
   test('detaches listeners on dispose', () => {
