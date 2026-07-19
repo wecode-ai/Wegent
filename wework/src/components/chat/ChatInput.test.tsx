@@ -451,7 +451,7 @@ describe('ChatInput', () => {
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
-  test('surfaces interrupt as the primary action while guidance is sending', async () => {
+  test('shows lightweight interrupt action while guidance is sending', async () => {
     const onInterruptAndSendQueuedMessage = vi.fn()
 
     render(
@@ -475,9 +475,12 @@ describe('ChatInput', () => {
     )
 
     const interruptButton = screen.getByTestId('queue-interrupt-button-sending-guidance')
-    expect(interruptButton).toHaveClass('border-border', 'bg-base', 'text-text-secondary')
-    expect(interruptButton).not.toHaveClass('bg-text-primary')
-    expect(screen.getByTestId('queue-guidance-button-sending-guidance')).toBeDisabled()
+    expect(screen.getByText('引导中')).toBeInTheDocument()
+    expect(interruptButton).toHaveTextContent('workbench.interrupt_and_send_short')
+    expect(interruptButton).toHaveClass('text-text-secondary', 'hover:bg-muted')
+    expect(interruptButton).not.toHaveClass('border', 'bg-base', 'shadow-sm')
+    expect(screen.queryByTestId('queue-guidance-button-sending-guidance')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('queue-cancel-button-sending-guidance')).not.toBeInTheDocument()
     expect(screen.queryByTestId('queue-more-button-sending-guidance')).not.toBeInTheDocument()
 
     await userEvent.click(interruptButton)

@@ -182,6 +182,7 @@ function QueueRow({
     isDragging,
   } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
+  const isSendingGuidance = isBusy && notice === '正在引导当前对话'
   const showInlineInterrupt = mode === 'guidance' || isBusy
   const statusText =
     status === 'failed'
@@ -189,7 +190,9 @@ function QueueRow({
       : status === 'expired'
         ? (error ?? '已过期')
         : status === 'sending'
-          ? (notice ?? '正在发送')
+          ? isSendingGuidance
+            ? '引导中'
+            : (notice ?? '正在发送')
           : null
 
   return (
@@ -231,7 +234,7 @@ function QueueRow({
         )}
       </span>
       <div className="flex shrink-0 items-center gap-1">
-        {mode === 'queue' && (
+        {mode === 'queue' && !isSendingGuidance && (
           <button
             type="button"
             data-testid={`queue-guidance-button-${id}`}
@@ -249,23 +252,25 @@ function QueueRow({
             type="button"
             data-testid={`queue-interrupt-button-${id}`}
             onClick={() => onInterrupt?.(id)}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg border border-border bg-base px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
+            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
             aria-label={t('workbench.interrupt_and_send')}
           >
             <Zap className="h-3.5 w-3.5" />
-            <span>{t('workbench.interrupt_and_send')}</span>
+            <span>{t('workbench.interrupt_and_send_short')}</span>
           </button>
         )}
-        <button
-          type="button"
-          data-testid={`queue-cancel-button-${id}`}
-          onClick={() => onCancel?.(id)}
-          disabled={isBusy}
-          className="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0 sm:px-2"
-          aria-label="移除队列消息"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        {!isSendingGuidance && (
+          <button
+            type="button"
+            data-testid={`queue-cancel-button-${id}`}
+            onClick={() => onCancel?.(id)}
+            disabled={isBusy}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0 sm:px-2"
+            aria-label="移除队列消息"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
         {mode === 'queue' && !isBusy && (
           <ActionMenu
             ariaLabel="更多队列操作"

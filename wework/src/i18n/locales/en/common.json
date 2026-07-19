@@ -464,6 +464,7 @@
     "send_after_turn": "Send after current response",
     "guide_current_turn": "Guide current response",
     "interrupt_and_send": "Interrupt and send now",
+    "interrupt_and_send_short": "Interrupt and send",
     "choose_send_mode": "Choose send mode",
     "interrupting_and_sending": "Interrupting and sending",
     "sending_message": "Sending...",
