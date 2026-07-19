@@ -146,17 +146,18 @@ export const ComposerProseMirrorEditor = forwardRef<
         if (sanitizedText) view.dispatch(view.state.tr.insertText(sanitizedText, from, to))
         return true
       },
+      handlePaste(view, event) {
+        const text =
+          event.clipboardData?.getData('text/plain') || event.clipboardData?.getData('text')
+        if (!text) return false
+        const paragraph = createComposerDocument(text).firstChild
+        if (!paragraph) return false
+        view.dispatch(view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0)))
+        return true
+      },
       handleDOMEvents: {
-        paste(view, event) {
-          if (callbacksRef.current.onPaste(event)) return true
-          const text =
-            event.clipboardData?.getData('text/plain') || event.clipboardData?.getData('text')
-          if (!text) return false
-          const paragraph = createComposerDocument(text).firstChild
-          if (!paragraph) return false
-          event.preventDefault()
-          view.dispatch(view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0)))
-          return true
+        paste(_view, event) {
+          return callbacksRef.current.onPaste(event)
         },
         drop(_view, event) {
           return callbacksRef.current.onDrop(event)
