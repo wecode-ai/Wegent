@@ -33,6 +33,7 @@ type DesktopControlAction =
   | 'getText'
   | 'getValue'
   | 'hover'
+  | 'pointerDown'
   | 'pointerMove'
   | 'snapshot'
   | 'waitFor'
@@ -402,6 +403,15 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   return element.textContent?.trim() ?? ''
 }
 
+function pressDesktopControlPointer(selector: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const options = desktopControlEventOptions(element)
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', options)
+  dispatchDesktopControlPointerEvent(element, 'pointerup', options)
+  return element.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -559,6 +569,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
+    case 'pointerDown':
+      return pressDesktopControlPointer(command.selector)
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {

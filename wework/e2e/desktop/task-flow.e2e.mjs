@@ -178,15 +178,17 @@ async function prepareCompletedTurnScreenshot(control) {
     timeoutMs: UI_TIMEOUT_MS,
   })
 
-  let snapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (snapshot.testIds.includes('model-selector-menu')) {
-    await control.command('click', '[data-testid="model-selector-button"]')
-  }
-
   const startedAt = Date.now()
+  let menuClosedAt = null
   while (Date.now() - startedAt < UI_TIMEOUT_MS) {
-    snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    if (!snapshot.testIds.includes('model-selector-menu')) return
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (snapshot.testIds.includes('model-selector-menu')) {
+      menuClosedAt = null
+      await control.command('pointerDown', ACTIVE_COMPOSER_SELECTOR)
+    } else {
+      menuClosedAt ??= Date.now()
+      if (Date.now() - menuClosedAt >= COMPOSER_READY_STABILITY_MS) return
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error('The model selector menu remained open before the verification screenshot')
