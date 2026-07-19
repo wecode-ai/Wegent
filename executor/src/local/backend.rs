@@ -861,7 +861,7 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
     )
 }
 
-pub async fn serve_local_sidecar(config: DeviceConfig) -> Result<(), String> {
+pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
@@ -871,7 +871,14 @@ pub async fn serve_local_sidecar(config: DeviceConfig) -> Result<(), String> {
         .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary())
         .with_backend_connection_handler(backend_connection);
-    server.serve_forever().await
+    server.serve_stdio().await
+}
+
+pub async fn serve_remote_local_backend(config: DeviceConfig) -> Result<(), String> {
+    let backend_config = LocalBackendConfig::from_device_config(config);
+    LocalBackendRunner::new(backend_config, SocketIoTransport::default())
+        .run_forever()
+        .await
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {

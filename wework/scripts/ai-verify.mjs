@@ -9,7 +9,6 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
@@ -192,7 +191,6 @@ async function runServer(sessionPath, token) {
   const updated = {
     ...session,
     controlUrl,
-    socketPath: join(tmpdir(), `wework-ai-${randomUUID()}.sock`),
     status: 'starting',
   }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
@@ -209,7 +207,6 @@ async function runServer(sessionPath, token) {
       codexHome,
       deviceId: session.deviceId,
       appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
-      socketPath: updated.socketPath,
       executorHome,
       sessionDirectory: session.directory,
     }),
@@ -301,7 +298,6 @@ async function main() {
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await rm(session.socketPath, { force: true })
     await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
     return
   }

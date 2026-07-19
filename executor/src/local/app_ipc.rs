@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 #[cfg(windows)]
-use std::path::Path;
 use std::{
-    collections::HashMap, env, future::Future, net::SocketAddr, path::PathBuf, pin::Pin, sync::Arc,
+    env,
+    path::{Path, PathBuf},
 };
 
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     sync::{broadcast, mpsc},
     time::{Duration, Instant},
 };
@@ -24,7 +24,7 @@ use crate::{
     local::workspace_files::{
         execute_workspace_file_command_with_input, is_workspace_file_command,
     },
-    logging::{format_executor_log, write_executor_log_line},
+    logging::{format_executor_log, reserve_executor_stdout_for_protocol, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
 };
@@ -33,9 +33,6 @@ use crate::{
 use crate::local::command::build_env;
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
-const DEFAULT_APP_IPC_ADDR: &str = "127.0.0.1:0";
-const APP_IPC_ADDR_FILE_NAME: &str = "app-ipc.addr";
-const APP_IPC_ADDR_FILE_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
@@ -435,37 +432,17 @@ impl AppIpcServer {
         self.event_message("executor.ready", payload)
     }
 
-    pub async fn serve_forever(&self) -> Result<(), String> {
-        let addr = local_app_ipc_addr();
-        let listener = TcpListener::bind(&addr)
-            .await
-            .map_err(|error| format!("failed to bind app IPC TCP socket {addr}: {error}"))?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|error| format!("failed to read app IPC TCP local address: {error}"))?;
-        if let Err(error) = write_app_ipc_addr_file(local_addr) {
-            eprintln!("failed to write app IPC address file: {error}");
-        }
-        write_executor_log_line(&app_ipc_listening_log_line(
-            &self.device_id,
-            &local_addr.to_string(),
-        ));
-
-        loop {
-            let (stream, _) = listener.accept().await.map_err(|error| {
-                format!("failed to accept app IPC client on {local_addr}: {error}")
-            })?;
-            let server = self.clone();
-            tokio::spawn(async move {
-                if let Err(error) = server.handle_stream(stream).await {
-                    eprintln!("app IPC client error: {error}");
-                }
-            });
-        }
+    pub async fn serve_stdio(&self) -> Result<(), String> {
+        reserve_executor_stdout_for_protocol();
+        write_executor_log_line(&app_ipc_stdio_ready_log_line(&self.device_id));
+        self.serve_io(tokio::io::stdin(), tokio::io::stdout()).await
     }
 
-    async fn handle_stream(&self, stream: TcpStream) -> Result<(), String> {
-        let (reader, writer) = stream.into_split();
+    pub async fn serve_io<R, W>(&self, reader: R, writer: W) -> Result<(), String>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
         let mut writer_task = tokio::spawn(async move {
             let mut writer = writer;
@@ -499,6 +476,7 @@ impl AppIpcServer {
                     let bytes_read = read
                         .map_err(|error| format!("failed to read app IPC request: {error}"))?;
                     if bytes_read == 0 {
+                        writer_task.abort();
                         return Ok(());
                     }
                     let server = self.clone();
@@ -880,17 +858,13 @@ fn project_workspace_root_path() -> Result<String, String> {
         .to_string())
 }
 
-pub fn app_ipc_listening_log_line(device_id: &str, addr: &str) -> String {
+pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
     format_executor_log(
-        "app IPC listening",
+        "app IPC stdio ready",
         &[
             ("device_id", device_id.to_owned()),
-            ("addr", addr.to_owned()),
+            ("transport", "stdio".to_owned()),
             ("process_id", std::process::id().to_string()),
-            (
-                "addr_file",
-                local_app_ipc_addr_file_path().display().to_string(),
-            ),
         ],
     )
 }
@@ -973,7 +947,7 @@ pub async fn serve_app_ipc_sidecar(
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary());
-    server.serve_forever().await
+    server.serve_stdio().await
 }
 
 pub fn normalize_device_id(device_id: impl Into<String>) -> String {
@@ -1355,72 +1329,6 @@ fn stdout_string(result: &CommandResult) -> String {
         .unwrap_or_else(|| result.stdout.to_string())
 }
 
-pub fn app_ipc_socket_path() -> PathBuf {
-    local_app_ipc_addr_file_path()
-}
-
-pub fn local_app_ipc_addr_file_path() -> PathBuf {
-    if let Ok(value) = env::var(APP_IPC_ADDR_FILE_ENV) {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            return expand_home(trimmed);
-        }
-    }
-    let home = env::var("WEGENT_EXECUTOR_HOME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| expand_home(&value))
-        .unwrap_or_else(|| home_dir().join(".wegent-executor"));
-    home.join(APP_IPC_ADDR_FILE_NAME)
-}
-
-fn local_app_ipc_addr() -> SocketAddr {
-    if let Ok(value) = env::var("WEGENT_EXECUTOR_APP_IPC_ADDR") {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            if let Ok(addr) = trimmed.parse::<SocketAddr>() {
-                return addr;
-            }
-            if let Ok(port) = trimmed.parse::<u16>() {
-                if let Ok(addr) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
-                    return addr;
-                }
-            }
-        }
-    }
-    DEFAULT_APP_IPC_ADDR
-        .parse()
-        .expect("default address is valid")
-}
-
-fn write_app_ipc_addr_file(addr: SocketAddr) -> std::io::Result<()> {
-    let path = local_app_ipc_addr_file_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, addr.to_string())
-}
-
-pub fn read_app_ipc_addr_file() -> Option<SocketAddr> {
-    let path = local_app_ipc_addr_file_path();
-    let content = std::fs::read_to_string(&path).ok()?;
-    content.trim().parse::<SocketAddr>().ok()
-}
-
-fn expand_home(path: &str) -> PathBuf {
-    if path == "~" {
-        return home_dir();
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return home_dir().join(rest);
-    }
-    PathBuf::from(path)
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
-}
-
 async fn write_message<W>(writer: &mut W, message: &Value) -> std::io::Result<()>
 where
     W: AsyncWrite + Unpin,
@@ -1429,41 +1337,4 @@ where
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
     writer.flush().await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("environment lock should be available")
-    }
-
-    fn restore_env(key: &str, value: Option<OsString>) {
-        if let Some(value) = value {
-            env::set_var(key, value);
-        } else {
-            env::remove_var(key);
-        }
-    }
-
-    #[test]
-    fn explicit_app_ipc_addr_file_is_independent_from_executor_home() {
-        let _guard = env_lock();
-        let previous_home = env::var_os("WEGENT_EXECUTOR_HOME");
-        let previous_addr_file = env::var_os(APP_IPC_ADDR_FILE_ENV);
-        env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/shared-executor-home");
-        env::set_var(APP_IPC_ADDR_FILE_ENV, "/tmp/wework-runtime/app-ipc.addr");
-
-        let path = local_app_ipc_addr_file_path();
-
-        restore_env("WEGENT_EXECUTOR_HOME", previous_home);
-        restore_env(APP_IPC_ADDR_FILE_ENV, previous_addr_file);
-        assert_eq!(path, PathBuf::from("/tmp/wework-runtime/app-ipc.addr"));
-    }
 }

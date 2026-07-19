@@ -8,17 +8,17 @@ Wework includes an opt-in frontend performance diagnostics switch for investigat
 
 ## Debugging Multiple Instances
 
-For everyday development, `pnpm --filter wework dev:mac` uses the release app's Executor Home by default, so projects and tasks are shared with the locally installed release Wework. The debug process still uses its own IPC address file to avoid attaching to another running executor. Use `pnpm --filter wework dev:mac -- --executor-isolation` when projects and tasks must be isolated temporarily.
+For everyday development, `pnpm --filter wework dev:mac` uses the release app's Executor Home by default, so projects and tasks are shared with the locally installed release Wework. Each Wework process still communicates with its own executor child through stdio, preventing endpoint collisions or attachment to another executor. Use `pnpm --filter wework dev:mac -- --executor-isolation` when projects and tasks must be isolated temporarily.
 
-`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, IPC socket, and unique Tauri identifier, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
+`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, and unique Tauri identifier, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
 
 Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
 
 ## Diagnosing Startup Time
 
-The desktop startup screen waits only for the local executor to report ready; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Tauri cleans up the previous executor and IPC address file, then starts a new sidecar immediately. It attempts to attach to an existing sidecar only when reconnecting after a live connection is lost.
+The desktop startup screen waits only for the local executor to report ready through stdout; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Tauri starts a new sidecar directly and does not discover or attach to an existing executor.
 
-When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC listening` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
+When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
 
 ## Enabling Diagnostics
 
