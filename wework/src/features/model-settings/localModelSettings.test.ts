@@ -76,6 +76,39 @@ describe('localModelSettings', () => {
 
     expect(saved.baseUrl).toBe('https://models.local/v1')
     expect(saved.requestPath).toBe('/responses')
+    expect(saved.apiFormat).toBe('openai-responses')
+  })
+
+  test('stores Chat Completions format and applies its default endpoint', () => {
+    const saved = saveLocalModelConfig({
+      id: 'kimi-chat',
+      displayName: 'Kimi Chat',
+      modelId: 'kimi-for-coding',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      apiFormat: 'openai-chat-completions',
+    })
+
+    expect(saved).toMatchObject({
+      apiFormat: 'openai-chat-completions',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      requestPath: '/chat/completions',
+    })
+  })
+
+  test('stores Anthropic Messages format and applies its default endpoint', () => {
+    const saved = saveLocalModelConfig({
+      id: 'kimi-messages',
+      displayName: 'Kimi Messages',
+      modelId: 'kimi-for-coding',
+      baseUrl: 'https://api.kimi.com/coding/',
+      apiFormat: 'anthropic-messages',
+    })
+
+    expect(saved).toMatchObject({
+      apiFormat: 'anthropic-messages',
+      baseUrl: 'https://api.kimi.com/coding',
+      requestPath: '/v1/messages',
+    })
   })
 
   test('splits custom request URLs into base URL and request path', () => {
@@ -135,6 +168,7 @@ describe('localModelSettings', () => {
     expect(listLocalModelConfigs()).toEqual([
       expect.objectContaining({
         id: 'legacy-default',
+        apiFormat: 'openai-responses',
         baseUrl: 'https://models.local/v1',
         requestPath: '/responses',
       }),

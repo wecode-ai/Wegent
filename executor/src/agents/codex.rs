@@ -35,7 +35,8 @@ use crate::{
     runner::{AgentEngine, ExecutionOutcome},
     runtime_work::codex_stream_debug_enabled,
     server::{
-        executor_loopback_base_url, register_codex_responses_proxy, CodexResponsesProxyUpstream,
+        executor_loopback_base_url,
+        local_model_proxy::{self, LocalModelProxyUpstream},
     },
 };
 
@@ -2997,10 +2998,13 @@ fn resolve_codex_provider_config(
         return (normalized_base_url, api_key.to_owned());
     }
 
-    let local_token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
+    let local_token = local_model_proxy::register(LocalModelProxyUpstream {
         base_url: normalized_base_url,
-        responses_url: non_empty_config(model_config, "responses_url")
+        request_url: non_empty_config(model_config, "responses_url")
             .or_else(|| non_empty_config(model_config, "responsesUrl")),
+        api_format: non_empty_config(model_config, "upstream_api_format")
+            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
@@ -5259,7 +5263,7 @@ mod tests {
         }));
         assert!(launch_config.config_overrides.iter().any(|override_value| {
             override_value
-                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"codex-")
+                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"model-")
         }));
     }
 
