@@ -413,6 +413,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await selectE2EModel(control)
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
