@@ -163,13 +163,61 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
   throw new Error(message)
 }
 
-async function captureVerificationScreenshot(control, name) {
+async function waitForFileText(path, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const content = await readFile(path, 'utf8')
+      if (predicate(content)) return content
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForControlText(
+  control,
+  selector,
+  predicate,
+  message,
+  timeoutMs = UI_TIMEOUT_MS
+) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const text = await control.command('getText', selector)
+    if (predicate(text)) return text
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  throw new Error(message)
+}
+
+async function waitForControlValue(control, selector, value, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if ((await control.command('getValue', selector)) === value) return value
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Control ${selector} did not retain value ${value}`)
+}
+
+async function waitForScenarioRequestCount(control, scenario, count, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if ((control.scenarioRequests.get(scenario)?.length ?? 0) >= count) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`Scenario ${scenario} did not receive ${count} requests`)
+}
+
+async function captureVerificationScreenshot(control, name, selector = 'body') {
   const screenshotPath = join(resultDir, name)
   if (process.platform === 'linux') {
     await runChecked('import', ['-window', 'root', screenshotPath])
     return screenshotPath
   }
-  const dataUrl = await control.command('capture', 'body')
+  const dataUrl = await control.command('capture', selector)
   const prefix = 'data:image/png;base64,'
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
   await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
@@ -948,12 +996,49 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
+  const marketplacePath = join(resultDir, 'plugin-marketplace')
   const appLogPath = join(resultDir, 'app.log')
   const executorSocketPath = join(tmpdir(), `wework-e2e-${process.pid}.sock`)
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
+    mkdir(join(marketplacePath, '.agents', 'plugins'), { recursive: true }),
+    mkdir(join(marketplacePath, 'verification-plugin', '.codex-plugin'), { recursive: true }),
+    mkdir(join(marketplacePath, 'verification-plugin', 'skills', 'verify'), { recursive: true }),
   ])
+  await writeFile(
+    join(marketplacePath, '.agents', 'plugins', 'marketplace.json'),
+    JSON.stringify(
+      {
+        name: 'wework-e2e',
+        plugins: [
+          {
+            name: 'verification-plugin',
+            source: { source: 'local', path: './verification-plugin' },
+          },
+        ],
+      },
+      null,
+      2
+    )
+  )
+  await writeFile(
+    join(marketplacePath, 'verification-plugin', '.codex-plugin', 'plugin.json'),
+    JSON.stringify(
+      {
+        name: 'verification-plugin',
+        displayName: 'Wework E2E Verification',
+        description: 'Validates project plugin installation.',
+        version: '0.1.0',
+      },
+      null,
+      2
+    )
+  )
+  await writeFile(
+    join(marketplacePath, 'verification-plugin', 'skills', 'verify', 'SKILL.md'),
+    '---\nname: verify\ndescription: Verify project plugin installation.\n---\n\nVerify the project.\n'
+  )
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
   await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = true\n')
   await runChecked('git', ['init'], { cwd: workspacePath })
@@ -1092,16 +1177,17 @@ async function main() {
     })
 
     phase = 'project-folder-remove-immediately'
-    const openedProjectSnapshot = await waitForSnapshot(
-      control,
-      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
-      'The newly opened folder project was not shown in the sidebar'
+    await control.command('waitFor', '[data-testid^="project-row-"]', {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const projectRowTestId = await control.command(
+      'getTestIdByText',
+      '[data-testid^="project-row-"]',
+      { value: 'workspace' }
     )
-    const projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
-      testId.startsWith('project-menu-')
-    )
-    assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
-    const projectId = projectMenuTestId.slice('project-menu-'.length)
+    const projectId = projectRowTestId.slice('project-row-'.length)
+    const projectMenuTestId = `project-menu-${projectId}`
     await control.command('click', `[data-testid="${projectMenuTestId}"]`)
     await control.command('click', `[data-testid="remove-project-${projectId}"]`)
     await control.command(
@@ -1131,6 +1217,159 @@ async function main() {
     await control.command('waitFor', '[data-testid^="project-menu-"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    await selectE2EModel(control)
+    phase = 'project-settings-graphical-flow'
+    const reopenedProjectRowTestId = await control.command(
+      'getTestIdByText',
+      '[data-testid^="project-row-"]',
+      { value: 'workspace' }
+    )
+    const reopenedProjectId = reopenedProjectRowTestId.slice('project-row-'.length)
+    const reopenedProjectMenuTestId = `project-menu-${reopenedProjectId}`
+    await control.command('click', `[data-testid="${reopenedProjectMenuTestId}"]`)
+    await control.command('click', `[data-testid="project-settings-${reopenedProjectId}"]`)
+    await control.command('waitFor', '[data-testid="project-settings-page"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-settings-instructions-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const projectSettingsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      projectSettingsSnapshot.testIds.includes('project-settings-editor-config'),
+      false,
+      'Project settings exposed the raw Codex config editor'
+    )
+    await control.command('fill', '[data-testid="project-settings-instructions-input"]', {
+      value: 'Run focused tests before completing each task.',
+    })
+    await waitForControlValue(
+      control,
+      '[data-testid="project-settings-instructions-input"]',
+      'Run focused tests before completing each task.'
+    )
+    await control.command('clickWhenEnabled', '[data-testid="project-settings-save-button"]', {
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const savedInstructions = await waitForFileText(
+      join(workspacePath, 'AGENTS.md'),
+      content => content === 'Run focused tests before completing each task.',
+      'Project instructions were not written to the workspace'
+    )
+    assert.equal(savedInstructions, 'Run focused tests before completing each task.')
+    await control.command('select', '[data-testid="project-settings-sandbox-mode"]', {
+      value: 'workspace-write',
+    })
+    await waitForControlValue(
+      control,
+      '[data-testid="project-settings-sandbox-mode"]',
+      'workspace-write'
+    )
+    await control.command('select', '[data-testid="project-settings-approval-policy"]', {
+      value: 'on-request',
+    })
+    await waitForControlValue(
+      control,
+      '[data-testid="project-settings-approval-policy"]',
+      'on-request'
+    )
+    await control.command('select', '[data-testid="project-settings-web-search"]', {
+      value: 'live',
+    })
+    await waitForControlValue(control, '[data-testid="project-settings-web-search"]', 'live')
+    await control.command('clickWhenEnabled', '[data-testid="project-settings-save-button"]', {
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const savedProjectConfig = await waitForFileText(
+      join(workspacePath, '.codex', 'config.toml'),
+      content =>
+        content.includes('sandbox_mode = "workspace-write"') &&
+        content.includes('approval_policy = "on-request"') &&
+        content.includes('web_search = "live"'),
+      'Graphical execution settings were not written to project config'
+    )
+    assert.match(savedProjectConfig, /sandbox_mode = "workspace-write"/)
+    assert.match(savedProjectConfig, /approval_policy = "on-request"/)
+    assert.match(savedProjectConfig, /web_search = "live"/)
+    await captureVerificationScreenshot(control, '00-project-settings-graphical.png')
+
+    phase = 'project-plugin-marketplace-flow'
+    await control.command('click', '[data-testid="project-settings-browse-plugins-button"]')
+    await control.command('waitFor', '[data-testid="plugins-install-target-select"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const selectedInstallTarget = await control.command(
+      'getText',
+      '[data-testid="plugins-install-target-select"]'
+    )
+    assert.ok(selectedInstallTarget.length > 0, 'The project install target was not visible')
+    await control.command('waitFor', '[data-testid="plugins-add-marketplace-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+    await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+      value: marketplacePath,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid^="plugin-marketplace-row-"]', {
+      text: 'verification-plugin',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await captureVerificationScreenshot(control, '01-project-plugin-marketplace.png')
+    const marketplacePluginRowTestId = await control.command(
+      'getTestIdByText',
+      '[data-testid^="plugin-marketplace-row-"]',
+      { value: 'verification-plugin' }
+    )
+    const installPluginTestId = marketplacePluginRowTestId.replace(
+      'plugin-marketplace-row-',
+      'plugin-marketplace-install-'
+    )
+    await control.command('clickWhenEnabled', `[data-testid="${installPluginTestId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await waitForControlText(
+      control,
+      `[data-testid="${installPluginTestId}"]`,
+      text => text.includes('已添加到项目') || text.includes('Added to project'),
+      'The plugin marketplace did not show the project-installed state'
+    )
+    const configWithProjectPlugin = await waitForFileText(
+      join(workspacePath, '.codex', 'config.toml'),
+      content => /\[plugins\."[^"]+"\]\nenabled = true/.test(content),
+      'Installing from the project marketplace did not append the plugin to project config'
+    )
+    assert.match(
+      configWithProjectPlugin,
+      /\[plugins\."[^"]+"\]\nenabled = true/,
+      'Installing from the project marketplace did not append the plugin to project config'
+    )
+    await captureVerificationScreenshot(control, '02-project-plugin-installed.png')
+    await control.command('click', '[data-testid="plugins-project-scope-back"]')
+    await control.command('waitFor', '[data-testid="project-settings-page"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid^="project-plugin-toggle-"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('hover', '[data-testid="project-settings-plugins-section"]')
+    await captureVerificationScreenshot(
+      control,
+      '03-project-plugin-visible-in-settings.png',
+      '[data-testid="project-settings-plugins-section"]'
+    )
+    await runChecked('git', ['add', 'AGENTS.md', '.codex/config.toml'], { cwd: workspacePath })
+    await runChecked('git', ['commit', '-m', 'test: configure project settings'], {
+      cwd: workspacePath,
+    })
+    await control.command('click', '[data-testid="project-settings-back-button"]')
+    await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
 
     await selectE2EModel(control)
     phase = 'initial-task'
@@ -1403,13 +1642,7 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
+    await waitForScenarioRequestCount(control, 'retry', 2)
     control.releaseRetryResponse()
     await control.command(
       'waitFor',

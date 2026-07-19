@@ -17,6 +17,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  Settings,
   Sparkles,
   UserRound,
   X,
@@ -2225,6 +2226,12 @@ function ProjectItem({
                   icon: Edit3,
                   testId: `rename-project-${project.id}`,
                   onSelect: () => onRenameProject(project),
+                },
+                {
+                  label: t('workbench.project_settings_menu'),
+                  icon: Settings,
+                  testId: `project-settings-${project.id}`,
+                  onSelect: () => navigateTo(`/projects/${project.id}/settings`),
                 },
                 {
                   label: t('workbench.change_project_appearance'),

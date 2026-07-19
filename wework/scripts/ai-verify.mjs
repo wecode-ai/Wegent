@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { removeQueuedCommand, requestedControlPort } from './ai-verify-queue.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
@@ -22,12 +23,13 @@ const corsHeaders = {
   'access-control-allow-headers': 'authorization, content-type',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-origin': '*',
+  'cache-control': 'no-store',
 }
 
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
@@ -114,6 +116,7 @@ async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
   const pending = new Map()
+  let waitingCommandResponse = null
   let ready = null
   let app = null
   const server = createServer((request, response) => {
@@ -132,16 +135,17 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
-          response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+        if (command) return json(response, 200, command)
+        waitingCommandResponse = response
+        response.once('close', () => {
+          if (waitingCommandResponse === response) waitingCommandResponse = null
+        })
+        return
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
         const waiter = pending.get(result.id)
-        if (!waiter) return json(response, 404, { error: `Unknown command ${result.id}` })
+        if (!waiter) return json(response, 200, { ok: true, expired: true })
         pending.delete(result.id)
         result.ok
           ? waiter.resolve(result.value ?? '')
@@ -163,7 +167,14 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const queuedCommand = { id, ...command }
+        if (waitingCommandResponse) {
+          const commandResponse = waitingCommandResponse
+          waitingCommandResponse = null
+          json(commandResponse, 200, queuedCommand)
+        } else {
+          queue.push(queuedCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
@@ -171,6 +182,7 @@ async function runServer(sessionPath, token) {
           })
         } catch (error) {
           pending.delete(id)
+          removeQueuedCommand(queue, id)
           return json(response, 500, { ok: false, error: String(error.message ?? error) })
         }
       }
@@ -184,8 +196,9 @@ async function runServer(sessionPath, token) {
       json(response, 404, { error: 'Not found' })
     })().catch(error => json(response, 500, { error: String(error.message ?? error) }))
   })
+  const requestedPort = requestedControlPort(session)
   await new Promise((resolvePromise, reject) =>
-    server.listen(0, '127.0.0.1', error => (error ? reject(error) : resolvePromise()))
+    server.listen(requestedPort, '127.0.0.1', error => (error ? reject(error) : resolvePromise()))
   )
   const address = server.address()
   const controlUrl = `http://127.0.0.1:${address.port}`
@@ -316,6 +329,7 @@ async function main() {
     'close-to-tray': 'closeMainWindowToTray',
     fill: 'fill',
     hover: 'hover',
+    navigate: 'navigate',
     'pointer-move': 'pointerMove',
     press: 'press',
     'select-text': 'selectText',
@@ -331,6 +345,7 @@ async function main() {
     options.selector ??
     (command === 'capture' ||
     command === 'snapshot' ||
+    command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
     command === 'close-to-tray'

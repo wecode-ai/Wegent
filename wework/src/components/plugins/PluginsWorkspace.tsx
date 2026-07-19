@@ -1,9 +1,13 @@
 import {
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   BookOpen,
   Boxes,
   Check,
+  ChevronDown,
+  Folder,
+  Globe2,
   ImageIcon,
   MoreHorizontal,
   Pencil,
@@ -29,6 +33,10 @@ import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import {
+  installedPluginKey,
+  type ProjectPluginScope,
+} from '@/features/plugins/useProjectPluginScope'
 import type {
   InstalledSkill,
   InstalledPlugin,
@@ -430,6 +438,9 @@ function PluginMarketplaceRow({
   installingLabel,
   tryLabel,
   uninstallLabel,
+  actionDisabled = false,
+  showUninstall = true,
+  showInstalledCheck = true,
   onOpen,
   onInstall,
   onUninstall,
@@ -440,6 +451,9 @@ function PluginMarketplaceRow({
   installingLabel: string
   tryLabel: string
   uninstallLabel: string
+  actionDisabled?: boolean
+  showUninstall?: boolean
+  showInstalledCheck?: boolean
   onOpen: () => void
   onInstall: () => void
   onUninstall: () => void
@@ -492,13 +506,14 @@ function PluginMarketplaceRow({
         <button
           type="button"
           data-testid={`plugin-marketplace-install-${item.id}`}
-          disabled={isInstalling}
+          disabled={isInstalling || actionDisabled}
           className={[
             'flex h-8 min-w-[58px] items-center justify-center rounded-xl border px-3 text-xs font-normal leading-[18px] transition-colors',
             item.installed
               ? 'border-border bg-background text-text-primary hover:bg-surface'
               : 'border-border bg-background text-text-primary hover:bg-surface',
             isInstalling ? 'cursor-wait opacity-70' : '',
+            actionDisabled ? 'cursor-default opacity-60' : '',
           ].join(' ')}
           onClick={event => {
             event.stopPropagation()
@@ -507,7 +522,7 @@ function PluginMarketplaceRow({
         >
           {isInstalling ? (
             installingLabel
-          ) : item.installed ? (
+          ) : item.installed && showInstalledCheck ? (
             <span className="inline-flex items-center gap-1.5">
               <Check className="h-4 w-4 text-text-muted" />
               {tryLabel}
@@ -516,7 +531,7 @@ function PluginMarketplaceRow({
             installLabel
           )}
         </button>
-        {item.installed && (
+        {item.installed && showUninstall && (
           <div className="relative">
             <button
               type="button"
@@ -659,12 +674,20 @@ interface PluginsWorkspaceProps {
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
   cloudMarketplaceAvailable?: boolean
+  projectScope?: ProjectPluginScope | null
+  installTargetProjects?: Array<{ id: number; name: string }>
+  selectedInstallProjectId?: number | null
+  onInstallTargetChange?: (projectId: number | null) => void
 }
 
 export function PluginsWorkspace({
   sidebarCollapsed = false,
   topBarLeftActions,
   cloudMarketplaceAvailable = true,
+  projectScope = null,
+  installTargetProjects = [],
+  selectedInstallProjectId = null,
+  onInstallTargetChange,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -1085,6 +1108,26 @@ export function PluginsWorkspace({
           : (installedPlugins.find(
               plugin => String(plugin.id) === String(item.installedPluginId)
             ) ?? null)
+      if (projectScope) {
+        if (!installed || installed.raw.spec.enabled) return
+        if (projectScope.pluginKeys.has(installedPluginKey(installed.raw))) return
+        if (projectScope.loading || projectScope.error) return
+        setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
+        setPluginMarketplaceState(previous => ({ ...previous, error: null }))
+        void projectScope
+          .addInstalledPlugin(installed.raw)
+          .catch((error: Error) => {
+            setPluginMarketplaceState(previous => ({ ...previous, error: error.message }))
+          })
+          .finally(() => {
+            setInstallingMarketplacePluginIds(previous => {
+              const next = new Set(previous)
+              next.delete(item.id)
+              return next
+            })
+          })
+        return
+      }
       const trialPluginId = installed?.id ?? item.installedPluginId ?? item.id
       if (selectedMarketplace.kind === 'local') {
         tryLocalInstalledPluginInChat(trialPluginId)
@@ -1115,8 +1158,26 @@ export function PluginsWorkspace({
         : pluginApi.installMarketplacePlugin(item.id).then(response => response.plugin)
 
     request
-      .then(plugin => {
-        const installed = toInstalledPluginItem(plugin)
+      .then(async plugin => {
+        let nextPlugin = plugin
+        if (projectScope) {
+          const id = toInstalledPluginItem(plugin).id
+          try {
+            nextPlugin =
+              selectedMarketplace.kind === 'local'
+                ? await localPluginApi.updateInstalledPlugin(id, { enabled: false })
+                : await pluginApi.updateInstalledPlugin(id, { enabled: false })
+            await projectScope.addInstalledPlugin(nextPlugin)
+          } catch (scopeError) {
+            const rollback =
+              selectedMarketplace.kind === 'local'
+                ? localPluginApi.uninstallInstalledPlugin(id)
+                : pluginApi.uninstallInstalledPlugin(id)
+            await rollback.catch(() => undefined)
+            throw scopeError
+          }
+        }
+        const installed = toInstalledPluginItem(nextPlugin)
         setInstalledPlugins(previous => [
           installed,
           ...previous.filter(plugin => plugin.id !== installed.id),
@@ -1129,11 +1190,11 @@ export function PluginsWorkspace({
               ? {
                   ...candidate,
                   installed: true,
-                  enabled: plugin.spec.enabled,
+                  enabled: nextPlugin.spec.enabled,
                   installedPluginId: installed.id,
-                  components: plugin.spec.components,
-                  manifest: plugin.spec.manifest,
-                  interface: plugin.spec.interface,
+                  components: nextPlugin.spec.components,
+                  manifest: nextPlugin.spec.manifest,
+                  interface: nextPlugin.spec.interface,
                 }
               : candidate
           ),
@@ -1532,6 +1593,55 @@ export function PluginsWorkspace({
     return Array.from(groups.entries())
   }, [pluginMarketplaceState.items])
 
+  const projectMarketplaceAction = (item: PluginMarketplaceItem) => {
+    if (!projectScope) return null
+    if (projectScope.loading) {
+      return {
+        label: t('workbench.plugins_project_loading', '加载项目...'),
+        disabled: true,
+        showCheck: false,
+      }
+    }
+    if (projectScope.error) {
+      return {
+        label: t('workbench.plugins_project_unavailable', '项目不可用'),
+        disabled: true,
+        showCheck: false,
+      }
+    }
+    if (!item.installed) {
+      return {
+        label: t('workbench.plugins_install_to_project', '安装到项目'),
+        disabled: false,
+        showCheck: false,
+      }
+    }
+    const installed =
+      item.installedPluginId === null || item.installedPluginId === undefined
+        ? null
+        : (installedPlugins.find(plugin => String(plugin.id) === String(item.installedPluginId)) ??
+          null)
+    if (installed?.raw.spec.enabled) {
+      return {
+        label: t('workbench.plugins_inherited_globally', '全局已启用'),
+        disabled: true,
+        showCheck: true,
+      }
+    }
+    if (installed && projectScope.pluginKeys.has(installedPluginKey(installed.raw))) {
+      return {
+        label: t('workbench.plugins_added_to_project', '已添加到项目'),
+        disabled: true,
+        showCheck: true,
+      }
+    }
+    return {
+      label: t('workbench.plugins_add_to_project', '添加到项目'),
+      disabled: installed === null,
+      showCheck: false,
+    }
+  }
+
   const toggleMarketplaceSectionExpanded = (title: string) => {
     setExpandedMarketplaceSections(previous => {
       const next = new Set(previous)
@@ -1582,6 +1692,7 @@ export function PluginsWorkspace({
       installedDetail ?? toMarketplaceInstalledPluginItem(selectedMarketplacePlugin)
     const isInstalled = selectedMarketplacePlugin.installed || installedDetail !== null
     const isInstalling = installingMarketplacePluginIds.has(selectedMarketplacePlugin.id)
+    const projectAction = projectMarketplaceAction(selectedMarketplacePlugin)
 
     return (
       <PluginDetailView
@@ -1589,12 +1700,14 @@ export function PluginsWorkspace({
         primaryActionLabel={
           isInstalling
             ? t('workbench.plugins_installing', '安装中...')
-            : isInstalled
-              ? t('workbench.plugins_try_in_chat', '在对话中试用')
-              : t('workbench.plugins_install', '安装')
+            : projectAction
+              ? projectAction.label
+              : isInstalled
+                ? t('workbench.plugins_try_in_chat', '在对话中试用')
+                : t('workbench.plugins_install', '安装')
         }
-        primaryActionDisabled={isInstalling}
-        showUninstall={isInstalled}
+        primaryActionDisabled={isInstalling || projectAction?.disabled}
+        showUninstall={isInstalled && !projectScope}
         onBack={() => setSelectedMarketplacePluginId(null)}
         onToggle={() => {
           if (isInstalled && installedDetail) {
@@ -1699,6 +1812,62 @@ export function PluginsWorkspace({
           </p>
         </section>
 
+        {onInstallTargetChange ? (
+          <section
+            data-testid="plugins-install-target"
+            className="flex min-h-9 flex-wrap items-center justify-between gap-2"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <label
+                htmlFor="plugins-install-target-select"
+                className="shrink-0 text-sm font-medium text-text-primary"
+              >
+                {t('workbench.plugins_install_target', '安装到')}
+              </label>
+              <div className="relative">
+                {projectScope ? (
+                  <Folder className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+                ) : (
+                  <Globe2 className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+                )}
+                <select
+                  id="plugins-install-target-select"
+                  data-testid="plugins-install-target-select"
+                  value={selectedInstallProjectId ?? ''}
+                  onChange={event =>
+                    onInstallTargetChange(event.target.value ? Number(event.target.value) : null)
+                  }
+                  className="h-11 min-w-44 appearance-none rounded-lg border border-border bg-background py-0 pl-8 pr-8 text-sm text-text-primary outline-none transition-colors hover:bg-surface-secondary focus:border-focus md:h-8"
+                >
+                  <option value="">{t('workbench.plugins_install_target_global', '全局')}</option>
+                  {installTargetProjects.map(project => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+              </div>
+              <span className="hidden text-sm text-text-secondary sm:inline">
+                {projectScope
+                  ? t('workbench.plugins_install_target_project_hint', '仅当前项目')
+                  : t('workbench.plugins_install_target_global_hint', '所有项目')}
+              </span>
+            </div>
+            {projectScope ? (
+              <button
+                type="button"
+                data-testid="plugins-project-scope-back"
+                className="flex h-11 shrink-0 items-center gap-2 rounded-lg px-2 text-sm text-text-secondary transition-colors hover:bg-background hover:text-text-primary md:h-8"
+                onClick={() => window.history.back()}
+              >
+                <ArrowLeft className="h-4 w-4" />
+                {t('workbench.plugins_back_to_project_settings', '返回项目设置')}
+              </button>
+            ) : null}
+          </section>
+        ) : null}
+
         {hasMarketplace && (
           <>
             <div className="grid w-full grid-cols-[minmax(0,1fr)_44px] items-center gap-2 md:block">
@@ -1743,12 +1912,14 @@ export function PluginsWorkspace({
               )}
             </div>
 
-            <InstalledPluginStrip
-              plugins={installedPlugins}
-              title={t('workbench.plugins_installed', '已安装')}
-              onManage={() => navigateTo('/plugins/manage')}
-              onSelect={setSelectedPluginId}
-            />
+            {!projectScope ? (
+              <InstalledPluginStrip
+                plugins={installedPlugins}
+                title={t('workbench.plugins_installed', '已安装')}
+                onManage={() => navigateTo('/plugins/manage')}
+                onSelect={setSelectedPluginId}
+              />
+            ) : null}
 
             <div
               className="flex items-center justify-between gap-4"
@@ -1940,10 +2111,21 @@ export function PluginsWorkspace({
                             key={item.id}
                             item={item}
                             isInstalling={installingMarketplacePluginIds.has(item.id)}
-                            installLabel={t('workbench.plugins_install', '安装')}
+                            installLabel={
+                              projectMarketplaceAction(item)?.label ??
+                              t('workbench.plugins_install', '安装')
+                            }
                             installingLabel={t('workbench.plugins_installing', '安装中...')}
-                            tryLabel={t('workbench.plugins_try_in_chat', '在对话中试用')}
+                            tryLabel={
+                              projectMarketplaceAction(item)?.label ??
+                              t('workbench.plugins_try_in_chat', '在对话中试用')
+                            }
                             uninstallLabel={t('workbench.plugins_uninstall', '卸载')}
+                            actionDisabled={projectMarketplaceAction(item)?.disabled}
+                            showUninstall={!projectScope}
+                            showInstalledCheck={
+                              !projectScope || Boolean(projectMarketplaceAction(item)?.showCheck)
+                            }
                             onOpen={() => setSelectedMarketplacePluginId(item.id)}
                             onInstall={() => installMarketplacePlugin(item)}
                             onUninstall={() => {

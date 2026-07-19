@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -10,10 +10,12 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useProjectPluginScope } from '@/features/plugins/useProjectPluginScope'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
@@ -79,7 +81,7 @@ function PluginsWorkspaceRouteFallback({
   )
 }
 
-export function PluginsPage() {
+export function PluginsPage({ search = window.location.search }: { search?: string }) {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
   const cloudConnection = useOptionalCloudConnection()
@@ -120,6 +122,21 @@ export function PluginsPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
+  const requestedProjectIdParam = new URLSearchParams(search).get('projectId')
+  const requestedProjectId =
+    requestedProjectIdParam === null ? null : Number(requestedProjectIdParam)
+  const installTargetProjects = useMemo(() => {
+    const projects = new Map(state.projects.map(project => [project.id, project]))
+    for (const runtimeProject of state.runtimeWork?.projects ?? []) {
+      const project = runtimeProjectToProject(runtimeProject)
+      if (!projects.has(project.id)) projects.set(project.id, project)
+    }
+    return Array.from(projects.values()).map(project => ({ id: project.id, name: project.name }))
+  }, [state.projects, state.runtimeWork])
+  const selectedProjectId = installTargetProjects.some(project => project.id === requestedProjectId)
+    ? requestedProjectId
+    : null
+  const projectPluginScope = useProjectPluginScope(selectedProjectId)
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
@@ -268,6 +285,12 @@ export function PluginsPage() {
       >
         <PluginsWorkspace
           cloudMarketplaceAvailable={cloudConnection.isConnected}
+          installTargetProjects={installTargetProjects}
+          selectedInstallProjectId={selectedProjectId}
+          onInstallTargetChange={projectId =>
+            navigateTo(projectId ? `/plugins?projectId=${projectId}` : '/plugins')
+          }
+          projectScope={projectPluginScope}
           sidebarCollapsed={sidebarCollapsed && !isMobile}
           topBarLeftActions={
             !isMobile && sidebarCollapsed && !isTauri ? (

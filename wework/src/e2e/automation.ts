@@ -30,11 +30,15 @@ type DesktopControlAction =
   | 'dispatchLocalModelSettingsChanged'
   | 'fill'
   | 'getText'
+  | 'getTestIdByText'
+  | 'getValue'
   | 'hover'
+  | 'navigate'
   | 'pointerMove'
   | 'snapshot'
   | 'waitFor'
   | 'press'
+  | 'select'
   | 'selectText'
 
 interface DesktopControlCommand {
@@ -475,8 +479,33 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getTestIdByText': {
+      const expectedText = command.value ?? ''
+      const element = findDesktopControlElements(command.selector).find(candidate =>
+        candidate.innerText.includes(expectedText)
+      )
+      if (!element?.dataset.testid) {
+        throw new Error(`Unable to find text "${expectedText}" in selector "${command.selector}"`)
+      }
+      return element.dataset.testid
+    }
+    case 'getValue': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (
+        !(element instanceof HTMLInputElement) &&
+        !(element instanceof HTMLTextAreaElement) &&
+        !(element instanceof HTMLSelectElement)
+      ) {
+        throw new Error(`Selector "${command.selector}" does not expose a value`)
+      }
+      return element.value
+    }
     case 'snapshot':
       return desktopControlSnapshot()
+    case 'navigate':
+      window.history.pushState({}, '', command.value ?? '/')
+      dispatchNavigationEvents()
+      return window.location.href
     case 'click': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -502,6 +531,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
+    }
+    case 'select': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!(element instanceof HTMLSelectElement)) {
+        throw new Error(`Selector "${command.selector}" is not a select element`)
+      }
+      element.value = command.value ?? ''
+      element.dispatchEvent(new Event('change', { bubbles: true }))
+      return element.value
     }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
@@ -542,7 +580,10 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
   while (true) {
     try {
-      const response = await fetch(`${url}/commands`, { headers: desktopControlHeaders() })
+      const response = await fetch(`${url}/commands`, {
+        cache: 'no-store',
+        headers: desktopControlHeaders(),
+      })
       if (response.status === 204) {
         await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_IDLE_POLL_DELAY_MS))
         continue

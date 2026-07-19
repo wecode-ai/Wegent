@@ -11,6 +11,7 @@ import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
 import { SitesPage } from '@/pages/SitesPage'
+import { ProjectSettingsPage } from '@/pages/ProjectSettingsPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -70,15 +71,22 @@ import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
 function useCurrentPath() {
-  const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
+  const [location, setLocation] = useState(() => ({
+    path: stripAppBasePath(window.location.pathname),
+    search: window.location.search,
+  }))
 
   useEffect(() => {
-    const handlePopState = () => setPath(stripAppBasePath(window.location.pathname))
+    const handlePopState = () =>
+      setLocation({
+        path: stripAppBasePath(window.location.pathname),
+        search: window.location.search,
+      })
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  return path
+  return location
 }
 
 interface AppRoutesProps {
@@ -87,13 +95,15 @@ interface AppRoutesProps {
 }
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
-  const path = useCurrentPath()
+  const { path, search } = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
   const activeIframeTab =
     !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? activeTab : null
+  const projectSettingsMatch = path.match(/^\/projects\/(\d+)\/settings$/)
   const isAuxiliaryRoute =
     Boolean(activeIframeTab) ||
+    Boolean(projectSettingsMatch) ||
     path === '/plugins/manage' ||
     path === '/plugins/create' ||
     path === '/plugins' ||
@@ -136,18 +146,19 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     return null
   }
 
-  const auxiliaryPage =
-    path === '/plugins/manage' ? (
-      <PluginManagementPage />
-    ) : path === '/plugins/create' ? (
-      <PluginCreatePage />
-    ) : path === '/plugins' ? (
-      <PluginsPage />
-    ) : path === '/sites' ? (
-      <SitesPage />
-    ) : path === '/apps' ? (
-      <AppsPage />
-    ) : null
+  const auxiliaryPage = projectSettingsMatch ? (
+    <ProjectSettingsPage projectId={Number(projectSettingsMatch[1])} />
+  ) : path === '/plugins/manage' ? (
+    <PluginManagementPage />
+  ) : path === '/plugins/create' ? (
+    <PluginCreatePage />
+  ) : path === '/plugins' ? (
+    <PluginsPage search={search} />
+  ) : path === '/sites' ? (
+    <SitesPage />
+  ) : path === '/apps' ? (
+    <AppsPage />
+  ) : null
   // Keep the workbench mounted while another top-level surface is visible. The
   // composer, terminals and in-app browser own live, non-serializable state, so
   // reconstructing them after every route change is both lossy and expensive.
@@ -215,7 +226,7 @@ export default function App() {
 }
 
 function AppShell() {
-  const path = useCurrentPath()
+  const { path } = useCurrentPath()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
   const initialCloudConnection = {

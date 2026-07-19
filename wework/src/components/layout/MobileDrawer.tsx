@@ -8,6 +8,7 @@ import {
   Monitor,
   RotateCw,
   Search,
+  Settings,
   SquarePen,
   X,
 } from 'lucide-react'
@@ -16,6 +17,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { isImeEnterEvent } from '@/lib/ime'
+import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -424,7 +426,7 @@ export function MobileDrawer({
                         toggleProject(project.id)
                       }}
                       onPointerDown={event =>
-                        startLongPress(event.clientX, event.clientY, 2, () =>
+                        startLongPress(event.clientX, event.clientY, 3, () =>
                           setProjectActionTarget(project)
                         )
                       }
@@ -440,7 +442,7 @@ export function MobileDrawer({
                         event.preventDefault()
                         cancelLongPress()
                         longPressTriggeredRef.current = true
-                        positionActionMenu(event.clientX, event.clientY, 2)
+                        positionActionMenu(event.clientX, event.clientY, 3)
                         setProjectActionTarget(project)
                       }}
                       aria-expanded={expanded}
@@ -674,6 +676,19 @@ export function MobileDrawer({
             style={actionMenuPosition}
             onClick={event => event.stopPropagation()}
           >
+            <button
+              type="button"
+              data-testid="mobile-project-settings-button"
+              onClick={() => {
+                navigateTo(`/projects/${projectActionTarget.id}/settings`)
+                setProjectActionTarget(null)
+                onClose()
+              }}
+              className="flex h-14 min-w-[44px] w-full items-center gap-4 rounded-xl px-4 text-left text-heading-sm text-[#111111] hover:bg-[#F7F7F7]"
+            >
+              <Settings className="h-6 w-6 shrink-0" />
+              <span>{t('workbench.project_settings_menu')}</span>
+            </button>
             <button
               type="button"
               data-testid="mobile-rename-project-button"

@@ -39,7 +39,7 @@ export default defineConfig({
     fileViewerRenderers({
       preset: 'auto',
       autoPresets: ['office', 'lite', 'engineering'],
-      copyAssets: true,
+      copyAssets: process.env.VITEST !== 'true',
       chunkStrategy: 'renderer',
     }),
   ],
