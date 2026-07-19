@@ -144,6 +144,8 @@ export function useProjectPluginScope(projectId: number | null): ProjectPluginSc
     async (plugin: InstalledPlugin) => {
       let current = targetRef.current
       if (!current) throw new Error(error ?? t('workbench.plugins_project_config_loading'))
+      if (!writeWorkspaceTextFile)
+        throw new Error(t('workbench.project_settings_workspace_missing'))
       const id = installedPluginId(plugin)
       if (id == null) throw new Error(t('workbench.plugins_install_missing_id'))
       const content = setProjectPluginEnabled(current.content, installedPluginKey(plugin), true)
