@@ -453,6 +453,57 @@ describe('ToolBlocksDisplay', () => {
     ).toBeInTheDocument()
   })
 
+  test('shows each file change duration from its matching edit tool', () => {
+    const firstEdit: ProcessingBlock = {
+      id: 'edit-first',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: {
+        patch: '*** Begin Patch\n*** Update File: scripts/env\n*** End Patch',
+      },
+      status: 'done',
+      createdAt: 1770000000000,
+      completedAt: 1770000004250,
+    }
+    const secondEdit: ProcessingBlock = {
+      id: 'edit-second',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: {
+        patch: '*** Begin Patch\n*** Update File: /tmp/project/src/main.ts\n*** End Patch',
+      },
+      status: 'done',
+      createdAt: 1770000005000,
+      completedAt: 1770000011750,
+    }
+    const fileChanges: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        file_count: 2,
+        files: [
+          completedFileChangesBlock.fileChanges.files[0],
+          {
+            path: 'src/main.ts',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+
+    render(<ToolBlocksDisplay blocks={[firstEdit, secondEdit, fileChanges]} isStreaming={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /编辑 2 个文件 已处理/ }))
+
+    expect(screen.getByRole('button', { name: /编辑 env/ })).toHaveTextContent('4.3s')
+    expect(screen.getByRole('button', { name: /编辑 main.ts/ })).toHaveTextContent('6.8s')
+    expect(screen.queryByText('0.0s')).not.toBeInTheDocument()
+  })
+
   test('counts edited files separately from tool calls', () => {
     const multiFileChangesBlock: ProcessingBlock = {
       ...completedFileChangesBlock,

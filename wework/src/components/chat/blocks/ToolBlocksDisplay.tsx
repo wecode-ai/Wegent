@@ -20,7 +20,7 @@ import {
   isRequestUserInputBlock,
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
-import { ToolBlockItem } from './ToolBlockItem'
+import { ToolBlockItem, type FileEditDuration } from './ToolBlockItem'
 import {
   RequestUserInputCard,
   RequestUserInputSummary,
@@ -43,6 +43,7 @@ import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
 import { getDurationText, getWholeSecondsDurationText } from './processingDuration'
+import { getFileInputPaths, isFileEditToolName } from './toolBlockKinds'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
 type ProcessingDisplayItem =
@@ -176,6 +177,7 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const fileEditDurations = useMemo(() => getFileEditDurations(blocks), [blocks])
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
   const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
   const hasActiveContextCompaction = blocks.some(
@@ -294,6 +296,7 @@ export function ToolBlocksDisplay({
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
+                fileEditDurations={fileEditDurations}
               />
             )
           })}
@@ -306,6 +309,7 @@ export function ToolBlocksDisplay({
       onOpenAssistantPlan,
       onLoadFullTranscript,
       loadingFullTranscript,
+      fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
       stateKey,
@@ -348,6 +352,7 @@ export function ToolBlocksDisplay({
             (processingPhase === 'live' || showInterToolThinking)
           }
           onOpenWorkspaceFile={onOpenWorkspaceFile}
+          fileEditDurations={fileEditDurations}
         />
       ) : null}
     </>
@@ -476,10 +481,12 @@ function LiveProcessingPreview({
   rows,
   showThinking,
   onOpenWorkspaceFile,
+  fileEditDurations,
 }: {
   rows: ProcessingDisplayRow[]
   showThinking: boolean
   onOpenWorkspaceFile?: (path: string) => void
+  fileEditDurations: ReadonlyMap<string, FileEditDuration>
 }) {
   const { t } = useTranslation('chat')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -525,6 +532,7 @@ function LiveProcessingPreview({
             row={row}
             shimmer={isProcessingRowRunning(row) && index === rows.length - 1}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
+            fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
           />
         ))}
@@ -543,6 +551,7 @@ function LiveProcessingPreviewRow({
   shimmer,
   durationStartedAt,
   durationEndAt,
+  fileEditDurations,
   onOpenWorkspaceFile,
   onExpandedChange,
 }: {
@@ -550,6 +559,7 @@ function LiveProcessingPreviewRow({
   shimmer: boolean
   durationStartedAt?: number
   durationEndAt?: number
+  fileEditDurations: ReadonlyMap<string, FileEditDuration>
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
 }) {
@@ -582,6 +592,7 @@ function LiveProcessingPreviewRow({
         shimmer={shimmer}
         durationStartedAt={durationStartedAt}
         durationEndAt={durationEndAt}
+        fileEditDurations={fileEditDurations}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         onExpandedChange={handleExpandedChange}
       />
@@ -594,9 +605,50 @@ function LiveProcessingPreviewRow({
       shimmer={shimmer}
       durationStartedAt={durationStartedAt}
       durationEndAt={durationEndAt}
+      fileEditDurations={fileEditDurations}
       onExpandedChange={handleExpandedChange}
     />
   )
+}
+
+function getFileEditDurations(blocks: ProcessingBlock[]): ReadonlyMap<string, FileEditDuration> {
+  const edits = blocks.flatMap(block => {
+    if (block.type !== 'tool' || !isFileEditToolName(block.toolName)) return []
+    const completedAt = block.completedAt
+    if (completedAt === undefined) {
+      return []
+    }
+    return getFileInputPaths(block).map(path => ({
+      path: normalizeActivityPath(path),
+      startedAt: block.createdAt,
+      completedAt,
+    }))
+  })
+  const durations = new Map<string, FileEditDuration>()
+
+  blocks.forEach(block => {
+    if (block.type !== 'file_changes') return
+    block.fileChanges.files.forEach(file => {
+      const filePath = normalizeActivityPath(file.path)
+      const matches = edits.filter(
+        edit =>
+          edit.path === filePath ||
+          edit.path.endsWith(`/${filePath}`) ||
+          filePath.endsWith(`/${edit.path}`)
+      )
+      if (matches.length === 0) return
+      durations.set(file.path, {
+        startedAt: Math.min(...matches.map(match => match.startedAt)),
+        completedAt: Math.max(...matches.map(match => match.completedAt)),
+      })
+    })
+  })
+
+  return durations
+}
+
+function normalizeActivityPath(path: string): string {
+  return path.replaceAll('\\', '/').replace(/^\.\//, '')
 }
 
 function isProcessingRowRunning(row: ProcessingDisplayRow): boolean {

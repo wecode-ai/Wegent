@@ -10,6 +10,8 @@ After a supported coding task completes, Wework displays a file changes card bel
 
 The card shows the number of changed files, added and deleted lines, and the file list. It displays the first three files by default and can expand to show the rest.
 
+The file changes list in the conversation also shows the actual edit duration for each file. It measures from the start of the matching edit tool call until all streamed output and execution finish. When the same file is edited more than once, the duration spans from the first edit start to the final edit completion. The time when the final change summary is generated is therefore not reported as the file's edit duration.
+
 Binary files do not have reliable text line counts, so the card displays only the file name and binary status.
 
 ## Review the Full Diff
