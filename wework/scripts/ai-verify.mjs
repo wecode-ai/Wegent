@@ -26,12 +26,13 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
+                            Required destination selector for drag
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
@@ -310,6 +311,7 @@ async function main() {
     snapshot: 'snapshot',
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
+    drag: 'drag',
     fill: 'fill',
     hover: 'hover',
     'pointer-move': 'pointerMove',

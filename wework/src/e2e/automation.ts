@@ -30,6 +30,7 @@ type DesktopControlAction =
   | 'clickWhenEnabled'
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
+  | 'drag'
   | 'fill'
   | 'getText'
   | 'hover'
@@ -341,7 +342,7 @@ function desktopControlEventOptions(element: HTMLElement): MouseEventInit & Poin
 }
 
 function dispatchDesktopControlPointerEvent(
-  element: HTMLElement,
+  element: EventTarget,
   type: string,
   options: MouseEventInit & PointerEventInit
 ) {
@@ -370,6 +371,21 @@ function moveDesktopControlPointer(command: DesktopControlCommand): string {
   const options = desktopControlEventOptions(element)
   dispatchDesktopControlPointerEvent(element, 'pointermove', options)
   element.dispatchEvent(new MouseEvent('mousemove', options))
+  return element.textContent?.trim() ?? ''
+}
+
+function dragDesktopControlElement(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  if (!command.target) throw new Error('Drag requires a target selector')
+  const target = findDesktopControlElements(command.target)[0]
+  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
+
+  const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
+  const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
+  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
+  dispatchDesktopControlPointerEvent(document, 'pointerup', { ...endOptions, buttons: 0 })
   return element.textContent?.trim() ?? ''
 }
 
@@ -474,6 +490,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'drag':
+      return dragDesktopControlElement(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
