@@ -4018,7 +4018,7 @@ describe('MessageList', () => {
     expect(processText.compareDocumentPosition(runningTool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  test('ends the preceding live tool preview when process text starts', () => {
+  test('keeps thinking in the preceding tool preview when process text starts', () => {
     const completedBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -4052,7 +4052,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
+    expect(screen.getByTestId('processing-live-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('tool-block-thinking')).toHaveTextContent('正在思考')
     expect(screen.getByTestId('process-text-block')).toHaveTextContent('负载均值明显偏高。')
   })
 
