@@ -26,10 +26,15 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.namespace import GroupRole
+from app.services.knowledge import knowledge_visibility_query
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import (
     ExternalKnowledgeBaseListFilters,
     KnowledgeService,
+)
+from app.services.knowledge.knowledge_visibility_query import (
+    get_acl_accessible_knowledge_base_ids,
+    get_directly_accessible_knowledge_base_ids,
 )
 from app.services.share import knowledge_share_service
 
@@ -199,7 +204,7 @@ def test_public_agent_acl_access_only_allows_organization_knowledge_bases(
         ),
     )
 
-    accessible_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    accessible_ids = get_acl_accessible_knowledge_base_ids(
         test_db,
         user_id=0,
         candidate_ids=[group_kb_id, organization_kb_id],
@@ -274,6 +279,52 @@ def test_edit_direct_access_requirement_hides_kb_from_reporter(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("requirement", "member_role", "expected_access"),
+    [
+        ("read", GroupRole.Reporter, True),
+        ("edit", GroupRole.Reporter, False),
+        ("edit", GroupRole.Developer, True),
+    ],
+)
+def test_single_and_paginated_direct_access_policies_match(
+    test_db: Session,
+    requirement: str,
+    member_role: GroupRole,
+    expected_access: bool,
+) -> None:
+    suffix = f"{requirement}-{member_role.value}"
+    owner = _create_user(test_db, f"policy-contract-owner-{suffix}")
+    member = _create_user(test_db, f"policy-contract-member-{suffix}")
+    namespace = _create_namespace(test_db, owner, f"policy-contract-{suffix}")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, member, member_role, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name=f"policy-contract-kb-{suffix}",
+            namespace=namespace.name,
+            direct_access_requirement=requirement,
+        ),
+    )
+
+    _, single_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        member.id,
+    )
+    page, _ = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+
+    assert single_access is expected_access
+    assert (knowledge_base_id in {kb.id for kb in page}) is expected_access
+
+
+@pytest.mark.unit
 def test_acl_access_ignores_direct_visibility_requirement(
     test_db: Session,
 ) -> None:
@@ -292,12 +343,12 @@ def test_acl_access_ignores_direct_visibility_requirement(
         ),
     )
 
-    direct_ids = KnowledgeService.get_directly_accessible_knowledge_base_ids(
+    direct_ids = get_directly_accessible_knowledge_base_ids(
         test_db,
         user_id=reporter.id,
         candidate_ids=[knowledge_base_id],
     )
-    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    acl_ids = get_acl_accessible_knowledge_base_ids(
         test_db,
         user_id=reporter.id,
         candidate_ids=[knowledge_base_id],
@@ -326,7 +377,7 @@ def test_acl_access_denies_restricted_group_member(test_db: Session) -> None:
         KnowledgeBaseCreate(name="restricted-group-kb", namespace=namespace.name),
     )
 
-    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    acl_ids = get_acl_accessible_knowledge_base_ids(
         test_db,
         user_id=restricted.id,
         candidate_ids=[knowledge_base_id],
@@ -357,7 +408,7 @@ def test_acl_access_denies_direct_restriction_over_other_grants(
         owner.id,
     )
 
-    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    acl_ids = get_acl_accessible_knowledge_base_ids(
         test_db,
         user_id=reporter.id,
         candidate_ids=[knowledge_base_id],
@@ -388,7 +439,7 @@ def test_acl_access_denies_legacy_restricted_member(test_db: Session) -> None:
         resource_type="KNOWLEDGE_BASE",
     )
 
-    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    acl_ids = get_acl_accessible_knowledge_base_ids(
         test_db,
         user_id=reporter.id,
         candidate_ids=[knowledge_base_id],
@@ -420,7 +471,7 @@ def test_acl_access_allows_legacy_reporter_member(test_db: Session) -> None:
         resource_type="KNOWLEDGE_BASE",
     )
 
-    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    acl_ids = get_acl_accessible_knowledge_base_ids(
         test_db,
         user_id=reporter.id,
         candidate_ids=[knowledge_base_id],
@@ -544,13 +595,18 @@ def test_paginated_lists_do_not_materialize_all_entity_authorized_kbs(
     test_db: Session,
 ) -> None:
     user = _create_user(test_db, "permission-context-user")
-    collect_external_roles = KnowledgeService._collect_external_entity_member_roles
+    collect_external_roles = (
+        knowledge_visibility_query.collect_external_entity_member_roles
+    )
 
     with (
-        patch.object(KnowledgeService, "_collect_entity_authorized_kbs") as collect_all,
         patch.object(
-            KnowledgeService,
-            "_collect_external_entity_member_roles",
+            knowledge_visibility_query,
+            "collect_entity_authorized_kbs",
+        ) as collect_all,
+        patch.object(
+            knowledge_visibility_query,
+            "collect_external_entity_member_roles",
             wraps=collect_external_roles,
         ) as collect_external,
     ):
@@ -566,10 +622,13 @@ def test_paginated_lists_do_not_materialize_all_entity_authorized_kbs(
     assert collect_external.call_count == 1
 
     with (
-        patch.object(KnowledgeService, "_collect_entity_authorized_kbs") as collect_all,
         patch.object(
-            KnowledgeService,
-            "_collect_external_entity_member_roles",
+            knowledge_visibility_query,
+            "collect_entity_authorized_kbs",
+        ) as collect_all,
+        patch.object(
+            knowledge_visibility_query,
+            "collect_external_entity_member_roles",
             wraps=collect_external_roles,
         ) as collect_external,
     ):

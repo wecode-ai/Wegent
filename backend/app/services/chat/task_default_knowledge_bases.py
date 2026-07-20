@@ -14,7 +14,9 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.adapters.task_kinds.converters import resolve_task_ref_team
 from app.services.kind_ref_resolver import batch_load_kinds_by_refs
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_visibility_query import (
+    get_acl_accessible_knowledge_base_ids,
+)
 from app.services.readers import KindType
 from app.services.share import team_share_service
 from app.stores.tasks import task_store
@@ -27,6 +29,19 @@ def _get_accessible_knowledge_base(
     from app.services.share.knowledge_share_service import KnowledgeShareService
 
     return KnowledgeShareService()._get_resource(db, knowledge_base_id, user_id)
+
+
+def _get_active_knowledge_base(db: Session, knowledge_base_id: int) -> Kind | None:
+    """Load an active knowledge base without depending on KnowledgeService."""
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.id == knowledge_base_id,
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+        .first()
+    )
 
 
 def _get_knowledge_base_display_name(knowledge_base: Kind) -> str:
@@ -119,7 +134,7 @@ def _resolve_task_default_knowledge_bases(
         if knowledge_base_id not in candidate_ids:
             return team, []
         candidate_ids = [knowledge_base_id]
-    allowed_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+    allowed_ids = get_acl_accessible_knowledge_base_ids(
         db,
         user_id=team.user_id,
         candidate_ids=candidate_ids,
@@ -157,7 +172,7 @@ def resolve_task_default_knowledge_base_read_user_id(
     )
     if team is None or knowledge_base_id not in knowledge_base_ids:
         return None
-    knowledge_base = KnowledgeService._get_knowledge_base_record(db, knowledge_base_id)
+    knowledge_base = _get_active_knowledge_base(db, knowledge_base_id)
     return knowledge_base.user_id if knowledge_base is not None else None
 
 

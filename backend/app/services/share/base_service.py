@@ -52,7 +52,7 @@ from app.schemas.share import (
     ShareLinkConfig,
     ShareLinkResponse,
 )
-from app.services.share.external_entity_resolver import get_entity_resolver
+from app.services.external_entity_resolver import get_entity_resolver
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -2021,7 +2021,7 @@ class UnifiedShareService(ABC):
         Delegates to shared resolve_entity_roles_for_resource and returns
         the highest privilege role among matched bindings.
         """
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             resolve_entity_roles_for_resource,
         )
 

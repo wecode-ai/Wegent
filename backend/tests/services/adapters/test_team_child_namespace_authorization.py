@@ -21,7 +21,7 @@ from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
     resolve_task_default_knowledge_base_ids,
 )
-from app.services.share.external_entity_resolver import register_entity_resolver
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
 
 

@@ -1434,7 +1434,9 @@ def _get_user_kb_tool_access_mode(
     Returns:
         Tuple of (access_mode, reason)
     """
-    from app.services.share import get_knowledge_base_tool_access_mode_by_ids
+    from app.services.knowledge.knowledge_access_policy import (
+        get_knowledge_base_tool_access_mode_by_ids,
+    )
 
     return get_knowledge_base_tool_access_mode_by_ids(db, user_id, knowledge_base_ids)
 
