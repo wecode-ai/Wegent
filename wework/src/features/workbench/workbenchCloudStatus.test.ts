@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
+  filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
   mergeRuntimeWorkLists,
   selectCloudWorkStatus,
@@ -329,6 +330,52 @@ describe('cloud runtime sync state', () => {
 
     expect(once.totalTasks).toBe(1)
     expect(twice.totalTasks).toBe(1)
+  })
+
+  test('hides remote work while the cloud connection is explicitly disconnected', () => {
+    const localWorkspace = workspace('local-device', [{ taskId: 'local-task' }])
+    const remoteWorkspace = {
+      ...workspace('remote-device', [{ taskId: 'remote-task' }]),
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
+      deviceName: '127.0.0.1',
+      deviceStatus: 'offline',
+      available: false,
+    }
+    const filtered = filterDisconnectedRemoteRuntimeWork({
+      projects: [
+        {
+          project: {
+            key: 'remote-project-id',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Remote',
+            kind: 'remote',
+            source: 'remote_project',
+          },
+          deviceWorkspaces: [remoteWorkspace],
+          totalTasks: 1,
+        },
+        {
+          project: { key: 'local-project-id', name: 'Local' },
+          deviceWorkspaces: [localWorkspace, remoteWorkspace],
+          totalTasks: 2,
+        },
+      ],
+      chats: [
+        {
+          ...remoteWorkspace,
+          workspaceKind: 'chat',
+        },
+      ],
+      totalTasks: 4,
+    })
+
+    expect(filtered.projects).toHaveLength(1)
+    expect(filtered.projects[0].project.name).toBe('Local')
+    expect(filtered.projects[0].deviceWorkspaces).toEqual([localWorkspace])
+    expect(filtered.projects[0].totalTasks).toBe(1)
+    expect(filtered.chats).toEqual([])
+    expect(filtered.totalTasks).toBe(1)
   })
 
   test('canonicalizes cloud runtime workspaces to the local route for the same runtime', () => {

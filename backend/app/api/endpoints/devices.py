@@ -735,6 +735,7 @@ async def start_device_terminal(
 @router.post("/{device_id}/code-server", response_model=DeviceSessionResponse)
 async def start_device_code_server(
     device_id: str,
+    payload: DeviceSessionCreate | None = Body(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -748,6 +749,8 @@ async def start_device_code_server(
         local_device_session_service,
     )
 
+    requested_path = payload.path.strip() if payload and payload.path else ""
+    session_path = requested_path or DEFAULT_DEVICE_SESSION_PATH
     try:
         result = await local_device_session_service.start_session(
             db=db,
@@ -755,8 +758,8 @@ async def start_device_code_server(
             device_id=device_id,
             project_id=0,
             session_type="code_server",
-            path=DEFAULT_DEVICE_SESSION_PATH,
-            create_if_missing=True,
+            path=session_path,
+            create_if_missing=not bool(requested_path),
         )
     except DeviceSessionError as exc:
         raise HTTPException(
@@ -768,7 +771,7 @@ async def start_device_code_server(
         session_id=result.get("session_id", ""),
         device_id=result.get("device_id", device_id),
         type="code_server",
-        path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
+        path=result.get("path", session_path),
         url=result.get("url", ""),
         transport=result.get("transport", "url"),
     )

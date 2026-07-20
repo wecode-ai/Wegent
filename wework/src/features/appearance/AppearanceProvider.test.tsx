@@ -38,6 +38,12 @@ function Harness() {
       <span data-testid="ui-font-size">{appearance.uiFontSize}</span>
       <span data-testid="code-font-size">{appearance.codeFontSize}</span>
       <span data-testid="background-path">{appearance.backgroundImagePath ?? 'none'}</span>
+      <span data-testid="light-background-path">
+        {appearance.lightBackground.imagePath ?? 'none'}
+      </span>
+      <span data-testid="dark-background-path">
+        {appearance.darkBackground.imagePath ?? 'none'}
+      </span>
       <span data-testid="background-visibility">{appearance.backgroundVisibility}</span>
       <span data-testid="background-blur">{appearance.backgroundBlur}</span>
       <span data-testid="background-in-main">{String(appearance.backgroundInMain)}</span>
@@ -224,6 +230,8 @@ describe('AppearanceProvider', () => {
     )
 
     expect(screen.getByTestId('background-path')).toHaveTextContent('/tmp/background.png')
+    expect(screen.getByTestId('light-background-path')).toHaveTextContent('none')
+    expect(screen.getByTestId('dark-background-path')).toHaveTextContent('none')
     expect(screen.getByTestId('background-visibility')).toHaveTextContent('100')
     expect(screen.getByTestId('background-blur')).toHaveTextContent('20')
     expect(screen.getByTestId('background-in-main')).toHaveTextContent('true')

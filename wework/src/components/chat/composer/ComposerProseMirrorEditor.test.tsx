@@ -91,6 +91,45 @@ describe('ComposerProseMirrorEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('first line\nsecond line\nthird line')
   })
 
+  test('inserts pasted text exactly once through the ProseMirror paste pipeline', () => {
+    const { editorRef, onChange } = renderEditor('existing ')
+    const editor = screen.getByTestId('composer-editor')
+
+    act(() => editorRef.current?.setValue('existing ', 'existing '.length))
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'pasted text' : ''),
+        types: ['text/plain'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('existing pasted text')
+    expect(onChange).toHaveBeenCalledOnce()
+    expect(onChange).toHaveBeenLastCalledWith('existing pasted text')
+  })
+
+  test('keeps line breaks when pasting rich text', () => {
+    const { editorRef, onChange } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => {
+          if (type === 'text/plain') return 'first line\nsecond line\nthird line'
+          if (type === 'text/html') return '<p>first line</p><p>second line</p><p>third line</p>'
+          return ''
+        },
+        types: ['text/plain', 'text/html'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('first line\nsecond line\nthird line')
+    expect(onChange).toHaveBeenCalledOnce()
+  })
+
   test('keeps the caret outside the skill while repeatedly moving left', () => {
     const { editorRef, onChange } = renderEditor()
     const editor = screen.getByTestId('composer-editor')

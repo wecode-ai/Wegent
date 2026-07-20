@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { Streamdown } from 'streamdown'
@@ -31,25 +31,46 @@ const INLINE_DIFF_MAX_LINES = 96
 
 interface ToolBlockItemProps {
   block: ProcessingBlock
+  compact?: boolean
+  shimmer?: boolean
+  durationStartedAt?: number
+  durationEndAt?: number
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onLoadFullTranscript?: () => Promise<void> | void
   loadingFullTranscript?: boolean
+  onExpandedChange?: (expanded: boolean) => void
 }
 
 export function ToolBlockItem({
   block,
+  compact = false,
+  shimmer = false,
+  durationStartedAt,
+  durationEndAt,
   forceExpanded = false,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
   onLoadFullTranscript,
   loadingFullTranscript = false,
+  onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
   const [userExpanded, setUserExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+  const duration = useToolDuration(
+    durationStartedAt ?? block.createdAt,
+    durationEndAt ?? block.completedAt,
+    isRunning
+  )
+  const hasDetail = block.type === 'tool' && hasBlockDetail(block)
+  const expanded = hasDetail && (forceExpanded || userExpanded)
+
+  useLayoutEffect(() => {
+    if (block.type === 'tool') onExpandedChange?.(expanded)
+  }, [block.type, expanded, onExpandedChange])
 
   if (block.type === 'thinking') {
     return <ThinkingBlockItem block={block} isRunning={isRunning} />
@@ -61,7 +82,14 @@ export function ToolBlockItem({
     return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
   }
   if (block.type === 'file_changes') {
-    return <ProcessFileChangesBlockItem block={block} />
+    return (
+      <ProcessFileChangesBlockItem
+        block={block}
+        shimmer={shimmer}
+        duration={duration}
+        onExpandedChange={onExpandedChange}
+      />
+    )
   }
 
   const { icon, label } = getBlockLabel(block, {
@@ -78,19 +106,21 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
   })
   const workspaceFilePath = getWorkspaceFilePath(block)
-  const hasDetail = hasBlockDetail(block)
-  const expanded = hasDetail && (forceExpanded || userExpanded)
   const labelContent = (
     <>
       {icon}
-      <span className="min-w-0 truncate">{label}</span>
+      <span className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}>
+        {label}
+      </span>
       {isRunning && <span className="animate-pulse text-xs will-change-opacity">...</span>}
     </>
   )
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm" data-processing-block-id={block.id}>
-      <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
+    <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
+      <div
+        className={`flex w-full max-w-full items-center gap-1.5 text-text-secondary ${compact ? 'min-h-8' : ''}`}
+      >
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
             type="button"
@@ -102,6 +132,8 @@ export function ToolBlockItem({
         ) : hasDetail ? (
           <button
             type="button"
+            data-tool-detail-toggle
+            aria-expanded={expanded}
             onClick={() => setUserExpanded(value => !value)}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
@@ -113,6 +145,7 @@ export function ToolBlockItem({
         {hasDetail ? (
           <button
             type="button"
+            data-tool-detail-toggle
             onClick={() => setUserExpanded(value => !value)}
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={expanded ? '收起工具详情' : '展开工具详情'}
@@ -129,9 +162,10 @@ export function ToolBlockItem({
             </svg>
           </button>
         ) : null}
+        <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">{duration}</span>
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-hidden">
+        <div className="mt-2 min-w-0 overflow-x-clip">
           {renderBlockDetail(block, { onLoadFullTranscript, loadingFullTranscript })}
         </div>
       ) : null}
@@ -166,13 +200,23 @@ function PlanBlockItem({
 
 function ProcessFileChangesBlockItem({
   block,
+  shimmer,
+  duration,
+  onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
+  shimmer: boolean
+  duration: string
+  onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t } = useTranslation('chat')
   const summary = block.fileChanges
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
+
+  useLayoutEffect(() => {
+    onExpandedChange?.(expandedFilePath !== null)
+  }, [expandedFilePath, onExpandedChange])
 
   if (!summary.files.length) return null
 
@@ -182,7 +226,7 @@ function ProcessFileChangesBlockItem({
       data-processing-block-id={block.id}
       data-testid="process-file-changes-block"
     >
-      <div className="flex min-w-0 flex-col gap-1.5">
+      <div className="flex min-w-0 flex-col">
         {summary.files.map(file => {
           const previewLines = fileDiffPreviewLines(file, summary)
           const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
@@ -195,10 +239,14 @@ function ProcessFileChangesBlockItem({
                 onClick={() =>
                   setExpandedFilePath(current => (current === file.path ? null : file.path))
                 }
-                className="group flex max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
+                className="group flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-                <span className="min-w-0 truncate">{fileChangeRowLabel(file, t, isRunning)}</span>
+                <span
+                  className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}
+                >
+                  {fileChangeRowLabel(file, t, isRunning)}
+                </span>
                 {!file.binary ? (
                   <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium">
                     <span className="text-green-600">+{file.additions}</span>
@@ -213,6 +261,9 @@ function ProcessFileChangesBlockItem({
                     strokeWidth={2}
                   />
                 ) : null}
+                <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">
+                  {duration}
+                </span>
               </button>
               {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
             </div>
@@ -221,6 +272,27 @@ function ProcessFileChangesBlockItem({
       </div>
     </div>
   )
+}
+
+function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, isRunning: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  const wasRunning = useRef(isRunning)
+  const [completedAt, setCompletedAt] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!isRunning) return
+    const timer = window.setInterval(() => setNow(Date.now()), 100)
+    return () => window.clearInterval(timer)
+  }, [isRunning])
+
+  useEffect(() => {
+    if (wasRunning.current && !isRunning) setCompletedAt(Date.now())
+    wasRunning.current = isRunning
+  }, [isRunning])
+
+  const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? startedAt)
+  if (!isRunning && completedAt === null && fallbackEndAt === undefined) return ''
+  return `${(Math.max(0, endedAt - startedAt) / 1000).toFixed(1)}s`
 }
 
 function fileChangeRowLabel(
@@ -237,14 +309,14 @@ function fileChangeRowLabel(
   }
   switch (file.change_type) {
     case 'created':
-      return t('file_changes.created_file', { filename })
+      return t('tool_activity.created_file', { filename })
     case 'deleted':
-      return t('file_changes.deleted_file', { filename })
+      return t('tool_activity.deleted_file', { filename })
     case 'renamed':
-      return t('file_changes.renamed_file', { filename })
+      return t('tool_activity.renamed_file', { filename })
     case 'modified':
     default:
-      return t('file_changes.edited_file', { filename })
+      return t('tool_activity.edited_file', { filename })
   }
 }
 
@@ -795,7 +867,7 @@ function getFileToolLabel(prefix: string, block: ToolBlock, action: string): str
 
 function fileToolFallbackLabel(status: ToolBlock['status'], action: string): string {
   if (status === 'error') return `${action}文件失败`
-  if (status === 'done') return `已${action}文件`
+  if (status === 'done') return `${action}文件`
   return `正在${action}文件`
 }
 
@@ -814,13 +886,13 @@ function getToolStatusPrefix(block: ToolBlock) {
 
   if (block.status === 'done') {
     return {
-      running: '已运行',
-      create: '已新增',
-      edit: '已编辑',
-      read: '已读取',
-      webSearch: '已搜索网页',
-      guidance: '已引导对话',
-      generic: '已执行',
+      running: '运行',
+      create: '新增',
+      edit: '编辑',
+      read: '读取',
+      webSearch: '搜索网页',
+      guidance: '引导对话',
+      generic: '执行',
     }
   }
 

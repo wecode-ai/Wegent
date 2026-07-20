@@ -277,6 +277,8 @@ export interface RuntimeMessageSource {
 
 export interface NormalizedRuntimeMessage {
   id: string
+  clientMessageId?: string | null
+  client_message_id?: string | null
   role: 'user' | 'assistant' | 'system' | string
   content: string
   contentTruncated?: boolean | null
@@ -556,6 +558,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  clientMessageId?: string
   ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
@@ -569,6 +572,8 @@ export interface RuntimeSendRequest {
   additionalContext?: RuntimeAdditionalContext
   additional_context?: RuntimeAdditionalContext
 }
+
+export type RuntimeInterruptAndSendRequest = RuntimeSendRequest
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
@@ -861,6 +866,7 @@ export interface RuntimeManagedWorktree {
   path: string
   repositoryName: string
   sourcePath?: string | null
+  permanent?: boolean
   createdAt?: number | null
   updatedAt?: number | null
   state: 'active' | 'restorable' | 'missing' | 'deleted' | string
@@ -880,6 +886,7 @@ export interface RuntimeWorktreePrepareRequest {
   sourcePath: string
   worktreeId: string
   ref?: string | null
+  permanent?: boolean
 }
 
 export interface RuntimeWorktreeMutationResponse {
@@ -1011,6 +1018,7 @@ export interface RuntimeTaskCreateRequest {
   teamId: number
   runtime: RuntimeName
   message: string
+  clientMessageId?: string
   title?: string
   modelId?: string
   modelType?: ModelType | null

@@ -30,30 +30,22 @@ export function getWorkbenchPaneKey({
   return `blank:${blankPaneKey}`
 }
 
-export function getRunningRuntimeWorkbenchPaneKeys(
+export function getRuntimeWorkbenchPaneKeys(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): string[] {
   if (!runtimeWork) return []
-  const keys: string[] = []
   const workspaces = [
     ...runtimeWork.chats,
     ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
   ]
-  workspaces.forEach(workspace => {
-    workspace.tasks.forEach(task => {
-      if (task.running !== true) return
-      keys.push(
-        getWorkbenchPaneKey({
-          currentRuntimeTask: {
-            deviceId: workspace.deviceId,
-            taskId: task.taskId,
-          },
-          currentProject: null,
-        })
-      )
-    })
-  })
-  return keys
+  return workspaces.flatMap(workspace =>
+    workspace.tasks.map(task =>
+      getWorkbenchPaneKey({
+        currentRuntimeTask: { deviceId: workspace.deviceId, taskId: task.taskId },
+        currentProject: null,
+      })
+    )
+  )
 }
 
 interface CachedWorkbenchPaneStackProps {

@@ -96,6 +96,20 @@ describe('createDeviceApi', () => {
     })
   })
 
+  test('starts code-server at the requested device path', async () => {
+    const client = {
+      post: vi.fn().mockResolvedValue({ session_id: 'ide-1' }),
+    } as unknown as HttpClient
+
+    const api = createDeviceApi(client)
+
+    await api.startCodeServer('device/1', ' /workspace/project ')
+
+    expect(client.post).toHaveBeenCalledWith('/devices/device%2F1/code-server', {
+      path: '/workspace/project',
+    })
+  })
+
   test('listWorkspaceEntries maps workspace tree output', async () => {
     const post = vi.fn().mockResolvedValue({
       success: true,

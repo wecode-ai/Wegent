@@ -25,6 +25,60 @@ const streamingTextBlock: ProcessingBlock = {
 }
 
 describe('ToolBlockItem', () => {
+  test('renders a completed tool duration with 0.1 second precision', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'tool-duration',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { command: 'sleep 3' },
+          status: 'done',
+          createdAt: 1770000000000,
+          completedAt: 1770000003278,
+        }}
+      />
+    )
+
+    expect(screen.getByText('3.3s')).toBeInTheDocument()
+  })
+
+  test('uses the standard tool row height for file changes', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'file-change-height',
+          subtaskId: 1,
+          type: 'file_changes',
+          status: 'done',
+          createdAt: 1770000000000,
+          fileChanges: {
+            version: 1,
+            status: 'completed',
+            artifact_id: 'artifact-1',
+            device_id: 'device-1',
+            workspace_path: '/workspace',
+            file_count: 1,
+            additions: 1,
+            deletions: 0,
+            files: [
+              {
+                path: 'src/example.ts',
+                change_type: 'modified',
+                additions: 1,
+                deletions: 0,
+                binary: false,
+              },
+            ],
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button')).toHaveClass('min-h-8')
+  })
+
   test('renders streaming thinking as a single live preview row', () => {
     render(<ToolBlockItem block={streamingThinkingBlock} />)
 
@@ -106,8 +160,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
-    expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
+    expect(screen.getByText('搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('运行 web_search')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -161,7 +215,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已调用 custom agent tool')).toBeInTheDocument()
+    expect(screen.getByText('调用 custom agent tool')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
     expect(screen.queryByText(/raw details should stay hidden/)).not.toBeInTheDocument()
   })
@@ -185,7 +239,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /已读取 package.json/ }))
+    await user.click(screen.getByRole('button', { name: /读取 package.json/ }))
 
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
   })
@@ -215,7 +269,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑 config.ts')).toBeInTheDocument()
+    expect(screen.getByText('编辑 config.ts')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -250,7 +304,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑 mod.rs')).toBeInTheDocument()
+    expect(screen.getByText('编辑 mod.rs')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -272,8 +326,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑文件')).toBeInTheDocument()
-    expect(screen.queryByText('已编辑 文件')).not.toBeInTheDocument()
+    expect(screen.getByText('编辑文件')).toBeInTheDocument()
+    expect(screen.queryByText('编辑 文件')).not.toBeInTheDocument()
   })
 
   test('renders process text code blocks with shared syntax highlighting', () => {

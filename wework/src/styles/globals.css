@@ -63,6 +63,55 @@
   --z-system-popover: 1010;
 }
 
+@keyframes suffix-roll-out-up {
+  to {
+    transform: translateY(-110%);
+  }
+}
+
+@keyframes suffix-roll-in-up {
+  from {
+    transform: translateY(110%);
+  }
+}
+
+@keyframes suffix-roll-out-down {
+  to {
+    transform: translateY(110%);
+  }
+}
+
+@keyframes suffix-roll-in-down {
+  from {
+    transform: translateY(-110%);
+  }
+}
+
+.suffix-roll-out-up,
+.suffix-roll-in-up,
+.suffix-roll-out-down,
+.suffix-roll-in-down {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+
+.suffix-roll-out-up {
+  animation-name: suffix-roll-out-up;
+}
+
+.suffix-roll-in-up {
+  animation-name: suffix-roll-in-up;
+}
+
+.suffix-roll-out-down {
+  animation-name: suffix-roll-out-down;
+}
+
+.suffix-roll-in-down {
+  animation-name: suffix-roll-in-down;
+}
+
 [data-theme='dark'] {
   color-scheme: dark;
   --color-bg-base: 17 19 22;

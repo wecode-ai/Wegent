@@ -103,6 +103,7 @@ export interface ChatInputProps {
   codeComments?: CodeCommentContext[]
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
+  onInterruptAndSendQueuedMessage?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
   onReorderQueuedMessages?: (sourceId: string, targetId: string) => void
   queuePaused?: boolean
@@ -134,6 +135,7 @@ export interface ChatInputProps {
 
 export interface ChatSubmitOptions {
   guideWhenBusy?: boolean
+  interruptWhenBusy?: boolean
 }
 
 interface PendingQueuedSend {
@@ -207,6 +209,7 @@ export function ChatInput({
   codeComments = [],
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
+  onInterruptAndSendQueuedMessage,
   onEditQueuedMessage,
   onReorderQueuedMessages,
   queuePaused,
@@ -337,6 +340,7 @@ export function ChatInput({
       guidanceMessages={guidanceMessages}
       onCancelQueuedMessage={onCancelQueuedMessage}
       onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+      onInterruptAndSendQueuedMessage={onInterruptAndSendQueuedMessage}
       onEditQueuedMessage={onEditQueuedMessage}
       onReorderQueuedMessages={onReorderQueuedMessages}
       queuePaused={queuePaused}

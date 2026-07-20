@@ -57,6 +57,17 @@ export function createLocalFileWorkspaceTarget(
   }
 }
 
+export function createLocalAttachmentWorkspaceTarget(
+  filePath: string,
+  devices: DeviceInfo[]
+): WorkspaceTarget | null {
+  const normalizedPath = filePath.trim().replace(/\\/g, '/')
+  const isLocalAttachment =
+    normalizedPath.includes('/.wegent-executor/workspace/attachments/') ||
+    normalizedPath.includes('/.wegent/attachments/')
+  return isLocalAttachment ? createLocalFileWorkspaceTarget(normalizedPath, devices) : null
+}
+
 async function projectWorkspaceTarget(
   project: ProjectWithTasks,
   api: ProjectWorkspaceRootApi

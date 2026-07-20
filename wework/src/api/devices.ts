@@ -482,10 +482,14 @@ export function createDeviceApi(client: HttpClient) {
         : client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/terminal`)
     },
 
-    async startCodeServer(deviceId: string): Promise<DeviceSessionResponse> {
-      return client.post<DeviceSessionResponse>(
-        `/devices/${encodeURIComponent(deviceId)}/code-server`
-      )
+    async startCodeServer(deviceId: string, cwd?: string): Promise<DeviceSessionResponse> {
+      const path = cwd?.trim()
+      return path
+        ? client.post<DeviceSessionResponse>(
+            `/devices/${encodeURIComponent(deviceId)}/code-server`,
+            { path }
+          )
+        : client.post<DeviceSessionResponse>(`/devices/${encodeURIComponent(deviceId)}/code-server`)
     },
 
     async openLocalTerminal(deviceId: string, cwd?: string): Promise<void> {

@@ -545,8 +545,8 @@ export function ComposerTextarea({
   )
 
   const selectMentionMenuRow = useCallback(
-    (row: MentionMenuRow) => {
-      const trigger = activeMenuRef.current?.trigger
+    (row: MentionMenuRow, explicitTrigger?: ComposerTextTrigger) => {
+      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
       const editor = editorRef.current
       if (!trigger || !editor) return false
       if (row.kind === 'candidate') {
@@ -626,9 +626,9 @@ export function ComposerTextarea({
       const row = mentionMenuRows[index]
       if (!row) return
       setSelectedIndex(index)
-      selectMentionMenuRow(row)
+      selectMentionMenuRow(row, activeMenu?.trigger)
     },
-    [mentionMenuRows, selectMentionMenuRow]
+    [activeMenu?.trigger, mentionMenuRows, selectMentionMenuRow]
   )
 
   const selectHighlightedSlashCommand = useCallback(() => {
@@ -842,13 +842,18 @@ export function ComposerTextarea({
           event.stopPropagation()
           return true
         }
-        if (event.shiftKey) return false
+        if (event.shiftKey && !event.metaKey && !event.ctrlKey) return false
 
         event.preventDefault()
         if (snapshot.value.trim().length > 0 || canSend) {
+          const modifierPressed = event.metaKey || event.ctrlKey
           onSubmit(
             snapshot.value,
-            event.metaKey || event.ctrlKey ? { guideWhenBusy: true } : undefined
+            modifierPressed
+              ? event.shiftKey
+                ? { interruptWhenBusy: true }
+                : { guideWhenBusy: true }
+              : undefined
           )
         }
         return true

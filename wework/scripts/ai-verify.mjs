@@ -9,7 +9,6 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
@@ -27,12 +26,13 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
+                            Required destination selector for drag
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
@@ -192,7 +192,6 @@ async function runServer(sessionPath, token) {
   const updated = {
     ...session,
     controlUrl,
-    socketPath: join(tmpdir(), `wework-ai-${randomUUID()}.sock`),
     status: 'starting',
   }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
@@ -208,7 +207,7 @@ async function runServer(sessionPath, token) {
       token,
       codexHome,
       deviceId: session.deviceId,
-      socketPath: updated.socketPath,
+      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
       executorHome,
       sessionDirectory: session.directory,
     }),
@@ -300,7 +299,6 @@ async function main() {
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await rm(session.socketPath, { force: true })
     await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
     return
   }
@@ -313,6 +311,7 @@ async function main() {
     snapshot: 'snapshot',
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
+    drag: 'drag',
     fill: 'fill',
     hover: 'hover',
     'pointer-move': 'pointerMove',

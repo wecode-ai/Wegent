@@ -4,6 +4,7 @@ export interface LocalModelConfig {
   group?: string
   modelId: string
   baseUrl: string
+  apiFormat: LocalModelApiFormat
   requestPath?: string
   apiKey?: string
   contextWindow?: number
@@ -13,6 +14,11 @@ export interface LocalModelConfig {
   updatedAt: string
 }
 
+export type LocalModelApiFormat =
+  | 'openai-responses'
+  | 'openai-chat-completions'
+  | 'anthropic-messages'
+
 export type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
 
 export interface SaveLocalModelConfigInput {
@@ -21,6 +27,7 @@ export interface SaveLocalModelConfigInput {
   group?: string | null
   modelId: string
   baseUrl: string
+  apiFormat?: LocalModelApiFormat | null
   requestPath?: string | null
   apiKey?: string | null
   contextWindow?: number | string | null
@@ -37,6 +44,24 @@ export const LOCAL_MODEL_SETTINGS_STORAGE_KEY = 'wework.localModelSettings.v1'
 export const LOCAL_MODEL_SETTINGS_CHANGED_EVENT = 'wework:local-model-settings-changed'
 export const LOCAL_MODEL_NAME_PREFIX = 'local-model:'
 export const DEFAULT_LOCAL_MODEL_REQUEST_PATH = '/responses'
+export const DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH = '/chat/completions'
+export const DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH = '/v1/messages'
+
+export function defaultLocalModelRequestPath(apiFormat: LocalModelApiFormat): string {
+  if (apiFormat === 'openai-chat-completions') {
+    return DEFAULT_LOCAL_MODEL_CHAT_COMPLETIONS_REQUEST_PATH
+  }
+  if (apiFormat === 'anthropic-messages') {
+    return DEFAULT_LOCAL_MODEL_ANTHROPIC_MESSAGES_REQUEST_PATH
+  }
+  return DEFAULT_LOCAL_MODEL_REQUEST_PATH
+}
+
+export function normalizeLocalModelApiFormat(value?: string | null): LocalModelApiFormat {
+  return value === 'openai-chat-completions' || value === 'anthropic-messages'
+    ? value
+    : 'openai-responses'
+}
 
 function readStoredConfigs(): LocalModelConfig[] {
   try {
@@ -59,6 +84,10 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
     (record.group === undefined || typeof record.group === 'string') &&
     typeof record.modelId === 'string' &&
     typeof record.baseUrl === 'string' &&
+    (record.apiFormat === undefined ||
+      record.apiFormat === 'openai-responses' ||
+      record.apiFormat === 'openai-chat-completions' ||
+      record.apiFormat === 'anthropic-messages') &&
     (record.requestPath === undefined || typeof record.requestPath === 'string') &&
     (record.requestUrlMode === undefined ||
       record.requestUrlMode === 'responses_path' ||
@@ -81,12 +110,13 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
 
 function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
   const legacyConfig = config as LocalModelConfig & { requestUrlMode?: string }
+  const apiFormat = normalizeLocalModelApiFormat(legacyConfig.apiFormat)
   const splitUrl =
     legacyConfig.requestUrlMode === 'custom_url'
       ? splitLocalModelRequestUrl(legacyConfig.baseUrl, legacyConfig.requestPath)
       : {
           baseUrl: legacyConfig.baseUrl,
-          requestPath: normalizeLocalModelRequestPath(legacyConfig.requestPath),
+          requestPath: normalizeLocalModelRequestPath(legacyConfig.requestPath, apiFormat),
         }
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
@@ -94,6 +124,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     ...(legacyConfig.group ? { group: legacyConfig.group } : {}),
     modelId: legacyConfig.modelId,
     baseUrl: legacyConfig.baseUrl,
+    apiFormat,
     ...(legacyConfig.apiKey ? { apiKey: legacyConfig.apiKey } : {}),
     ...(legacyConfig.contextWindow ? { contextWindow: legacyConfig.contextWindow } : {}),
     webSearchMode: normalizeLocalModelWebSearchMode(legacyConfig.webSearchMode),
@@ -106,7 +137,7 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
   return {
     ...nextConfig,
     baseUrl: splitUrl.baseUrl,
-    requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath),
+    requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat),
   }
 }
 
@@ -152,27 +183,37 @@ export function normalizeLocalModelBaseUrl(value: string): string {
   return trimmed
 }
 
-export function normalizeLocalModelRequestPath(value?: string | null): string {
-  const trimmed = value?.trim() || DEFAULT_LOCAL_MODEL_REQUEST_PATH
+export function normalizeLocalModelRequestPath(
+  value?: string | null,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
+): string {
+  const defaultPath = defaultLocalModelRequestPath(apiFormat)
+  const trimmed = value?.trim() || defaultPath
   const withoutTrailingSlash = trimmed.replace(/\/+$/, '')
   const path = withoutTrailingSlash.startsWith('/')
     ? withoutTrailingSlash
     : `/${withoutTrailingSlash}`
-  return path || DEFAULT_LOCAL_MODEL_REQUEST_PATH
+  return path || defaultPath
 }
 
-export function buildLocalModelRequestUrl(baseUrl: string, requestPath?: string | null): string {
-  const splitUrl = splitLocalModelRequestUrl(baseUrl, requestPath)
+export function buildLocalModelRequestUrl(
+  baseUrl: string,
+  requestPath?: string | null,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
+): string {
+  const splitUrl = splitLocalModelRequestUrl(baseUrl, requestPath, apiFormat)
   return `${normalizeLocalModelBaseUrl(splitUrl.baseUrl)}${normalizeLocalModelRequestPath(
-    splitUrl.requestPath
+    splitUrl.requestPath,
+    apiFormat
   )}`
 }
 
 export function splitLocalModelRequestUrl(
   value: string,
-  preferredPath?: string | null
+  preferredPath?: string | null,
+  apiFormat: LocalModelApiFormat = 'openai-responses'
 ): { baseUrl: string; requestPath: string } {
-  const requestPath = normalizeLocalModelRequestPath(preferredPath)
+  const requestPath = normalizeLocalModelRequestPath(preferredPath, apiFormat)
   const trimmed = value.trim().replace(/\/+$/, '')
   if (!trimmed) return { baseUrl: '', requestPath }
 
@@ -252,9 +293,10 @@ export function listLocalModelConfigs(): LocalModelConfig[] {
 
 export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalModelConfig {
   const modelId = normalizeLocalModelId(input.modelId)
-  const splitUrl = splitLocalModelRequestUrl(input.baseUrl, input.requestPath)
+  const apiFormat = normalizeLocalModelApiFormat(input.apiFormat)
+  const splitUrl = splitLocalModelRequestUrl(input.baseUrl, input.requestPath, apiFormat)
   const baseUrl = normalizeLocalModelBaseUrl(splitUrl.baseUrl)
-  const requestPath = normalizeLocalModelRequestPath(splitUrl.requestPath)
+  const requestPath = normalizeLocalModelRequestPath(splitUrl.requestPath, apiFormat)
   const displayName = input.displayName?.trim() || modelId
   const group = normalizeLocalModelGroup(input.group)
   const apiKey = input.apiKey?.trim() || undefined
@@ -274,6 +316,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     ...(group ? { group } : {}),
     modelId,
     baseUrl,
+    apiFormat,
     requestPath,
     apiKey,
     ...(contextWindow ? { contextWindow } : {}),
