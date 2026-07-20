@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.0.22",
+  "version": "0.0.23",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
@@ -36,9 +36,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -54,12 +52,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor"
-    ],
-    "resources": [
-      "binaries/codex/**/*"
-    ],
+    "externalBin": ["binaries/wegent-executor"],
+    "resources": ["binaries/codex/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

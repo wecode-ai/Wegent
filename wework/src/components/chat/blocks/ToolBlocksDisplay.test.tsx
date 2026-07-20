@@ -453,6 +453,57 @@ describe('ToolBlocksDisplay', () => {
     ).toBeInTheDocument()
   })
 
+  test('shows each file change duration from its matching edit tool', () => {
+    const firstEdit: ProcessingBlock = {
+      id: 'edit-first',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: {
+        patch: '*** Begin Patch\n*** Update File: scripts/env\n*** End Patch',
+      },
+      status: 'done',
+      createdAt: 1770000000000,
+      completedAt: 1770000004250,
+    }
+    const secondEdit: ProcessingBlock = {
+      id: 'edit-second',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: {
+        patch: '*** Begin Patch\n*** Update File: /tmp/project/src/main.ts\n*** End Patch',
+      },
+      status: 'done',
+      createdAt: 1770000005000,
+      completedAt: 1770000011750,
+    }
+    const fileChanges: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        file_count: 2,
+        files: [
+          completedFileChangesBlock.fileChanges.files[0],
+          {
+            path: 'src/main.ts',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+
+    render(<ToolBlocksDisplay blocks={[firstEdit, secondEdit, fileChanges]} isStreaming={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /编辑 2 个文件 已处理/ }))
+
+    expect(screen.getByRole('button', { name: /编辑 env/ })).toHaveTextContent('4.3s')
+    expect(screen.getByRole('button', { name: /编辑 main.ts/ })).toHaveTextContent('6.8s')
+    expect(screen.queryByText('0.0s')).not.toBeInTheDocument()
+  })
+
   test('counts edited files separately from tool calls', () => {
     const multiFileChangesBlock: ProcessingBlock = {
       ...completedFileChangesBlock,
@@ -1183,6 +1234,31 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.queryByTestId('processing-summary-toggle')).not.toBeInTheDocument()
     expect(screen.getByText(/\d+ 秒/)).toBeInTheDocument()
+  })
+
+  test('shows a subtle one-line reconnecting status only while it is active', () => {
+    const reconnectingBlock: ProcessingBlock = {
+      id: 'reconnecting-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'runtime_reconnecting',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />
+    )
+
+    const status = screen.getByTestId('runtime-reconnecting-status')
+    expect(status).toHaveTextContent('连接中断，正在重连…')
+    expect(status).toHaveClass('truncate')
+    expect(status.firstElementChild).toHaveClass('tool-activity-shimmer')
+
+    rerender(
+      <ToolBlocksDisplay blocks={[{ ...reconnectingBlock, status: 'done' }]} isStreaming={true} />
+    )
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
   })
 
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {

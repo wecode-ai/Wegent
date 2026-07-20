@@ -207,7 +207,9 @@ export function reduceWorkbenchMessages<
         limitWorkbenchMessage
       )
     case 'user_added':
-      return [...state, action.message]
+      return normalizeUniqueWorkbenchMessages([...state, action.message]).map(
+        limitWorkbenchMessage
+      )
     case 'assistant_started':
       if (
         state.some((message) => isAssistantMessageForAction(message, action))

@@ -28,6 +28,8 @@ const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response 
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
+const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
+const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const GIT_SEED_NAME = 'README.md'
@@ -70,6 +72,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
 const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
+const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -545,6 +548,61 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
 }
 
+async function verifyReconnectRecovery({ composerSelector, control }) {
+  control.setScenario('reconnect')
+  await sendPromptUntilScenarioRequest(control, composerSelector, RECONNECT_PROMPT, 'reconnect')
+  await withTimeout(
+    control.awaitReconnectResponseStarted(),
+    UI_TIMEOUT_MS,
+    'The reconnect response stream did not start'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-01-streaming.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  control.disconnectReconnectResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-02-reconnecting.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  await withTimeout(
+    control.awaitScenarioRequestCount('reconnect', 2),
+    UI_TIMEOUT_MS,
+    'Codex did not retry the disconnected response stream'
+  )
+  control.releaseReconnectResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: RECONNECT_COMPLETION_TEXT, timeoutMs: UI_TIMEOUT_MS }
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('runtime-reconnecting-status'),
+    false,
+    'The reconnecting status remained after model output recovered'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-03-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -783,6 +841,15 @@ class DesktopE2EServer {
     this.requestUserInputResponseWritten = new Promise(resolvePromise => {
       this.resolveRequestUserInputResponseWritten = resolvePromise
     })
+    this.reconnectDisconnectRelease = new Promise(resolvePromise => {
+      this.releaseReconnectDisconnect = resolvePromise
+    })
+    this.reconnectResponseStarted = new Promise(resolvePromise => {
+      this.resolveReconnectResponseStarted = resolvePromise
+    })
+    this.reconnectCompletionRelease = new Promise(resolvePromise => {
+      this.releaseReconnectCompletion = resolvePromise
+    })
     this.windowLifecycleRelease = new Promise(resolvePromise => {
       this.releaseWindowLifecycle = resolvePromise
     })
@@ -927,6 +994,7 @@ class DesktopE2EServer {
         'window_lifecycle',
         'cancellation',
         'retry',
+        'reconnect',
         'fresh_chat',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
@@ -955,6 +1023,13 @@ class DesktopE2EServer {
     )
   }
 
+  async awaitScenarioRequestCount(scenario, count) {
+    while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    return this.scenarioRequests.get(scenario).at(-1)
+  }
+
   releaseInitialToolExecution() {
     this.releaseInitialTool()
   }
@@ -966,6 +1041,18 @@ class DesktopE2EServer {
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
     return this.requestUserInputResponseWritten
+  }
+
+  awaitReconnectResponseStarted() {
+    return this.reconnectResponseStarted
+  }
+
+  disconnectReconnectResponse() {
+    this.releaseReconnectDisconnect()
+  }
+
+  releaseReconnectResponse() {
+    this.releaseReconnectCompletion()
   }
 
   awaitWindowLifecycleResponseStarted() {
@@ -1339,6 +1426,35 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(RETRY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'reconnect') {
+      this.recordScenarioRequest('reconnect', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(RECONNECT_PROMPT),
+        'The real Codex request did not contain the reconnect prompt'
+      )
+      const reconnectRequests = this.scenarioRequests.get('reconnect') ?? []
+      if (reconnectRequests.length === 1) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        this.resolveReconnectResponseStarted()
+        await this.reconnectDisconnectRelease
+        response.destroy()
+        return
+      }
+      await this.reconnectCompletionRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(RECONNECT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -2223,6 +2339,17 @@ async function main() {
     const initialModelLabel = await control.command('waitFor', activeModelSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    if (RECONNECT_ONLY) {
+      phase = 'reconnect'
+      await verifyReconnectRecovery({ composerSelector, control })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop reconnect E2E passed. Evidence: ${resultDir}`)
+      return
+    }
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
     await withTimeout(
@@ -2561,6 +2688,9 @@ async function main() {
       2,
       'Retry did not issue exactly one additional request for the failed user message'
     )
+
+    phase = 'reconnect'
+    await verifyReconnectRecovery({ composerSelector, control })
 
     phase = 'fresh-chat'
     control.setScenario('fresh_chat')
