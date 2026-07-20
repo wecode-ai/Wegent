@@ -589,6 +589,44 @@ async def send_runtime_message(
     return _runtime_send_response(result, address.local_task_id)
 
 
+async def interrupt_and_send_runtime_message(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeSendRequest,
+) -> RuntimeSendResponse:
+    """Interrupt the active turn and immediately continue the same LocalTask."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    payload = {
+        **_runtime_task_address_payload(address),
+        "message": request.message,
+    }
+    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    if attachments:
+        payload["attachments"] = attachments
+    if request.source:
+        payload["source"] = request.source.model_dump()
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.interrupt_and_send",
+            payload=payload,
+            timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_send_response(result, address.local_task_id)
+
+
 async def send_runtime_guidance(
     *,
     db: Session,

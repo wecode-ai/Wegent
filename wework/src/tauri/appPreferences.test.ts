@@ -14,9 +14,11 @@ vi.mock('@/lib/runtime-environment', () => ({
 const mergedDefaultPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
+  experimentalFeaturesEnabled: false,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -101,6 +103,36 @@ describe('appPreferences', () => {
       browserExternalLinkTarget: 'wework',
       browserDownloadDirectory: '/tmp/downloads',
       browserAskBeforeDownload: true,
+    })
+  })
+
+  test('preserves attachment-only stash phrases', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      quickPhrases: [
+        {
+          id: 'stash-file',
+          title: 'image.png',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/image.png'],
+        },
+      ],
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      quickPhrases: [
+        {
+          id: 'stash-file',
+          title: 'image.png',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/image.png'],
+        },
+      ],
     })
   })
 

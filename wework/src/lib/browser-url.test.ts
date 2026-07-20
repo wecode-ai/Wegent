@@ -13,11 +13,15 @@ describe('browser URL helpers', () => {
   test('allows application assets only from the current Tauri origin', () => {
     expect(
       normalizeBrowserUrl(
-        'tauri://localhost/vnc.html?sessionId=123e4567-e89b-42d3-a456-426614174000',
+        'tauri://localhost/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000',
         'tauri://localhost/'
       )
-    ).toBe('tauri://localhost/vnc.html?sessionId=123e4567-e89b-42d3-a456-426614174000')
-    expect(normalizeBrowserUrl('tauri://other-host/vnc.html', 'tauri://localhost/')).toBeNull()
-    expect(normalizeBrowserUrl('custom://localhost/vnc.html', 'tauri://localhost/')).toBeNull()
+    ).toBe('tauri://localhost/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000')
+    expect(
+      normalizeBrowserUrl('tauri://other-host/extension-page.html', 'tauri://localhost/')
+    ).toBe(null)
+    expect(
+      normalizeBrowserUrl('custom://localhost/extension-page.html', 'tauri://localhost/')
+    ).toBe(null)
   })
 })

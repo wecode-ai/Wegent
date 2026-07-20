@@ -12,7 +12,9 @@ describe('cloud desktop fallback extension', () => {
 
     expect(cloudDesktopExtension.available).toBe(false)
     expect(view.container).toBeEmptyDOMElement()
-    expect(cloudDesktopExtension.isInternalPageUrl('tauri://localhost/vnc.html')).toBe(false)
+    expect(cloudDesktopExtension.isInternalPageUrl('tauri://localhost/extension-page.html')).toBe(
+      false
+    )
     await expect(
       cloudDesktopExtension.open({
         connection: { isConnected: false, token: null },

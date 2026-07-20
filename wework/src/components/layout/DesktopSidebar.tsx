@@ -35,6 +35,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
@@ -70,7 +71,11 @@ import {
   getRuntimeProjectSidebarStateKey,
 } from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import {
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
 import type {
   DeviceInfo,
   RuntimeTaskSummary,
@@ -189,6 +194,11 @@ interface DesktopSidebarProps {
     workspacePath: string,
     label?: string
   ) => Promise<void> | void
+  onCreatePermanentWorktree?: (data: {
+    deviceId: string
+    sourcePath: string
+    name: string
+  }) => Promise<void>
   onSelectStandaloneDevice?: (deviceId: string | null) => void
   onGetRemoteDeviceStartupCommand?: () => Promise<DockerRemoteDeviceCommandResponse>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -471,7 +481,7 @@ function SidebarButton({
       aria-current={selected ? 'page' : undefined}
       onClick={onClick}
       className={[
-        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-sm font-normal leading-5',
+        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -1644,7 +1654,7 @@ function RuntimeTaskRow({
           }}
           onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
           className={cn(
-            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-sm leading-5',
+            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-base leading-5',
             indentClassName,
             disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
             selected
@@ -1871,6 +1881,7 @@ function ProjectItem({
   sidebarStateDeviceId,
   onStartNewProjectChat,
   onRemoveProject,
+  onCreatePermanentWorktree,
   onSetRuntimeProjectPinned,
   onSetRuntimeProjectAppearance,
   onReorderRuntimeProjectTasks,
@@ -1895,6 +1906,11 @@ function ProjectItem({
   sidebarStateDeviceId?: string | null
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
+  onCreatePermanentWorktree?: (data: {
+    deviceId: string
+    sourcePath: string
+    name: string
+  }) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
@@ -1934,6 +1950,7 @@ function ProjectItem({
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
   const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
+  const [createPermanentWorktreeOpen, setCreatePermanentWorktreeOpen] = useState(false)
   const [removingProject, setRemovingProject] = useState(false)
   const [optimisticProjectPinned, setOptimisticProjectPinned] = useState<{
     base: boolean
@@ -1970,6 +1987,9 @@ function ProjectItem({
     Boolean(onArchiveProjectConversations) &&
     !projectArchiving
   const finderWorkspacePath = getProjectFinderWorkspacePath(project, runtimeProjectWork, devices)
+  const permanentWorktreeSource = runtimeWorkspaces?.find(
+    workspace => workspace.deviceId.trim() && workspace.workspacePath.trim()
+  )
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
@@ -2124,7 +2144,7 @@ function ProjectItem({
             event.stopPropagation()
             setProjectMenuPosition({ left: event.clientX, top: event.clientY })
           }}
-          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-sm leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
           <button
             type="button"
@@ -2231,6 +2251,13 @@ function ProjectItem({
                     ]
                   : []),
                 {
+                  label: t('workbench.create_permanent_worktree'),
+                  icon: GitCompareArrows,
+                  testId: `create-permanent-worktree-${project.id}`,
+                  disabled: !permanentWorktreeSource || !onCreatePermanentWorktree,
+                  onSelect: () => setCreatePermanentWorktreeOpen(true),
+                },
+                {
                   label: projectArchiving
                     ? t('workbench.archiving_conversations', '归档中...')
                     : t('workbench.archive_project_conversations', '归档对话'),
@@ -2267,6 +2294,26 @@ function ProjectItem({
           </div>
         </div>
       </SidebarHoverCard>
+      <TextInputDialog
+        open={createPermanentWorktreeOpen}
+        title={t('workbench.create_permanent_worktree_title')}
+        description={t('workbench.create_permanent_worktree_description')}
+        label={t('workbench.project_name')}
+        initialValue={`${project.name}_2`}
+        confirmLabel={t('workbench.create')}
+        cancelLabel={t('workbench.cancel')}
+        inputTestId={`permanent-worktree-name-${project.id}`}
+        confirmTestId={`confirm-create-permanent-worktree-${project.id}`}
+        onClose={() => setCreatePermanentWorktreeOpen(false)}
+        onSubmit={async name => {
+          if (!permanentWorktreeSource || !onCreatePermanentWorktree) return
+          await onCreatePermanentWorktree({
+            deviceId: permanentWorktreeSource.deviceId,
+            sourcePath: permanentWorktreeSource.workspacePath,
+            name,
+          })
+        }}
+      />
       <div
         data-testid={`project-local-tasks-panel-${project.id}`}
         aria-hidden={!expanded}
@@ -2462,6 +2509,7 @@ export function DesktopSidebar({
   onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
+  onCreatePermanentWorktree,
   onSelectStandaloneDevice,
   onGetRemoteDeviceStartupCommand,
   onUpdateProjectName,
@@ -2488,7 +2536,10 @@ export function DesktopSidebar({
   onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
@@ -2967,11 +3018,11 @@ export function DesktopSidebar({
       onPointerLeave={onPointerLeave}
       className={cn(
         'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
-        appearance.backgroundImagePath && appearance.backgroundInSidebar
+        background.imagePath && background.inSidebar
           ? 'bg-background/25'
           : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
         !windowFocused &&
-          !(appearance.backgroundImagePath && appearance.backgroundInSidebar) &&
+          !(background.imagePath && background.inSidebar) &&
           'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
@@ -3010,6 +3061,7 @@ export function DesktopSidebar({
                   if (app === 'wework') onOpenWorkbench?.()
                   if (app === 'todo') onOpenTodo?.()
                   if (app === 'apps') onOpenApps?.()
+                  if (app === 'wegent') navigateTo('/app/wegent')
                 }}
               />
             </div>
@@ -3060,13 +3112,15 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
-              <SidebarButton
-                icon={Grid3X3}
-                label={t('workbench.sites', '站点')}
-                testId="sites-button"
-                selected={activeItem === 'sites'}
-                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
-              />
+              {(experimentalFeaturesEnabled || activeItem === 'sites') && (
+                <SidebarButton
+                  icon={Grid3X3}
+                  label={t('workbench.sites', '站点')}
+                  testId="sites-button"
+                  selected={activeItem === 'sites'}
+                  onClick={onOpenSites ?? (() => navigateTo('/sites'))}
+                />
+              )}
               {showCloudConnectionEntry && (
                 <CloudConnectionSidebarButton
                   devices={devices}
@@ -3196,6 +3250,7 @@ export function DesktopSidebar({
                         onToggleProject={handleToggleProject}
                         onStartNewProjectChat={onStartNewProjectChat}
                         onRemoveProject={onRemoveProject}
+                        onCreatePermanentWorktree={onCreatePermanentWorktree}
                         onReorderRuntimeProjects={onReorderRuntimeProjects}
                         onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                         onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
@@ -3370,6 +3425,7 @@ export function DesktopSidebar({
                       onToggleProject={handleToggleProject}
                       onStartNewProjectChat={onStartNewProjectChat}
                       onRemoveProject={onRemoveProject}
+                      onCreatePermanentWorktree={onCreatePermanentWorktree}
                       onReorderRuntimeProjects={onReorderRuntimeProjects}
                       onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                       onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}

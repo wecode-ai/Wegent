@@ -9,7 +9,7 @@ const cloudDesktopExtensionMock = vi.hoisted(() => ({
   DeviceAction: vi.fn(),
   isInternalPageUrl: vi.fn((value: string) => {
     try {
-      return new URL(value, 'http://localhost').pathname.endsWith('/vnc.html')
+      return new URL(value, 'http://localhost').pathname.endsWith('/extension-page.html')
     } catch {
       return false
     }
@@ -902,7 +902,7 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('exits annotation mode before navigating to an internal VNC page', async () => {
+  test('exits annotation mode before navigating to an internal extension page', async () => {
     mockBrowserHostRect()
     const onAddCodeComment = vi.fn()
     let resolvePendingAnnotations!: (
@@ -946,19 +946,19 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalled())
 
     embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
-    const vncUrl = new URL(
-      '/vnc.html?sessionId=123e4567-e89b-42d3-a456-426614174000&sandboxId=sandbox-1',
+    const extensionUrl = new URL(
+      '/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000&contextId=context-1',
       window.location.href
     ).toString()
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
-      title: '云桌面 - sandbox-1',
-      url: vncUrl,
+      title: 'Extension page - context-1',
+      url: extensionUrl,
     })
     rerender(
       <WorkspaceBrowserPanel
         active
-        openRequest={{ id: 1, label: 'workspace-browser', url: vncUrl }}
+        openRequest={{ id: 1, label: 'workspace-browser', url: extensionUrl }}
         onAddCodeComment={onAddCodeComment}
       />
     )
@@ -968,7 +968,7 @@ describe('WorkspaceBrowserPanel', () => {
         screen.queryByTestId('workspace-browser-annotation-close-button')
       ).not.toBeInTheDocument()
     })
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue(vncUrl)
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue(extensionUrl)
     expect(screen.getByTestId('workspace-browser-annotate-button')).toBeDisabled()
     expect(screen.getByTestId('workspace-browser-open-external-button')).toBeDisabled()
     resolvePendingAnnotations([
@@ -998,7 +998,7 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('cleans the annotation layer when browser history reaches an internal VNC page', async () => {
+  test('cleans the annotation layer when browser history reaches an internal extension page', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active onAddCodeComment={vi.fn()} />)
 
@@ -1011,14 +1011,14 @@ describe('WorkspaceBrowserPanel', () => {
     await screen.findByTestId('workspace-browser-annotation-close-button')
     embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
 
-    const vncUrl = new URL(
-      '/vnc.html?sessionId=123e4567-e89b-42d3-a456-426614174000&sandboxId=sandbox-1',
+    const extensionUrl = new URL(
+      '/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000&contextId=context-1',
       window.location.href
     ).toString()
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
       nativeLabel: 'workspace-browser-native-1',
-      title: '云桌面 - sandbox-1',
-      url: vncUrl,
+      title: 'Extension page - context-1',
+      url: extensionUrl,
     })
 
     await waitFor(
@@ -1029,7 +1029,7 @@ describe('WorkspaceBrowserPanel', () => {
       },
       { timeout: 5_000 }
     )
-    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue(vncUrl)
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue(extensionUrl)
     expect(embeddedBrowserMocks.evalEmbeddedBrowser).toHaveBeenCalledWith(
       expect.stringContaining('__weworkBrowserAnnotationClose'),
       'workspace-browser'
@@ -1040,7 +1040,7 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('uses the latest annotation mode when a pending page read reaches VNC', async () => {
+  test('uses the latest annotation mode when a pending page read reaches an extension page', async () => {
     mockBrowserHostRect()
     render(<WorkspaceBrowserPanel active onAddCodeComment={vi.fn()} />)
 
@@ -1068,15 +1068,15 @@ describe('WorkspaceBrowserPanel', () => {
     await screen.findByTestId('workspace-browser-annotation-close-button')
     embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
 
-    const vncUrl = new URL(
-      '/vnc.html?sessionId=123e4567-e89b-42d3-a456-426614174000&sandboxId=sandbox-1',
+    const extensionUrl = new URL(
+      '/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000&contextId=context-1',
       window.location.href
     ).toString()
     await act(async () => {
       resolvePageState({
         nativeLabel: 'workspace-browser-native-1',
-        title: '云桌面 - sandbox-1',
-        url: vncUrl,
+        title: 'Extension page - context-1',
+        url: extensionUrl,
       })
       await pendingPageState
     })
@@ -1125,22 +1125,22 @@ describe('WorkspaceBrowserPanel', () => {
     firstView.unmount()
     render(<WorkspaceBrowserPanel active />)
 
-    const vncUrl = new URL(
-      '/vnc.html?sessionId=123e4567-e89b-42d3-a456-426614174000&sandboxId=stale-sandbox',
+    const extensionUrl = new URL(
+      '/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000&contextId=stale-context',
       window.location.href
     ).toString()
     await act(async () => {
       resolvePageState({
         nativeLabel: 'workspace-browser-native-1',
-        title: '云桌面 - stale-sandbox',
-        url: vncUrl,
+        title: 'Extension page - stale-context',
+        url: extensionUrl,
       })
       await pendingPageState
     })
 
-    expect(staleTitleChange).not.toHaveBeenCalledWith('云桌面 - stale-sandbox')
+    expect(staleTitleChange).not.toHaveBeenCalledWith('Extension page - stale-context')
     expect(embeddedBrowserMocks.evalEmbeddedBrowser).not.toHaveBeenCalled()
-    expect(screen.getByTestId('workspace-browser-url-input')).not.toHaveValue(vncUrl)
+    expect(screen.getByTestId('workspace-browser-url-input')).not.toHaveValue(extensionUrl)
   })
 
   test('does not let a pending annotation injection clear a remounted browser label', async () => {

@@ -37,11 +37,17 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 - 页面加载事件负责把当前 URL 写入应用状态。不要在 IPC 或自定义协议处理期间同步读取原生 WebView URL；macOS WebKit 在 WebView 创建或销毁期间可能暂时没有 URL。
 - 嵌入式浏览器使用标准 Safari 兼容 User-Agent，避免网站把缺少浏览器产品标识的 WebKit User-Agent 识别为不受支持的客户端。
 
-## 云设备桌面 VNC
+## 可选云桌面扩展
 
-“设置 → 连接”中的云设备桌面按钮和项目工作区中的桌面入口都复用当前 Wework 内置浏览器。前端先读取 `GET /api/cloud-devices/{device_id}/vnc-config`，再通过 `/vnc-proxy/{device_id}` 建立 noVNC WebSocket 连接。
+公开版 Wework 只定义云桌面的扩展契约和不可用时的默认实现，不包含具体远程桌面协议、鉴权接口、代理、页面或第三方客户端资源。工作台和设备设置页只能通过 `src/extensions/cloud-desktop-contract.ts` 使用该能力；默认实现的 `available` 为 `false`，因此不会展示桌面入口。
 
-WebSocket 地址和 Bearer token 不得放入浏览器地址、历史记录或 React 可见路由。前端调用 `prepare_vnc_session`，把连接信息写入 Tauri Rust 进程中的两分钟内存交接会话；浏览器只打开 `/vnc.html?sessionId=...&sandboxId=...`，页面再通过 `get_vnc_session_config` IPC 读取凭据。两分钟只限制主 WebView 向 VNC 页交接凭据；首次读取后，VNC 页会在自身生命周期内缓存认证 WebSocket 地址，断线重试不受该交接期限限制。完整刷新页面后，如果交接会话已经过期，则必须从云设备入口重新打开桌面。
+产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。实现负责完成连接、在内置浏览器中打开页面，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。不要在公开组件中增加具体 VNC API、`vnc.html` 或 noVNC 资源作为回退路径。
+
+### Wecode VNC 实现
+
+Wecode 发行版在“设置 → 连接”和项目工作区中提供云设备桌面入口，两个入口都复用当前 Wework 内置浏览器。扩展先读取 `GET /api/cloud-devices/{device_id}/vnc-config`，再通过 `/vnc-proxy/{device_id}` 建立 noVNC WebSocket 连接。
+
+WebSocket 地址和 Bearer token 不得放入浏览器地址、历史记录或 React 可见路由。扩展调用 `prepare_vnc_session`，把连接信息写入 Tauri Rust 进程中的两分钟内存交接会话；浏览器只打开 `/vnc.html?sessionId=...&sandboxId=...`，页面再通过 `get_vnc_session_config` IPC 读取凭据。两分钟只限制主 WebView 向 VNC 页交接凭据；首次读取后，VNC 页会在自身生命周期内缓存认证 WebSocket 地址，断线重试不受该交接期限限制。完整刷新页面后，如果交接会话已经过期，则必须从云设备入口重新打开桌面。
 
 内部 VNC 页面只在 noVNC 真实连接成功后设置连接标记。断开或连接失败时必须清除该标记，并提供重试状态。为避免凭据或内部页面被导出，VNC 页面不允许使用系统浏览器打开，也不提供网页批注模式。
 

@@ -18,12 +18,15 @@ EXPLICIT_VITE_WEGENT_BACKEND_URL_VALUE="${VITE_WEGENT_BACKEND_URL:-}"
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-branding.sh
+source "$SCRIPT_DIR/lib/wework-branding.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
 TAURI_BUNDLES="${WEWORK_TAURI_BUNDLES:-nsis}"
 RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
 TAURI_CONFIG_PATH="${WEWORK_TAURI_CONFIG:-}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 
 usage() {
   cat <<'EOF'
@@ -35,6 +38,7 @@ Options:
   --bundles <bundles>      Tauri bundles to package, e.g. nsis or nsis,msi.
   --config <path>          Additional Tauri JSON config merged into the build.
   --devtools               Enable Web Inspector support in release builds.
+  --brand-config <path>    Brand identity JSON used for this app bundle.
   -h, --help               Show this help message.
 
 Environment:
@@ -44,6 +48,7 @@ Environment:
   WEWORK_RELEASE_DEVTOOLS   Set to 1 to compile Tauri devtools into release builds.
   WEWORK_TAURI_CONFIG       Default additional Tauri JSON config path.
   WEWORK_SKIP_ENV_FILE      Set to 1 when the caller already loaded environment files.
+  WEWORK_BRAND_CONFIG       Default brand identity JSON.
 
 Examples:
   bash wework/scripts/build-windows-app.sh --profile dev
@@ -127,6 +132,19 @@ while [ "$#" -gt 0 ]; do
       RELEASE_DEVTOOLS="1"
       shift
       ;;
+    --brand-config)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a config path." >&2
+        usage
+        exit 1
+      fi
+      BRAND_CONFIG="$2"
+      shift 2
+      ;;
+    --brand-config=*)
+      BRAND_CONFIG="${1#*=}"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -151,6 +169,14 @@ if [ -n "$TAURI_CONFIG_PATH" ]; then
   TAURI_CONFIG_PATH="$(cd "$(dirname "$TAURI_CONFIG_PATH")" && pwd)/$(basename "$TAURI_CONFIG_PATH")"
 fi
 
+if [ -n "$BRAND_CONFIG" ]; then
+  if [ ! -f "$BRAND_CONFIG" ]; then
+    echo "Error: brand config not found: $BRAND_CONFIG" >&2
+    exit 1
+  fi
+  BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
+fi
+
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 DEFAULT_SOCKET_BASE_URL="${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}"
@@ -165,6 +191,7 @@ echo "  BACKEND_PORT=$BACKEND_PORT"
 echo "  WINDOWS_BUILD_TARGET=$WINDOWS_BUILD_TARGET"
 echo "  TAURI_BUNDLES=${TAURI_BUNDLES:-<default>}"
 echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
+echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
 echo "  VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
@@ -190,11 +217,17 @@ RUSTFLAGS="-C target-feature=+crt-static" cargo xwin build "${CARGO_PROFILE_ARGS
 mkdir -p "$SIDE_CAR_DIR"
 cp "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$BUILD_PROFILE/$EXECUTOR_BINARY_NAME" "$SIDE_CAR_DIR/$SIDE_CAR_NAME"
 
+# Tauri's build.rs looks for the sidecar in executor/dist/ before falling back
+# to wework/src-tauri/binaries/, so keep the two locations in sync.
+mkdir -p "$EXECUTOR_DIR/dist"
+cp "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$BUILD_PROFILE/$EXECUTOR_BINARY_NAME" "$EXECUTOR_DIR/dist/$EXECUTOR_BINARY_NAME"
+
 cd "$WEWORK_DIR"
 CONFIG_OVERRIDE=""
 cleanup() {
   if [ -n "$CONFIG_OVERRIDE" ]; then
     rm -f "$CONFIG_OVERRIDE"
+    rm -f "$CONFIG_OVERRIDE.namespace"
   fi
 }
 trap cleanup EXIT
@@ -205,41 +238,13 @@ TAURI_ARGS+=(--target "$WINDOWS_BUILD_TARGET")
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
-if [ "$RELEASE_DEVTOOLS" = "1" ] || [ -n "$TAURI_CONFIG_PATH" ]; then
-  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.windows-build.json.XXXXXX")"
-  BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
-  INPUT_CONFIG="$TAURI_CONFIG_PATH" \
-  ENABLE_DEVTOOLS="$RELEASE_DEVTOOLS" \
-  CONFIG_OVERRIDE="$CONFIG_OVERRIDE" \
-    uv run --project "$PROJECT_DIR/backend" python - <<'PY'
-import json
-import os
-
-with open(os.environ["BASE_CONFIG"], "r", encoding="utf-8") as handle:
-    base_config = json.load(handle)
-
-config = {}
-input_config = os.environ["INPUT_CONFIG"]
-if input_config:
-    with open(input_config, "r", encoding="utf-8") as handle:
-        config = json.load(handle)
-
-if os.environ["ENABLE_DEVTOOLS"] == "1":
-    windows = base_config.get("app", {}).get("windows", [])
-    config["app"] = {
-        "windows": [
-            {
-                **window,
-                "devtools": True,
-            }
-            for window in windows
-        ],
-    }
-
-with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2)
-    handle.write("\n")
-PY
+if [ -n "$BRAND_CONFIG" ] || [ "$RELEASE_DEVTOOLS" = "1" ] || [ -n "$TAURI_CONFIG_PATH" ]; then
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.XXXXXX.json")"
+  wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "${RELEASE_DEVTOOLS:-0}" "$CONFIG_OVERRIDE" "$TAURI_CONFIG_PATH"
+  if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
+    export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"
+    rm -f "$CONFIG_OVERRIDE.namespace"
+  fi
   if [ "$RELEASE_DEVTOOLS" = "1" ]; then
     TAURI_ARGS+=(--features release-devtools)
   fi

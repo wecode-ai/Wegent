@@ -1416,7 +1416,8 @@ mod tests {
     #[test]
     fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
         let external_url = tauri::Url::parse("https://example.com/").unwrap();
-        let app_url = tauri::Url::parse("tauri://localhost/vnc.html?sessionId=test").unwrap();
+        let app_url =
+            tauri::Url::parse("tauri://localhost/extension-page.html?sessionId=test").unwrap();
 
         assert!(matches!(
             browser_webview_url(external_url),

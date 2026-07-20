@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
 import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
 import { CloudConnectionProvider } from './CloudConnectionProvider'
+import { saveStoredCloudConnection } from './cloudConnectionStorage'
 import { useCloudConnection } from './useCloudConnection'
 
 const httpMocks = vi.hoisted(() => ({
@@ -46,6 +47,16 @@ function CloudConnectProbe({
     >
       connect
     </button>
+  )
+}
+
+function CloudSocketProbe() {
+  const cloud = useCloudConnection()
+  return (
+    <>
+      <span data-testid="cloud-connection-status">{cloud.status}</span>
+      <span data-testid="cloud-socket-base-url">{cloud.socketBaseUrl}</span>
+    </>
   )
 }
 
@@ -125,6 +136,72 @@ describe('CloudConnectionProvider', () => {
     expect(createHttpClient).toHaveBeenCalled()
     expect(httpMocks.post).toHaveBeenCalledWith('/auth/wework/sessions')
     expect(closeAuthorizationWindow).toHaveBeenCalled()
+  })
+
+  it('migrates the default backend to the packaged socket endpoint', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      apiBaseUrl: 'https://cloud.example.com/api',
+      wegentBackendUrl: '',
+      socketBaseUrl: 'https://wss-cloud.example.com',
+      socketPath: '/socket.io',
+    }
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    })
+    httpMocks.get.mockResolvedValueOnce({
+      id: 7,
+      user_name: 'alice',
+      email: 'alice@example.com',
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(
+      'https://wss-cloud.example.com'
+    )
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl).toBe(
+        'https://wss-cloud.example.com'
+      )
+    })
+  })
+
+  it('discards a stored connection with an invalid backend URL', () => {
+    localStorage.setItem(
+      'wework.cloudConnection',
+      JSON.stringify({
+        backendUrl: '',
+        apiBaseUrl: 'https://cloud.example.com/api',
+        socketBaseUrl: 'https://cloud.example.com',
+        socketPath: '/socket.io',
+        token: 'cloud-token',
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-20T00:00:00.000Z',
+      })
+    )
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+    expect(httpMocks.get).not.toHaveBeenCalled()
   })
 
   it('keeps the cloud connection when closing the authorization window fails after success', async () => {

@@ -34,7 +34,7 @@ import {
 import { TaskForkDialog } from './TaskForkDialog'
 import {
   CachedWorkbenchPaneStack,
-  getRunningRuntimeWorkbenchPaneKeys,
+  getRuntimeWorkbenchPaneKeys,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
@@ -47,6 +47,7 @@ import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import {
   defaultAppearance,
+  getWorkbenchBackground,
   useOptionalAppearance,
   WorkbenchBackground,
 } from '@/features/appearance'
@@ -54,14 +55,16 @@ import { cn } from '@/lib/utils'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
     standaloneChatKey: state.standaloneChatKey,
   }
   const pinnedPaneKeys = useMemo(
-    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
 
@@ -72,11 +75,7 @@ export function MobileWorkbenchLayout() {
         activePane={activePane}
         maxPanes={1}
         pinnedKeys={pinnedPaneKeys}
-        className={
-          appearance.backgroundImagePath && appearance.backgroundInMain
-            ? 'h-dvh bg-background/20'
-            : 'h-dvh'
-        }
+        className={background.imagePath && background.inMain ? 'h-dvh bg-background/20' : 'h-dvh'}
         renderPane={renderMobileWorkbenchPane}
       />
     </div>
@@ -92,7 +91,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
 }: {
   pane: WorkbenchPaneIdentity
 }) {
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const {
     state,
     upgradingDevices,
@@ -197,10 +198,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    paneSession.status.isSubmitting ||
-    activeDeviceUnavailable ||
-    activeDeviceVersionUnsupported ||
-    noStandaloneCompatibleDevice
+    activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
         device:
@@ -258,9 +256,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     <div
       className={cn(
         'flex h-full overflow-hidden text-text-primary',
-        appearance.backgroundImagePath && appearance.backgroundInMain
-          ? 'bg-background/20'
-          : 'bg-background'
+        background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
       )}
     >
       <main className="flex h-full min-h-0 w-full flex-col overflow-hidden">
@@ -270,7 +266,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               data-testid="mobile-conversation-header"
               className={cn(
                 'pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
-                appearance.backgroundImagePath && appearance.backgroundInTopBar
+                background.imagePath && background.inTopBar
                   ? 'bg-background/20'
                   : 'bg-background/95 backdrop-blur'
               )}
@@ -418,6 +414,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}
+                    submitDisabled={paneSession.status.isSubmitting}
                     error={paneSession.error}
                     disabledReason={inlineComposerDisabledReason}
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
@@ -439,6 +436,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                     onClearQueue={paneSession.clearQueuedMessages}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                    onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
                     onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                     onClearCodeComments={paneSession.clearCodeComments}
@@ -453,7 +451,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               data-testid="mobile-empty-header"
               className={cn(
                 'flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]',
-                appearance.backgroundImagePath && appearance.backgroundInTopBar
+                background.imagePath && background.inTopBar
                   ? 'bg-background/20'
                   : 'bg-background/95'
               )}
@@ -521,6 +519,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 onChange={paneSession.setInput}
                 onSubmit={paneSession.send}
                 disabled={composerDisabled}
+                submitDisabled={paneSession.status.isSubmitting}
                 error={paneSession.error}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
@@ -542,6 +541,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
                 onClearQueue={paneSession.clearQueuedMessages}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
                 onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                 onClearCodeComments={paneSession.clearCodeComments}

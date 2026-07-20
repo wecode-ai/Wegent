@@ -82,6 +82,8 @@ wegent-standalone stop
 
 下载并安装 Wework，打开一个本地项目即可开始 AI Coding。Wework 自带本地执行能力，也可以在设置中连接团队部署的 Wegent。
 
+任务执行期间，Wework 会持续展示最新工具调用；工具列表默认显示约 3.5 行并可滚动，当前最新一行和仍在运行的工具会以扫光效果提示，命令输出、搜索详情和文件变更可逐项展开。中间过程文本只结束当前工具段，并继续以“已调用工具”汇总显示；最终回答开始后，处理过程会收起为带分隔线的“已处理”条目，展开后仍使用相同的工具列表。
+
 **[下载 Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
 ### Wegent Web 部署方式
@@ -343,17 +345,17 @@ graph TB
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/fingki">
                     <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
                     <br />
                     <sub><b>Fingki</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/flyhope">
-                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
-                    <br />
-                    <sub><b>李枨煊</b></sub>
                 </a>
             </td>
 		</tr>
@@ -363,6 +365,13 @@ graph TB
                     <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
                     <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/flyhope">
+                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
+                    <br />
+                    <sub><b>李枨煊</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -391,13 +400,6 @@ graph TB
                     <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
                     <br />
                     <sub><b>Li Daiyan</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/sdadunderscoresdad">
-                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
-                    <br />
-                    <sub><b>+7</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -474,6 +476,13 @@ graph TB
             </td>
 		</tr>
 		<tr>
+            <td align="center">
+                <a href="https://github.com/Qinxl0921">
+                    <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
+                    <br />
+                    <sub><b>qinxll</b></sub>
+                </a>
+            </td>
             <td align="center">
                 <a href="https://github.com/salt-hai">
                     <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>

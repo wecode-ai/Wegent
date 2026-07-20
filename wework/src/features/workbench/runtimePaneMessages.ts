@@ -20,7 +20,7 @@ import type {
 } from '@/types/api'
 import type { MessageSource, ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { stripCodexUiDirectives } from '@/lib/codex-directives'
-import { normalizeTurnFileChanges } from './turnFileChanges'
+import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
@@ -44,6 +44,8 @@ export function createRuntimeTaskStreamHandlers(
   address: RuntimeTaskAddress,
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
+  const streamedFileChanges = new Map<string, Map<string, TurnFileChangesSummary>>()
+
   return {
     scope: {
       deviceId: address.deviceId,
@@ -112,15 +114,28 @@ export function createRuntimeTaskStreamHandlers(
       })
     },
     onChatDone: payload => {
-      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      if (!isRuntimeTaskStreamPayload(address, payload)) {
+        warnAndDropMismatchedRuntimeTerminalEvent('chat:done', address, payload)
+        return
+      }
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:done', address, payload)
         return
       }
+      const blocks = getResultBlocks(identity.subtaskId, payload.result)
+      const fileChanges =
+        normalizeTurnFileChanges(payload.result.fileChanges) ??
+        fileChangesFromBlocks(blocks) ??
+        mergeTurnFileChanges([...(streamedFileChanges.get(identity.subtaskId)?.values() ?? [])])
+      streamedFileChanges.delete(identity.subtaskId)
       debugRuntimeStreamEvent('chat:done', address, payload, true, {
-        hasFileChanges: Boolean(normalizeTurnFileChanges(payload.result.fileChanges)),
-        blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
+        hasFileChanges: Boolean(fileChanges),
+        blockCount: blocks?.length ?? 0,
+      })
+      logAcceptedRuntimeTerminalEvent('chat:done', address, payload, {
+        hasFileChanges: Boolean(fileChanges),
+        blockCount: blocks?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
       if (payload.result.contextUsage) {
@@ -130,13 +145,16 @@ export function createRuntimeTaskStreamHandlers(
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
         content: doneContent(payload.result),
-        blocks: getResultBlocks(identity.subtaskId, payload.result),
-        fileChanges: normalizeTurnFileChanges(payload.result.fileChanges),
+        blocks,
+        fileChanges,
       })
       handlers.onRefreshWorkLists?.()
     },
     onChatError: payload => {
-      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      if (!isRuntimeTaskStreamPayload(address, payload)) {
+        warnAndDropMismatchedRuntimeTerminalEvent('chat:error', address, payload)
+        return
+      }
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       if (!identity) {
         warnAndDropRuntimeStreamEvent('chat:error', address, payload, {
@@ -147,6 +165,9 @@ export function createRuntimeTaskStreamHandlers(
       debugRuntimeStreamEvent('chat:error', address, payload, true, {
         error: payload.error,
         errorType: payload.type,
+      })
+      logAcceptedRuntimeTerminalEvent('chat:error', address, payload, {
+        errorType: payload.type ?? null,
       })
       handlers.onAssistantSettled?.()
       if (isCancelledRuntimeError(payload)) {
@@ -162,6 +183,7 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
+      streamedFileChanges.delete(identity.subtaskId)
       handlers.onRefreshWorkLists?.()
     },
     onBlockCreated: payload => {
@@ -179,6 +201,14 @@ export function createRuntimeTaskStreamHandlers(
         normalizedBlockType: block?.type ?? null,
       })
       if (!block) return
+      if (block.type === 'file_changes') {
+        rememberStreamedFileChanges(
+          streamedFileChanges,
+          identity.subtaskId,
+          block.id,
+          block.fileChanges
+        )
+      }
       handlers.onMessageAction({
         type: 'block_created',
         subtaskId: identity.subtaskId,
@@ -215,6 +245,15 @@ export function createRuntimeTaskStreamHandlers(
         hasRenderPayload: payload.renderPayload !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
+      const fileChanges = normalizeTurnFileChanges(payload.fileChanges)
+      if (fileChanges) {
+        rememberStreamedFileChanges(
+          streamedFileChanges,
+          identity.subtaskId,
+          payload.blockId,
+          fileChanges
+        )
+      }
       handlers.onMessageAction({
         type: 'block_updated',
         subtaskId: identity.subtaskId,
@@ -396,6 +435,7 @@ function runtimeStreamTaskSubtaskIdentity(
 
 function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): WorkbenchMessage {
   const role = message.role.toLowerCase() === 'user' ? 'user' : 'assistant'
+  const clientMessageId = message.clientMessageId ?? message.client_message_id ?? undefined
   const subtaskId = runtimeMessageSubtaskId(message)
   const normalizedStatus = String(message.status ?? '').toLowerCase()
   const status: WorkbenchMessage['status'] =
@@ -426,7 +466,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
       : []
   const contentTruncated = hasTruncatedRuntimeContent(message)
   return {
-    id: message.id,
+    id: role === 'user' && clientMessageId ? clientMessageId : message.id,
     role,
     subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
@@ -490,6 +530,36 @@ function warnAndDropRuntimeStreamEvent(
   })
 }
 
+function warnAndDropMismatchedRuntimeTerminalEvent(
+  event: 'chat:done' | 'chat:error',
+  address: RuntimeTaskAddress,
+  payload: { taskId?: string; deviceId?: string; subtaskId?: string }
+): void {
+  console.warn('[Wework] Dropped mismatched runtime terminal event', {
+    event,
+    currentRuntimeTask: runtimeAddressDebug(address),
+    payloadTaskId: payload.taskId ?? null,
+    payloadDeviceId: payload.deviceId ?? null,
+    payloadSubtaskId: payload.subtaskId ?? null,
+  })
+}
+
+function logAcceptedRuntimeTerminalEvent(
+  event: 'chat:done' | 'chat:error',
+  address: RuntimeTaskAddress,
+  payload: { taskId?: string; deviceId?: string; subtaskId?: string },
+  details: Record<string, unknown>
+): void {
+  console.info('[Wework] Runtime terminal event accepted', {
+    event,
+    currentRuntimeTask: runtimeAddressDebug(address),
+    payloadTaskId: payload.taskId ?? null,
+    payloadDeviceId: payload.deviceId ?? null,
+    payloadSubtaskId: payload.subtaskId ?? null,
+    ...details,
+  })
+}
+
 function warnAndDropEmptyRuntimeChunk(
   address: RuntimeTaskAddress,
   payload: ChatChunkPayload,
@@ -514,9 +584,9 @@ function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean
 }
 
 function runtimeMessageSubtaskId(message: NormalizedRuntimeMessage): string | undefined {
-  return typeof message.subtaskId === 'string' && message.subtaskId.trim()
-    ? message.subtaskId
-    : undefined
+  const subtaskId = message.subtaskId
+  if (typeof subtaskId === 'number') return String(subtaskId)
+  return typeof subtaskId === 'string' && subtaskId.trim() ? subtaskId : undefined
 }
 
 function warnInvalidRuntimeTranscriptIdentity(
@@ -835,6 +905,28 @@ function getResultBlocks(subtaskId: string, result: unknown): ProcessingBlock[] 
   if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined
   const blocks = normalizeProcessingBlocks(subtaskId, result.blocks)
   return blocks.length > 0 ? blocks : undefined
+}
+
+function fileChangesFromBlocks(
+  blocks: ProcessingBlock[] | undefined
+): TurnFileChangesSummary | undefined {
+  return mergeTurnFileChanges(
+    (blocks ?? []).flatMap(block => (block.type === 'file_changes' ? [block.fileChanges] : []))
+  )
+}
+
+function rememberStreamedFileChanges(
+  summaries: Map<string, Map<string, TurnFileChangesSummary>>,
+  subtaskId: string,
+  blockId: string,
+  fileChanges: TurnFileChangesSummary
+) {
+  let blocks = summaries.get(subtaskId)
+  if (!blocks) {
+    blocks = new Map()
+    summaries.set(subtaskId, blocks)
+  }
+  blocks.set(blockId, fileChanges)
 }
 
 function doneContent(result: unknown): string | undefined {

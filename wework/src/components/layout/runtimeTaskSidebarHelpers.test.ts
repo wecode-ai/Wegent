@@ -23,6 +23,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'Older running',
           runtime: 'codex',
           running: true,
+          completedAt: '2026-06-01T00:00:00.000Z',
           updatedAt: '2026-06-01T00:00:00.000Z',
         },
         {
@@ -31,6 +32,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'Newer idle',
           runtime: 'codex',
           running: false,
+          completedAt: '2026-06-02T00:00:00.000Z',
           updatedAt: '2026-06-02T00:00:00.000Z',
         },
       ],
@@ -47,6 +49,7 @@ describe('runtimeTaskSidebarHelpers', () => {
           title: 'New worktree task',
           runtime: 'codex',
           running: true,
+          completedAt: '2026-06-03T00:00:00.000Z',
           updatedAt: '2026-06-03T00:00:00.000Z',
         },
       ],
@@ -55,6 +58,41 @@ describe('runtimeTaskSidebarHelpers', () => {
     expect(
       getRuntimeSidebarTaskItems([oldWorkspace, newWorkspace]).map(item => item.task.taskId)
     ).toEqual(['new-worktree-task', 'newer-idle', 'older-running'])
+  })
+
+  test('does not reorder a running task when streaming updates change updatedAt', () => {
+    const workspace: RuntimeDeviceWorkspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        {
+          taskId: 'running',
+          workspacePath: '/workspace/repo',
+          title: 'Running',
+          runtime: 'codex',
+          running: true,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          completedAt: '2026-06-02T00:00:00.000Z',
+          updatedAt: '2026-06-04T00:00:00.000Z',
+        },
+        {
+          taskId: 'completed',
+          workspacePath: '/workspace/repo',
+          title: 'Completed',
+          runtime: 'codex',
+          running: false,
+          createdAt: '2026-06-01T00:00:00.000Z',
+          completedAt: '2026-06-03T00:00:00.000Z',
+          updatedAt: '2026-06-03T00:00:00.000Z',
+        },
+      ],
+    }
+
+    expect(getRuntimeSidebarTaskItems([workspace]).map(item => item.task.taskId)).toEqual([
+      'completed',
+      'running',
+    ])
   })
 
   test('carries runtime handle into task addresses when present', () => {

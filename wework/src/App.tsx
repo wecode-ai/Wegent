@@ -16,6 +16,7 @@ import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
+import type { AppTab } from '@/config/apps'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
@@ -65,8 +66,21 @@ import {
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
+import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
+
+function hasTauriIpc() {
+  const internals = (
+    window as typeof window & {
+      __TAURI_INTERNALS__?: { invoke?: unknown; transformCallback?: unknown }
+    }
+  ).__TAURI_INTERNALS__
+  return (
+    typeof internals?.invoke === 'function' && typeof internals.transformCallback === 'function'
+  )
+}
 
 function useCurrentPath() {
   const [path, setPath] = useState(stripAppBasePath(window.location.pathname))
@@ -89,15 +103,34 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
+  const activeIframeTab =
+    !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? activeTab : null
   const isAuxiliaryRoute =
-    (!isNativeApp && activeTab?.mode === 'iframe' && Boolean(activeTab.url)) ||
+    Boolean(activeIframeTab) ||
     path === '/plugins/manage' ||
     path === '/plugins/create' ||
     path === '/plugins' ||
     path === '/sites' ||
     path === '/apps'
   const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
+  const [mountedIframeTabs, setMountedIframeTabs] = useState<AppTab[]>(() =>
+    activeIframeTab ? [activeIframeTab] : []
+  )
   if (!isAuxiliaryRoute && !hasMountedWorkbench) setHasMountedWorkbench(true)
+
+  const mountedActiveIframeTab = activeIframeTab
+    ? mountedIframeTabs.find(tab => tab.key === activeIframeTab.key)
+    : null
+  if (
+    activeIframeTab &&
+    (mountedActiveIframeTab?.url !== activeIframeTab.url ||
+      mountedActiveIframeTab?.label !== activeIframeTab.label)
+  ) {
+    setMountedIframeTabs(current => [
+      ...current.filter(tab => tab.key !== activeIframeTab.key),
+      activeIframeTab,
+    ])
+  }
 
   useEffect(() => {
     if (isLoading || !user || isNativeApp || !activeTab?.url) return
@@ -117,9 +150,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }
 
   const auxiliaryPage =
-    !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? (
-      <AppIframe src={activeTab.url} title={activeTab.label} />
-    ) : path === '/plugins/manage' ? (
+    path === '/plugins/manage' ? (
       <PluginManagementPage />
     ) : path === '/plugins/create' ? (
       <PluginCreatePage />
@@ -136,20 +167,36 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   return (
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {onOpenWeworkForAppshot ? <AppshotBridge onOpenWework={onOpenWeworkForAppshot} /> : null}
-      {(!auxiliaryPage || hasMountedWorkbench) && (
-        <div
-          className={cn('h-full', auxiliaryPage && 'hidden')}
-          aria-hidden={Boolean(auxiliaryPage)}
-        >
+      {hasTauriIpc() && <SystemDragBridge />}
+      {(!isAuxiliaryRoute || hasMountedWorkbench) && (
+        <div className={cn('h-full', isAuxiliaryRoute && 'hidden')} aria-hidden={isAuxiliaryRoute}>
           <WorkbenchPage />
         </div>
       )}
+      {mountedIframeTabs.map(tab => (
+        <div
+          key={tab.key}
+          className={cn('h-full', activeIframeTab?.key !== tab.key && 'hidden')}
+          aria-hidden={activeIframeTab?.key !== tab.key}
+        >
+          <AppIframe src={tab.url ?? ''} title={tab.label} />
+        </div>
+      ))}
       {auxiliaryPage}
     </WorkbenchProvider>
   )
 }
 
 export default function App() {
+  const path = useCurrentPath()
+  if (isTauriRuntime() && path === '/system-drag') {
+    return <SystemDragPanel />
+  }
+
+  return <MainApp />
+}
+
+function MainApp() {
   useEffect(() => {
     document.title = getWeworkDocumentTitle()
   }, [])

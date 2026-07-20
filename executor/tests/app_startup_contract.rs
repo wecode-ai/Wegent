@@ -8,7 +8,10 @@ use axum::{routing::get, Json, Router};
 use serde_json::json;
 use tokio::net::TcpListener;
 use wegent_executor::{
-    app::{cli::CliArgs, run, startup_plan, HttpServerPlan, SocketSidecarPlan, StartupPlan},
+    app::{
+        cli::CliArgs, run, startup_plan, HttpServerPlan, LocalSidecarPlan, LocalSidecarTransport,
+        StartupPlan,
+    },
     services::updater::binary_name_for,
     version::get_version,
 };
@@ -48,10 +51,11 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn default_startup_mode_plans_loopback_http_server_and_socket_sidecar() {
+fn default_startup_mode_plans_loopback_http_server_and_stdio_sidecar() {
     let _lock = env_lock();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
+    let _app_ipc_device_id = EnvGuard::remove("WEGENT_APP_IPC_DEVICE_ID");
     let _device_id = EnvGuard::remove("DEVICE_ID");
     let _port = EnvGuard::set("PORT", "10088");
     let _host = EnvGuard::remove("HOST");
@@ -68,24 +72,26 @@ fn default_startup_mode_plans_loopback_http_server_and_socket_sidecar() {
                 host: "127.0.0.1".to_owned(),
                 port: 0,
             }),
-            socket_sidecar: Some(SocketSidecarPlan {
+            local_sidecar: Some(LocalSidecarPlan {
                 backend_enabled: false,
-                device_id: plan.socket_sidecar.as_ref().unwrap().device_id.clone(),
+                device_id: plan.local_sidecar.as_ref().unwrap().device_id.clone(),
+                transport: LocalSidecarTransport::Stdio,
             }),
         }
     );
-    let socket_sidecar = plan.socket_sidecar.unwrap();
-    assert!(!socket_sidecar.backend_enabled);
-    assert!(socket_sidecar.device_id.starts_with("device-"));
-    assert_ne!(socket_sidecar.device_id, "local-device");
+    let local_sidecar = plan.local_sidecar.unwrap();
+    assert!(!local_sidecar.backend_enabled);
+    assert!(local_sidecar.device_id.starts_with("device-"));
+    assert_ne!(local_sidecar.device_id, "local-device");
 }
 
 #[test]
-fn startup_plan_with_backend_enables_backend_sidecar_and_loopback_http_server() {
+fn standalone_local_executor_keeps_remote_backend_transport() {
     let _lock = env_lock();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _port = EnvGuard::set("PORT", "10089");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _app_ipc_device_id = EnvGuard::remove("WEGENT_APP_IPC_DEVICE_ID");
     let _device_id = EnvGuard::set("DEVICE_ID", "device-1");
     let home = unique_home("backend");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
@@ -100,20 +106,52 @@ fn startup_plan_with_backend_enables_backend_sidecar_and_loopback_http_server() 
                 host: "127.0.0.1".to_owned(),
                 port: 0,
             }),
-            socket_sidecar: Some(SocketSidecarPlan {
+            local_sidecar: Some(LocalSidecarPlan {
                 backend_enabled: true,
                 device_id: "device-1".to_owned(),
+                transport: LocalSidecarTransport::RemoteBackend,
             }),
         }
     );
 }
 
 #[test]
-fn docker_executor_mode_plans_http_without_socket_sidecar() {
+fn desktop_executor_with_backend_uses_stdio_sidecar() {
+    let _lock = env_lock();
+    let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _port = EnvGuard::set("PORT", "10089");
+    let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _app_ipc_device_id = EnvGuard::set("WEGENT_APP_IPC_DEVICE_ID", "app-device-1");
+    let _device_id = EnvGuard::set("DEVICE_ID", "device-1");
+    let home = unique_home("desktop-backend");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
+
+    let args = CliArgs::parse_from(["wegent-executor"]).unwrap();
+    let plan = startup_plan(args).unwrap();
+
+    assert_eq!(
+        plan,
+        StartupPlan {
+            http_server: Some(HttpServerPlan {
+                host: "127.0.0.1".to_owned(),
+                port: 0,
+            }),
+            local_sidecar: Some(LocalSidecarPlan {
+                backend_enabled: true,
+                device_id: "device-1".to_owned(),
+                transport: LocalSidecarTransport::Stdio,
+            }),
+        }
+    );
+}
+
+#[test]
+fn docker_executor_mode_plans_http_without_stdio_sidecar() {
     let _lock = env_lock();
     let _mode = EnvGuard::set("EXECUTOR_MODE", "docker");
     let _port = EnvGuard::set("PORT", "10090");
     let _backend = EnvGuard::set("WEGENT_BACKEND_URL", "http://localhost:8000");
+    let _app_ipc_device_id = EnvGuard::set("WEGENT_APP_IPC_DEVICE_ID", "app-device-docker");
     let _device_id = EnvGuard::set("DEVICE_ID", "device-docker");
     let home = unique_home("docker-mode");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", home.to_str().unwrap());
@@ -128,7 +166,7 @@ fn docker_executor_mode_plans_http_without_socket_sidecar() {
                 host: "0.0.0.0".to_owned(),
                 port: 10090,
             }),
-            socket_sidecar: None,
+            local_sidecar: None,
         }
     );
 }

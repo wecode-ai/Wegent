@@ -46,8 +46,9 @@ interface ActivityStats {
 
 const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack'])
-const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'du', 'file'])
+const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'file'])
 const HIDDEN_ACTIVITY_TOOLS = new Set(['write_stdin', 'functions.write_stdin'])
+const RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
 
 export function buildProcessingDisplayRows(
   blocks: ProcessingBlock[],
@@ -204,13 +205,13 @@ export function summarizeToolBlocks(blocks: ToolBlock[]): string {
   if (stats.edits > 0) parts.push(`已编辑 ${formatCount(stats.edits, '个文件')}`)
   if (stats.guidance > 0) parts.push('已引导对话')
   if (stats.commands > 0) parts.push(`已运行 ${formatCount(stats.commands, '条命令')}`)
-  if (stats.tools > 0) parts.push(`已执行 ${formatCount(stats.tools, '个工具')}`)
+  if (stats.tools > 0) parts.push(`已调用 ${formatCount(stats.tools, '个工具')}`)
   if (stats.failedCommands > 0) {
     parts.push(`运行失败 ${formatCount(stats.failedCommands, '条命令')}`)
   }
   if (stats.failedTools > 0) parts.push(`执行失败 ${formatCount(stats.failedTools, '个工具')}`)
 
-  return parts.length > 0 ? parts.join(' ') : `已执行 ${formatCount(blocks.length, '个工具')}`
+  return parts.length > 0 ? parts.join(' ') : `已调用 ${formatCount(blocks.length, '个工具')}`
 }
 
 function getActivityStats(blocks: ToolBlock[]): ActivityStats {
@@ -264,7 +265,9 @@ export function getToolActivityKind(block: ToolBlock): ToolActivityKind {
 
 export function getToolActivityFilePaths(block: ToolBlock): string[] {
   const name = block.toolName.toLowerCase()
-  if (isFileReadToolName(name)) return getFileInputPaths(block)
+  if (isFileReadToolName(name) || isFileCreateToolName(name) || isFileEditToolName(name)) {
+    return getFileInputPaths(block)
+  }
   if (!isCommandToolName(name)) return []
 
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
@@ -637,7 +640,11 @@ function isRedundantPatchApplyBlock(block: ProcessingBlock): boolean {
 }
 
 function isHiddenToolActivityBlock(block: ProcessingBlock): boolean {
-  return block.type === 'tool' && HIDDEN_ACTIVITY_TOOLS.has(block.toolName.toLowerCase())
+  return (
+    block.type === 'tool' &&
+    (HIDDEN_ACTIVITY_TOOLS.has(block.toolName.toLowerCase()) ||
+      (block.toolName === RECONNECTING_TOOL_NAME && isCompletedToolBlock(block)))
+  )
 }
 
 export function isWebSearchToolName(name: string): boolean {

@@ -2,11 +2,10 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { access, appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tmpdir } from 'node:os'
 
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -17,30 +16,52 @@ const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification 
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
+const WINDOW_LIFECYCLE_PROMPT =
+  'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
+const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
+const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
+const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
+const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
+const IMAGE_ARTIFACT_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
 const GIT_SEED_CONTENT = '# Desktop E2E workspace\n'
 const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
-const MODEL_LABEL = 'GPT 5.4'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
-const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
-const LOCAL_MODEL_ID = 'local-model:desktop-e2e-local'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-desktop-e2e-cloud-device'
 const CLOUD_DEVICE_SANDBOX_ID = 'wework-desktop-e2e-sandbox'
 const CLOUD_DEVICE_TOKEN = 'wework-desktop-e2e-cloud-token'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
+const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
+const CLOUD_TASK_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
+const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
+const CLOUD_FOLLOW_UP_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
+const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
+const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
+const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
-const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
+const MACOS_LAUNCH_SERVICES_REGISTER =
+  '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
+const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
+const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
+const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
+const CLOUD_ONLY = process.argv.includes('--cloud-only')
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -98,6 +119,43 @@ async function runChecked(command, args, options = {}) {
   })
 }
 
+async function reservePort() {
+  const server = createServer()
+  await new Promise((resolvePromise, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolvePromise)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
+  await new Promise(resolvePromise => server.close(resolvePromise))
+  return address.port
+}
+
+async function waitForUrl(url, message, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(url)
+      if (response.ok) return
+    } catch {
+      // The real service is still starting.
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  throw new Error(message)
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options)
+  const body = await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${url} failed: ${JSON.stringify(body)}`
+  )
+  return body
+}
+
 async function resolveExecutable(configuredPath, fallbackCommand, description) {
   const candidate = configuredPath?.trim()
   if (candidate) {
@@ -143,11 +201,13 @@ async function appendProcessOutput(stream, destination) {
 }
 
 async function sendPrompt(control, selector, prompt) {
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('pause-response-button'),
+    'The active task did not become idle before sending the next prompt'
+  )
   await control.command('fill', selector, { value: prompt })
-  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
+  await control.command('press', selector, { key: 'Enter' })
 }
 
 async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
@@ -187,6 +247,79 @@ async function waitForVncConnection(control, sandboxId, timeoutMs = UI_TIMEOUT_M
   )
 }
 
+async function waitForControlValue(control, selector, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    if ((await control.command('getValue', selector)) === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function captureVerificationScreenshot(control, name, selector = 'body') {
+  if (
+    process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
+    !name.endsWith('04-task-completed-after-reopen.png')
+  ) {
+    return null
+  }
+  const screenshotPath = join(resultDir, name)
+  if (process.platform === 'linux') {
+    await runChecked('import', ['-window', 'root', screenshotPath])
+    return screenshotPath
+  }
+  let dataUrl
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      dataUrl = await control.command('capture', selector, { timeoutMs: 30_000 })
+      break
+    } catch (error) {
+      if (attempt === 2) throw error
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+  }
+  const prefix = 'data:image/png;base64,'
+  assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
+  await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
+  return screenshotPath
+}
+
+function processIsAlive(processId) {
+  try {
+    process.kill(processId, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function waitForExecutorReadyEvidence(logPath, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(logPath, 'utf8').catch(() => '')
+    const processIds = [...content.matchAll(/app IPC stdio ready[^\n]*process_id=(\d+)/g)].map(
+      match => Number(match[1])
+    )
+    if (processIds.length > 0) return { processIds, content }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
+}
+
+async function waitForLogPattern(logPath, pattern, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(logPath, 'utf8').catch(() => '')
+    if (pattern.test(content)) return content
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`Timed out waiting for ${pattern} in ${logPath}`)
+}
+
+async function reactivateMacApplication(appIdentifier) {
+  await runChecked('open', ['-b', appIdentifier])
+}
+
 async function triggerModelReloadUntilCloudFailure(control) {
   const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
   for (let attempt = 0; attempt < 10 && control.failedCloudModelRequests === 0; attempt += 1) {
@@ -204,46 +337,305 @@ async function triggerModelReloadUntilCloudFailure(control) {
 }
 
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
-  let lastError
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await sendPrompt(control, selector, prompt)
-    try {
-      return await withTimeout(
-        control.awaitScenarioRequest(scenario),
-        2_000,
-        `The model service did not receive the ${scenario} request`
-      )
-    } catch (error) {
-      lastError = error
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-    }
-  }
-  throw lastError
+  const scenarioRequest = control.awaitScenarioRequest(scenario)
+  await sendPrompt(control, selector, prompt)
+  return withTimeout(
+    scenarioRequest,
+    UI_TIMEOUT_MS,
+    `The model service did not receive the ${scenario} request`
+  )
 }
 
-async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+async function verifyBackgroundTaskWindowLifecycle({
+  app,
+  appIdentifier,
+  composerSelector,
+  control,
+  executorLogPath,
+  setPhase,
+}) {
+  const lifecycleScreenshotName = name => (LIFECYCLE_ONLY ? name : `window-lifecycle-${name}`)
+  setPhase('background-streaming-task')
+  control.setScenario('window_lifecycle')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+  await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    WINDOW_LIFECYCLE_PROMPT,
+    'window_lifecycle'
+  )
+  await withTimeout(
+    control.awaitWindowLifecycleResponseStarted(),
+    UI_TIMEOUT_MS,
+    'Timed out waiting for the streaming response to start'
+  )
+  const runningTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-running-')),
+    'The running task was not available before closing the window'
+  )
+  const runningTaskTestId = runningTaskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-running-')
+  )
+  assert.ok(runningTaskTestId, 'The running task indicator was not found')
+  const taskRowTestId = runningTaskTestId.replace(
+    'runtime-local-task-running-',
+    'runtime-local-task-row-'
+  )
+
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('01-task-running-before-window-close.png')
+  )
+
+  if (process.platform === 'darwin') {
+    setPhase('close-to-tray-and-reopen')
+    const readyCountBeforeClose = control.readyCount
+    const readyEvidenceBeforeClose = await waitForExecutorReadyEvidence(executorLogPath)
+    const executorProcessId = readyEvidenceBeforeClose.processIds.at(-1)
+    assert.ok(executorProcessId, 'The executor stdio-ready log did not include a process ID')
+    assert.equal(processIsAlive(app.pid), true, 'The Wework process was not alive before close')
+    assert.equal(
+      processIsAlive(executorProcessId),
+      true,
+      'The executor process was not alive before close'
+    )
+
+    await control.command('closeMainWindowToTray', 'body')
+    await waitForLogPattern(join(resultDir, `wework-tauri-${app.pid}.log`), /windowWillClose:/)
+    assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
+    assert.equal(
+      processIsAlive(executorProcessId),
+      true,
+      'Closing to tray terminated the executor process'
+    )
+
+    await reactivateMacApplication(appIdentifier)
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeClose),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The reopened Wework WebView did not reconnect to the desktop controller'
+    )
+    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    const readyEvidenceAfterReopen = await waitForExecutorReadyEvidence(executorLogPath)
+    assert.deepEqual(
+      readyEvidenceAfterReopen.processIds,
+      [executorProcessId],
+      'Reopening the window spawned or attached to a different executor process'
+    )
+    assert.equal(
+      processIsAlive(executorProcessId),
+      true,
+      'The original executor process was not alive after reopening the window'
+    )
+    await writeFile(
+      join(resultDir, 'stdio-lifecycle-verification.json'),
+      `${JSON.stringify(
+        {
+          appProcessId: app.pid,
+          executorProcessId,
+          executorReadyLogCount: readyEvidenceAfterReopen.processIds.length,
+          webviewReadyCountBeforeClose: readyCountBeforeClose,
+          webviewReadyCountAfterReopen: control.readyCount,
+          appAliveAfterReopen: processIsAlive(app.pid),
+          executorAliveAfterReopen: processIsAlive(executorProcessId),
+        },
+        null,
+        2
+      )}\n`
+    )
+    await captureVerificationScreenshot(
+      control,
+      lifecycleScreenshotName('02-window-reopened-task-still-running.png')
+    )
+  }
+
+  const reopenedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (!reopenedSnapshot.text.includes(WINDOW_LIFECYCLE_PROMPT)) {
+    await control.command('deferredClick', `[data-testid="${taskRowTestId}"]`)
+  }
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: WINDOW_LIFECYCLE_PROMPT,
+    visible: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', '[data-testid="model-control-menu-model"]', {
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('03-running-task-after-reopen.png')
+  )
+  control.releaseWindowLifecycleResponse()
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
+    visible: true,
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
+  if (process.platform === 'darwin') {
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        !snapshot.testIds.includes('thinking-indicator') &&
+        !snapshot.testIds.includes(runningTaskTestId),
+      'The reopened task did not settle after its persisted transcript completed'
+    )
+  }
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('04-task-completed-after-reopen.png')
+  )
+}
+
+async function attachAndSendOnlyFile(control, composerSelector) {
+  await control.command('dropFile', composerSelector, {
+    filename: ATTACHMENT_ONLY_FILENAME,
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('waitFor', `[data-testid="model-option-${LOCAL_MODEL_ID}"]`, {
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('click', `[data-testid="model-option-${modelId}"]`)
-  await control.command('waitFor', '[data-testid="model-selector-button"]', {
-    text: modelLabel,
+}
+
+async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control }) {
+  control.setScenario('attachment_only')
+
+  await attachAndSendOnlyFile(control, composerSelector)
+  await captureVerificationScreenshot(control, '01-attachment-only-first-submitted.png')
+  await control.awaitScenarioRequestCount('attachment_only', 1)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_1`,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  const firstSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-')).length >= 1,
+    'The first attachment-only task did not appear in the sidebar'
+  )
+  const firstRows = firstSnapshot.testIds.filter(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  await captureVerificationScreenshot(control, '02-attachment-only-first-completed.png')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await attachAndSendOnlyFile(control, composerSelector)
+  await captureVerificationScreenshot(control, '03-attachment-only-second-submitted.png')
+  await control.awaitScenarioRequestCount('attachment_only', 2)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const twoTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => {
+      const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+      return firstRows.every(testId => rows.includes(testId)) && rows.length >= firstRows.length + 1
+    },
+    'A same-title attachment-only task disappeared after the authoritative sidebar refresh'
+  )
+  const expectedRows = twoTaskSnapshot.testIds.filter(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')
+
+  if (process.platform === 'darwin') {
+    const readyCountBeforeClose = control.readyCount
+    await control.command('closeMainWindowToTray', 'body')
+    await reactivateMacApplication(appIdentifier)
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeClose),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The reopened Wework WebView did not reconnect during attachment-only verification'
+    )
+  } else {
+    await control.command('navigate', '/')
+  }
+
+  for (const testId of expectedRows) {
+    await control.command('waitFor', `[data-testid="${testId}"]`, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  await captureVerificationScreenshot(control, '05-attachment-only-two-tasks-after-reopen.png')
+
+  const requests = control.scenarioRequests.get('attachment_only') ?? []
+  assert.equal(requests.length, 2, 'Attachment-only flow did not send exactly two model requests')
+  for (const request of requests) {
+    const serialized = JSON.stringify(request.body)
+    assert.ok(
+      serialized.includes(ATTACHMENT_ONLY_FILENAME),
+      'The attachment filename was not forwarded to the real Codex request'
+    )
+  }
+}
+
+async function verifyReconnectRecovery({ composerSelector, control }) {
+  control.setScenario('reconnect')
+  await sendPromptUntilScenarioRequest(control, composerSelector, RECONNECT_PROMPT, 'reconnect')
+  await withTimeout(
+    control.awaitReconnectResponseStarted(),
+    UI_TIMEOUT_MS,
+    'The reconnect response stream did not start'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-01-streaming.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  control.disconnectReconnectResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-02-reconnecting.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  await withTimeout(
+    control.awaitScenarioRequestCount('reconnect', 2),
+    UI_TIMEOUT_MS,
+    'Codex did not retry the disconnected response stream'
+  )
+  control.releaseReconnectResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: RECONNECT_COMPLETION_TEXT, timeoutMs: UI_TIMEOUT_MS }
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('runtime-reconnecting-status'),
+    false,
+    'The reconnecting status remained after model output recovered'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-03-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
 }
 
 function createSse(events) {
@@ -293,13 +685,35 @@ function responseFailed(id, message) {
 }
 
 function functionCall(callId, name, argumentsValue) {
+  return [
+    {
+      type: 'response.output_item.added',
+      item: {
+        type: 'function_call',
+        call_id: callId,
+        name,
+      },
+    },
+    {
+      type: 'response.output_item.done',
+      item: {
+        type: 'function_call',
+        call_id: callId,
+        name,
+        arguments: JSON.stringify(argumentsValue),
+      },
+    },
+  ]
+}
+
+function customToolCall(callId, name, input) {
   return {
     type: 'response.output_item.done',
     item: {
-      type: 'function_call',
+      type: 'custom_tool_call',
       call_id: callId,
       name,
-      arguments: JSON.stringify(argumentsValue),
+      input,
     },
   }
 }
@@ -414,7 +828,8 @@ function rfbServerInit() {
 }
 
 function requestContainsToolOutput(request) {
-  return JSON.stringify(request.input ?? []).includes('function_call_output')
+  const input = JSON.stringify(request.input ?? [])
+  return input.includes('function_call_output') || input.includes('custom_tool_call_output')
 }
 
 function requestAdvertisesShellTool(request) {
@@ -430,7 +845,7 @@ function selectTool(request, name, argumentsValue) {
 }
 
 function selectShellTool(request, workspacePath) {
-  const command = `printf '%s\\n' '${ARTIFACT_CONTENT}' > ${ARTIFACT_NAME}`
+  const command = 'pwd'
   const tools = Array.isArray(request.tools) ? request.tools : []
   if (tools.some(tool => tool?.name === 'exec_command')) {
     return selectTool(request, 'exec_command', {
@@ -449,17 +864,243 @@ function selectShellTool(request, workspacePath) {
   throw new Error('Real Codex did not advertise a supported shell tool')
 }
 
-class DesktopE2EServer {
-  constructor(workspacePath) {
+function selectApplyPatchTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    tools.some(tool => tool?.name === 'apply_patch'),
+    `Real Codex did not advertise apply_patch: ${tools
+      .map(tool => tool?.name)
+      .filter(Boolean)
+      .join(', ')}`
+  )
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${ARTIFACT_NAME}`,
+    `+${ARTIFACT_CONTENT}`,
+    '*** End Patch',
+  ].join('\n')
+}
+
+function selectCloudApplyPatchTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    tools.some(tool => tool?.name === 'apply_patch'),
+    'Real cloud Codex did not advertise apply_patch'
+  )
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${CLOUD_ARTIFACT_NAME}`,
+    `+${CLOUD_ARTIFACT_CONTENT}`,
+    '*** End Patch',
+  ].join('\n')
+}
+
+function selectViewImageTool(request, workspacePath) {
+  return selectTool(request, 'view_image', {
+    path: join(workspacePath, IMAGE_ARTIFACT_NAME),
+  })
+}
+
+class RealCloudEnvironment {
+  constructor({ codexBinary, executorBinary, modelServerUrl, workspacePath }) {
+    this.codexBinary = codexBinary
+    this.executorBinary = executorBinary
+    this.modelServerUrl = modelServerUrl
     this.workspacePath = workspacePath
+  }
+
+  async start() {
+    this.redisPort = await reservePort()
+    this.backendPort = await reservePort()
+    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
+    this.backendLogPath = join(resultDir, 'cloud-backend.log')
+    this.redisLogPath = join(resultDir, 'cloud-redis.log')
+    this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
+
+    this.redis = spawn(
+      'redis-server',
+      ['--port', String(this.redisPort), '--save', '', '--appendonly', 'no'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    await Promise.all([
+      appendProcessOutput(this.redis.stdout, this.redisLogPath),
+      appendProcessOutput(this.redis.stderr, this.redisLogPath),
+    ])
+
+    const backendEnv = {
+      ...process.env,
+      DATABASE_URL: `sqlite:///${this.databasePath}`,
+      REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
+      SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
+      INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      DB_AUTO_MIGRATE: 'false',
+      INIT_DATA_ENABLED: 'true',
+    }
+    await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
+      cwd: join(repoDir, 'backend'),
+      env: backendEnv,
+    })
+    this.backend = spawn(
+      'uv',
+      ['run', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(this.backendPort)],
+      {
+        cwd: join(repoDir, 'backend'),
+        env: backendEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    )
+    await Promise.all([
+      appendProcessOutput(this.backend.stdout, this.backendLogPath),
+      appendProcessOutput(this.backend.stderr, this.backendLogPath),
+    ])
+    await waitForUrl(
+      `${this.backendUrl}/api/docs`,
+      `Real cloud backend did not start; see ${this.backendLogPath}`
+    )
+
+    const password = `wework-desktop-e2e-${process.pid}`
+    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    this.authToken = setup.access_token
+    assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+
+    const remoteHome = join(resultDir, 'cloud-executor-home')
+    const remoteCodexHome = join(remoteHome, 'codex')
+    await writeCodexConfig(remoteCodexHome, this.modelServerUrl)
+    const remoteEnv = {
+      ...process.env,
+      CODEX_BIN: this.codexBinary,
+      CODEX_HOME: remoteCodexHome,
+      HOME: remoteHome,
+      WEGENT_CODEX_HOME: remoteCodexHome,
+      WEGENT_EXECUTOR_HOME: remoteHome,
+      WEGENT_EXECUTOR_LOG_DIR: resultDir,
+      WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
+      EXECUTOR_MODE: 'local',
+      WEGENT_BACKEND_URL: this.backendUrl,
+      WEGENT_AUTH_TOKEN: this.authToken,
+      DEVICE_ID: CLOUD_DEVICE_ID,
+      DEVICE_NAME: 'Wework E2E Cloud Device',
+      DEVICE_TYPE: 'remote',
+      BIND_SHELL: 'claudecode',
+      LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
+      WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+    }
+    delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
+    this.remoteExecutor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env: remoteEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    await Promise.all([
+      appendProcessOutput(this.remoteExecutor.stdout, this.remoteExecutorLogPath),
+      appendProcessOutput(this.remoteExecutor.stderr, this.remoteExecutorLogPath),
+    ])
+    await this.waitForDevice()
+  }
+
+  async waitForDevice() {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const response = await fetch(`${this.backendUrl}/api/devices`, {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      })
+      if (response.ok) {
+        const devices = await response.json()
+        const device = devices.items?.find(item => item.device_id === CLOUD_DEVICE_ID)
+        if (device?.status === 'online') return
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error(`Real cloud executor did not register; see ${this.remoteExecutorLogPath}`)
+  }
+
+  async waitForWorkspaceRemoved(workspacePath) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+      const response = await fetch(`${this.backendUrl}/api/runtime-work`, {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      })
+      if (response.ok) {
+        const work = await response.json()
+        const stillPresent = work.workspaces?.some(
+          workspace => workspace.workspacePath === workspacePath
+        )
+        if (!stillPresent) return
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error('The real cloud backend still returned the removed project')
+  }
+
+  async cancelRunningTasks() {
+    if (!this.backendUrl || !this.authToken) return
+    const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const workspaces = [
+      ...(work.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
+      ...(work.chats ?? []),
+    ]
+    const runningTasks = workspaces.flatMap(workspace =>
+      (workspace.tasks ?? [])
+        .filter(task => task.running)
+        .map(task => ({
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          workspacePath: task.workspacePath,
+        }))
+    )
+    await Promise.all(
+      runningTasks.map(address =>
+        fetchJson(`${this.backendUrl}/api/runtime-work/cancel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.authToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(address),
+        })
+      )
+    )
+  }
+
+  async stop() {
+    try {
+      await this.cancelRunningTasks()
+    } catch (error) {
+      await appendFile(
+        this.remoteExecutorLogPath,
+        `Cloud E2E cleanup could not cancel running tasks: ${String(error)}\n`
+      )
+    }
+    await stopProcess(this.remoteExecutor)
+    await stopProcess(this.backend)
+    await stopProcess(this.redis)
+  }
+}
+
+class DesktopE2EServer {
+  constructor(workspacePath, cloudWorkspacePath = workspacePath) {
+    this.workspacePath = workspacePath
+    this.cloudWorkspacePath = cloudWorkspacePath
     this.server = createServer((request, response) => {
       void this.handle(request, response)
     })
     this.server.on('upgrade', (request, socket, head) => {
       this.handleVncUpgrade(request, socket, head)
     })
+    this.controlServer = createServer((request, response) => {
+      void this.handleControl(request, response)
+    })
     this.ready = null
     this.readyResolver = null
+    this.readyCount = 0
+    this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
     this.commandHistory = []
@@ -476,7 +1117,9 @@ class DesktopE2EServer {
     this.vncSockets = new Set()
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.cloudModelStage = 'initial'
     this.toolLessPrewarmHandled = false
+    this.cloudToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
@@ -484,21 +1127,46 @@ class DesktopE2EServer {
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
     })
+    this.reconnectDisconnectRelease = new Promise(resolvePromise => {
+      this.releaseReconnectDisconnect = resolvePromise
+    })
+    this.reconnectResponseStarted = new Promise(resolvePromise => {
+      this.resolveReconnectResponseStarted = resolvePromise
+    })
+    this.reconnectCompletionRelease = new Promise(resolvePromise => {
+      this.releaseReconnectCompletion = resolvePromise
+    })
+    this.windowLifecycleRelease = new Promise(resolvePromise => {
+      this.releaseWindowLifecycle = resolvePromise
+    })
+    this.windowLifecycleResponseStarted = new Promise(resolvePromise => {
+      this.resolveWindowLifecycleResponseStarted = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
   }
 
   async start() {
+    await Promise.all([this.listen(this.server), this.listen(this.controlServer)])
+    const address = this.server.address()
+    const controlAddress = this.controlServer.address()
+    assert.ok(address && typeof address !== 'string', 'Desktop E2E server did not bind a TCP port')
+    assert.ok(
+      controlAddress && typeof controlAddress !== 'string',
+      'Desktop E2E control server did not bind a TCP port'
+    )
+    this.url = `http://127.0.0.1:${address.port}`
+    this.controlUrl = `http://127.0.0.1:${controlAddress.port}`
+  }
+
+  async listen(server) {
     await new Promise((resolvePromise, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(0, '127.0.0.1', () => {
-        this.server.off('error', reject)
+      server.once('error', reject)
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject)
         resolvePromise()
       })
     })
-    const address = this.server.address()
-    assert.ok(address && typeof address !== 'string', 'Desktop E2E server did not bind a TCP port')
-    this.url = `http://127.0.0.1:${address.port}`
   }
 
   async close() {
@@ -507,7 +1175,11 @@ class DesktopE2EServer {
     for (const socket of this.vncSockets) socket.destroy()
     this.vncSockets.clear()
     this.server.closeAllConnections?.()
-    await new Promise(resolvePromise => this.server.close(resolvePromise))
+    this.controlServer.closeAllConnections?.()
+    await Promise.all([
+      new Promise(resolvePromise => this.server.close(resolvePromise)),
+      new Promise(resolvePromise => this.controlServer.close(resolvePromise)),
+    ])
   }
 
   handleVncUpgrade(request, socket, head) {
@@ -588,6 +1260,13 @@ class DesktopE2EServer {
     })
   }
 
+  awaitReadyAfter(readyCount) {
+    if (this.readyCount > readyCount) return Promise.resolve(this.ready)
+    return new Promise(resolvePromise => {
+      this.readyWaiters.push({ readyCount, resolve: resolvePromise })
+    })
+  }
+
   awaitBlockedCloudRequest(pathname) {
     const request = this.blockedCloudRequests.find(item => item.pathname === pathname)
     if (request) return Promise.resolve(request)
@@ -634,7 +1313,18 @@ class DesktopE2EServer {
 
   setScenario(scenario) {
     assert.ok(
-      ['initial', 'follow_up', 'cancellation', 'retry', 'fresh_chat'].includes(scenario),
+      [
+        'initial',
+        'follow_up',
+        'window_lifecycle',
+        'cancellation',
+        'retry',
+        'reconnect',
+        'fresh_chat',
+        'attachment_only',
+        'cloud_initial',
+        'cloud_follow_up',
+      ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
@@ -659,12 +1349,39 @@ class DesktopE2EServer {
     })
   }
 
+  async awaitScenarioRequestCount(scenario, count) {
+    while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    return this.scenarioRequests.get(scenario).at(-1)
+  }
+
   releaseInitialToolExecution() {
     this.releaseInitialTool()
   }
 
   releaseRetryResponse() {
     this.releaseRetryCompletion()
+  }
+
+  awaitReconnectResponseStarted() {
+    return this.reconnectResponseStarted
+  }
+
+  disconnectReconnectResponse() {
+    this.releaseReconnectDisconnect()
+  }
+
+  releaseReconnectResponse() {
+    this.releaseReconnectCompletion()
+  }
+
+  awaitWindowLifecycleResponseStarted() {
+    return this.windowLifecycleResponseStarted
+  }
+
+  releaseWindowLifecycleResponse() {
+    this.releaseWindowLifecycle()
   }
 
   async command(action, selector, options = {}) {
@@ -681,6 +1398,21 @@ class DesktopE2EServer {
     )
   }
 
+  async handleControl(request, response) {
+    cors(response)
+    if (request.method === 'OPTIONS') {
+      response.writeHead(204)
+      response.end()
+      return
+    }
+
+    const url = new URL(request.url ?? '/', this.controlUrl)
+    if (await this.handleControlRoute(request, response, url)) return
+    json(response, 404, {
+      error: `No Desktop E2E control route for ${request.method} ${url.pathname}`,
+    })
+  }
+
   async handle(request, response) {
     cors(response)
     if (request.method === 'OPTIONS') {
@@ -690,43 +1422,7 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
-    if (request.method === 'POST' && url.pathname === '/ready') {
-      const ready = await readRequestBody(request)
-      this.ready = ready
-      this.readyResolver?.(ready)
-      this.readyResolver = null
-      json(response, 200, { ok: true })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/commands') {
-      if (this.commandQueue.length > 0) {
-        const command = this.commandQueue.shift()
-        this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
-        json(response, 200, command)
-        return
-      }
-      response.writeHead(204)
-      response.end()
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/results') {
-      const result = await readRequestBody(request)
-      const pending = this.commandResults.get(result.id)
-      if (!pending) {
-        json(response, 404, { error: `Unknown command ${result.id}` })
-        return
-      }
-      this.commandResults.delete(result.id)
-      if (result.ok) {
-        pending.resolve(result.value ?? '')
-      } else {
-        pending.reject(new Error(result.error ?? `UI action ${result.id} failed`))
-      }
-      json(response, 200, { ok: true })
-      return
-    }
+    if (await this.handleControlRoute(request, response, url)) return
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -813,6 +1509,57 @@ class DesktopE2EServer {
     json(response, 404, { error: `No Desktop E2E route for ${request.method} ${url.pathname}` })
   }
 
+  async handleControlRoute(request, response, url) {
+    if (request.method === 'POST' && url.pathname === '/ready') {
+      const ready = await readRequestBody(request)
+      this.ready = ready
+      this.readyCount += 1
+      this.readyResolver?.(ready)
+      this.readyResolver = null
+      const remainingWaiters = []
+      for (const waiter of this.readyWaiters) {
+        if (this.readyCount > waiter.readyCount) {
+          waiter.resolve(ready)
+        } else {
+          remainingWaiters.push(waiter)
+        }
+      }
+      this.readyWaiters = remainingWaiters
+      json(response, 200, { ok: true })
+      return true
+    }
+
+    if (request.method === 'GET' && url.pathname === '/commands') {
+      if (this.commandQueue.length > 0) {
+        const command = this.commandQueue.shift()
+        this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
+        json(response, 200, command)
+        return true
+      }
+      response.writeHead(204)
+      response.end()
+      return true
+    }
+
+    if (request.method === 'POST' && url.pathname === '/results') {
+      const result = await readRequestBody(request)
+      const pending = this.commandResults.get(result.id)
+      if (!pending) {
+        json(response, 404, { error: `Unknown command ${result.id}` })
+        return true
+      }
+      this.commandResults.delete(result.id)
+      if (result.ok) {
+        pending.resolve(result.value ?? '')
+      } else {
+        pending.reject(new Error(result.error ?? `UI action ${result.id} failed`))
+      }
+      json(response, 200, { ok: true })
+      return true
+    }
+    return false
+  }
+
   async handleModelResponse(request, response) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
@@ -852,6 +1599,17 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      this.scenario === 'cloud_initial' &&
+      this.cloudModelStage === 'initial' &&
+      !this.cloudToolLessPrewarmHandled &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.cloudToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
     if (this.scenario === 'initial' && this.modelStage === 'initial') {
       this.recordScenarioRequest('initial', modelRequest)
       assert.ok(
@@ -859,11 +1617,15 @@ class DesktopE2EServer {
         'The real Codex request did not contain the UI task prompt'
       )
       const tool = selectShellTool(body, this.workspacePath)
+      const patch = selectApplyPatchTool(body)
+      const image = selectViewImageTool(body, this.workspacePath)
       this.modelStage = 'awaiting_tool_output'
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
-        functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
+        customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
       return
@@ -891,6 +1653,54 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'cloud_initial' && this.cloudModelStage === 'initial') {
+      this.recordScenarioRequest('cloud_initial', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_TASK_PROMPT),
+        'The real cloud Codex request did not contain the UI task prompt'
+      )
+      const tool = selectShellTool(body, this.cloudWorkspacePath)
+      const patch = selectCloudApplyPatchTool(body)
+      this.cloudModelStage = 'awaiting_tool_output'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
+        customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'cloud_initial') {
+      this.recordScenarioRequest('cloud_initial', modelRequest)
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The real cloud Codex request did not report its tool output to the model service'
+      )
+      this.cloudModelStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CLOUD_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'cloud_follow_up') {
+      this.recordScenarioRequest('cloud_follow_up', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
+        'The real cloud Codex request did not contain the follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'follow_up') {
       this.recordScenarioRequest('follow_up', modelRequest)
       assert.ok(
@@ -905,6 +1715,30 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'window_lifecycle') {
+      this.recordScenarioRequest('window_lifecycle', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(WINDOW_LIFECYCLE_PROMPT),
+        'The real Codex request did not contain the window-lifecycle prompt'
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      this.resolveWindowLifecycleResponseStarted()
+      await this.windowLifecycleRelease
+      response.end(
+        createSse([
+          assistantMessage(WINDOW_LIFECYCLE_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      )
+      return
+    }
+
     if (this.scenario === 'fresh_chat') {
       this.recordScenarioRequest('fresh_chat', modelRequest)
       assert.ok(JSON.stringify(body).includes(FRESH_CHAT_PROMPT), 'The fresh chat prompt was lost')
@@ -916,6 +1750,22 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'attachment_only') {
+      this.recordScenarioRequest('attachment_only', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(ATTACHMENT_ONLY_FILENAME),
+        'The attachment-only request did not contain the selected file'
+      )
+      const requestNumber = this.scenarioRequests.get('attachment_only').length
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
         responseCompleted(responseId),
       ])
       return
@@ -955,6 +1805,35 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(RETRY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'reconnect') {
+      this.recordScenarioRequest('reconnect', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(RECONNECT_PROMPT),
+        'The real Codex request did not contain the reconnect prompt'
+      )
+      const reconnectRequests = this.scenarioRequests.get('reconnect') ?? []
+      if (reconnectRequests.length === 1) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        this.resolveReconnectResponseStarted()
+        await this.reconnectDisconnectRelease
+        response.destroy()
+        return
+      }
+      await this.reconnectCompletionRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(RECONNECT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -1008,9 +1887,44 @@ async function readTauriMainBinaryName() {
   }
 }
 
-async function buildDesktopApp(controlUrl, appIdentifier) {
+async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
+  if (process.platform !== 'darwin') return { binaryPath, appBundlePath: null }
+
+  const appBundlePath = join(resultDir, `WeWork-E2E-${process.pid}.app`)
+  const contentsPath = join(appBundlePath, 'Contents')
+  const bundledBinaryPath = join(contentsPath, 'MacOS', binaryName)
+  await mkdir(join(contentsPath, 'MacOS'), { recursive: true })
+  await symlink(binaryPath, bundledBinaryPath)
+  await writeFile(
+    join(contentsPath, 'Info.plist'),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleExecutable</key><string>${binaryName}</string>
+  <key>CFBundleIdentifier</key><string>${appIdentifier}</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>WeWork E2E ${process.pid}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+`,
+    'utf8'
+  )
+  commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
+  return { binaryPath: bundledBinaryPath, appBundlePath }
+}
+
+async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdentifier) {
   const configured = process.env.WEWORK_E2E_APP_BIN
-  if (configured) return resolveExecutable(configured, 'app', 'Configured Wework desktop app')
+  if (configured) {
+    const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
+    return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier)
+  }
 
   await runChecked(
     'pnpm',
@@ -1028,7 +1942,8 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
       env: {
         ...process.env,
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
-        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: controlUrl,
+        VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
+        VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
@@ -1052,11 +1967,123 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
     ),
   ]
   for (const candidate of candidates) {
-    if (await isExecutable(candidate)) return candidate
+    if (await isExecutable(candidate)) {
+      return wrapMacDesktopApp(candidate, binaryName, appIdentifier)
+    }
   }
   throw new Error(
     `Tauri build did not produce an executable app. Checked: ${candidates.join(', ')}`
   )
+}
+
+async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) {
+  const composerSelector = ACTIVE_COMPOSER_SELECTOR
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: CLOUD_DEVICE_ID,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'cloud-executor-home'),
+    'The remote folder picker did not load the real executor home directory'
+  )
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    workspacePath,
+    'The remote folder picker did not retain the selected cloud workspace path'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  const projectSnapshot = await waitForSnapshot(
+    control,
+    value => value.testIds.some(testId => testId.startsWith('project-device-status-')),
+    'The real cloud project was not shown with its remote device status'
+  )
+  const deviceStatusTestId = projectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-device-status-')
+  )
+  assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
+  const projectId = deviceStatusTestId.slice('project-device-status-'.length)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+  )
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+
+  control.setScenario('cloud_initial')
+  await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('cloud_initial', 2),
+    UI_TIMEOUT_MS,
+    'The real cloud executor did not complete its model tool loop'
+  )
+  assert.equal(
+    (await readFile(join(workspacePath, CLOUD_ARTIFACT_NAME), 'utf8')).trim(),
+    CLOUD_ARTIFACT_CONTENT,
+    'The real cloud executor did not create the verification artifact'
+  )
+  const taskSnapshot = await waitForSnapshot(
+    control,
+    value => value.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+    'The completed cloud task was not persisted in the sidebar'
+  )
+  const taskRowTestId = taskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  assert.ok(taskRowTestId, 'The completed cloud task row was not available')
+  await control.command('click', `[data-testid="${taskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-project-task-completed.png')
+
+  control.setScenario('cloud_follow_up')
+  await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequest('cloud_follow_up'),
+    UI_TIMEOUT_MS,
+    'The real cloud executor did not send the follow-up model request'
+  )
+  await control.command('click', `[data-testid="${taskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const projectMenuTestId = `project-menu-${projectId}`
+  await waitForSnapshot(
+    control,
+    value => value.testIds.includes(projectMenuTestId),
+    'The cloud project was not shown in the sidebar'
+  )
+  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  )
+  await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
 }
 
 async function main() {
@@ -1065,25 +2092,33 @@ async function main() {
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
   const appLogPath = join(resultDir, 'app.log')
-  const executorSocketPath = join(tmpdir(), `wework-e2e-${process.pid}.sock`)
+  const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
   await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = true\n')
+  await writeFile(
+    join(workspacePath, IMAGE_ARTIFACT_NAME),
+    Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
+  )
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
   })
-  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts'], { cwd: workspacePath })
+  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts', IMAGE_ARTIFACT_NAME], {
+    cwd: workspacePath,
+  })
   await runChecked('git', ['commit', '-m', 'test: initialize desktop e2e workspace'], {
     cwd: workspacePath,
   })
 
-  const control = new DesktopE2EServer(workspacePath)
+  const control = new DesktopE2EServer(workspacePath, workspacePath)
   let app
+  let appBundlePath
+  let cloudEnvironment
   let phase = 'startup'
   try {
     await control.start()
@@ -1097,10 +2132,24 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
 
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
-    const [executorBinary, appBinary] = await Promise.all([
-      buildExecutor(),
-      buildDesktopApp(control.url, appIdentifier),
-    ])
+    const executorBinary = await buildExecutor()
+    if (CLOUD_ONLY) {
+      cloudEnvironment = new RealCloudEnvironment({
+        codexBinary,
+        executorBinary,
+        modelServerUrl: control.url,
+        workspacePath,
+      })
+      await cloudEnvironment.start()
+    }
+    const desktopApp = await buildDesktopApp(
+      control.controlUrl,
+      cloudEnvironment?.backendUrl ?? control.url,
+      cloudEnvironment?.authToken ?? 'wework-desktop-e2e-cloud-token',
+      appIdentifier
+    )
+    const appBinary = desktopApp.binaryPath
+    appBundlePath = desktopApp.appBundlePath
     await writeCodexConfig(join(executorHome, 'codex'), control.url)
 
     app = spawn(appBinary, [], {
@@ -1111,10 +2160,13 @@ async function main() {
         HOME: homePath,
         WEGENT_CODEX_HOME: join(executorHome, 'codex'),
         WEGENT_EXECUTOR_HOME: executorHome,
-        WEGENT_EXECUTOR_APP_IPC_SOCKET: executorSocketPath,
+        WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
         WEGENT_EXECUTOR_LOG_DIR: resultDir,
         WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
         DEVICE_ID: `wework-e2e-device-${process.pid}`,
+        DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+        DEVICE_SESSION_GATEWAY_PORT: '0',
+        VITE_WEWORK_E2E: 'true',
         WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
         WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
@@ -1137,6 +2189,18 @@ async function main() {
       'The desktop controller did not connect from a webview'
     )
 
+    if (CLOUD_ONLY) {
+      phase = 'cloud-project-flow'
+      await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop cloud-project E2E passed. Diagnostics: ${resultDir}`)
+      return
+    }
+
     phase = 'cloud-request-non-blocking'
     await withTimeout(
       control.awaitBlockedCloudRequest(BLOCKED_CLOUD_MODEL_PATH),
@@ -1146,7 +2210,6 @@ async function main() {
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control)
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
@@ -1311,9 +2374,97 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
-    await selectE2EModel(control)
+    if (ATTACHMENT_ONLY_SIDEBAR) {
+      phase = 'attachment-only-sidebar'
+      await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
+      console.log(`Wework attachment-only sidebar E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (LIFECYCLE_ONLY) {
+      await verifyBackgroundTaskWindowLifecycle({
+        app,
+        appIdentifier,
+        composerSelector,
+        control,
+        executorLogPath,
+        setPhase: value => {
+          phase = value
+        },
+      })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop lifecycle E2E passed. Diagnostics: ${resultDir}`)
+      return
+    }
+
+    const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+    const initialModelLabel = await control.command('waitFor', activeModelSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    if (RECONNECT_ONLY) {
+      phase = 'reconnect'
+      await verifyReconnectRecovery({ composerSelector, control })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop reconnect E2E passed. Evidence: ${resultDir}`)
+      return
+    }
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
+    await withTimeout(
+      control.awaitScenarioRequest('initial'),
+      UI_TIMEOUT_MS,
+      'The model service did not receive the initial task request'
+    )
+
+    if (VIEW_IMAGE_ONLY) {
+      control.releaseInitialToolExecution()
+    } else {
+      phase = 'send-mode-menu'
+      await control.command('waitFor', '[data-testid="pause-response-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await control.command('fill', composerSelector, { value: SEND_MODE_DRAFT })
+      await control.command('waitFor', '[data-testid="send-mode-menu-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, '01-send-mode-follow-up-ready.png')
+      await control.command('click', '[data-testid="send-mode-menu-button"]')
+      await control.command('waitFor', '[data-testid="send-mode-menu-button-menu"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      const sendModeMenuText = await control.command(
+        'getText',
+        '[data-testid="send-mode-menu-button-menu"]'
+      )
+      assert.match(
+        sendModeMenuText,
+        /当前回复结束后发送|Send after current response/,
+        'The send-after-turn option was not visible in the send mode menu'
+      )
+      assert.match(
+        sendModeMenuText,
+        /引导当前回复|Guide current response/,
+        'The guide-current-turn option was not visible in the send mode menu'
+      )
+      assert.match(
+        sendModeMenuText,
+        /打断并立即发送|Interrupt and send now/,
+        'The interrupt-and-send option was not visible in the send mode menu'
+      )
+      await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('fill', composerSelector, { value: '' })
+    }
+
+    phase = 'initial-task-completion'
     await control.command('waitFor', '[data-testid="environment-info-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -1336,10 +2487,94 @@ async function main() {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('click', '[data-testid="final-processing-toggle"]')
+    await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const processingSummaryText = await control.command(
+      'getText',
+      '[data-testid="processing-summary-toggle"]'
+    )
+    assert.match(
+      processingSummaryText,
+      /调用 2 个工具，编辑 1 个文件|Called 2 tools, edited 1 file/,
+      'The processing summary did not report tool calls and edited files separately'
+    )
+    await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    if (process.platform === 'darwin') {
+      await control.command('scrollIntoView', '[data-testid="processing-summary-header"]')
+      await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
+        visible: true,
+        stableMs: 500,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+      const processingSummaryScreenshot = await control.command(
+        'capture',
+        '[data-testid="processing-summary-toggle"]'
+      )
+      await writeFile(
+        join(resultDir, 'processing-summary.png'),
+        Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
+      )
+    }
+    await control.command('click', '[data-testid="processing-summary-toggle"]')
+    await control.command('waitFor', '[data-processing-block-id="wework-e2e-view-image"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+    await control.command(
+      'waitFor',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
+      { visible: true, stableMs: 300, timeoutMs: UI_TIMEOUT_MS }
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await captureVerificationScreenshot(
+      control,
+      '03-view-image-collapsed.png',
+      '[data-testid="processing-live-preview"]'
+    )
+    await control.command(
+      'click',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
+    )
+    await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
+      { stableMs: 500, timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+    await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      visible: true,
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await captureVerificationScreenshot(
+      control,
+      '04-view-image-expanded.png',
+      '[data-testid="processing-live-preview"]'
+    )
+    await control.command('click', '[data-testid="processing-summary-toggle"]')
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',
       timeoutMs: UI_TIMEOUT_MS,
     })
+    if (VIEW_IMAGE_ONLY) {
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework view_image desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
     const changedEnvironmentText = await control.command(
       'getText',
       '[data-testid="environment-changes-button"]'
@@ -1351,11 +2586,6 @@ async function main() {
     )
 
     phase = 'workspace-mention'
-    await control.command('fill', composerSelector, { value: '@' })
-    await control.command('waitFor', '[data-testid="mention-files-action"]', {
-      enabled: true,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
     await control.command('fill', composerSelector, { value: '@auth' })
     await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
       timeoutMs: UI_TIMEOUT_MS,
@@ -1401,29 +2631,39 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', '[data-testid="model-selector-button"]', {
-      text: MODEL_LABEL,
+    await control.command('waitFor', activeModelSelector, {
+      text: initialModelLabel,
       timeoutMs: UI_TIMEOUT_MS,
     })
 
     phase = 'follow-up'
     control.setScenario('follow_up')
-    await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
+    const followUpRequest = await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      FOLLOW_UP_PROMPT,
+      'follow_up'
+    )
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: FOLLOW_UP_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
-    const followUpRequest = await withTimeout(
-      control.awaitScenarioRequest('follow_up'),
-      UI_TIMEOUT_MS,
-      'The model service did not receive the follow-up request'
-    )
     assert.ok(
       JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
       'The follow-up request did not preserve the user prompt'
     )
+
+    await verifyBackgroundTaskWindowLifecycle({
+      app,
+      appIdentifier,
+      composerSelector,
+      control,
+      executorLogPath,
+      setPhase: value => {
+        phase = value
+      },
+    })
 
     phase = 'cancellation'
     control.setScenario('cancellation')
@@ -1487,6 +2727,9 @@ async function main() {
       'Retry did not issue exactly one additional request for the failed user message'
     )
 
+    phase = 'reconnect'
+    await verifyReconnectRecovery({ composerSelector, control })
+
     phase = 'fresh-chat'
     control.setScenario('fresh_chat')
     await control.command('click', '[data-testid="new-chat-button"]')
@@ -1528,6 +2771,52 @@ async function main() {
       'The global new-task action did not preserve the standalone project state'
     )
 
+    phase = 'permanent-worktree-create'
+    const sourceProjectId = projectId
+    const sourceProjectMenuTestId = `project-menu-${sourceProjectId}`
+    await control.command('waitFor', `[data-testid="${sourceProjectMenuTestId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', `[data-testid="${sourceProjectMenuTestId}"]`)
+    await control.command('click', `[data-testid="create-permanent-worktree-${sourceProjectId}"]`)
+    await control.command('waitFor', `[data-testid="permanent-worktree-name-${sourceProjectId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', `[data-testid="permanent-worktree-name-${sourceProjectId}"]`, {
+      value: 'Permanent E2E',
+    })
+    await control.command(
+      'click',
+      `[data-testid="confirm-create-permanent-worktree-${sourceProjectId}"]`
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => snapshot.text.includes('Permanent E2E'),
+      'The permanent worktree was not added to the project list'
+    )
+    const appRuntimeEntries = await readdir(join(executorHome, 'app-runtime'), {
+      withFileTypes: true,
+    })
+    const appRuntimeDirectory = appRuntimeEntries.find(entry => entry.isDirectory())
+    assert.ok(appRuntimeDirectory, 'The isolated app runtime directory was not created')
+    const worktreeState = JSON.parse(
+      await readFile(
+        join(
+          executorHome,
+          'app-runtime',
+          appRuntimeDirectory.name,
+          'runtime-work',
+          'worktrees.json'
+        ),
+        'utf8'
+      )
+    )
+    assert.equal(
+      Object.values(worktreeState.records ?? {}).some(record => record.permanent === true),
+      true,
+      'The created worktree was not marked permanent'
+    )
+
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -1545,6 +2834,7 @@ async function main() {
           vncConfigRequests: control.vncConfigRequests,
           vncProtocolError: control.vncProtocolError,
           vncRfbConnections: control.vncRfbConnections,
+          cloudModelStage: control.cloudModelStage,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
@@ -1556,6 +2846,11 @@ async function main() {
         null,
         2
       )}\n`,
+      'utf8'
+    )
+    await writeFile(
+      join(resultDir, 'model-requests.json'),
+      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
       'utf8'
     )
     try {
@@ -1571,8 +2866,12 @@ async function main() {
     )
     throw error
   } finally {
+    await cloudEnvironment?.stop()
     await stopProcess(app)
     await control.close()
+    if (appBundlePath) {
+      spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+    }
   }
 }
 

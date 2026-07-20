@@ -1,14 +1,17 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode, TransitionEvent } from 'react'
 import {
   Archive,
   ChevronDown,
   FileText,
+  LoaderCircle,
   MessageCircle,
   Pencil,
   Search,
   SquareTerminal,
+  Wrench,
 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
@@ -17,7 +20,7 @@ import {
   isRequestUserInputBlock,
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
-import { ToolBlockItem } from './ToolBlockItem'
+import { ToolBlockItem, type FileEditDuration } from './ToolBlockItem'
 import {
   RequestUserInputCard,
   RequestUserInputSummary,
@@ -36,12 +39,14 @@ import {
   isWebSearchActivityGroup,
   type ProcessingDisplayRow,
 } from './toolBlockActivity'
+import { isImageViewToolName } from './toolBlockKinds'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+import { getDurationText, getWholeSecondsDurationText } from './processingDuration'
+import { getFileInputPaths, isFileEditToolName } from './toolBlockKinds'
 
 const EMPTY_HIDDEN_REQUEST_USER_INPUT_IDS = new Set<string>()
-
 type ProcessingDisplayItem =
   | ProcessingDisplayRow
   | {
@@ -60,7 +65,8 @@ interface ToolBlocksDisplayProps {
   // timer from the refresh moment.
   startedAt?: number
   forceExpanded?: boolean
-  hasFinalContent?: boolean
+  processingPhase?: 'live' | 'intermediate' | 'final'
+  showInterToolThinking?: boolean
   showSummary?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
@@ -78,7 +84,8 @@ export function ToolBlocksDisplay({
   isStreaming,
   startedAt,
   forceExpanded = false,
-  hasFinalContent = false,
+  processingPhase = 'live',
+  showInterToolThinking = false,
   showSummary = true,
   stateKey,
   onOpenWorkspaceFile,
@@ -90,10 +97,14 @@ export function ToolBlocksDisplay({
   hideRequestUserInputBlocks = false,
   hiddenRequestUserInputIds,
 }: ToolBlocksDisplayProps) {
-  const isRunning = isStreaming || blocks.some(b => b.status !== 'done' && b.status !== 'error')
+  const { t } = useTranslation('chat')
+  const hasRunningBlock = blocks.some(b => b.status !== 'done' && b.status !== 'error')
+  const isRunning =
+    (isStreaming && (processingPhase === 'live' || showInterToolThinking)) || hasRunningBlock
   const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(
     stateKey ? `${stateKey}:processing` : undefined
   )
+  const [livePreviewCollapsed, setLivePreviewCollapsed] = useState(false)
   const [mountedAt] = useState(() => Date.now())
   const turnStartedAt = startedAt ?? mountedAt
   const [hasRenderedRunning, setHasRenderedRunning] = useState(isRunning)
@@ -102,7 +113,7 @@ export function ToolBlocksDisplay({
 
   useEffect(() => {
     if (!isRunning) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    const timer = window.setInterval(() => setNow(Date.now()), 100)
     return () => window.clearInterval(timer)
   }, [isRunning])
 
@@ -130,7 +141,9 @@ export function ToolBlocksDisplay({
 
     const flushRegularBlocks = () => {
       if (pendingRegularBlocks.length === 0) return
-      items.push(...buildProcessingDisplayRows(pendingRegularBlocks))
+      items.push(
+        ...buildProcessingDisplayRows(pendingRegularBlocks, { groupCompletedTools: false })
+      )
       pendingRegularBlocks = []
     }
 
@@ -165,18 +178,89 @@ export function ToolBlocksDisplay({
       ),
     [displayItems]
   )
+  const fileEditDurations = useMemo(() => getFileEditDurations(blocks), [blocks])
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
-  const hasRunningBlock = blocks.some(block => block.status !== 'done' && block.status !== 'error')
-  const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent) || hasPlanResponse
-  const expanded = isLockedOpen || userExpanded
-  const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
-  const collapsedRunningItems = useMemo(
-    () =>
-      !expanded && hasRunningBlock
-        ? displayItems.filter(item => isRunningProcessingDisplayItem(item))
-        : [],
-    [displayItems, expanded, hasRunningBlock]
+  const hasRequestUserInput = displayItems.some(item => item.type === 'request_user_input')
+  const hasActiveContextCompaction = blocks.some(
+    block =>
+      isContextCompactionToolBlock(block) && block.status !== 'done' && block.status !== 'error'
   )
+  const isLockedOpen =
+    forceExpanded ||
+    !showSummary ||
+    hasPlanResponse ||
+    hasRequestUserInput ||
+    hasActiveContextCompaction
+  const hasRunningToolActivity = rows.some(row =>
+    row.type === 'activity_group'
+      ? row.blocks.some(block => block.status !== 'done' && block.status !== 'error')
+      : (row.block.type === 'tool' || row.block.type === 'file_changes') &&
+        row.block.status !== 'done' &&
+        row.block.status !== 'error'
+  )
+  const hasClosedToolSegment = processingPhase !== 'live'
+  const usesUnifiedToolList = showSummary && !isLockedOpen
+  const expanded = isLockedOpen || (userExpanded && !usesUnifiedToolList)
+  const canToggleSummary =
+    showSummary && !isLockedOpen && !hasRunningToolActivity && rows.length > 0
+  const hasLivePreview =
+    isRunning &&
+    (!hasClosedToolSegment || hasRunningToolActivity || showInterToolThinking) &&
+    !expanded &&
+    rows.length > 0
+  const previewRows = useMemo(
+    () =>
+      !expanded &&
+      (hasRunningToolActivity ||
+        (hasLivePreview && !livePreviewCollapsed) ||
+        (usesUnifiedToolList && userExpanded))
+        ? rows
+        : [],
+    [
+      expanded,
+      hasLivePreview,
+      hasRunningToolActivity,
+      livePreviewCollapsed,
+      rows,
+      userExpanded,
+      usesUnifiedToolList,
+    ]
+  )
+  const summaryExpanded = expanded || previewRows.length > 0
+  const toggleSummary = () => {
+    if (hasLivePreview) {
+      setLivePreviewCollapsed(value => !value)
+      return
+    }
+    setUserExpanded(value => !value)
+  }
+  const hasToolActivity = rows.some(
+    row =>
+      row.type === 'activity_group' ||
+      row.block.type === 'tool' ||
+      row.block.type === 'file_changes'
+  )
+  const activityStats = countProcessingActivityKinds(rows)
+  const hasOnlyEditActivity =
+    activityStats.edit > 0 &&
+    activityStats.command === 0 &&
+    activityStats.file === 0 &&
+    activityStats.search === 0 &&
+    activityStats.other === 0
+  const toolCallCount = countProcessingToolCalls(activityStats)
+  const summaryTitle = hasToolActivity
+    ? hasOnlyEditActivity
+      ? t('tool_activity.edit_summary', { count: activityStats.edit })
+      : activityStats.edit > 0
+        ? t('tool_activity.mixed_summary', {
+            count: activityStats.edit,
+            toolSummary: t('tool_activity.summary', { count: toolCallCount }),
+          })
+        : t('tool_activity.summary', { count: toolCallCount })
+    : t('thinking.completed')
+  const summaryDuration = hasToolActivity
+    ? getWholeSecondsDurationText(blocks, turnStartedAt, now, completedAt, isRunning)
+    : duration.replace(/^已处理\s*/, '')
   const processingContent = useMemo(
     () =>
       expanded ? (
@@ -213,6 +297,7 @@ export function ToolBlocksDisplay({
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onLoadFullTranscript={onLoadFullTranscript}
                 loadingFullTranscript={loadingFullTranscript}
+                fileEditDurations={fileEditDurations}
               />
             )
           })}
@@ -225,6 +310,7 @@ export function ToolBlocksDisplay({
       onOpenAssistantPlan,
       onLoadFullTranscript,
       loadingFullTranscript,
+      fileEditDurations,
       onRequestUserInputIgnore,
       onRequestUserInputSubmit,
       stateKey,
@@ -233,73 +319,385 @@ export function ToolBlocksDisplay({
 
   if (blocks.length === 0 && !isStreaming) return null
 
-  return (
-    <div className="mb-3 min-w-0 w-full">
-      {showSummary && !canToggleSummary ? (
-        <div className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted">
-          <span className="inline-flex items-center gap-1">{duration}</span>
-        </div>
-      ) : showSummary ? (
-        <div className="mb-3 w-full border-b border-border pb-2">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-left text-xs text-text-muted hover:text-text-secondary"
-            onClick={() => setUserExpanded(value => !value)}
-            aria-expanded={expanded}
-          >
-            <span>{duration}</span>
-            <svg
-              className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-        </div>
+  const processingBody = (
+    <>
+      {showSummary ? (
+        <ProcessingSummaryHeader
+          canToggle={canToggleSummary}
+          duration={summaryDuration}
+          durationAriaLabel={duration}
+          expanded={summaryExpanded}
+          isRunning={isRunning && !hasClosedToolSegment}
+          rows={rows}
+          onToggle={toggleSummary}
+          title={summaryTitle}
+          labels={{
+            command: t('tool_activity.command'),
+            file: t('tool_activity.file'),
+            search: t('tool_activity.search'),
+            edit: t('tool_activity.edit'),
+            other: t('tool_activity.other'),
+          }}
+        />
       ) : null}
       <CollapsibleProcessingContent expanded={expanded}>
         {processingContent}
       </CollapsibleProcessingContent>
-      {collapsedRunningItems.length > 0 && (
-        <div className="flex min-w-0 flex-col gap-3 pt-0.5">
-          {collapsedRunningItems.map(item =>
-            item.type === 'activity_group' ? (
-              <ToolActivityGroup
-                key={item.id}
-                row={item}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-              />
-            ) : item.type === 'request_user_input' ? null : isContextCompactionToolBlock(
-                item.block
-              ) ? (
-              <ContextCompactionIndicator key={item.id} block={item.block} />
-            ) : (
-              <ToolBlockItem
-                key={item.id}
-                block={item.block}
-                stateKey={stateKey ? `${stateKey}:${item.id}:running` : undefined}
-                onOpenWorkspaceFile={onOpenWorkspaceFile}
-                onOpenAssistantPlan={onOpenAssistantPlan}
-              />
-            )
-          )}
-        </div>
+      {previewRows.length > 0 ? (
+        <LiveProcessingPreview
+          rows={previewRows}
+          showThinking={
+            isStreaming &&
+            hasToolActivity &&
+            !hasRunningToolActivity &&
+            (processingPhase === 'live' || showInterToolThinking)
+          }
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          fileEditDurations={fileEditDurations}
+          stateKey={stateKey}
+        />
+      ) : null}
+    </>
+  )
+  return <div className="mb-3 min-w-0 w-full">{processingBody}</div>
+}
+
+type ToolActivityLabels = {
+  command: string
+  file: string
+  search: string
+  edit: string
+  other: string
+}
+
+function ProcessingSummaryHeader({
+  canToggle,
+  duration,
+  durationAriaLabel,
+  expanded,
+  isRunning,
+  rows,
+  onToggle,
+  title,
+  labels,
+}: {
+  canToggle: boolean
+  duration: string
+  durationAriaLabel: string
+  expanded: boolean
+  isRunning: boolean
+  rows: ProcessingDisplayRow[]
+  onToggle: () => void
+  title: string
+  labels: ToolActivityLabels
+}) {
+  const titleContent = (
+    <>
+      {rows.length > 0 ? (
+        <ChevronDown
+          data-testid="processing-summary-chevron"
+          className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
+          strokeWidth={2}
+          aria-hidden="true"
+        />
+      ) : null}
+      <span className="font-medium text-text-secondary">{title}</span>
+    </>
+  )
+
+  return (
+    <div
+      className="flex min-h-8 min-w-0 items-center gap-2 text-xs text-text-muted"
+      data-testid="processing-summary-header"
+    >
+      {canToggle ? (
+        <button
+          type="button"
+          data-testid="processing-summary-toggle"
+          className="inline-flex shrink-0 items-center gap-1 hover:text-text-primary"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-label={durationAriaLabel ? `${title} ${durationAriaLabel}` : `${title} 已处理`}
+        >
+          {titleContent}
+        </button>
+      ) : (
+        <span className="inline-flex shrink-0 items-center gap-1">{titleContent}</span>
       )}
+      <ToolActivityStats rows={rows} labels={labels} />
+      {isRunning || duration ? (
+        <span className="ml-auto inline-flex shrink-0 items-center gap-1">
+          {isRunning ? (
+            <LoaderCircle
+              className="h-3 w-3 animate-spin text-blue-500 motion-reduce:animate-none"
+              strokeWidth={1.8}
+              aria-hidden="true"
+            />
+          ) : null}
+          {duration}
+        </span>
+      ) : null}
     </div>
   )
 }
 
-function isRunningProcessingDisplayItem(item: ProcessingDisplayItem): boolean {
-  if (item.type === 'request_user_input') {
-    return item.block.status !== 'done' && item.block.status !== 'error'
+function ToolActivityStats({
+  rows,
+  labels,
+}: {
+  rows: ProcessingDisplayRow[]
+  labels: ToolActivityLabels
+}) {
+  const stats = countProcessingActivityKinds(rows)
+  const items = [
+    { key: 'command', count: stats.command, label: labels.command, icon: SquareTerminal },
+    { key: 'file', count: stats.file, label: labels.file, icon: FileText },
+    { key: 'search', count: stats.search, label: labels.search, icon: Search },
+    { key: 'edit', count: stats.edit, label: labels.edit, icon: Pencil },
+    { key: 'other', count: stats.other, label: labels.other, icon: Wrench },
+  ].filter(item => item.count > 0)
+
+  if (items.length === 0) return null
+
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      data-testid="processing-tool-stats"
+    >
+      {items.map(({ key, count, label, icon: Icon }) => (
+        <span
+          key={key}
+          className="inline-flex shrink-0 items-center gap-1"
+          title={`${label} ${count}`}
+          aria-label={`${label} ${count}`}
+        >
+          <Icon className="h-3.5 w-3.5" strokeWidth={1.7} aria-hidden="true" />
+          <span className="font-mono">{count}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function LiveProcessingPreview({
+  rows,
+  showThinking,
+  onOpenWorkspaceFile,
+  fileEditDurations,
+  stateKey,
+}: {
+  rows: ProcessingDisplayRow[]
+  showThinking: boolean
+  onOpenWorkspaceFile?: (path: string) => void
+  fileEditDurations: ReadonlyMap<string, FileEditDuration>
+  stateKey?: string
+}) {
+  const { t } = useTranslation('chat')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(() => new Set())
+  const hasExpandedDetail = rows.some(row => expandedRowIds.has(row.id))
+
+  const updateExpandedRow = useCallback((rowId: string, expanded: boolean) => {
+    setExpandedRowIds(current => {
+      if (current.has(rowId) === expanded) return current
+      const next = new Set(current)
+      if (expanded) next.add(rowId)
+      else next.delete(rowId)
+      return next
+    })
+    if (!expanded) {
+      requestAnimationFrame(() => {
+        const scrollArea = scrollRef.current
+        if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
+      })
+    }
+  }, [])
+
+  useLayoutEffect(() => {
+    const scrollArea = scrollRef.current
+    if (!scrollArea) return
+    scrollArea.scrollTop = scrollArea.scrollHeight
+  }, [rows.length, showThinking])
+
+  return (
+    <div className="ml-2 min-w-0 border-l border-border pl-3" data-testid="processing-live-preview">
+      <div
+        ref={scrollRef}
+        className="scrollbar-soft flex min-w-0 flex-col"
+        data-testid="processing-live-preview-scroll"
+        style={{
+          maxHeight: hasExpandedDetail ? 'none' : '7rem',
+          overflowY: hasExpandedDetail ? 'visible' : 'auto',
+        }}
+      >
+        {rows.map((row, index) => (
+          <LiveProcessingPreviewRow
+            key={row.id}
+            row={row}
+            shimmer={isProcessingRowRunning(row) && index === rows.length - 1}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
+            fileEditDurations={fileEditDurations}
+            onExpandedChange={updateExpandedRow}
+            stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
+          />
+        ))}
+        {showThinking ? (
+          <div className="flex min-h-8 items-center py-1 text-sm" data-testid="tool-block-thinking">
+            <span className="waiting-thinking-text">{t('thinking.running')}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function LiveProcessingPreviewRow({
+  row,
+  shimmer,
+  durationStartedAt,
+  durationEndAt,
+  fileEditDurations,
+  onOpenWorkspaceFile,
+  onExpandedChange,
+  stateKey,
+}: {
+  row: ProcessingDisplayRow
+  shimmer: boolean
+  durationStartedAt?: number
+  durationEndAt?: number
+  fileEditDurations: ReadonlyMap<string, FileEditDuration>
+  onOpenWorkspaceFile?: (path: string) => void
+  onExpandedChange: (rowId: string, expanded: boolean) => void
+  stateKey?: string
+}) {
+  const handleExpandedChange = useCallback(
+    (expanded: boolean) => onExpandedChange(row.id, expanded),
+    [onExpandedChange, row.id]
+  )
+
+  if (row.type === 'activity_group') {
+    return (
+      <div className="min-h-8 min-w-0 py-1">
+        <ToolActivityGroup
+          row={row}
+          initialExpanded={false}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      </div>
+    )
   }
-  if (item.type === 'activity_group') {
-    return item.blocks.some(block => block.status !== 'done' && block.status !== 'error')
+
+  if (row.block.type === 'tool') {
+    if (isContextCompactionToolBlock(row.block)) {
+      return <ContextCompactionIndicator block={row.block} />
+    }
+
+    return (
+      <ToolBlockItem
+        block={row.block}
+        compact
+        shimmer={shimmer}
+        durationStartedAt={durationStartedAt}
+        durationEndAt={durationEndAt}
+        fileEditDurations={fileEditDurations}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        onExpandedChange={handleExpandedChange}
+        stateKey={stateKey}
+      />
+    )
   }
-  return item.block.status !== 'done' && item.block.status !== 'error'
+
+  return (
+    <ToolBlockItem
+      block={row.block}
+      shimmer={shimmer}
+      durationStartedAt={durationStartedAt}
+      durationEndAt={durationEndAt}
+      fileEditDurations={fileEditDurations}
+      onExpandedChange={handleExpandedChange}
+      stateKey={stateKey}
+    />
+  )
+}
+
+function getFileEditDurations(blocks: ProcessingBlock[]): ReadonlyMap<string, FileEditDuration> {
+  const edits = blocks.flatMap(block => {
+    if (block.type !== 'tool' || !isFileEditToolName(block.toolName)) return []
+    const completedAt = block.completedAt
+    if (completedAt === undefined) {
+      return []
+    }
+    return getFileInputPaths(block).map(path => ({
+      path: normalizeActivityPath(path),
+      startedAt: block.createdAt,
+      completedAt,
+    }))
+  })
+  const durations = new Map<string, FileEditDuration>()
+
+  blocks.forEach(block => {
+    if (block.type !== 'file_changes') return
+    block.fileChanges.files.forEach(file => {
+      const filePath = normalizeActivityPath(file.path)
+      const matches = edits.filter(
+        edit =>
+          edit.path === filePath ||
+          edit.path.endsWith(`/${filePath}`) ||
+          filePath.endsWith(`/${edit.path}`)
+      )
+      if (matches.length === 0) return
+      durations.set(file.path, {
+        startedAt: Math.min(...matches.map(match => match.startedAt)),
+        completedAt: Math.max(...matches.map(match => match.completedAt)),
+      })
+    })
+  })
+
+  return durations
+}
+
+function normalizeActivityPath(path: string): string {
+  return path.replaceAll('\\', '/').replace(/^\.\//, '')
+}
+
+function isProcessingRowRunning(row: ProcessingDisplayRow): boolean {
+  if (row.type === 'activity_group') {
+    return row.blocks.some(block => block.status !== 'done' && block.status !== 'error')
+  }
+  return row.block.status !== 'done' && row.block.status !== 'error'
+}
+
+function countProcessingActivityKinds(rows: ProcessingDisplayRow[]) {
+  const stats = { command: 0, file: 0, search: 0, edit: 0, other: 0 }
+
+  const addToolBlock = (block: ToolBlock) => {
+    const kind = getToolActivityKind(block)
+    if (kind === 'command') stats.command += 1
+    else if (kind === 'file') stats.file += 1
+    else if (kind === 'search') stats.search += 1
+    else if (kind === 'edit' || kind === 'create') stats.edit += 1
+    else stats.other += 1
+  }
+
+  rows.forEach(row => {
+    if (row.type === 'activity_group') {
+      row.blocks.forEach(addToolBlock)
+      return
+    }
+    if (row.block.type === 'tool') {
+      addToolBlock(row.block)
+      return
+    }
+    if (row.block.type === 'file_changes') {
+      stats.edit += row.block.fileChanges.file_count || row.block.fileChanges.files.length
+    }
+  })
+
+  return stats
+}
+
+function countProcessingToolCalls(stats: ReturnType<typeof countProcessingActivityKinds>): number {
+  return stats.command + stats.file + stats.search + stats.other
 }
 
 function CollapsibleProcessingContent({
@@ -391,12 +789,14 @@ function CollapsibleProcessingContent({
 
 function ToolActivityGroup({
   row,
+  initialExpanded = true,
   onOpenWorkspaceFile,
 }: {
   row: Extract<ProcessingDisplayRow, { type: 'activity_group' }>
+  initialExpanded?: boolean
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(initialExpanded)
   const isWebSearchGroup = isWebSearchActivityGroup(row.blocks)
   const isGuidanceGroup = isGuidanceActivityGroup(row.blocks)
   const icon = renderActivityGroupIcon(row.blocks)
@@ -414,10 +814,11 @@ function ToolActivityGroup({
   }
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm">
+    <div className="min-w-0 overflow-x-clip text-sm">
       <button
         type="button"
         data-testid="processing-activity-group-toggle"
+        data-tool-detail-toggle
         aria-expanded={expanded}
         onClick={() => setExpanded(value => !value)}
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
@@ -491,6 +892,12 @@ function ToolActivityDetails({
   return (
     <>
       {blocks.map(block => {
+        if (isImageViewToolName(block.toolName)) {
+          return (
+            <ToolBlockItem key={block.id} block={block} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+          )
+        }
+
         const item = getToolActivitySearchItem(block)
         if (item) {
           return <CodeSearchActivityRow key={item.id} label={item.label} />
@@ -519,8 +926,9 @@ function CodeSearchActivityRow({ label }: { label: string }) {
   return (
     <div
       data-testid="code-search-activity-row"
-      className="flex max-w-full text-sm leading-5 text-text-muted"
+      className="flex max-w-full items-start gap-1.5 text-sm leading-5 text-text-muted"
     >
+      <Search className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
       <span className="min-w-0 break-words">{label}</span>
     </div>
   )
@@ -533,7 +941,8 @@ function FileReadActivityRow({
   path: string
   onOpenWorkspaceFile?: (path: string) => void
 }) {
-  const label = `Read ${basename(path)}`
+  const { t } = useTranslation('chat')
+  const label = t('tool_activity.file_done', { name: basename(path) })
   const content = (
     <span data-testid="file-read-activity-row" className="min-w-0 truncate">
       {label}
@@ -544,15 +953,22 @@ function FileReadActivityRow({
     return (
       <button
         type="button"
+        data-testid="file-read-activity-button"
         className="flex max-w-full items-center gap-1.5 text-left text-text-muted hover:text-text-secondary"
         onClick={() => onOpenWorkspaceFile(path)}
       >
+        <FileText className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
         {content}
       </button>
     )
   }
 
-  return <div className="flex max-w-full items-center gap-1.5 text-text-muted">{content}</div>
+  return (
+    <div className="flex max-w-full items-center gap-1.5 text-text-muted">
+      <FileText className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+      {content}
+    </div>
+  )
 }
 
 function basename(path: string): string {
@@ -603,44 +1019,4 @@ function renderActivityGroupIcon(blocks: ToolBlock[]) {
     )
   }
   return <Search className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-}
-
-function getDurationText(
-  blocks: ProcessingBlock[],
-  turnStartedAt: number,
-  now: number,
-  completedAt: number | null,
-  isRunning: boolean
-): string {
-  // Anchor the elapsed time to the turn's wall-clock start rather than the
-  // first block. After a page refresh the in-progress blocks are re-streamed
-  // with fresh client timestamps, so anchoring to blocks[0] would restart the
-  // timer from the refresh moment.
-  const first = turnStartedAt
-  const last = blocks[blocks.length - 1]?.createdAt ?? first
-  // While running, keep counting against the live clock so the timer advances
-  // every second even during pure thinking phases with no new tool output.
-  // Once finished, lock to the completion time (or the last block timestamp
-  // when the turn was restored from history after a refresh).
-  const endTime = isRunning ? now : (completedAt ?? last)
-  const durationMs = isRunning ? Math.max(1000, endTime - first) : Math.max(0, endTime - first)
-  const duration = formatDuration(durationMs)
-
-  return `已处理 ${duration}`
-}
-
-function formatDuration(durationMs: number): string {
-  const seconds = Math.floor(durationMs / 1000)
-  if (seconds < 60) return `${seconds} 秒`
-
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  if (minutes < 60) {
-    return remainingSeconds > 0 ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`
-  }
-
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  if (remainingMinutes === 0) return `${hours} 小时`
-  return `${hours} 小时 ${remainingMinutes} 分钟`
 }

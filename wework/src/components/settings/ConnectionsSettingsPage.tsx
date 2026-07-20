@@ -29,7 +29,7 @@ import {
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
@@ -45,7 +45,6 @@ import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import { DeviceActionButton } from './DeviceActionButton'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
@@ -58,7 +57,11 @@ import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel 
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import {
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
@@ -72,9 +75,11 @@ import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
+  createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
 
@@ -535,13 +540,23 @@ function CloudDeviceConnectionInfoDialog({
 function DeviceCard({
   device,
   onChanged,
-  onVncDesktopOpened,
+  onCloudDesktopOpened,
 }: {
   device: DeviceInfo
   onChanged: () => void
-  onVncDesktopOpened: () => void
+  onCloudDesktopOpened: () => void
 }) {
   const cloudConnection = useOptionalCloudConnection()
+  const remoteTerminalClientFactory = useMemo(
+    () =>
+      cloudConnection.isConnected &&
+      cloudConnection.socketBaseUrl &&
+      cloudConnection.socketPath &&
+      cloudConnection.token
+        ? createSettingsRemoteTerminalClientFactory(cloudConnection)
+        : null,
+    [cloudConnection]
+  )
   const [sessionLoading, setSessionLoading] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState(device.name)
@@ -564,13 +579,16 @@ function DeviceCard({
         await openExternalUrl(result.url)
         return
       }
+      if (!remoteTerminalClientFactory) {
+        throw new Error('Cloud terminal connection is unavailable')
+      }
       setTerminalSession(result)
     } catch (e) {
       console.error('Failed to start terminal:', e)
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device])
+  }, [cloudConnection, device, remoteTerminalClientFactory])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
@@ -772,7 +790,7 @@ function DeviceCard({
                   <CloudDesktopDeviceAction
                     deviceId={device.device_id}
                     disabled={!isOnline}
-                    onOpened={onVncDesktopOpened}
+                    onOpened={onCloudDesktopOpened}
                   />
                 )}
               </>
@@ -835,7 +853,7 @@ function DeviceCard({
         </div>
       </div>
 
-      {terminalSession && (
+      {terminalSession && remoteTerminalClientFactory && (
         <section
           data-testid="settings-device-terminal-panel"
           className="mt-3 flex h-[360px] min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
@@ -859,7 +877,11 @@ function DeviceCard({
             </button>
           </div>
           <div className="min-h-0 flex-1">
-            <RemoteTerminal sessionId={terminalSession.session_id} active />
+            <RemoteTerminal
+              sessionId={terminalSession.session_id}
+              clientFactory={remoteTerminalClientFactory}
+              active
+            />
           </div>
         </section>
       )}
@@ -887,13 +909,13 @@ function DeviceSection({
   title,
   devices,
   onChanged,
-  onVncDesktopOpened,
+  onCloudDesktopOpened,
   icon: Icon,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
-  onVncDesktopOpened: () => void
+  onCloudDesktopOpened: () => void
   icon: ComponentType<{ className?: string }>
 }) {
   return (
@@ -911,7 +933,7 @@ function DeviceSection({
             key={device.device_id}
             device={device}
             onChanged={onChanged}
-            onVncDesktopOpened={onVncDesktopOpened}
+            onCloudDesktopOpened={onCloudDesktopOpened}
           />
         ))}
       </div>
@@ -1031,10 +1053,10 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
 
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
-  onVncDesktopOpened,
+  onCloudDesktopOpened,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
-  onVncDesktopOpened: () => void
+  onCloudDesktopOpened: () => void
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1231,7 +1253,7 @@ function ConnectionsDeviceSettingsPage({
                       devices={cloudDevices}
                       icon={Cloud}
                       onChanged={fetchDevices}
-                      onVncDesktopOpened={onVncDesktopOpened}
+                      onCloudDesktopOpened={onCloudDesktopOpened}
                     />
                   )}
                   {remoteDevices.length > 0 && (
@@ -1240,7 +1262,7 @@ function ConnectionsDeviceSettingsPage({
                       devices={remoteDevices}
                       icon={Server}
                       onChanged={fetchDevices}
-                      onVncDesktopOpened={onVncDesktopOpened}
+                      onCloudDesktopOpened={onCloudDesktopOpened}
                     />
                   )}
                 </>
@@ -1271,7 +1293,9 @@ export function ConnectionsSettingsPage({
   onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
@@ -1297,10 +1321,7 @@ export function ConnectionsSettingsPage({
       data-testid="wework-settings-page"
       className={cn(
         'relative flex h-screen min-w-0 flex-1 overflow-hidden text-text-primary',
-        appearance.backgroundImagePath &&
-          (appearance.backgroundInMain ||
-            appearance.backgroundInSidebar ||
-            appearance.backgroundInTopBar)
+        background.imagePath && (background.inMain || background.inSidebar || background.inTopBar)
           ? 'bg-transparent'
           : 'bg-background'
       )}
@@ -1308,7 +1329,7 @@ export function ConnectionsSettingsPage({
       <aside
         className={cn(
           'relative flex shrink-0 flex-col border-r border-border/70 px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))]',
-          appearance.backgroundImagePath && appearance.backgroundInSidebar
+          background.imagePath && background.inSidebar
             ? 'bg-background/25'
             : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150'
         )}
@@ -1392,9 +1413,7 @@ export function ConnectionsSettingsPage({
       <main
         className={cn(
           'min-w-0 flex-1 overflow-auto px-8 pb-8',
-          appearance.backgroundImagePath && appearance.backgroundInMain
-            ? 'bg-background/20'
-            : 'bg-background',
+          background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background',
           usesOverlayTitlebar ? 'pt-16' : 'pt-8'
         )}
       >
@@ -1438,7 +1457,7 @@ export function ConnectionsSettingsPage({
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
-            onVncDesktopOpened={onBack}
+            onCloudDesktopOpened={onBack}
           />
         )}
       </main>

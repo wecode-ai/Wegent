@@ -80,6 +80,16 @@ Select **Quick phrases** in the lower-left area of the Wework composer to open t
 
 Open **Settings > Quick phrases** to create, edit, delete, and reorder phrases. Each phrase can use Normal, Plan mode, or Goal; selecting it also switches the composer to that mode. Quick phrases are stored on the current device, remain available offline, and are not synchronized to other devices.
 
+### Use the System Drag Panel
+
+The macOS desktop app enables the system drag panel by default. When you start dragging files, images, web links, or selected text, Wework shows a compact always-on-top panel at the top of the display containing the pointer. Drop the content onto one of these targets:
+
+- **New chat** opens a new chat and appends the content to its draft. If a new-chat draft is already open, Wework preserves and appends to its existing content.
+- **Follow up** appears only while a conversation is open and appends the content to that conversation's composer.
+- **Temporary stash** saves the dropped content in the stash above the quick-phrase list.
+
+The stash presents content as horizontal attachment cards. Multiple files appear as a stack, and images use thumbnails. You can scroll horizontally, hover to preview, remove an item, or select a stashed item to append its text and attachments to any conversation. Web links retain both the page title and URL. Turn the feature off or back on under **Settings > General > System drag panel**.
+
 ## Commit and Push Changes
 
 In desktop Wework, open **Environment info** in the upper-right corner, then select **Commit or push** to run one of these actions in the current task or project's actual workspace directory:

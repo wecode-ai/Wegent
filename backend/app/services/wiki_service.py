@@ -34,8 +34,6 @@ from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 
-INTERNAL_CONTENT_WRITE_TOKEN = wiki_settings.INTERNAL_API_TOKEN
-
 
 class WikiService:
     """Wiki document service"""
@@ -76,9 +74,12 @@ class WikiService:
                 "content_endpoint_url": f"{base_url}{endpoint_path}",
                 "default_section_types": wiki_settings.DEFAULT_SECTION_TYPES,
                 "generation_id": generation.id,
-                "auth_token": INTERNAL_CONTENT_WRITE_TOKEN,
             }
         )
+        # Do not persist the internal write token in ext: the wiki_submit skill
+        # authenticates via the task JWT (TASK_INFO.auth_token), and anything stored
+        # here leaks through the generation/project API responses.
+        content_meta.pop("auth_token", None)
         ext["content_write"] = content_meta
         return ext
 
@@ -291,13 +292,6 @@ class WikiService:
                 section_types=content_meta.get("default_section_types"),
                 language=obj_in.language,
             )
-            # Store wiki environment variables in generation ext for executor to use
-            wiki_env = {
-                "WIKI_ENDPOINT": content_meta.get("content_endpoint_url", ""),
-                "WIKI_TOKEN": content_meta.get("auth_token", ""),
-                "WIKI_GENERATION_ID": str(generation.id),
-            }
-            generation.ext["wiki_env"] = wiki_env
 
             # Note: model_id is not passed - wiki uses the team's bound model
             # The team's bot should have a model configured (bind_model or custom config)
@@ -1123,6 +1117,25 @@ class WikiService:
             raise HTTPException(status_code=404, detail="Project not found")
 
         return project
+
+    def check_user_project_access(
+        self, project: WikiProject, user: Optional[User]
+    ) -> bool:
+        """Check whether a user has read access to a single project's repository.
+
+        Reuses the same repository-access logic as the project list endpoint so
+        the detail endpoint cannot be used to bypass permission filtering.
+
+        Args:
+            project: WikiProject to check.
+            user: Current user. Access is denied when user is None.
+
+        Returns:
+            True if the user has read access to the underlying repository.
+        """
+        if user is None:
+            return False
+        return bool(self._filter_projects_by_user_access([project], user))
 
     def cancel_wiki_generation(
         self, wiki_db: Session, generation_id: int, user_id: int

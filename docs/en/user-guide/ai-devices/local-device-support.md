@@ -155,12 +155,13 @@ The generation API uses the current Backend environment to generate `WEGENT_BACK
 
 The default image is controlled by the Backend environment variable `REMOTE_DEVICE_DOCKER_IMAGE`; if unset, Wegent uses `ghcr.io/wecode-ai/wegent-device:latest`. If a deployment must use an internal registry, the deployer should set `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>` in the Backend runtime environment. Users do not need to enter an image address manually.
 
-By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server and Desktop VNC/VPN entries remain cloud-device-only.
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at `DEVICE_PUBLIC_BASE_URL`, so that address must be reachable from the user's browser. Public Wework does not provide cloud desktop support; some product distributions may add it through the optional extension.
 
 - `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
+- `POST /api/devices/{device_id}/code-server`: opens code-server on a specific device. The optional request-body `path` opens that remote project directory; omitting it uses the default workspace used by Settings. Executor accepts only the default workspace, roots configured through `WEGENT_WORKSPACE_ROOTS`, and saved Codex project roots. Paths outside those boundaries are rejected.
 
-Terminal sessions work for local and cloud devices. Backend records the `session_id`, user, device, and executor socket binding; the frontend connects to the `/terminal` namespace with the existing login JWT; Backend then relays input, resize, and close events to the device through the `/local-executor` namespace, while Executor manages the PTY directly. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. Local devices do not support code-server project sessions.
+Terminal sessions work for local, cloud, and remote Docker devices. Backend records the `session_id`, user, device, and executor socket binding, and the frontend connects to the `/terminal` namespace with the existing login JWT. After the browser joins the session room, Backend sends an acknowledged `terminal:attach` event through the `/local-executor` namespace. Executor only then reads the initial output buffered by the PTY and returns `terminal:output` and `terminal:exit` events, so the first shell prompt cannot be lost before the browser subscribes. Backend also relays input, resize, and close events to the device, while Executor manages the PTY directly. Code-server is a persistent in-container process, and cloud and remote Docker devices use the gateway to open the requested project path. Local devices do not support code-server project sessions.
 
 When a project configures `workspace.localPath`, `workspace.devicePath`, or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server. `localPath` is for the user's local executor, while `devicePath` is a sandbox directory bound to a specific cloud or remote device. If the request includes a task ID and that task records an execution workspace path, such as a Git worktree, terminal or code-server starts directly in the task workspace path and does not fall back to the project directory.
 
@@ -218,7 +219,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also starts the local socket and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend. Wework App manages executors it starts itself; if you start an executor manually outside the App, the App attaches to the existing socket but does not terminate that external process on exit. Do not run multiple manual executors with the same executor home or socket path. Logs are written to `~/.wegent-executor/logs/executor.log`.
+The installer and first startup create `~/.wegent-executor/device-config.json`. Configuration priority is environment variables, device config, then defaults. If `WEGENT_EXECUTOR_HOME` is not set, the executor uses `~/.wegent-executor`. The executor always starts the HTTP server; non-`docker` mode also provides local JSONL IPC through the current process stdin/stdout and, after `WEGENT_BACKEND_URL` or `connection.backend_url` is set, connects to Backend. Wework App communicates only with the executor child process it starts directly; it does not discover or attach to an executor started manually outside the App. A full App exit also terminates only the child it owns. Stdout carries protocol frames only, while diagnostics are written to stderr and `~/.wegent-executor/logs/executor.log`.
 
 #### Claude Code Execution Timeout
 
@@ -298,7 +299,7 @@ Local devices do not support cloud connection capabilities in the project toolba
 | --------------------------- | -------------------- |
 | **Terminal**                | Not supported        |
 | **IDE/code-server**         | Not supported        |
-| **Desktop VNC/VPN**         | Not supported        |
+| **Cloud desktop**           | Not supported        |
 | **CPU/MEM/Disk monitoring** | Not supported        |
 
 When a project is bound to a local device, the workspace toolbar hides Terminal, IDE, and Desktop entries and shows a local-device capability notice. Choose a cloud device when you need those connection and monitoring capabilities.
@@ -327,16 +328,14 @@ The **Settings** → **Connections** page lists ClaudeCode devices that the curr
 
 Cloud devices display online status, executor version, CPU, memory, and disk usage. When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online. The Wework frontend can configure the scaling Wiki link in the resource note card with `VITE_CLOUD_DEVICE_SCALING_WIKI_URL`, guiding users to request a larger cloud device or clean workspace cache when CPU, MEM, or disk stays above 80%.
 
-The web **AI Devices** page shows the same real-time CPU/memory/disk usage on cloud device cards, with an expandable 1-hour trend chart (hover for per-minute values). When any metric reaches 80%, a warning icon appears next to the disk metric; click it for scaling guidance and a Wiki link.
+Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, cloud desktop, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
 
-Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, Desktop VNC/VPN, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
-
-Online cloud devices can open interactive sessions directly:
+Online cloud and remote Docker devices can open interactive sessions directly:
 
 | Action       | Backend API                                     | Description                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Terminal** | `POST /api/devices/{device_id}/terminal`        | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
-| **IDE**      | `POST /api/devices/{device_id}/code-server`     | Opens a code-server session                                                                                                                                                                           |
+| **IDE**      | `POST /api/devices/{device_id}/code-server`     | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
 | **Desktop**  | `GET /api/cloud-devices/{device_id}/vnc-config` | Opens the cloud-device VNC desktop in Wework's embedded browser                                                                                                                                       |
 
 Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Desktop sessions connect through `/vnc-proxy/{device_id}`; the proxy URL and sign-in token remain only in local memory owned by Tauri and the embedded VNC page, never in the address bar or browser history. The two-minute lifetime applies only while the main WebView hands credentials to the VNC page; once open, that page can use its own memory cache for disconnect retries. Terminal, IDE, and Desktop buttons are disabled while the device is offline.

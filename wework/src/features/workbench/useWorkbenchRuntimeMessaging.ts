@@ -205,6 +205,28 @@ export function useWorkbenchRuntimeMessaging({
     [dispatch, executorClient, refreshWorkLists, reportError]
   )
 
+  const interruptAndSendRuntimePaneMessage = useCallback(
+    async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
+      dispatch({ type: 'runtime_task_started', address: request.address })
+      try {
+        const response = await executorClient.runtime.interruptAndSendRuntimeMessage(request)
+        if (!response.accepted) throw new Error(response.error || '打断并发送失败')
+        void refreshWorkLists().catch(error => {
+          console.warn('[Wework] Interrupt-and-send accepted but work list refresh failed', {
+            taskId: response.taskId ?? request.address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+        return true
+      } catch (error) {
+        dispatch({ type: 'runtime_task_settled', address: request.address })
+        reportError(error instanceof Error ? error.message : '打断并发送失败', options)
+        return false
+      }
+    },
+    [dispatch, executorClient, refreshWorkLists, reportError]
+  )
+
   const editLastUserMessage = useCallback(
     async (request: RuntimeRollbackRequest): Promise<boolean> => {
       try {
@@ -447,7 +469,7 @@ export function useWorkbenchRuntimeMessaging({
       activeDeviceId?: string,
       options?: Pick<
         SendCurrentInputOptions,
-        'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
+        'clientMessageId' | 'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
       > & {
         ephemeral?: boolean
         openInMainPane?: boolean
@@ -541,6 +563,7 @@ export function useWorkbenchRuntimeMessaging({
         teamId: payload.team_id,
         runtime,
         message: payload.message,
+        ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
@@ -804,6 +827,7 @@ export function useWorkbenchRuntimeMessaging({
           {
             address: state.currentRuntimeTask,
             message: payloadMessage,
+            ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
             ...runtimeModelFields,
             ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
             ...(attachments.length > 0 ? { attachments } : {}),
@@ -882,6 +906,7 @@ export function useWorkbenchRuntimeMessaging({
           initialGoal: options?.initialGoal,
           onError: options?.onError,
           onRuntimeTaskOptimisticOpen: options?.onRuntimeTaskOptimisticOpen,
+          clientMessageId: options?.clientMessageId,
         }
       )
       if (sent) {
@@ -952,6 +977,7 @@ export function useWorkbenchRuntimeMessaging({
         return sendRuntimePaneMessage({
           address: state.currentRuntimeTask,
           message: previousUserMessage.content,
+          clientMessageId: previousUserMessage.id,
           ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
           ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
@@ -1216,6 +1242,7 @@ export function useWorkbenchRuntimeMessaging({
 
   return {
     sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance,
     compactRuntimePaneTask,
     editLastUserMessage,

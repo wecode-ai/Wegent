@@ -50,6 +50,10 @@ A Codex web search may not include its query action in `item/started`; the final
 
 The Wework presentation layer accepts both Responses API snake_case action names (`open_page`, `find_in_page`) and Codex app-server camelCase names (`openPage`, `findInPage`). Normalize this naming difference at the tool-detail parsing boundary; do not mask missing completion events with UI placeholder content or status fallbacks.
 
+### Tool Activity Preview Scrolling
+
+The collapsed tool activity preview shows at most three rows and follows the latest activity while no tool detail is expanded. Auto-scroll must react both to changes in the tool row count and to the bottom “Thinking” row appearing or disappearing. When a tool completes without changing the row count, the thinking row must remain inside the inner scroll area's visible range. Expanding a detail removes the preview height limit, so forced scrolling must not override the user's reading position in that state.
+
 ## Goal and Task Execution State
 
 The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.
@@ -103,6 +107,10 @@ Maintenance rule: do not add UI fallbacks that insert temporary chats into the l
 The workbench owns live state that cannot be serialized reliably, including composer drafts, Terminal sessions, and the in-app browser. When users move from the workbench to plugins, apps, or iframe apps, `AppRoutes` must keep `WorkbenchProvider` and `WorkbenchPage` mounted and only hide the workbench surface. Returning to the workbench then reuses the original component instances. A direct visit to an auxiliary page may defer the initial workbench mount to avoid creating unused background sessions.
 
 Do not unmount the workbench during route transitions, and do not add incomplete restoration fallbacks for Terminal or browser state. New top-level pages should join the auxiliary-page rendering branch without changing the workbench lifecycle.
+
+## Workbench Pane Cache
+
+The desktop workbench caches up to 20 regular panes so messages, composer drafts, and local UI state survive switches between parallel tasks. Once the limit is exceeded, inactive panes are evicted in least-recently-used order. Panes for running tasks and panes with pinned terminals remain mounted outside the regular cache limit until the task finishes or the terminal is unpinned. Maintain this boundary through the existing `CachedWorkbenchPaneStack` LRU and pinning mechanisms; do not add a second pane cache in the layout.
 
 ## Audit Result
 

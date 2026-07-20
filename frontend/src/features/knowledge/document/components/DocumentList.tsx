@@ -24,7 +24,7 @@ import {
   Pencil,
   FolderInput,
   ArrowRightLeft,
-  X,
+  ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -230,16 +230,6 @@ function flattenFoldersForSelect(
   return result
 }
 
-function findFolderName(folders: KnowledgeFolder[], targetId: number | undefined): string | null {
-  if (targetId === undefined) return null
-  for (const folder of folders) {
-    if (folder.id === targetId) return folder.name
-    const childName = findFolderName(folder.children, targetId)
-    if (childName) return childName
-  }
-  return null
-}
-
 export function DocumentList({
   knowledgeBase,
   onBack,
@@ -259,7 +249,10 @@ export function DocumentList({
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
-  const [activeFolderId, setActiveFolderId] = useState<number | undefined>(undefined)
+  // 0 = root level, positive number = subfolder id
+  const [currentFolderId, setCurrentFolderId] = useState<number>(0)
+  // Expand-all view: show full folder+document tree when KB document_count < 200
+  const [isExpandAllView, setIsExpandAllView] = useState(false)
 
   // Folder state
   const {
@@ -272,15 +265,20 @@ export function DocumentList({
     batchMove,
   } = useFolders({ knowledgeBaseId: knowledgeBase.id })
 
-  const folderResourceTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
+  // Full tree index (all folders) — used for selection scope and breadcrumb
+  const fullTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
 
-  const activeFolderScopeIds = useMemo(
-    () =>
-      activeFolderId === undefined
-        ? undefined
-        : Array.from(folderResourceTree.index.folderDescendantIds.get(activeFolderId) ?? []),
-    [folderResourceTree, activeFolderId]
-  )
+  // Breadcrumb path from root to currentFolderId
+  const folderBreadcrumb = useMemo(() => {
+    if (currentFolderId === 0) return []
+    const path: KnowledgeFolder[] = []
+    let cur = fullTree.index.folderById.get(currentFolderId)
+    while (cur) {
+      path.unshift(cur)
+      cur = cur.parent_id ? fullTree.index.folderById.get(cur.parent_id) : undefined
+    }
+    return path
+  }, [currentFolderId, fullTree.index])
 
   const {
     documents,
@@ -301,17 +299,44 @@ export function DocumentList({
   } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
     paginationEnabled,
-    folderId: activeFolderId,
-    includeSubfolders: activeFolderId !== undefined,
-    folderScopeIds: activeFolderScopeIds,
+    loadAll: isExpandAllView,
+    folderId: isExpandAllView || searchQuery ? undefined : currentFolderId,
+    includeSubfolders: false,
     keyword: searchQuery,
     sortBy: sortField,
     sortOrder,
   })
 
+  // When searching, build a filtered folder tree containing only ancestors of matching documents.
+  // This lets deep documents show their full path without showing irrelevant folder rows.
+  const searchResultFolders = useMemo(() => {
+    if (!searchQuery || documents.length === 0) return null
+    const relevantIds = new Set<number>()
+    for (const doc of documents) {
+      const pathIds = fullTree.index.folderPathIds.get(doc.folder_id ?? 0) ?? []
+      pathIds.forEach(id => relevantIds.add(id))
+    }
+    function filterFolders(list: KnowledgeFolder[]): KnowledgeFolder[] {
+      return list
+        .filter(f => relevantIds.has(f.id))
+        .map(f => ({ ...f, children: filterFolders(f.children) }))
+    }
+    return filterFolders(folders)
+  }, [searchQuery, documents, folders, fullTree.index])
+
+  // Direct child folders for display
+  const directFolders = useMemo(() => {
+    if (searchQuery) return searchResultFolders ?? []
+    if (isExpandAllView) return folders
+    if (currentFolderId === 0) return folders.map(f => ({ ...f, children: [] }))
+    const parentFolder = fullTree.index.folderById.get(currentFolderId)
+    return (parentFolder?.children ?? []).map(f => ({ ...f, children: [] }))
+  }, [folders, currentFolderId, isExpandAllView, searchQuery, searchResultFolders, fullTree.index])
+
+  // Display tree: direct children only in layered nav, full tree in expand-all
   const resourceTree = useMemo(
-    () => buildKnowledgeResourceTree(folders, documents),
-    [folders, documents]
+    () => buildKnowledgeResourceTree(directFolders, documents),
+    [directFolders, documents]
   )
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
@@ -324,23 +349,14 @@ export function DocumentList({
     if (knowledgeBase.id) {
       fetchFolders()
       setSelectedUploadFolderId(0)
-      setActiveFolderId(undefined)
+      setCurrentFolderId(0)
+      setIsExpandAllView(false)
     }
   }, [knowledgeBase.id, fetchFolders])
 
   // Flatten folder tree for select dropdowns
   const folderOptions = useMemo(() => flattenFoldersForSelect(folders), [folders])
-  const activeFolderName = useMemo(
-    () => findFolderName(folders, activeFolderId),
-    [folders, activeFolderId]
-  )
-  const searchPlaceholder = activeFolderName
-    ? t('document.document.searchInFolder', { folder: activeFolderName })
-    : t('document.document.search')
-
-  const handleActivateFolder = useCallback((folderId: number) => {
-    setActiveFolderId(currentFolderId => (currentFolderId === folderId ? undefined : folderId))
-  }, [])
+  const searchPlaceholder = t('document.document.search')
 
   // Resolve whether the KB's multimodal analysis model supports video, so the
   // upload picker can reject video files early when an image-only model is
@@ -369,8 +385,27 @@ export function DocumentList({
     getPayload: getSelectionPayload,
   } = useKnowledgeResourceSelection({
     documents,
-    treeIndex: resourceTree.index,
+    treeIndex: fullTree.index,
   })
+
+  // Navigate into a subfolder (layered navigation)
+  const handleNavigateIntoFolder = useCallback(
+    (folderId: number) => {
+      setCurrentFolderId(folderId)
+      setSearchQuery('')
+      resetSelection()
+    },
+    [resetSelection]
+  )
+
+  // Toggle expand-all view
+  const handleToggleExpandAll = useCallback(() => {
+    if (!isExpandAllView) {
+      setCurrentFolderId(0)
+    }
+    resetSelection()
+    setIsExpandAllView(prev => !prev)
+  }, [isExpandAllView, resetSelection])
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initialDocPath has been handled
@@ -511,14 +546,22 @@ export function DocumentList({
 
   useEffect(() => {
     resetSelection()
-  }, [activeFolderId, searchQuery, sortField, sortOrder, resetSelection])
+  }, [currentFolderId, isExpandAllView, searchQuery, sortField, sortOrder, resetSelection])
 
   useEffect(() => {
-    if (!folderTreeContainsId(folders, activeFolderId)) {
-      setActiveFolderId(undefined)
+    if (currentFolderId !== 0 && !folderTreeContainsId(folders, currentFolderId)) {
+      setCurrentFolderId(0)
       resetSelection()
     }
-  }, [folders, activeFolderId, resetSelection])
+  }, [folders, currentFolderId, resetSelection])
+
+  // Auto-exit expand-all view if KB document count exceeds the threshold
+  useEffect(() => {
+    if (isExpandAllView && (knowledgeBase.document_count ?? 0) >= 200) {
+      setIsExpandAllView(false)
+      resetSelection()
+    }
+  }, [isExpandAllView, knowledgeBase.document_count, resetSelection])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
   const canManageDocumentArea = canManageAnyDocuments
@@ -536,9 +579,9 @@ export function DocumentList({
   })
 
   const handleOpenUpload = useCallback(() => {
-    setSelectedUploadFolderId(activeFolderId ?? 0)
+    setSelectedUploadFolderId(currentFolderId)
     setShowUpload(true)
-  }, [activeFolderId])
+  }, [currentFolderId])
 
   const handleGoToPage = useCallback(
     (targetPage: number) => {
@@ -798,8 +841,8 @@ export function DocumentList({
 
   const handleDeleteFolderConfirm = async () => {
     if (!deletingFolder) return
-    if (deletedFolderAffectsActiveFolder(folders, deletingFolder.id, activeFolderId)) {
-      setActiveFolderId(undefined)
+    if (deletedFolderAffectsActiveFolder(folders, deletingFolder.id, currentFolderId)) {
+      setCurrentFolderId(0)
       resetSelection()
     }
     await deleteFolder(deletingFolder.id)
@@ -1011,10 +1054,55 @@ export function DocumentList({
             <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
-        {/* Header actions (e.g., tabs) */}
+        {/* Header actions (e.g., tabs) + expand-all toggle */}
+        {(knowledgeBase.document_count ?? 0) < 200 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleToggleExpandAll}
+            data-testid="expand-all-toggle"
+          >
+            {isExpandAllView ? t('document.tree.layeredNav') : t('document.tree.expandAll')}
+          </Button>
+        )}
         {headerActions}
       </div>
       {canManageAllDocuments && <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />}
+
+      {/* Folder breadcrumb navigation (layered nav only) */}
+      {!isExpandAllView && (
+        <div className="flex items-center gap-1 text-sm text-text-muted flex-wrap">
+          <button
+            onClick={() => {
+              setCurrentFolderId(0)
+              resetSelection()
+            }}
+            className={`hover:text-text-primary transition-colors ${currentFolderId === 0 ? 'text-text-primary font-medium' : ''}`}
+            data-testid="breadcrumb-root"
+          >
+            {t('document.breadcrumb.root')}
+          </button>
+          {folderBreadcrumb.map((folder, i) => (
+            <span key={folder.id} className="flex items-center gap-1">
+              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
+              {i < folderBreadcrumb.length - 1 ? (
+                <button
+                  onClick={() => {
+                    setCurrentFolderId(folder.id)
+                    resetSelection()
+                  }}
+                  className="hover:text-text-primary transition-colors"
+                  data-testid={`breadcrumb-folder-${folder.id}`}
+                >
+                  {folder.name}
+                </button>
+              ) : (
+                <span className="text-text-primary font-medium">{folder.name}</span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -1045,11 +1133,12 @@ export function DocumentList({
                     onChange={e => setSearchQuery(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Escape') {
+                        setSearchQuery('')
                         setShowSearchPopover(false)
                       }
                     }}
                     onBlur={() => {
-                      // Delay to allow click events to fire
+                      // Delay to allow click events to fire before closing popover
                       setTimeout(() => setShowSearchPopover(false), 150)
                     }}
                   />
@@ -1068,18 +1157,6 @@ export function DocumentList({
               onChange={e => setSearchQuery(e.target.value)}
             />
           </div>
-        )}
-        {activeFolderName && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setActiveFolderId(undefined)}
-            className="min-h-11 min-w-11 max-w-[220px]"
-            data-testid="active-folder-clear"
-          >
-            <span className="truncate">{activeFolderName}</span>
-            <X className="w-3.5 h-3.5 ml-1 flex-shrink-0" />
-          </Button>
         )}
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
@@ -1117,7 +1194,7 @@ export function DocumentList({
           <Button
             variant="outline"
             className="h-11 min-w-[44px]"
-            onClick={() => handleCreateFolder(0)}
+            onClick={() => handleCreateFolder(currentFolderId)}
           >
             <FolderPlus className="w-4 h-4 mr-1" />
             {t('document.folder.create')}
@@ -1145,7 +1222,7 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : documents.length > 0 || folders.length > 0 ? (
+      ) : documents.length > 0 || directFolders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
           {canManageDocumentArea && selectionSummary.canTransfer && !onSelectionChange && (
@@ -1254,7 +1331,7 @@ export function DocumentList({
                 </div>
               )}
               <FolderTree
-                folders={folders}
+                folders={directFolders}
                 documents={documents}
                 compact={true}
                 onViewDetail={setViewingDoc}
@@ -1279,10 +1356,11 @@ export function DocumentList({
                 canSelectFolders={canManageFolderStructure && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
-                activeFolderId={activeFolderId}
-                onActivateFolder={handleActivateFolder}
+                activeFolderId={isExpandAllView ? undefined : currentFolderId}
+                onActivateFolder={isExpandAllView ? undefined : handleNavigateIntoFolder}
+                expandAllFolders={isExpandAllView}
               />
-              {paginationEnabled && (
+              {paginationEnabled && !isExpandAllView && (
                 <Pagination
                   page={page}
                   totalPages={totalPages}
@@ -1300,7 +1378,7 @@ export function DocumentList({
               <KnowledgeDocumentTreeGrid
                 nodes={resourceTree.nodes}
                 treeIndex={resourceTree.index}
-                folders={folders}
+                folders={directFolders}
                 documents={documents}
                 showSelectionColumn={canManageDocumentArea}
                 showActionsColumn={canManageAnyDocuments}
@@ -1313,11 +1391,7 @@ export function DocumentList({
                 isAllSelected={isAllSelected}
                 isPartialSelected={isPartialSelected}
                 onSelectAll={handleSelectAll}
-                selectAllLabel={
-                  paginationEnabled
-                    ? t('document.document.batch.selectCurrentPage')
-                    : t('document.document.batch.selectAll')
-                }
+                selectAllLabel={t('document.document.batch.selectCurrentPage')}
                 onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
                 onDelete={setDeletingDoc}
@@ -1340,11 +1414,12 @@ export function DocumentList({
                 canSelectFolders={canManageFolderStructure && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
-                activeFolderId={activeFolderId}
-                onActivateFolder={handleActivateFolder}
+                activeFolderId={isExpandAllView ? undefined : currentFolderId}
+                onActivateFolder={isExpandAllView ? undefined : handleNavigateIntoFolder}
+                expandAllFolders={isExpandAllView}
               />
               {/* Pagination bar for classic mode */}
-              {paginationEnabled && (
+              {paginationEnabled && !isExpandAllView && (
                 <div className="min-w-[880px] bg-base">
                   <Pagination
                     page={page}
@@ -1360,11 +1435,16 @@ export function DocumentList({
             </div>
           )}
         </>
-      ) : searchQuery || activeFolderId !== undefined ? (
+      ) : searchQuery ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
           <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
+        </div>
+      ) : currentFolderId !== 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
+          <FileText className="w-12 h-12 mb-4 opacity-50" />
+          <p>{t('document.document.empty')}</p>
         </div>
       ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">

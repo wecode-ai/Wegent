@@ -345,6 +345,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   })
 
   test('strips Codex UI directives from completed assistant content', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
       taskId: 'runtime-task-1',
@@ -374,6 +375,40 @@ describe('createRuntimeTaskStreamHandlers', () => {
       subtaskId: 'subtask-9',
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
+    expect(info).toHaveBeenCalledWith(
+      '[Wework] Runtime terminal event accepted',
+      expect.objectContaining({
+        event: 'chat:done',
+        payloadTaskId: 'runtime-task-1',
+        payloadSubtaskId: 'subtask-9',
+      })
+    )
+  })
+
+  test('warns when a terminal event does not match the subscribed runtime task', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-2',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'complete' },
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped mismatched runtime terminal event',
+      expect.objectContaining({
+        event: 'chat:done',
+        payloadTaskId: 'runtime-task-2',
+        payloadSubtaskId: 'subtask-9',
+      })
+    )
   })
 
   test('settles runtime streams without forwarding empty final content', () => {
@@ -404,6 +439,158 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(
       (actions[0] as Extract<RuntimePaneMessageAction, { type: 'assistant_done' }>).content
     ).toBeUndefined()
+  })
+
+  test('builds the completed turn file changes summary from streamed blocks', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+    const summary = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 2,
+      deletions: 1,
+      files: [
+        {
+          path: 'src/main.ts',
+          change_type: 'modified' as const,
+          additions: 2,
+          deletions: 1,
+          binary: false,
+        },
+      ],
+    }
+
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: {
+        value: 'Done',
+        blocks: [
+          {
+            id: 'file-changes-1',
+            type: 'file_changes',
+            status: 'done',
+            fileChanges: summary,
+          },
+        ],
+      },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_done',
+      fileChanges: summary,
+    })
+  })
+
+  test('keeps file change blocks until a later completion event', () => {
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(
+      { deviceId: 'device-1', taskId: 'runtime-task-1' },
+      { onMessageAction: action => actions.push(action) }
+    )
+    const fileChanges = {
+      version: 1 as const,
+      status: 'active' as const,
+      artifact_id: 'artifact-1',
+      device_id: 'device-1',
+      workspace_path: '/workspace/project',
+      file_count: 1,
+      additions: 1,
+      deletions: 0,
+      files: [
+        {
+          path: 'qa.txt',
+          change_type: 'created' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        },
+      ],
+    }
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      block: {
+        id: 'file-changes-1',
+        type: 'file_changes',
+        status: 'streaming',
+        file_changes: fileChanges,
+      },
+    })
+    handlers.onChatDone?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      result: { value: 'Done' },
+    })
+
+    expect(actions[1]).toMatchObject({
+      type: 'assistant_done',
+      fileChanges,
+    })
+  })
+
+  test('restores historical blocks that use a numeric subtask identity', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-history',
+        role: 'assistant',
+        content: '已完成',
+        subtaskId: 901,
+        blocks: [
+          {
+            id: 'tool-history',
+            type: 'tool',
+            tool_name: 'exec_command',
+            tool_input: { cmd: 'pwd' },
+            status: 'done',
+          },
+          {
+            id: 'file-history',
+            type: 'file_changes',
+            status: 'done',
+            file_changes: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-history',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: 'history.txt',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      subtaskId: '901',
+      blocks: [
+        { type: 'tool', toolName: 'exec_command' },
+        { type: 'file_changes', fileChanges: { files: [{ path: 'history.txt' }] } },
+      ],
+    })
   })
 
   test('treats interrupted runtime errors as cancellation events', () => {
@@ -493,6 +680,27 @@ describe('createRuntimeTaskStreamHandlers', () => {
       },
     })
     expect(warn).not.toHaveBeenCalled()
+  })
+})
+
+describe('runtimeMessagesToWorkbenchMessages', () => {
+  test('uses the client message id to reconcile a persisted user message', () => {
+    const [message] = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'codex-user-item-1',
+        clientMessageId: 'runtime-local-pane-1',
+        role: 'user',
+        content: 'hello',
+        status: 'done',
+        createdAt: '2026-07-17T00:00:00.000Z',
+      },
+    ])
+
+    expect(message).toMatchObject({
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: 'hello',
+    })
   })
 })
 

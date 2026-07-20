@@ -1,4 +1,4 @@
-import type { AppearanceConfig, ThemePalette } from './types'
+import type { AppearanceConfig, ThemePalette, WorkbenchBackgroundConfig } from './types'
 import { DEFAULT_CODE_FONT_SIZE, DEFAULT_UI_FONT_SIZE } from './typography'
 
 export const DEFAULT_ACCENT_COLOR = '#2563eb'
@@ -47,6 +47,15 @@ export const darkPalette: ThemePalette = {
   codeBg: '15 23 42',
 }
 
+const defaultBackground: WorkbenchBackgroundConfig = {
+  imagePath: null,
+  visibility: 24,
+  blur: 0,
+  inMain: true,
+  inSidebar: true,
+  inTopBar: true,
+}
+
 export const defaultAppearance: AppearanceConfig = {
   mode: 'system',
   accentColor: DEFAULT_ACCENT_COLOR,
@@ -58,11 +67,15 @@ export const defaultAppearance: AppearanceConfig = {
   sidebarTranslucent: true,
   contrast: 50,
   backgroundImagePath: null,
+  separateBackgroundsByTheme: false,
+  themeBackgroundsInitialized: false,
   backgroundVisibility: 24,
   backgroundBlur: 0,
   backgroundInMain: true,
   backgroundInSidebar: true,
   backgroundInTopBar: true,
+  lightBackground: { ...defaultBackground },
+  darkBackground: { ...defaultBackground },
   light: lightPalette,
   dark: darkPalette,
 }

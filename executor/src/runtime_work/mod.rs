@@ -19,3 +19,12 @@ mod worktrees;
 
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
+
+pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {
+    codex_global_state::CodexGlobalProjectIndex::load()
+        .projects()
+        .iter()
+        .flat_map(|project| project.roots.iter())
+        .map(std::path::PathBuf::from)
+        .collect()
+}

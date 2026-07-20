@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    process::Command,
+    io::{BufRead, BufReader, Read},
+    process::{Command, Stdio},
     sync::{Mutex, MutexGuard, OnceLock},
 };
 use wegent_executor::app::cli::{CliArgs, CliError};
@@ -82,4 +83,53 @@ fn binary_version_exits_without_runtime_startup() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "7.8.9");
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn app_sidecar_reserves_stdout_for_jsonl_before_backend_startup() {
+    let executor_home =
+        std::env::temp_dir().join(format!("wegent-executor-cli-stdio-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&executor_home);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wegent-executor"))
+        .env_remove("EXECUTOR_MODE")
+        .env("WEGENT_EXECUTOR_HOME", &executor_home)
+        .env("WEGENT_APP_IPC_DEVICE_ID", "app-device-stdio")
+        .env("DEVICE_ID", "app-device-stdio")
+        .env("WEGENT_BACKEND_URL", "http://127.0.0.1:9")
+        .env("WEGENT_AUTH_TOKEN", "test-token")
+        .env("DEVICE_SESSION_GATEWAY_HOST", "127.0.0.1")
+        .env("DEVICE_SESSION_GATEWAY_PORT", "0")
+        .env("DEVICE_PUBLIC_BASE_URL", "")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start app stdio sidecar");
+    let mut stdout = BufReader::new(child.stdout.take().expect("capture app stdio stdout"));
+    let mut ready_line = String::new();
+    stdout
+        .read_line(&mut ready_line)
+        .expect("read app stdio ready event");
+
+    let ready: serde_json::Value = serde_json::from_str(&ready_line)
+        .expect("stdout must contain only JSONL protocol messages");
+    assert_eq!(ready["event"], "executor.ready");
+    assert_eq!(ready["payload"]["device_id"], "app-device-stdio");
+
+    drop(child.stdin.take());
+    let status = child.wait().expect("wait for app stdio sidecar");
+    assert!(status.success());
+    let mut remaining_stdout = String::new();
+    stdout
+        .read_to_string(&mut remaining_stdout)
+        .expect("read remaining app stdio output");
+    for line in remaining_stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        serde_json::from_str::<serde_json::Value>(line)
+            .expect("all app sidecar stdout lines must be JSONL protocol messages");
+    }
+
+    let _ = std::fs::remove_dir_all(executor_home);
 }

@@ -22,6 +22,7 @@ export interface BaseWorkbenchProcessingBlock {
   subtaskId: string
   status: WorkbenchToolBlockStatus
   createdAt: number
+  completedAt?: number
   contentTruncated?: boolean
   contentOriginalChars?: number
   contentLoadRef?: WorkbenchContentLoadRef
@@ -206,7 +207,9 @@ export function reduceWorkbenchMessages<
         limitWorkbenchMessage
       )
     case 'user_added':
-      return [...state, action.message]
+      return normalizeUniqueWorkbenchMessages([...state, action.message]).map(
+        limitWorkbenchMessage
+      )
     case 'assistant_started':
       if (
         state.some((message) => isAssistantMessageForAction(message, action))
@@ -473,10 +476,10 @@ function mergeProcessingBlockUpdate<TFileChanges>(
   updates: ProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
   const { toolOutputDelta, ...directUpdates } = updates
-  const nextBlock = {
+  const nextBlock = withBlockCompletionTime(block, {
     ...block,
     ...directUpdates
-  } as WorkbenchProcessingBlock<TFileChanges>
+  } as WorkbenchProcessingBlock<TFileChanges>)
 
   if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {
     return nextBlock
@@ -1104,7 +1107,11 @@ function finalizeOpenNarrativeBlocks<TFileChanges>(
         block.type === 'plan') &&
       block.status === 'streaming'
     ) {
-      return { ...block, status: 'done' as const }
+      return {
+        ...block,
+        status: 'done' as const,
+        completedAt: block.completedAt ?? Date.now()
+      }
     }
 
     return block
@@ -1124,10 +1131,10 @@ function finalizeBlocks<TFileChanges>(
       return block
     }
 
-    return {
+    return withBlockCompletionTime(block, {
       ...block,
       status: finalStatus
-    } as WorkbenchProcessingBlock<TFileChanges>
+    } as WorkbenchProcessingBlock<TFileChanges>)
   })
 }
 
@@ -1147,9 +1154,19 @@ function mergeProcessingBlock<TFileChanges>(
   if (index === -1) return [...blocks, incomingBlock]
 
   const nextBlocks = [...blocks]
-  nextBlocks[index] = {
+  nextBlocks[index] = withBlockCompletionTime(nextBlocks[index], {
     ...nextBlocks[index],
     ...incomingBlock
-  } as WorkbenchProcessingBlock<TFileChanges>
+  } as WorkbenchProcessingBlock<TFileChanges>)
   return nextBlocks
+}
+
+function withBlockCompletionTime<TFileChanges>(
+  previous: WorkbenchProcessingBlock<TFileChanges>,
+  next: WorkbenchProcessingBlock<TFileChanges>
+): WorkbenchProcessingBlock<TFileChanges> {
+  const wasActive = previous.status !== 'done' && previous.status !== 'error'
+  const isComplete = next.status === 'done' || next.status === 'error'
+  if (!wasActive || !isComplete || next.completedAt !== undefined) return next
+  return { ...next, completedAt: Date.now() }
 }

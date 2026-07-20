@@ -121,6 +121,8 @@ interface UseDocumentsOptions {
   autoLoad?: boolean
   /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
+  /** When true, load all documents from the local snapshot without page slicing */
+  loadAll?: boolean
   folderId?: number
   includeSubfolders?: boolean
   /** Folder ids in the active folder subtree for local metadata pagination */
@@ -135,6 +137,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     knowledgeBaseId,
     autoLoad = true,
     paginationEnabled = true,
+    loadAll = false,
     folderId,
     includeSubfolders = false,
     folderScopeIds,
@@ -161,6 +164,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const pageRef = useRef(page)
   const pageSizeRef = useRef(pageSize)
   const paginationEnabledRef = useRef(paginationEnabled)
+  const loadAllRef = useRef(loadAll)
   const knowledgeBaseIdRef = useRef(knowledgeBaseId)
   const requestSeqRef = useRef(0)
   const localSnapshotRef = useRef<KnowledgeDocument[]>([])
@@ -185,6 +189,9 @@ export function useDocuments(options: UseDocumentsOptions) {
   useEffect(() => {
     paginationEnabledRef.current = paginationEnabled
   }, [paginationEnabled])
+  useEffect(() => {
+    loadAllRef.current = loadAll
+  }, [loadAll])
   useEffect(() => {
     knowledgeBaseIdRef.current = knowledgeBaseId
   }, [knowledgeBaseId])
@@ -302,7 +309,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         let nextDocuments: KnowledgeDocument[]
         let nextTotalCount: number
 
-        if (paginationEnabledRef.current) {
+        if (paginationEnabledRef.current || loadAllRef.current) {
           if (localSnapshotKbIdRef.current !== currentKbId) {
             localSnapshotModeRef.current = 'unknown'
           }
@@ -319,10 +326,15 @@ export function useDocuments(options: UseDocumentsOptions) {
           if (localSnapshotModeRef.current === 'local') {
             const filteredDocuments = applyLocalQuery(snapshot, query)
             nextTotalCount = filteredDocuments.length
-            nextDocuments = filteredDocuments.slice(
-              (effectivePage - 1) * effectivePageSize,
-              effectivePage * effectivePageSize
-            )
+            if (loadAllRef.current) {
+              // Expand-all mode: return all filtered documents without slicing
+              nextDocuments = filteredDocuments
+            } else {
+              nextDocuments = filteredDocuments.slice(
+                (effectivePage - 1) * effectivePageSize,
+                effectivePage * effectivePageSize
+              )
+            }
           } else {
             const response = await fetchServerPage(
               currentKbId,
@@ -577,6 +589,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     debouncedKeyword,
     sortBy,
     sortOrder,
+    loadAll,
     fetchDocuments,
   ])
 

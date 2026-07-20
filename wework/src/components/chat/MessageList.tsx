@@ -47,6 +47,9 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { getDurationText } from './blocks/processingDuration'
+import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
+import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
 import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from './requestUserInputMessages'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import { buildProcessingDisplayRows, isWebSearchToolName } from './blocks/toolBlockActivity'
@@ -855,7 +858,7 @@ function UserMessage({
         ) : displayContent ? (
           <div
             className={[
-              'overflow-hidden rounded-2xl bg-muted text-sm leading-5 text-text-primary',
+              'overflow-hidden rounded-2xl bg-muted text-base leading-5 text-text-primary',
               hasImagePreviews ? 'max-w-[80%]' : 'max-w-full',
             ].join(' ')}
           >
@@ -976,7 +979,7 @@ function UserMessageEditForm({
   return (
     <div
       data-testid="edit-user-message-form"
-      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-sm leading-5 text-text-primary"
+      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-base leading-5 text-text-primary"
     >
       <textarea
         ref={textareaRef}
@@ -997,7 +1000,7 @@ function UserMessageEditForm({
             onCancel?.()
           }
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-sm leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -1005,7 +1008,7 @@ function UserMessageEditForm({
           data-testid="cancel-edit-user-message-button"
           disabled={submitting}
           onClick={onCancel}
-          className="flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md px-3 text-base font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
         >
           取消
         </button>
@@ -1014,7 +1017,7 @@ function UserMessageEditForm({
           data-testid="submit-edit-user-message-button"
           disabled={submitDisabled}
           onClick={submit}
-          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-base font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           发送
         </button>
@@ -1621,6 +1624,7 @@ function AssistantMessage({
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
+  const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
   const isStreaming = !isCancelled && message.status === 'streaming'
@@ -1629,10 +1633,22 @@ function AssistantMessage({
   const canShowFinalArtifacts = !isAssistantRunning
   const hasStreamedResponse = hasBlocks || hasVisibleContent
   const shouldShowProcessingSummary = hasBlocks || (isAssistantRunning && hasStreamedResponse)
+  const processingStateKey = getMessageDisplayStateKey(conversationKey, message)
+  const [finalProcessingExpanded, setFinalProcessingExpanded] = usePersistentProcessingExpansion(
+    `${processingStateKey}:final-processing`
+  )
+  const [finalProcessingCompletedAt] = useState(() => Date.now())
+  const usesFinalProcessingShell =
+    hasBlocks &&
+    hasVisibleContent &&
+    !hasRunningBlocks &&
+    !isCancelled &&
+    !message.runtimeGuidanceSplitBefore &&
+    !message.runtimeGuidanceContinuation
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isAssistantRunning,
+    hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
     hasVisibleContent,
-    hasLiveProcessingDisplayBlock: hasLiveProcessingDisplayBlock(displayBlocks),
   })
   const webSearchSources = isStreaming
     ? []
@@ -1649,6 +1665,47 @@ function AssistantMessage({
     onOpenWorkspaceFile?.(path)
   }
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
+  const processingTimeline = shouldShowProcessingSummary
+    ? processingSegments.map((segment, index) => (
+        <ToolBlocksDisplay
+          key={`${segment.kind}:${index}`}
+          blocks={segment.blocks}
+          isStreaming={isStreaming}
+          startedAt={segment.blocks[0]?.createdAt}
+          forceExpanded={segment.kind === 'narrative'}
+          processingPhase={
+            segment.blocks.length === 0
+              ? 'live'
+              : usesFinalProcessingShell
+                ? 'intermediate'
+                : getProcessingPhase(processingSegments, index, hasVisibleContent)
+          }
+          showInterToolThinking={
+            isStreaming &&
+            !hasVisibleContent &&
+            segment.kind === 'tool' &&
+            !processingSegments.slice(index + 1).some(candidate => candidate.kind === 'tool')
+          }
+          showSummary={segment.kind === 'tool'}
+          stateKey={`${processingStateKey}:${index}`}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          onRequestUserInputSubmit={onRequestUserInputSubmit}
+          onRequestUserInputIgnore={onRequestUserInputIgnore}
+          onOpenAssistantPlan={onOpenAssistantPlan}
+          onLoadFullTranscript={onLoadFullTranscript}
+          loadingFullTranscript={loadingFullTranscript}
+          hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+          hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+        />
+      ))
+    : null
+  const finalProcessingDuration = getDurationText(
+    displayBlocks,
+    getProcessingSummaryStartMs(message, displayBlocks, false) ?? finalProcessingCompletedAt,
+    finalProcessingCompletedAt,
+    isStreaming ? finalProcessingCompletedAt : null,
+    false
+  )
 
   return (
     <div className="min-w-0 max-w-full text-chat text-text-primary">
@@ -1662,7 +1719,7 @@ function AssistantMessage({
           {shouldShowStoppedNotice ? (
             <div
               data-testid="assistant-stopped-notice"
-              className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
+              className="mb-3 w-full pb-1 text-xs text-text-muted"
             >
               {stoppedElapsedDuration
                 ? t('assistant_status.stopped_after', {
@@ -1671,28 +1728,26 @@ function AssistantMessage({
                 : t('assistant_status.stopped')}
             </div>
           ) : null}
-          {shouldShowProcessingSummary && (
-            <ToolBlocksDisplay
-              blocks={displayBlocks}
-              isStreaming={isStreaming}
-              startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={
-                isCancelled ||
-                message.runtimeGuidanceSplitBefore === true ||
-                message.runtimeGuidanceContinuation === true
-              }
-              hasFinalContent={hasVisibleContent}
-              showSummary={!isCancelled}
-              stateKey={getMessageDisplayStateKey(conversationKey, message)}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-              onRequestUserInputSubmit={onRequestUserInputSubmit}
-              onRequestUserInputIgnore={onRequestUserInputIgnore}
-              onOpenAssistantPlan={onOpenAssistantPlan}
-              onLoadFullTranscript={onLoadFullTranscript}
-              loadingFullTranscript={loadingFullTranscript}
-              hideRequestUserInputBlocks={hideRequestUserInputBlocks}
-              hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-            />
+          {usesFinalProcessingShell ? (
+            <div className="mb-3 min-w-0 w-full border-b border-border pb-2">
+              <button
+                type="button"
+                data-testid="final-processing-toggle"
+                aria-expanded={finalProcessingExpanded}
+                className="flex min-h-8 items-center gap-1 text-sm text-text-muted hover:text-text-secondary"
+                onClick={() => setFinalProcessingExpanded(value => !value)}
+              >
+                <span>{finalProcessingDuration || '已处理'}</span>
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${finalProcessingExpanded ? '' : '-rotate-90'}`}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+              </button>
+              {finalProcessingExpanded ? <div className="mt-1">{processingTimeline}</div> : null}
+            </div>
+          ) : (
+            processingTimeline
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
           {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
@@ -1712,7 +1767,6 @@ function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -1851,31 +1905,60 @@ function hasRunningProcessingBlocks(blocks: ProcessingBlock[]): boolean {
   return blocks.some(block => block.status !== 'done' && block.status !== 'error')
 }
 
-function hasLiveProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
-  return buildProcessingDisplayRows(blocks).some(row => {
-    if (row.type !== 'block') return false
+type ProcessingSegment = {
+  kind: 'tool' | 'narrative'
+  blocks: ProcessingBlock[]
+}
 
-    const { block } = row
-    return (
-      block.status !== 'done' &&
-      block.status !== 'error' &&
-      (block.type === 'tool' || block.type === 'file_changes' || Boolean(block.content.trim()))
-    )
+function getProcessingPhase(
+  segments: ProcessingSegment[],
+  index: number,
+  hasFinalContent: boolean
+): 'live' | 'intermediate' | 'final' {
+  const laterSegments = segments.slice(index + 1)
+  if (hasFinalContent && !laterSegments.some(segment => segment.kind === 'tool')) return 'final'
+  if (laterSegments.some(segment => segment.kind === 'narrative')) return 'intermediate'
+  return 'live'
+}
+
+function splitProcessingBlocks(blocks: ProcessingBlock[]): ProcessingSegment[] {
+  if (blocks.length === 0) return [{ kind: 'tool', blocks: [] }]
+
+  const segments: ProcessingSegment[] = []
+
+  blocks.forEach(block => {
+    const kind = isCollapsibleToolBlock(block) ? 'tool' : 'narrative'
+    const previous = segments.at(-1)
+    if (previous?.kind === kind) {
+      previous.blocks.push(block)
+      return
+    }
+    segments.push({ kind, blocks: [block] })
   })
+
+  return segments
+}
+
+function isCollapsibleToolBlock(block: ProcessingBlock): boolean {
+  if (block.type === 'file_changes') return true
+  if (block.type !== 'tool') return false
+  return !isGuidanceToolName(block.toolName) && !isContextCompactionToolName(block.toolName)
+}
+
+function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
+  return buildProcessingDisplayRows(blocks).length > 0
 }
 
 function shouldShowAssistantThinkingIndicator({
   isAssistantRunning,
+  hasProcessingDisplayBlock,
   hasVisibleContent,
-  hasLiveProcessingDisplayBlock,
 }: {
   isAssistantRunning: boolean
+  hasProcessingDisplayBlock: boolean
   hasVisibleContent: boolean
-  hasLiveProcessingDisplayBlock: boolean
 }): boolean {
-  if (!isAssistantRunning) return false
-  if (hasVisibleContent) return true
-  return !hasLiveProcessingDisplayBlock
+  return isAssistantRunning && !hasProcessingDisplayBlock && !hasVisibleContent
 }
 
 function AssistantErrorCard({

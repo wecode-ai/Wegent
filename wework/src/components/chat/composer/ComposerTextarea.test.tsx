@@ -28,6 +28,40 @@ describe('ComposerTextarea', () => {
     nativeWorkspacePickerMocks.open.mockResolvedValue([])
   })
 
+  test('uses the interrupt send mode for Command-Shift-Enter', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onSubmit = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="Stop and do this now"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    act(() => {
+      editor.value = 'Stop and do this now'
+      editor.focus()
+    })
+    fireEvent.keyDown(editor, {
+      key: 'Enter',
+      code: 'Enter',
+      metaKey: true,
+      shiftKey: true,
+    })
+
+    expect(onSubmit).toHaveBeenCalledWith('Stop and do this now', {
+      interruptWhenBusy: true,
+    })
+  })
+
   test('consumes the Enter that selects a skill without adding a line break', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onChange = vi.fn()
