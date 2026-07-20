@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, Weak,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -17,6 +17,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{
+    async_runtime::Mutex as AsyncMutex,
     webview::{DownloadEvent, PageLoadEvent},
     Emitter, LogicalPosition, LogicalSize, Manager, Position, Rect, Size, Webview, WebviewUrl, Wry,
 };
@@ -39,16 +40,19 @@ const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static EMBEDDED_BROWSER_BRIDGE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static EMBEDDED_BROWSER_NATIVE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Default)]
 pub struct EmbeddedBrowserState {
     webviews: Arc<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     downloads: Arc<Mutex<HashMap<String, EmbeddedBrowserDownloadControl>>>,
+    lifecycle: Arc<AsyncMutex<()>>,
 }
 
 #[derive(Clone)]
 struct EmbeddedBrowserEntry {
     webview: Webview<Wry>,
+    native_label: String,
     title: Option<String>,
     url: Option<String>,
 }
@@ -65,6 +69,7 @@ pub struct EmbeddedBrowserBounds {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddedBrowserPageState {
+    native_label: String,
     title: Option<String>,
     url: Option<String>,
 }
@@ -104,6 +109,7 @@ struct EmbeddedBrowserOpenRequest {
 struct EmbeddedBrowserDownloadPayload {
     id: String,
     label: String,
+    native_label: String,
     url: String,
     path: Option<String>,
     status: String,
@@ -115,7 +121,8 @@ struct EmbeddedBrowserDownloadPayload {
 struct EmbeddedBrowserDownloadControl {
     app: tauri::AppHandle,
     id: String,
-    label: String,
+    native_label: String,
+    owner_webviews: Weak<Mutex<HashMap<String, EmbeddedBrowserEntry>>>,
     url: String,
     path: PathBuf,
     paused: Arc<(Mutex<bool>, Condvar)>,
@@ -126,24 +133,35 @@ struct EmbeddedBrowserDownloadControl {
 }
 
 impl EmbeddedBrowserDownloadControl {
-    fn payload(&self, status: &str) -> EmbeddedBrowserDownloadPayload {
+    fn payload(&self, status: &str) -> Option<EmbeddedBrowserDownloadPayload> {
+        let owner_webviews = self.owner_webviews.upgrade()?;
+        let label = {
+            let webviews = owner_webviews.lock().ok()?;
+            download_event_owner(
+                webviews.iter().map(|(logical_label, entry)| {
+                    (logical_label.as_str(), entry.native_label.as_str())
+                }),
+                &self.native_label,
+            )?
+        };
         let received_bytes = self.received_bytes.load(Ordering::Relaxed);
         let total_bytes = self.total_bytes.load(Ordering::Relaxed);
-        EmbeddedBrowserDownloadPayload {
+        Some(EmbeddedBrowserDownloadPayload {
             id: self.id.clone(),
-            label: self.label.clone(),
+            label,
+            native_label: self.native_label.clone(),
             url: self.url.clone(),
             path: Some(self.path.to_string_lossy().to_string()),
             status: status.to_string(),
             received_bytes: Some(received_bytes),
             total_bytes: (total_bytes > 0).then_some(total_bytes),
-        }
+        })
     }
 
     fn emit(&self, status: &str) {
-        let _ = self
-            .app
-            .emit(EMBEDDED_BROWSER_DOWNLOAD_EVENT, self.payload(status));
+        if let Some(payload) = self.payload(status) {
+            let _ = self.app.emit(EMBEDDED_BROWSER_DOWNLOAD_EVENT, payload);
+        }
     }
 }
 
@@ -263,6 +281,42 @@ fn browser_label(label: Option<String>) -> String {
     label.unwrap_or_else(|| BROWSER_WEBVIEW_LABEL.to_string())
 }
 
+fn native_webview_label(_logical_label: &str, sequence: u64) -> String {
+    format!("embedded-browser-native-{sequence}")
+}
+
+fn logical_owner_for_native_label<'a>(
+    identities: impl IntoIterator<Item = (&'a str, &'a str)>,
+    native_label: &str,
+) -> Option<String> {
+    identities
+        .into_iter()
+        .find_map(|(logical_label, identity)| {
+            (identity == native_label).then(|| logical_label.to_string())
+        })
+}
+
+fn download_event_owner<'a>(
+    identities: impl IntoIterator<Item = (&'a str, &'a str)>,
+    native_label: &str,
+) -> Option<String> {
+    logical_owner_for_native_label(identities, native_label)
+}
+
+fn remove_logical_entry_if_native_matches<T>(
+    entries: &mut HashMap<String, T>,
+    logical_label: &str,
+    native_label: &str,
+    identity: impl Fn(&T) -> &str,
+) -> Option<T> {
+    let matches_identity = entries
+        .get(logical_label)
+        .is_some_and(|entry| identity(entry) == native_label);
+    matches_identity
+        .then(|| entries.remove(logical_label))
+        .flatten()
+}
+
 fn browser_data_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
@@ -307,7 +361,7 @@ fn browser_download_destination(
 fn start_managed_browser_download(
     app: tauri::AppHandle,
     state: EmbeddedBrowserState,
-    label: String,
+    native_label: String,
     url: String,
     path: PathBuf,
 ) {
@@ -318,7 +372,8 @@ fn start_managed_browser_download(
     let control = EmbeddedBrowserDownloadControl {
         app,
         id: id.clone(),
-        label,
+        native_label,
+        owner_webviews: Arc::downgrade(&state.webviews),
         url,
         path,
         paused: Arc::new((Mutex::new(false), Condvar::new())),
@@ -359,12 +414,78 @@ fn set_entry_url(
     Ok(())
 }
 
+fn update_entry_for_native_label(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    update: impl FnOnce(&mut EmbeddedBrowserEntry),
+) -> Result<(), String> {
+    let mut webviews = state
+        .webviews
+        .lock()
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+    let logical_owner = logical_owner_for_native_label(
+        webviews
+            .iter()
+            .map(|(logical_label, entry)| (logical_label.as_str(), entry.native_label.as_str())),
+        native_label,
+    );
+    if let Some(logical_owner) = logical_owner {
+        if let Some(entry) = webviews.get_mut(&logical_owner) {
+            update(entry);
+        }
+    }
+    Ok(())
+}
+
+fn set_entry_url_for_native_label(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    url: String,
+) -> Result<(), String> {
+    update_entry_for_native_label(state, native_label, |entry| {
+        entry.url = Some(url);
+    })
+}
+
+fn current_logical_owner(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+) -> Result<Option<String>, String> {
+    let webviews = state
+        .webviews
+        .lock()
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+    Ok(logical_owner_for_native_label(
+        webviews
+            .iter()
+            .map(|(logical_label, entry)| (logical_label.as_str(), entry.native_label.as_str())),
+        native_label,
+    ))
+}
+
+fn start_managed_browser_download_for_native(
+    app: tauri::AppHandle,
+    state: EmbeddedBrowserState,
+    native_label: &str,
+    url: String,
+    path: PathBuf,
+) {
+    match current_logical_owner(&state, native_label) {
+        Ok(Some(_)) => {
+            start_managed_browser_download(app, state, native_label.to_string(), url, path)
+        }
+        Ok(None) => log::warn!("Ignored download from a closed embedded browser"),
+        Err(error) => log::warn!("Failed to resolve embedded browser download owner: {error}"),
+    }
+}
+
 fn page_state_for_label(
     state: &EmbeddedBrowserState,
     label: &str,
 ) -> Result<EmbeddedBrowserPageState, String> {
     let entry = get_entry(state, label)?;
     Ok(EmbeddedBrowserPageState {
+        native_label: entry.native_label,
         title: entry.title,
         url: entry.url,
     })
@@ -957,6 +1078,7 @@ pub async fn embedded_browser_open(
     label: Option<String>,
 ) -> Result<EmbeddedBrowserPageState, String> {
     let label = browser_label(label);
+    let _lifecycle = state.lifecycle.lock().await;
     let parsed_url = browser_url(&url)?;
     let normalized_bounds = normalize_bounds(bounds);
 
@@ -980,6 +1102,7 @@ pub async fn embedded_browser_open(
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
         set_entry_url(&state, &label, Some(url.clone()))?;
         return Ok(EmbeddedBrowserPageState {
+            native_label: entry.native_label,
             title: entry.title,
             url: Some(url),
         });
@@ -990,35 +1113,40 @@ pub async fn embedded_browser_open(
         .ok_or_else(|| "Main window not found".to_string())?;
     let load_state_handle = state.inner().clone();
     let title_state_handle = state.inner().clone();
-    let label_for_load = label.clone();
-    let label_for_title = label.clone();
+    let native_label = native_webview_label(
+        &label,
+        EMBEDDED_BROWSER_NATIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+    );
+    let native_label_for_load = native_label.clone();
+    let native_label_for_title = native_label.clone();
 
-    let builder = tauri::webview::WebviewBuilder::new(&label, browser_webview_url(parsed_url))
-        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
-        .data_directory(browser_data_directory(&app)?)
-        .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
-        .accept_first_mouse(true)
-        .on_page_load(move |_webview, payload| {
-            if matches!(payload.event(), PageLoadEvent::Finished) {
-                let _ = set_entry_url(
-                    &load_state_handle,
-                    &label_for_load,
-                    Some(payload.url().to_string()),
-                );
-            }
-        })
-        .on_document_title_changed(move |_webview, title| {
-            if let Ok(mut webviews) = title_state_handle.webviews.lock() {
-                if let Some(entry) = webviews.get_mut(&label_for_title) {
-                    entry.title = Some(title);
+    let builder =
+        tauri::webview::WebviewBuilder::new(&native_label, browser_webview_url(parsed_url))
+            .user_agent(EMBEDDED_BROWSER_USER_AGENT)
+            .data_directory(browser_data_directory(&app)?)
+            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+            .accept_first_mouse(true)
+            .on_page_load(move |_webview, payload| {
+                if matches!(payload.event(), PageLoadEvent::Finished) {
+                    let _ = set_entry_url_for_native_label(
+                        &load_state_handle,
+                        &native_label_for_load,
+                        payload.url().to_string(),
+                    );
                 }
-            }
-        });
+            })
+            .on_document_title_changed(move |_webview, title| {
+                let _ = update_entry_for_native_label(
+                    &title_state_handle,
+                    &native_label_for_title,
+                    |entry| entry.title = Some(title),
+                );
+            });
 
     #[cfg(desktop)]
     let builder = {
         let download_app = app.clone();
-        let download_label = label.clone();
+        let download_native_label = native_label.clone();
         let download_state = state.inner().clone();
         builder.on_download(move |_webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
@@ -1028,7 +1156,7 @@ pub async fn embedded_browser_open(
                         if ask_before_download {
                             let callback_app = download_app.clone();
                             let callback_state = download_state.clone();
-                            let callback_label = download_label.clone();
+                            let callback_native_label = download_native_label.clone();
                             download_app
                                 .dialog()
                                 .file()
@@ -1041,10 +1169,10 @@ pub async fn embedded_browser_open(
                                         return;
                                     };
                                     match selected.into_path() {
-                                        Ok(path) => start_managed_browser_download(
+                                        Ok(path) => start_managed_browser_download_for_native(
                                             callback_app,
                                             callback_state,
-                                            callback_label,
+                                            &callback_native_label,
                                             url,
                                             path,
                                         ),
@@ -1054,10 +1182,10 @@ pub async fn embedded_browser_open(
                                     }
                                 });
                         } else {
-                            start_managed_browser_download(
+                            start_managed_browser_download_for_native(
                                 download_app.clone(),
                                 download_state.clone(),
-                                download_label.clone(),
+                                &download_native_label,
                                 url,
                                 path,
                             );
@@ -1078,22 +1206,29 @@ pub async fn embedded_browser_open(
     let webview = window
         .add_child(builder, normalized_bounds.position, normalized_bounds.size)
         .map_err(|error| format!("Failed to create embedded browser: {error}"))?;
-    webview
-        .show()
-        .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
+    if let Err(error) = webview.show() {
+        let _ = webview.close();
+        return Err(format!("Failed to show embedded browser: {error}"));
+    }
 
     let entry = EmbeddedBrowserEntry {
-        webview,
+        webview: webview.clone(),
+        native_label: native_label.clone(),
         title: None,
         url: Some(url.clone()),
     };
-    state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .insert(label, entry);
+    match state.webviews.lock() {
+        Ok(mut webviews) => {
+            webviews.insert(label, entry);
+        }
+        Err(_) => {
+            let _ = webview.close();
+            return Err("Embedded browser state lock poisoned".to_string());
+        }
+    }
 
     Ok(EmbeddedBrowserPageState {
+        native_label,
         title: None,
         url: Some(url),
     })
@@ -1101,7 +1236,13 @@ pub async fn embedded_browser_open(
 
 #[cfg(test)]
 mod tests {
-    use super::browser_webview_url;
+    use std::collections::HashMap;
+
+    use super::{
+        browser_webview_url, download_event_owner, logical_owner_for_native_label,
+        native_webview_label, remove_logical_entry_if_native_matches,
+        EmbeddedBrowserDownloadPayload, EmbeddedBrowserPageState,
+    };
     use tauri::WebviewUrl;
 
     #[test]
@@ -1117,6 +1258,118 @@ mod tests {
             browser_webview_url(external_url),
             WebviewUrl::External(_)
         ));
+    }
+
+    #[test]
+    fn native_webview_labels_are_unique_across_creation_sequences() {
+        let first = native_webview_label("workspace-browser", 41);
+        let second = native_webview_label("workspace-browser", 42);
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn page_state_serializes_native_identity() {
+        let state = EmbeddedBrowserPageState {
+            native_label: "workspace-browser-native-41".to_string(),
+            title: Some("Example".to_string()),
+            url: Some("https://example.com/".to_string()),
+        };
+
+        let serialized = serde_json::to_value(state).unwrap();
+
+        assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
+    }
+
+    #[test]
+    fn download_payload_serializes_native_identity() {
+        let payload = EmbeddedBrowserDownloadPayload {
+            id: "download-1".to_string(),
+            label: "workspace-browser-owner".to_string(),
+            native_label: "workspace-browser-native-41".to_string(),
+            url: "https://example.com/app.dmg".to_string(),
+            path: Some("/tmp/app.dmg".to_string()),
+            status: "finished".to_string(),
+            received_bytes: Some(1024),
+            total_bytes: Some(1024),
+        };
+
+        let serialized = serde_json::to_value(payload).unwrap();
+
+        assert_eq!(serialized["nativeLabel"], "workspace-browser-native-41");
+    }
+
+    #[test]
+    fn native_identity_resolves_the_current_owner_after_logical_relabel() {
+        let native_label = native_webview_label("workspace-browser", 41);
+        let mut owners = HashMap::from([("workspace-browser".to_string(), native_label.clone())]);
+        let identity = owners.remove("workspace-browser").unwrap();
+        owners.insert("workspace-browser-regression-owner".to_string(), identity);
+
+        let owner = logical_owner_for_native_label(
+            owners.iter().map(|(logical_label, native_label)| {
+                (logical_label.as_str(), native_label.as_str())
+            }),
+            &native_label,
+        );
+
+        assert_eq!(owner.as_deref(), Some("workspace-browser-regression-owner"));
+    }
+
+    #[test]
+    fn download_event_owner_follows_relabel_and_ignores_reused_logical_label() {
+        let original_native = native_webview_label("workspace-browser", 41);
+        let replacement_native = native_webview_label("workspace-browser", 42);
+        let owners = HashMap::from([
+            (
+                "workspace-browser-regression-owner".to_string(),
+                original_native.clone(),
+            ),
+            ("workspace-browser".to_string(), replacement_native),
+        ]);
+
+        let owner = download_event_owner(
+            owners.iter().map(|(logical_label, native_label)| {
+                (logical_label.as_str(), native_label.as_str())
+            }),
+            &original_native,
+        );
+
+        assert_eq!(owner.as_deref(), Some("workspace-browser-regression-owner"));
+    }
+
+    #[test]
+    fn conditional_native_removal_preserves_a_replacement_entry() {
+        let original_native = native_webview_label("workspace-browser", 41);
+        let replacement_native = native_webview_label("workspace-browser", 42);
+        let mut owners =
+            HashMap::from([("workspace-browser".to_string(), replacement_native.clone())]);
+
+        let removed = remove_logical_entry_if_native_matches(
+            &mut owners,
+            "workspace-browser",
+            &original_native,
+            String::as_str,
+        );
+
+        assert_eq!(removed, None);
+        assert_eq!(owners.get("workspace-browser"), Some(&replacement_native));
+    }
+
+    #[test]
+    fn conditional_native_removal_removes_the_matching_entry() {
+        let native_label = native_webview_label("workspace-browser", 41);
+        let mut owners = HashMap::from([("workspace-browser".to_string(), native_label.clone())]);
+
+        let removed = remove_logical_entry_if_native_matches(
+            &mut owners,
+            "workspace-browser",
+            &native_label,
+            String::as_str,
+        );
+
+        assert_eq!(removed.as_deref(), Some(native_label.as_str()));
+        assert!(!owners.contains_key("workspace-browser"));
     }
 }
 
@@ -1314,11 +1567,12 @@ pub fn embedded_browser_page_state(
 }
 
 #[tauri::command]
-pub fn embedded_browser_relabel(
+pub async fn embedded_browser_relabel(
     state: tauri::State<'_, EmbeddedBrowserState>,
     from_label: String,
     to_label: String,
 ) -> Result<(), String> {
+    let _lifecycle = state.lifecycle.lock().await;
     if from_label == to_label {
         return Ok(());
     }
@@ -1338,21 +1592,34 @@ pub fn embedded_browser_relabel(
 }
 
 #[tauri::command]
-pub fn embedded_browser_close(
+pub async fn embedded_browser_close(
     state: tauri::State<'_, EmbeddedBrowserState>,
     label: Option<String>,
 ) -> Result<(), String> {
     let label = browser_label(label);
-    let entry = state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .remove(&label);
+    let _lifecycle = state.lifecycle.lock().await;
+    let entry = {
+        let webviews = state
+            .webviews
+            .lock()
+            .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+        webviews.get(&label).cloned()
+    };
     if let Some(entry) = entry {
         entry
             .webview
             .close()
             .map_err(|error| format!("Failed to close embedded browser: {error}"))?;
+        let mut webviews = state
+            .webviews
+            .lock()
+            .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+        remove_logical_entry_if_native_matches(
+            &mut webviews,
+            &label,
+            &entry.native_label,
+            |current| current.native_label.as_str(),
+        );
     }
     Ok(())
 }

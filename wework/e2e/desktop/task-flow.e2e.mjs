@@ -1151,6 +1151,7 @@ async function main() {
     await triggerModelReloadUntilCloudFailure(control)
 
     phase = 'cloud-vnc-browser'
+    await control.command('prepareEmbeddedBrowserRelabelRegression', '')
     await control.command('click', '[data-testid="settings-button"]')
     await control.command('click', '[data-testid="settings-menu-button"]')
     await control.command('waitFor', '[data-testid="wework-settings-page"]', {
@@ -1213,6 +1214,7 @@ async function main() {
       snapshot => !snapshot.testIds.includes('right-workspace-browser-tab'),
       'The VNC browser tab did not close after verification'
     )
+    await control.command('closeEmbeddedBrowser', 'workspace-browser-regression-owner')
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')

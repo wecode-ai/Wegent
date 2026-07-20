@@ -58,10 +58,12 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
       title: null,
       url: 'https://example.com/',
     })
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
       title: 'Example Domain',
       url: 'https://example.com/',
     })
@@ -149,6 +151,7 @@ describe('WorkspaceBrowserPanel', () => {
       handler({
         id: 'download-1',
         label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
         url: 'https://example.com/app.dmg',
         path: '/Users/test/Downloads/app.dmg',
         status: 'finished',
@@ -171,6 +174,7 @@ describe('WorkspaceBrowserPanel', () => {
       handler({
         id: 'download-1',
         label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
         url: 'https://example.com/app.dmg',
         path: '/Users/test/Downloads/app.dmg',
         status: 'progress',
@@ -195,6 +199,7 @@ describe('WorkspaceBrowserPanel', () => {
       handler({
         id: 'download-paused',
         label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
         url: 'https://example.com/app.dmg',
         path: '/Users/test/Downloads/app.dmg',
         status: 'paused',
@@ -216,9 +221,113 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
+  test('keeps terminal download events across a logical label handoff for the same native browser', async () => {
+    mockBrowserHostRect()
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return null
+    })
+
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
+    )
+
+    embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValueOnce(true)
+    view.rerender(<WorkspaceBrowserPanel active label="workspace-browser-owner" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'https://example.com/',
+        expect.any(Object),
+        'workspace-browser-owner'
+      )
+    )
+
+    act(() => {
+      handleDownload({
+        id: 'download-after-handoff',
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        url: 'https://example.com/handoff.dmg',
+        path: '/Users/test/Downloads/handoff.dmg',
+        status: 'finished',
+        receivedBytes: 1024,
+        totalBytes: 1024,
+      })
+    })
+
+    expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
+      'handoff.dmg'
+    )
+  })
+
+  test('discards buffered events when a logical label resolves to a different native browser', async () => {
+    mockBrowserHostRect()
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    let resolvePageState!: (state: { nativeLabel: string; title: string; url: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return null
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolvePageState = resolve
+      })
+    )
+
+    render(<WorkspaceBrowserPanel active label="workspace-browser" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
+    )
+
+    act(() => {
+      handleDownload({
+        id: 'stale-download',
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-old',
+        url: 'https://example.com/stale.dmg',
+        path: '/Users/test/Downloads/stale.dmg',
+        status: 'finished',
+        receivedBytes: 1024,
+        totalBytes: 1024,
+      })
+    })
+    expect(screen.queryByTestId('workspace-browser-download-item')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolvePageState({
+        nativeLabel: 'workspace-browser-native-replacement',
+        title: 'Replacement browser',
+        url: 'https://replacement.example/',
+      })
+    })
+
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+  })
+
   test('opens the embedded browser from an external open request', async () => {
     mockBrowserHostRect()
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValueOnce({
+      nativeLabel: 'workspace-browser-native-1',
       title: null,
       url: 'https://example.test/',
     })
@@ -532,6 +641,7 @@ describe('WorkspaceBrowserPanel', () => {
       window.location.href
     ).toString()
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
       title: '云桌面 - sandbox-1',
       url: vncUrl,
     })
@@ -596,6 +706,7 @@ describe('WorkspaceBrowserPanel', () => {
       window.location.href
     ).toString()
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
       title: '云桌面 - sandbox-1',
       url: vncUrl,
     })
@@ -628,8 +739,12 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.submit(input.closest('form')!)
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
 
-    let resolvePageState!: (state: { title: string; url: string }) => void
-    const pendingPageState = new Promise<{ title: string; url: string }>(resolve => {
+    let resolvePageState!: (state: { nativeLabel: string; title: string; url: string }) => void
+    const pendingPageState = new Promise<{
+      nativeLabel: string
+      title: string
+      url: string
+    }>(resolve => {
       resolvePageState = resolve
     })
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockClear()
@@ -648,7 +763,11 @@ describe('WorkspaceBrowserPanel', () => {
       window.location.href
     ).toString()
     await act(async () => {
-      resolvePageState({ title: '云桌面 - sandbox-1', url: vncUrl })
+      resolvePageState({
+        nativeLabel: 'workspace-browser-native-1',
+        title: '云桌面 - sandbox-1',
+        url: vncUrl,
+      })
       await pendingPageState
     })
 
@@ -676,8 +795,12 @@ describe('WorkspaceBrowserPanel', () => {
     fireEvent.submit(input.closest('form')!)
     await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
 
-    let resolvePageState!: (state: { title: string; url: string }) => void
-    const pendingPageState = new Promise<{ title: string; url: string }>(resolve => {
+    let resolvePageState!: (state: { nativeLabel: string; title: string; url: string }) => void
+    const pendingPageState = new Promise<{
+      nativeLabel: string
+      title: string
+      url: string
+    }>(resolve => {
       resolvePageState = resolve
     })
     embeddedBrowserMocks.readEmbeddedBrowserPageState.mockClear()
@@ -697,7 +820,11 @@ describe('WorkspaceBrowserPanel', () => {
       window.location.href
     ).toString()
     await act(async () => {
-      resolvePageState({ title: '云桌面 - stale-sandbox', url: vncUrl })
+      resolvePageState({
+        nativeLabel: 'workspace-browser-native-1',
+        title: '云桌面 - stale-sandbox',
+        url: vncUrl,
+      })
       await pendingPageState
     })
 

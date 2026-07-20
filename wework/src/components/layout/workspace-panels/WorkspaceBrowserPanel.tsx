@@ -59,6 +59,7 @@ const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
 const EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS = 5000
 const EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
+const EMBEDDED_BROWSER_PENDING_DOWNLOAD_LIMIT = 20
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
 const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
   try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
@@ -569,6 +570,8 @@ export function WorkspaceBrowserPanel({
   const annotationInjectionOwnerRef = useRef<number | null>(null)
   const annotationRequestGenerationRef = useRef(0)
   const currentLabelRef = useRef(label)
+  const nativeLabelRef = useRef<string | null>(null)
+  const pendingDownloadEventsRef = useRef<EmbeddedBrowserDownloadEvent[]>([])
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
@@ -592,6 +595,31 @@ export function WorkspaceBrowserPanel({
   const internalVncPage = Boolean(activePageUrl && isInternalVncPageUrl(activePageUrl))
   const embeddedBrowserOccluded = occludingOverlayIds.size > 0
 
+  const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
+    setDownloads(current => {
+      const remaining = current.filter(item => item.id !== download.id)
+      if (download.status === 'deleted') return remaining
+      return [download, ...remaining].slice(0, 10)
+    })
+    setDownloadsOpen(true)
+  }, [])
+
+  const adoptNativeLabel = useCallback(
+    (nativeLabel: string) => {
+      if (nativeLabelRef.current === nativeLabel) return
+
+      nativeLabelRef.current = nativeLabel
+      const pendingDownloads = pendingDownloadEventsRef.current
+      pendingDownloadEventsRef.current = []
+      setDownloads(current => current.filter(download => download.nativeLabel === nativeLabel))
+      setDownloadsOpen(false)
+      pendingDownloads
+        .filter(download => download.nativeLabel === nativeLabel)
+        .forEach(applyDownloadEvent)
+    },
+    [applyDownloadEvent]
+  )
+
   useLayoutEffect(() => {
     mountedRef.current = true
     currentLabelRef.current = label
@@ -606,18 +634,20 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserDownloads(download => {
-      if (download.label !== label) return
-      setDownloads(current => {
-        const remaining = current.filter(item => item.id !== download.id)
-        if (download.status === 'deleted') return remaining
-        return [download, ...remaining].slice(0, 10)
-      })
-      setDownloadsOpen(true)
+      const nativeLabel = nativeLabelRef.current
+      if (nativeLabel) {
+        if (download.nativeLabel === nativeLabel) applyDownloadEvent(download)
+        return
+      }
+
+      pendingDownloadEventsRef.current = [...pendingDownloadEventsRef.current, download].slice(
+        -EMBEDDED_BROWSER_PENDING_DOWNLOAD_LIMIT
+      )
     })
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [label])
+  }, [applyDownloadEvent])
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
@@ -872,6 +902,7 @@ export function WorkspaceBrowserPanel({
       if (!mountedRef.current || pageStateRequestGenerationRef.current !== requestGeneration) {
         return false
       }
+      adoptNativeLabel(pageState.nativeLabel)
       const nextUrl = pageState.url || currentUrlRef.current
       if (nextUrl && isInternalVncPageUrl(nextUrl) && annotationModeRef.current) {
         logBrowserAnnotation('exit annotation mode for internal VNC page', { label })
@@ -892,6 +923,7 @@ export function WorkspaceBrowserPanel({
     }
   }, [
     embeddedBrowserAvailable,
+    adoptNativeLabel,
     exitAnnotationMode,
     label,
     onFaviconChange,
@@ -931,6 +963,7 @@ export function WorkspaceBrowserPanel({
           await closeEmbeddedBrowser(label).catch(() => undefined)
           return
         }
+        adoptNativeLabel(pageState.nativeLabel)
         nativeBrowserOpenRef.current = true
         updatePageUrl(pageState.url || currentUrl)
         schedulePostOpenBoundsSync(active)
@@ -954,6 +987,7 @@ export function WorkspaceBrowserPanel({
     }
   }, [
     active,
+    adoptNativeLabel,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -970,7 +1004,9 @@ export function WorkspaceBrowserPanel({
     const attachExistingBrowser = async () => {
       try {
         const pageState = await readEmbeddedBrowserPageState(label)
-        if (disposed || !pageState.url) return
+        if (disposed) return
+        adoptNativeLabel(pageState.nativeLabel)
+        if (!pageState.url) return
         nativeBrowserOpenRef.current = true
         setCurrentUrl(pageState.url)
         updatePageUrl(pageState.url)
@@ -991,6 +1027,7 @@ export function WorkspaceBrowserPanel({
     }
   }, [
     active,
+    adoptNativeLabel,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1158,6 +1195,8 @@ export function WorkspaceBrowserPanel({
     return () => {
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
+      nativeLabelRef.current = null
+      pendingDownloadEventsRef.current = []
       void closeEmbeddedBrowser(label).catch(() => undefined)
     }
   }, [label])

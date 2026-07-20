@@ -15,7 +15,13 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
-import { evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
+import {
+  closeEmbeddedBrowser,
+  evalEmbeddedBrowserJson,
+  openEmbeddedBrowser,
+  relabelEmbeddedBrowser,
+  setEmbeddedBrowserBounds,
+} from '@/lib/embedded-browser'
 import { invoke } from '@tauri-apps/api/core'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -27,6 +33,7 @@ type DesktopControlAction =
   | 'capture'
   | 'click'
   | 'clickWhenEnabled'
+  | 'closeEmbeddedBrowser'
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
   | 'fill'
@@ -34,6 +41,7 @@ type DesktopControlAction =
   | 'getText'
   | 'hover'
   | 'pointerMove'
+  | 'prepareEmbeddedBrowserRelabelRegression'
   | 'snapshot'
   | 'waitFor'
   | 'press'
@@ -441,6 +449,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
+    case 'closeEmbeddedBrowser':
+      await closeEmbeddedBrowser(command.selector || undefined)
+      return ''
     case 'closeMainWindowToTray':
       window.setTimeout(() => {
         void closeMainWindowToTray().catch(error => {
@@ -457,6 +468,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         command.selector || undefined
       )
       return JSON.stringify(state)
+    }
+    case 'prepareEmbeddedBrowserRelabelRegression': {
+      const bounds = { x: 0, y: 0, width: 1, height: 1 }
+      const ownerLabel = 'workspace-browser-regression-owner'
+      await openEmbeddedBrowser('https://example.com/', bounds, 'workspace-browser')
+      await relabelEmbeddedBrowser('workspace-browser', ownerLabel)
+      await setEmbeddedBrowserBounds(bounds, false, ownerLabel)
+      return ''
     }
     case 'waitFor':
       return waitForDesktopControlElement(command)

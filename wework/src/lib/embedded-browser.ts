@@ -27,6 +27,7 @@ export interface EmbeddedBrowserBounds {
 }
 
 export interface EmbeddedBrowserPageState {
+  nativeLabel: string
   title: string | null
   url: string | null
 }
@@ -39,6 +40,7 @@ export interface EmbeddedBrowserOpenRequest {
 export interface EmbeddedBrowserDownloadEvent {
   id: string
   label: string
+  nativeLabel: string
   url: string
   path: string | null
   status: 'started' | 'progress' | 'paused' | 'finished' | 'failed' | 'deleted'

@@ -4043,10 +4043,18 @@ describe('DesktopWorkbenchLayout', () => {
   test('opens a cloud desktop in the right built-in browser and leaves settings', async () => {
     const tauriInvoke = vi.fn((command: string, args?: Record<string, unknown>) => {
       if (command === 'embedded_browser_open') {
-        return Promise.resolve({ title: null, url: args?.url ?? null })
+        return Promise.resolve({
+          nativeLabel: 'embedded-browser-native-test',
+          title: null,
+          url: args?.url ?? null,
+        })
       }
       if (command === 'embedded_browser_page_state') {
-        return Promise.resolve({ title: null, url: null })
+        return Promise.resolve({
+          nativeLabel: 'embedded-browser-native-test',
+          title: null,
+          url: null,
+        })
       }
       return Promise.resolve(undefined)
     })
@@ -4112,6 +4120,18 @@ describe('DesktopWorkbenchLayout', () => {
           undefined
         )
       )
+      const browserStateResponse = (command: string) => {
+        const callIndex = tauriInvoke.mock.calls.findIndex(([calledCommand]) => {
+          return calledCommand === command
+        })
+        return tauriInvoke.mock.results[callIndex]?.value
+      }
+      await expect(browserStateResponse('embedded_browser_open')).resolves.toMatchObject({
+        nativeLabel: 'embedded-browser-native-test',
+      })
+      await expect(browserStateResponse('embedded_browser_page_state')).resolves.toMatchObject({
+        nativeLabel: 'embedded-browser-native-test',
+      })
     } finally {
       browserBounds.mockRestore()
     }
