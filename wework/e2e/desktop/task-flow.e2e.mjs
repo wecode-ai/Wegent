@@ -506,15 +506,25 @@ function responseFailed(id, message) {
 }
 
 function functionCall(callId, name, argumentsValue) {
-  return {
-    type: 'response.output_item.done',
-    item: {
-      type: 'function_call',
-      call_id: callId,
-      name,
-      arguments: JSON.stringify(argumentsValue),
+  return [
+    {
+      type: 'response.output_item.added',
+      item: {
+        type: 'function_call',
+        call_id: callId,
+        name,
+      },
     },
-  }
+    {
+      type: 'response.output_item.done',
+      item: {
+        type: 'function_call',
+        call_id: callId,
+        name,
+        arguments: JSON.stringify(argumentsValue),
+      },
+    },
+  ]
 }
 
 function customToolCall(callId, name, input) {
@@ -1032,8 +1042,8 @@ class DesktopE2EServer {
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
-        functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
-        functionCall('wework-e2e-view-image', image.name, image.arguments),
+        ...functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall('wework-e2e-view-image', image.name, image.arguments),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
