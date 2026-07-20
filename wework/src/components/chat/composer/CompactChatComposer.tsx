@@ -38,6 +38,7 @@ interface CompactChatComposerProps {
   onChange: (value: string) => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
   attachments?: Attachment[]
@@ -73,6 +74,7 @@ export function CompactChatComposer({
   onChange,
   onSubmit,
   disabled,
+  submitDisabled = false,
   disabledReason,
   placeholder,
   attachments = [],
@@ -111,7 +113,9 @@ export function CompactChatComposer({
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
+    !disabled &&
+    !submitDisabled
   const explicitLineCount = value.split('\n').length
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content

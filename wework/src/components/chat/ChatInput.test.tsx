@@ -192,6 +192,27 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
+  test('keeps the desktop editor focused while submission is temporarily disabled', async () => {
+    const props = {
+      value: 'next draft',
+      onChange: vi.fn(),
+      onSubmit: vi.fn(),
+      disabled: false,
+      variant: 'desktop' as const,
+    }
+    const { rerender } = render(<ChatInput {...props} submitDisabled={false} />)
+    const editor = screen.getByTestId('chat-message-input')
+
+    editor.focus()
+    await waitFor(() => expect(editor).toHaveFocus())
+
+    rerender(<ChatInput {...props} submitDisabled />)
+
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    expect(editor).toHaveFocus()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+  })
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
