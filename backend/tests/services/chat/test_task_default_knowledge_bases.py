@@ -220,7 +220,7 @@ def test_resolve_task_defaults_uses_current_agent_configuration():
             return_value=[11, 22, 11],
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_directly_accessible_knowledge_base_ids",
+            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_acl_accessible_knowledge_base_ids",
             return_value={11, 22},
         ) as get_accessible_ids,
     ):
@@ -265,7 +265,7 @@ def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
             return_value=[11, 22],
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_directly_accessible_knowledge_base_ids",
+            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_acl_accessible_knowledge_base_ids",
             return_value={11},
         ),
     ):
@@ -274,24 +274,80 @@ def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
     assert result == [11]
 
 
-def test_task_default_access_user_is_team_owner_not_knowledge_base_owner():
+def test_resolve_public_team_defaults_uses_public_acl_context():
     from app.services.chat.task_default_knowledge_bases import (
-        resolve_task_default_knowledge_base_access_user_id,
+        resolve_task_default_knowledge_base_ids,
+    )
+
+    db = Mock()
+    task = SimpleNamespace(json={"kind": "Task"})
+    team = SimpleNamespace(id=42, user_id=0)
+
+    with (
+        patch(
+            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
+            return_value=SimpleNamespace(),
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
+            return_value=team,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            return_value=team,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
+            return_value=[11],
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_acl_accessible_knowledge_base_ids",
+            return_value={11},
+        ) as get_accessible_ids,
+    ):
+        result = resolve_task_default_knowledge_base_ids(
+            db,
+            task_id=100,
+            user_id=7,
+        )
+
+    assert result == [11]
+    get_accessible_ids.assert_called_once_with(
+        db,
+        user_id=0,
+        candidate_ids=[11],
+    )
+
+
+def test_task_default_read_user_is_knowledge_base_owner():
+    from app.services.chat.task_default_knowledge_bases import (
+        resolve_task_default_knowledge_base_read_user_id,
     )
 
     team = SimpleNamespace(user_id=9)
-    with patch(
-        "app.services.chat.task_default_knowledge_bases._resolve_task_default_knowledge_bases",
-        return_value=(team, [11]),
+    knowledge_base = SimpleNamespace(user_id=23)
+    with (
+        patch(
+            "app.services.chat.task_default_knowledge_bases._resolve_task_default_knowledge_bases",
+            return_value=(team, [11]),
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.KnowledgeService._get_knowledge_base_record",
+            return_value=knowledge_base,
+        ),
     ):
-        access_user_id = resolve_task_default_knowledge_base_access_user_id(
+        access_user_id = resolve_task_default_knowledge_base_read_user_id(
             Mock(),
             task_id=100,
             user_id=7,
             knowledge_base_id=11,
         )
 
-    assert access_user_id == team.user_id
+    assert access_user_id == knowledge_base.user_id
 
 
 def test_resolve_task_defaults_requires_agent_access():

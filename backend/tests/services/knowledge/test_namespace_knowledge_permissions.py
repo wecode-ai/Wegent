@@ -170,6 +170,44 @@ def test_developer_can_create_organization_knowledge_base(test_db: Session) -> N
 
 
 @pytest.mark.unit
+def test_public_agent_acl_access_only_allows_organization_knowledge_bases(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "public-agent-kb-owner")
+    group_namespace = _create_namespace(test_db, owner, "public-agent-group")
+    organization_namespace = _create_namespace(
+        test_db,
+        owner,
+        "public-agent-organization",
+        level="organization",
+    )
+    _add_member(test_db, group_namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, organization_namespace, owner, GroupRole.Owner, owner.id)
+    group_kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="group-kb", namespace=group_namespace.name),
+    )
+    organization_kb_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="organization-kb",
+            namespace=organization_namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    accessible_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=0,
+        candidate_ids=[group_kb_id, organization_kb_id],
+    )
+
+    assert accessible_ids == {organization_kb_id}
+
+
+@pytest.mark.unit
 def test_all_scope_does_not_duplicate_organization_knowledge_base(
     test_db: Session,
 ) -> None:
@@ -232,6 +270,40 @@ def test_edit_direct_access_requirement_hides_kb_from_reporter(
     assert knowledge_base is not None
     assert has_access is False
     assert knowledge_base_id not in listed_ids
+
+
+@pytest.mark.unit
+def test_acl_access_ignores_direct_visibility_requirement(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "agent-owner")
+    reporter = _create_user(test_db, "agent-reporter")
+    namespace = _create_namespace(test_db, owner, "agent-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="agent-kb",
+            namespace=namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    direct_ids = KnowledgeService.get_directly_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert direct_ids == set()
+    assert acl_ids == {knowledge_base_id}
 
 
 @pytest.mark.unit

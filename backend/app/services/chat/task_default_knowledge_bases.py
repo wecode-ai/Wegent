@@ -119,7 +119,7 @@ def _resolve_task_default_knowledge_bases(
         if knowledge_base_id not in candidate_ids:
             return team, []
         candidate_ids = [knowledge_base_id]
-    allowed_ids = KnowledgeService.get_directly_accessible_knowledge_base_ids(
+    allowed_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
         db,
         user_id=team.user_id,
         candidate_ids=candidate_ids,
@@ -142,13 +142,13 @@ def resolve_task_default_knowledge_base_ids(
     return knowledge_base_ids
 
 
-def resolve_task_default_knowledge_base_access_user_id(
+def resolve_task_default_knowledge_base_read_user_id(
     db: Session,
     task_id: int,
     user_id: int,
     knowledge_base_id: int,
 ) -> int | None:
-    """Return the current Team owner for authorized task-scoped default access."""
+    """Return the KB owner after validating task-scoped agent default access."""
     team, knowledge_base_ids = _resolve_task_default_knowledge_bases(
         db,
         task_id,
@@ -157,7 +157,8 @@ def resolve_task_default_knowledge_base_access_user_id(
     )
     if team is None or knowledge_base_id not in knowledge_base_ids:
         return None
-    return team.user_id
+    knowledge_base = KnowledgeService._get_knowledge_base_record(db, knowledge_base_id)
+    return knowledge_base.user_id if knowledge_base is not None else None
 
 
 def build_initial_task_knowledge_base_refs(

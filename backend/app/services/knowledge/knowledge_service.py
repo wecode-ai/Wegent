@@ -757,6 +757,46 @@ class KnowledgeService:
         return {row[0] for row in query.all()}
 
     @staticmethod
+    def get_acl_accessible_knowledge_base_ids(
+        db: Session,
+        *,
+        user_id: int,
+        candidate_ids: list[int],
+    ) -> set[int]:
+        """Resolve raw ACL access without applying direct visibility policy."""
+        candidate_ids = list(dict.fromkeys(candidate_ids))
+        if not candidate_ids:
+            return set()
+
+        if user_id == 0:
+            query = (
+                db.query(Kind.id)
+                .join(Namespace, Kind.namespace == Namespace.name)
+                .filter(
+                    Kind.id.in_(candidate_ids),
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Namespace.level == GroupLevel.organization.value,
+                    Namespace.is_active == True,
+                )
+            )
+        else:
+            permission_context = KnowledgeService._build_direct_access_query_context(
+                db,
+                user_id,
+                candidate_ids=candidate_ids,
+            )
+            query = _KnowledgeBaseVisibilityQueryBuilder.build(
+                db,
+                user_id=user_id,
+                scope=ResourceScope.ALL,
+                permission_context=permission_context,
+            ).filter(Kind.id.in_(candidate_ids))
+            query = query.with_entities(Kind.id)
+
+        return {row[0] for row in query.all()}
+
+    @staticmethod
     def list_knowledge_bases(
         db: Session,
         user_id: int,

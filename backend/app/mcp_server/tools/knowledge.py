@@ -29,7 +29,7 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
 from app.services.chat.task_default_knowledge_bases import (
-    resolve_task_default_knowledge_base_access_user_id,
+    resolve_task_default_knowledge_base_read_user_id,
 )
 from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -64,7 +64,7 @@ def _get_read_user_for_knowledge_base(
     ):
         return user
 
-    access_user_id = resolve_task_default_knowledge_base_access_user_id(
+    access_user_id = resolve_task_default_knowledge_base_read_user_id(
         db,
         token_info.task_id,
         user.id,
