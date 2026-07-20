@@ -290,7 +290,7 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
-  test('reconciles a stored event emitted after native relabel but before the label prop changes', async () => {
+  test('accepts a native-matching event emitted before the label prop changes', async () => {
     mockBrowserHostRect()
     let handleDownload!: (download: {
       id: string
@@ -326,7 +326,9 @@ describe('WorkspaceBrowserPanel', () => {
         totalBytes: 1024,
       })
     })
-    expect(screen.queryByTestId('workspace-browser-download-item')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
+      'relabel.dmg'
+    )
 
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValueOnce(true)
     view.rerender(<WorkspaceBrowserPanel active label="workspace-browser-owner" />)
@@ -455,6 +457,63 @@ describe('WorkspaceBrowserPanel', () => {
     expect(
       await within(destination.container).findByTestId('workspace-browser-download-item')
     ).toHaveTextContent('current-owner.dmg')
+  })
+
+  test('routes a stale-label terminal event to the active native-browser owner', async () => {
+    const handlers: Array<
+      (download: {
+        id: string
+        label: string
+        nativeLabel: string
+        url: string
+        path: string | null
+        status: string
+        receivedBytes: number | null
+        totalBytes: number | null
+      }) => void
+    > = []
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handlers.push(handler)
+      return null
+    })
+
+    const source = render(<WorkspaceBrowserPanel active label="workspace-browser-source" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser-source'
+      )
+    )
+    source.rerender(<WorkspaceBrowserPanel active={false} label="workspace-browser-source" />)
+    const destination = render(
+      <WorkspaceBrowserPanel active label="workspace-browser-destination" />
+    )
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser-destination'
+      )
+    )
+
+    act(() => {
+      handlers.forEach(handler =>
+        handler({
+          id: 'download-after-stale-owner-resolution',
+          label: 'workspace-browser-source',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'https://example.com/stale-owner.dmg',
+          path: '/Users/test/Downloads/stale-owner.dmg',
+          status: 'finished',
+          receivedBytes: 1024,
+          totalBytes: 1024,
+        })
+      )
+    })
+
+    expect(
+      await within(destination.container).findByTestId('workspace-browser-download-item')
+    ).toHaveTextContent('下载完成')
+    expect(
+      within(source.container).queryByTestId('workspace-browser-download-item')
+    ).not.toBeInTheDocument()
   })
 
   test('discards buffered events when a logical label resolves to a different native browser', async () => {

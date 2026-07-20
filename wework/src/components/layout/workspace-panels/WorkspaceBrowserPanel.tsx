@@ -572,6 +572,7 @@ export function WorkspaceBrowserPanel({
   const annotationInjectionOwnerRef = useRef<number | null>(null)
   const annotationRequestGenerationRef = useRef(0)
   const currentLabelRef = useRef(label)
+  const activeRef = useRef(active)
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
@@ -608,24 +609,32 @@ export function WorkspaceBrowserPanel({
     setDownloadsOpen(true)
   }, [])
 
-  const adoptNativeLabel = useCallback((nativeLabel: string, logicalLabel: string) => {
-    if (
-      nativeLabelRef.current === nativeLabel &&
-      adoptedDownloadOwnerLabelRef.current === logicalLabel
-    ) {
-      return
-    }
-
-    nativeLabelRef.current = nativeLabel
-    adoptedDownloadOwnerLabelRef.current = logicalLabel
+  const reconcileDownloadSnapshot = useCallback((nativeLabel: string) => {
     const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
     setDownloads(snapshot)
     setDownloadsOpen(snapshot.length > 0)
   }, [])
 
+  const adoptNativeLabel = useCallback(
+    (nativeLabel: string, logicalLabel: string) => {
+      if (
+        nativeLabelRef.current === nativeLabel &&
+        adoptedDownloadOwnerLabelRef.current === logicalLabel
+      ) {
+        return
+      }
+
+      nativeLabelRef.current = nativeLabel
+      adoptedDownloadOwnerLabelRef.current = logicalLabel
+      reconcileDownloadSnapshot(nativeLabel)
+    },
+    [reconcileDownloadSnapshot]
+  )
+
   useLayoutEffect(() => {
     mountedRef.current = true
     currentLabelRef.current = label
+    activeRef.current = active
     pageStateRequestGenerationRef.current += 1
     annotationRequestGenerationRef.current += 1
     return () => {
@@ -637,12 +646,15 @@ export function WorkspaceBrowserPanel({
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
-      const nativeLabel = nativeLabelRef.current
-      if (download.nativeLabel !== nativeLabel) return
-      if (download.label !== currentLabelRef.current) return
+      if (!activeRef.current || download.nativeLabel !== nativeLabelRef.current) return
       applyDownloadEvent(download)
     })
   }, [applyDownloadEvent])
+
+  useEffect(() => {
+    if (!active || !nativeLabelRef.current) return
+    reconcileDownloadSnapshot(nativeLabelRef.current)
+  }, [active, reconcileDownloadSnapshot])
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
