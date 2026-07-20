@@ -32,12 +32,14 @@ import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { readDroppedFiles } from '@/tauri/droppedFiles'
 
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
   attachments?: Attachment[]
@@ -73,6 +75,7 @@ export function CompactChatComposer({
   onChange,
   onSubmit,
   disabled,
+  submitDisabled = false,
   disabledReason,
   placeholder,
   attachments = [],
@@ -111,7 +114,9 @@ export function CompactChatComposer({
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
+    !disabled &&
+    !submitDisabled
   const explicitLineCount = value.split('\n').length
   const handleShowTextAttachment = (attachment: Attachment) => {
     const text = attachment.text_content
@@ -127,6 +132,9 @@ export function CompactChatComposer({
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
     onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    if (phrase.attachmentPaths?.length && onFileSelect) {
+      void readDroppedFiles(phrase.attachmentPaths).then(onFileSelect)
+    }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
@@ -256,7 +264,7 @@ export function CompactChatComposer({
             onOpenSkillFile={onOpenSkillFile}
             workspaceTarget={workspaceTarget}
             workspaceFileApi={workspaceFileApi}
-            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-secondary outline-none placeholder:text-text-muted"
+            className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-chat leading-5 text-text-secondary outline-none placeholder:text-text-muted"
             skillMenuClassName={[
               'left-[-1rem]',
               isStreaming && canSend ? 'right-[-5.75rem]' : 'right-[-3.5rem]',

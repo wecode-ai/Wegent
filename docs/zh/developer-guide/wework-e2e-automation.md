@@ -26,6 +26,12 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+仅运行云端项目桌面 E2E：
+
+```bash
+pnpm --filter wework e2e:desktop:cloud
+```
+
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：
 
 ```bash
@@ -68,6 +74,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
 可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Tauri 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
+
+云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。测试只模拟 Codex 使用的模型 Responses API；不得模拟 Backend HTTP 或 WebSocket 接口。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
 ## Responses API Mock
 
@@ -139,6 +147,7 @@ pnpm --filter wework e2e
 ```bash
 pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop
+xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。

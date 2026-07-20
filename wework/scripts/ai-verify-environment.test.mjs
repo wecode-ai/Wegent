@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
 describe('buildAiVerifyEnvironment', () => {
-  test('uses the same isolated Codex home for Wework and its executor', () => {
+  test('isolates Codex, executor, and Wework app preferences in the session', () => {
     const environment = buildAiVerifyEnvironment(
       { PATH: '/usr/bin' },
       {
@@ -24,6 +24,7 @@ describe('buildAiVerifyEnvironment', () => {
       '/tmp/session/executor-home/workspace/projects'
     )
     expect(environment.WEWORK_EXECUTOR_ISOLATION_OVERRIDE).toBe('true')
+    expect(environment.WEWORK_APP_CONFIG_DIR).toBe('/tmp/session/app-config')
     expect(environment.PATH).toBe('/usr/bin')
   })
 })

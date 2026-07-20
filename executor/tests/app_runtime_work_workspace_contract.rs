@@ -1315,7 +1315,7 @@ async fn runtime_task_list_keeps_cached_codex_store_entries_until_provider_disco
 }
 
 #[tokio::test]
-async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_thread_exists() {
+async fn runtime_task_list_keeps_distinct_tasks_with_matching_titles() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-pending-shadow-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1378,9 +1378,9 @@ async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_threa
         .expect("task list should succeed");
 
     let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["taskId"], "thread-real");
-    assert_eq!(tasks[0]["running"], false);
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks.iter().any(|task| task["taskId"] == "thread-real"));
+    assert!(tasks.iter().any(|task| task["taskId"] == "local-pending"));
 }
 
 #[tokio::test]
