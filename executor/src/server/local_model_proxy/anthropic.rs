@@ -461,4 +461,33 @@ mod tests {
         assert!(output.contains("response.custom_tool_call_input.done"));
         assert!(output.contains("\"input_tokens\":10"));
     }
+
+    #[tokio::test]
+    async fn normalizes_anthropic_apply_patch_alias_and_fence() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":1}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"apply_patch","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"content\":\"```patch\\n*** Update File: a.txt\\n@@\\n-old\\n+new\\n```\"}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+        let output = anthropic_sse_to_responses(source, {
+            let input = json!({"tools": [{"type": "custom", "name": "apply_patch"}]});
+            chat::responses_to_chat(&input).expect("context").1
+        })
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(Result::unwrap)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .collect::<String>();
+
+        assert!(output.contains("*** Begin Patch\\n*** Update File: a.txt"));
+        assert!(output.contains("+new\\n*** End Patch"));
+        assert!(!output.contains("```patch"));
+    }
 }

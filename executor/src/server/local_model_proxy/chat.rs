@@ -797,7 +797,7 @@ impl<S> ChatStreamState<S> {
             }
             let custom = self.context.is_custom(&state.name);
             let arguments = if custom {
-                custom_input(&state.arguments)
+                custom_input(&state.name, &state.arguments)
             } else {
                 normalize_arguments(&state.arguments)
             };
@@ -919,16 +919,53 @@ fn meaningful_error_message(value: &Value) -> Option<String> {
     }
 }
 
-fn custom_input(arguments: &str) -> String {
-    serde_json::from_str::<Value>(arguments)
+fn custom_input(tool_name: &str, arguments: &str) -> String {
+    let input = serde_json::from_str::<Value>(arguments)
         .ok()
         .and_then(|value| {
-            value
-                .get(CUSTOM_TOOL_INPUT_FIELD)
+            [CUSTOM_TOOL_INPUT_FIELD, "patch", "content"]
+                .iter()
+                .find_map(|field| value.get(*field))
                 .and_then(Value::as_str)
                 .map(str::to_owned)
         })
-        .unwrap_or_else(|| arguments.to_owned())
+        .unwrap_or_else(|| arguments.to_owned());
+    if tool_name == "apply_patch" {
+        normalize_apply_patch_input(&input)
+    } else {
+        input
+    }
+}
+
+fn normalize_apply_patch_input(input: &str) -> String {
+    let trimmed = input.trim();
+    let without_fence = trimmed
+        .strip_prefix("```diff")
+        .or_else(|| trimmed.strip_prefix("```patch"))
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|value| value.strip_suffix("```"))
+        .map(str::trim)
+        .unwrap_or(trimmed);
+
+    if let Some(begin) = without_fence.find("*** Begin Patch") {
+        if let Some(relative_end) = without_fence[begin..].find("*** End Patch") {
+            let end = begin + relative_end + "*** End Patch".len();
+            return without_fence[begin..end].to_owned();
+        }
+        // Preserve an incomplete patch so Codex reports the real grammar error.
+        return without_fence[begin..].to_owned();
+    }
+
+    if without_fence.lines().any(|line| {
+        line.starts_with("*** Add File:")
+            || line.starts_with("*** Update File:")
+            || line.starts_with("*** Delete File:")
+            || line.starts_with("*** Move to:")
+    }) {
+        return format!("*** Begin Patch\n{without_fence}\n*** End Patch");
+    }
+
+    without_fence.to_owned()
 }
 
 fn normalize_arguments(arguments: &str) -> String {
@@ -1064,6 +1101,35 @@ mod tests {
         assert!(output.contains("\"input\":\"patch\""));
         assert!(output.contains("response.completed"));
         assert!(output.contains("\"input_tokens\":10"));
+    }
+
+    #[tokio::test]
+    async fn normalizes_wrapped_apply_patch_function_arguments() {
+        let chunks = vec![Ok::<_, std::io::Error>(Bytes::from(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"apply_patch\",\"arguments\":\"{\\\"patch\\\":\\\"```diff\\\\n*** Update File: a.txt\\\\n@@\\\\n-old\\\\n+new\\\\n```\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+        ))];
+        let mut context = ToolContext::default();
+        context.insert("apply_patch".to_owned(), ToolKind::Custom);
+
+        let output = chat_sse_to_responses(futures_util::stream::iter(chunks), context)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(Result::unwrap)
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect::<String>();
+
+        assert!(output.contains("*** Begin Patch\\n*** Update File: a.txt"));
+        assert!(output.contains("+new\\n*** End Patch"));
+        assert!(!output.contains("```diff"));
+    }
+
+    #[test]
+    fn leaves_truncated_apply_patch_incomplete() {
+        assert_eq!(
+            normalize_apply_patch_input("prefix *** Begin Patch\n*** Update File: a.txt\n@@"),
+            "*** Begin Patch\n*** Update File: a.txt\n@@"
+        );
     }
 
     async fn convert_stream(input: &str, context: ToolContext) -> String {
