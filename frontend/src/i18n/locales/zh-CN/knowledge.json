@@ -212,6 +212,7 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
+      "createDialogDescription": "配置知识库名称、可见范围和检索设置。",
       "createDesc": "创建您的第一个知识库",
       "notebookDesc": "默认进入笔记本视图，可选择文档并开启对话",
       "classicDesc": "默认进入文档视图，适合浏览、上传和管理文档",
@@ -219,6 +220,7 @@
       "typeNotebook": "笔记本视图",
       "typeClassic": "文档视图",
       "edit": "编辑知识库",
+      "editDialogDescription": "更新知识库基本信息、可见范围和检索设置。",
       "loadingDetails": "正在加载知识库详情...",
       "loadDetailsFailed": "无法加载最新的知识库详情。为避免覆盖现有配置，暂时无法编辑。",
       "retryLoadDetails": "重试",

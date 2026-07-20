@@ -212,6 +212,7 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
+      "createDialogDescription": "Configure the knowledge base name, visibility, and retrieval settings.",
       "createDesc": "Create your first knowledge base",
       "notebookDesc": "Open Notebook View by default for document selection and chat",
       "classicDesc": "Open Document View by default for browsing, uploading, and management",
@@ -219,6 +220,7 @@
       "typeNotebook": "Notebook View",
       "typeClassic": "Document View",
       "edit": "Edit Knowledge Base",
+      "editDialogDescription": "Update the knowledge base details, visibility, and retrieval settings.",
       "loadingDetails": "Loading knowledge base details...",
       "loadDetailsFailed": "Failed to load the latest knowledge base details. Editing is disabled to protect the current settings.",
       "retryLoadDetails": "Retry",

@@ -9,6 +9,7 @@ import { BookOpen, Database } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -288,6 +289,9 @@ export function EditKnowledgeBaseDialog({
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>{t('knowledge:document.knowledgeBase.edit')}</DialogTitle>
+            <DialogDescription>
+              {t('knowledge:document.knowledgeBase.editDialogDescription')}
+            </DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto space-y-4 py-4">
             {isLoadingFullKnowledgeBase ? (

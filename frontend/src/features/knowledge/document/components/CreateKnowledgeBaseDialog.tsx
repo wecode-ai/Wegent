@@ -9,6 +9,7 @@ import { BookOpen, Database, User, Building2, Users, FileText } from 'lucide-rea
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -273,6 +274,9 @@ export function CreateKnowledgeBaseDialog({
       >
         <DialogHeader>
           <DialogTitle>{t('knowledge:document.knowledgeBase.create')}</DialogTitle>
+          <DialogDescription>
+            {t('knowledge:document.knowledgeBase.createDialogDescription')}
+          </DialogDescription>
         </DialogHeader>
         <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-3 [scrollbar-gutter:stable]">
           <KnowledgeBaseForm
