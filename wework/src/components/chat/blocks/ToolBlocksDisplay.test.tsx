@@ -1229,6 +1229,33 @@ describe('ToolBlocksDisplay', () => {
     expect(scrollArea.scrollTop).toBe(160)
   })
 
+  test('scrolls the live preview when the thinking row appears without a new tool row', () => {
+    const runningBlocks: ProcessingBlock[] = Array.from({ length: 4 }, (_, index) => ({
+      id: `running-${index + 1}`,
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'bash',
+      toolInput: { command: `command-${index + 1}` },
+      status: 'streaming',
+      createdAt: Date.now() + index,
+    }))
+
+    const { rerender } = render(<ToolBlocksDisplay blocks={runningBlocks} isStreaming={true} />)
+    const scrollArea = screen.getByTestId('processing-live-preview-scroll')
+    Object.defineProperty(scrollArea, 'scrollHeight', { configurable: true, value: 192 })
+    scrollArea.scrollTop = 0
+
+    rerender(
+      <ToolBlocksDisplay
+        blocks={runningBlocks.map(block => ({ ...block, status: 'done' }))}
+        isStreaming={true}
+      />
+    )
+
+    expect(screen.getByTestId('tool-block-thinking')).toBeInTheDocument()
+    expect(scrollArea.scrollTop).toBe(192)
+  })
+
   test('anchors the running duration to the turn start, surviving a refresh', () => {
     vi.useFakeTimers()
     // The page was refreshed 10s into a still-running turn.
