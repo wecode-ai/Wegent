@@ -11,10 +11,6 @@ import {
 
 const assetsDirectory = resolve(import.meta.dirname, 'assets')
 const pluginModulePath = resolve(import.meta.dirname, 'viteAssets.mjs')
-const viteConfigSource = readFileSync(
-  resolve(import.meta.dirname, '../../../vite.config.ts'),
-  'utf8'
-)
 
 type VncAssetsMiddleware = ReturnType<typeof createVncAssetsMiddleware>
 
@@ -95,16 +91,6 @@ function devServer(restart: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue
     watcher,
   }
 }
-
-describe('Vite config integration', () => {
-  test('loads the optional plugin as a native versioned module', () => {
-    expect(viteConfigSource).toContain('./wecode/features/vnc/viteAssets.mjs')
-    expect(viteConfigSource).not.toContain('./wecode/features/vnc/viteAssets.ts')
-    expect(viteConfigSource).toContain('fs.statSync(internalVncAssetsPluginPath).mtimeMs')
-    expect(viteConfigSource).toMatch(/searchParams\.set\(\s*'version'/)
-    expect(viteConfigSource).toContain('await import(internalVncAssetsPluginUrl.href)')
-  })
-})
 
 describe('matchVncAsset', () => {
   test.each([

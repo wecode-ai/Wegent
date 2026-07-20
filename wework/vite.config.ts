@@ -21,23 +21,23 @@ const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
   ? internalExtensionsDir
   : path.resolve(__dirname, './src/extensions')
-const internalVncAssetsPluginPath = path.resolve(__dirname, './wecode/features/vnc/viteAssets.mjs')
-const internalVncAssetsPluginUrl = fs.existsSync(internalVncAssetsPluginPath)
-  ? pathToFileURL(internalVncAssetsPluginPath)
+const internalVitePluginsPath = path.resolve(__dirname, './wecode/vitePlugins.mjs')
+const internalVitePluginsUrl = fs.existsSync(internalVitePluginsPath)
+  ? pathToFileURL(internalVitePluginsPath)
   : null
-if (internalVncAssetsPluginUrl) {
-  internalVncAssetsPluginUrl.searchParams.set(
+if (internalVitePluginsUrl) {
+  internalVitePluginsUrl.searchParams.set(
     'version',
-    String(fs.statSync(internalVncAssetsPluginPath).mtimeMs)
+    String(fs.statSync(internalVitePluginsPath).mtimeMs)
   )
 }
-const internalVncAssetsPlugin = internalVncAssetsPluginUrl
-  ? (
-      (await import(internalVncAssetsPluginUrl.href)) as {
-        createVncAssetsPlugin: () => Plugin
+const internalVitePlugins = internalVitePluginsUrl
+  ? await (
+      (await import(internalVitePluginsUrl.href)) as {
+        createWecodeVitePlugins: () => Promise<Plugin[]>
       }
-    ).createVncAssetsPlugin()
-  : null
+    ).createWecodeVitePlugins()
+  : []
 const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
@@ -60,7 +60,7 @@ export default defineConfig({
       copyAssets: true,
       chunkStrategy: 'renderer',
     }),
-    ...(internalVncAssetsPlugin ? [internalVncAssetsPlugin] : []),
+    ...internalVitePlugins,
   ],
   define: {
     __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),

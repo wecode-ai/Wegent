@@ -40,8 +40,8 @@ type DesktopControlAction =
   | 'dispatchLocalModelSettingsChanged'
   | 'drag'
   | 'dropFile'
+  | 'evalEmbeddedBrowserJson'
   | 'fill'
-  | 'getEmbeddedBrowserVncState'
   | 'getText'
   | 'getValue'
   | 'hover'
@@ -531,12 +531,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
-    case 'getEmbeddedBrowserVncState': {
-      const state = await evalEmbeddedBrowserJson<{ connected?: string; title?: string }>(
-        "({ connected: document.documentElement.dataset.vncConnected ?? '', title: document.title })",
-        command.selector || undefined
-      )
-      return JSON.stringify(state)
+    case 'evalEmbeddedBrowserJson': {
+      const expression = command.value?.trim()
+      if (!expression) {
+        throw new Error('evalEmbeddedBrowserJson requires an expression')
+      }
+      const value = await evalEmbeddedBrowserJson(expression, command.selector || undefined)
+      return JSON.stringify(value)
     }
     case 'prepareEmbeddedBrowserRelabelRegression': {
       const bounds = { x: 0, y: 0, width: 1, height: 1 }

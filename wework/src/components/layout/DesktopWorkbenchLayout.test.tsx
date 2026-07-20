@@ -109,6 +109,16 @@ const tauriMenuMocks = vi.hoisted(() => ({
 const authMocks = vi.hoisted(() => ({
   logout: vi.fn(),
 }))
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
 
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 
@@ -530,6 +540,20 @@ describe('DesktopWorkbenchLayout', () => {
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
+    cloudDesktopExtensionMock.available = true
+    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+      ({ deviceId, disabled, onOpened }) => (
+        <button
+          type="button"
+          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          disabled={disabled}
+          onClick={onOpened}
+        >
+          桌面
+        </button>
+      )
+    )
+    cloudDesktopExtensionMock.open.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
     getLocalCodexUsageDisplayMock.mockResolvedValue({
@@ -4048,14 +4072,13 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd')
+      screen.getByTestId('connection-cloud-desktop-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
     expect(screen.getByText('IDE')).toBeInTheDocument()
     expect(screen.getByText('桌面')).toBeInTheDocument()
     expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
     expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
-    expect(screen.queryByText('桌面 VNC')).not.toBeInTheDocument()
     expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
     expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
     expect(screen.queryByText('CPU')).not.toBeInTheDocument()
@@ -4073,119 +4096,6 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Cloud computing powered by Nevis')).not.toBeInTheDocument()
     expect(screen.queryByText('其他设置')).not.toBeInTheDocument()
     expect(screen.queryByText('Start Task')).not.toBeInTheDocument()
-  })
-
-  test('opens a cloud desktop in the right built-in browser and leaves settings', async () => {
-    const tauriInvoke = vi.fn((command: string, args?: Record<string, unknown>) => {
-      if (command === 'embedded_browser_open') {
-        return Promise.resolve({
-          nativeLabel: 'embedded-browser-native-test',
-          title: null,
-          url: args?.url ?? null,
-        })
-      }
-      if (command === 'embedded_browser_page_state') {
-        return Promise.resolve({
-          nativeLabel: 'embedded-browser-native-test',
-          title: null,
-          url: null,
-        })
-      }
-      return Promise.resolve(undefined)
-    })
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: { invoke: tauriInvoke },
-    })
-    window.history.pushState({}, '', '/settings/connections')
-    const browserBounds = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-      .mockImplementation(function () {
-        if (this.dataset.testid === 'workspace-browser-native-view') {
-          return createRect({ left: 500, top: 120, width: 400, height: 300 })
-        }
-        return createRect({ left: 0, top: 0, width: 0, height: 0 })
-      })
-    const getCloudDesktopConfig = vi.fn((path: string) => {
-      if (path.startsWith('/models/unified?')) {
-        return Promise.resolve({ data: [] })
-      }
-      return Promise.resolve({
-        wss_url: 'wss://unused.example.test/vnc',
-        signature: 'unused-signature',
-        sandbox_id: 'sandbox-1',
-      })
-    })
-    createHttpClientMock.mockReturnValue({ get: getCloudDesktopConfig } as never)
-    try {
-      render(<DesktopWorkbenchLayout {...baseProps} />)
-
-      await userEvent.click(
-        await screen.findByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd')
-      )
-
-      await waitFor(() =>
-        expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
-      )
-      expect(getCloudDesktopConfig).toHaveBeenCalledWith(
-        '/cloud-devices/24a59054-4638-4744-983d-372706c30fcd/vnc-config'
-      )
-      expect(createHttpClientMock).toHaveBeenCalledWith({
-        baseUrl: '/api',
-        getToken: expect.any(Function),
-        redirectOnUnauthorized: false,
-      })
-      const cloudDesktopClientOptions = createHttpClientMock.mock.calls
-        .map(([options]) => options)
-        .find(options => options.redirectOnUnauthorized === false)
-      expect(cloudDesktopClientOptions?.getToken?.()).toBe('fallback-token')
-      expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
-        'aria-selected',
-        'true'
-      )
-      expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
-      const openedUrl = new URL(
-        (screen.getByTestId('workspace-browser-url-input') as HTMLInputElement).value
-      )
-      expect(openedUrl.pathname).toBe('/vnc.html')
-      expect(openedUrl.searchParams.get('sessionId')).toEqual(expect.any(String))
-      expect(openedUrl.searchParams.has('wsUrl')).toBe(false)
-      expect(openedUrl.toString()).not.toContain('fallback-token')
-      expect(screen.getByTestId('workspace-browser-annotate-button')).toBeDisabled()
-      expect(screen.getByTestId('workspace-browser-open-external-button')).toBeDisabled()
-      await waitFor(() =>
-        expect(tauriInvoke).toHaveBeenCalledWith(
-          'prepare_vnc_session',
-          {
-            sessionId: openedUrl.searchParams.get('sessionId'),
-            token: 'fallback-token',
-            wsUrl: 'ws://localhost:3000/vnc-proxy/24a59054-4638-4744-983d-372706c30fcd',
-          },
-          undefined
-        )
-      )
-      await waitFor(() =>
-        expect(tauriInvoke).toHaveBeenCalledWith(
-          'embedded_browser_open',
-          expect.objectContaining({ url: openedUrl.toString() }),
-          undefined
-        )
-      )
-      const browserStateResponse = (command: string) => {
-        const callIndex = tauriInvoke.mock.calls.findIndex(([calledCommand]) => {
-          return calledCommand === command
-        })
-        return tauriInvoke.mock.results[callIndex]?.value
-      }
-      await expect(browserStateResponse('embedded_browser_open')).resolves.toMatchObject({
-        nativeLabel: 'embedded-browser-native-test',
-      })
-      await expect(browserStateResponse('embedded_browser_page_state')).resolves.toMatchObject({
-        nativeLabel: 'embedded-browser-native-test',
-      })
-    } finally {
-      browserBounds.mockRestore()
-    }
   })
 
   test('opens and resizes the right workspace panel', async () => {

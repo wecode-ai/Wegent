@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { access, appendFile, mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { createWecodeDesktopScenario } from '../../wecode/e2e/desktop/index.mjs'
 
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
@@ -39,8 +41,6 @@ const MODEL_ID = 'gpt-5.4'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-desktop-e2e-cloud-device'
-const CLOUD_DEVICE_SANDBOX_ID = 'wework-desktop-e2e-sandbox'
-const CLOUD_DEVICE_TOKEN = 'wework-desktop-e2e-cloud-token'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
@@ -62,6 +62,7 @@ const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
+const WECODE_ONLY = process.argv.includes('--wecode-only')
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -218,33 +219,6 @@ async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEO
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
-}
-
-async function waitForVncConnection(control, sandboxId, timeoutMs = UI_TIMEOUT_MS) {
-  const startedAt = Date.now()
-  let lastState = null
-  while (Date.now() - startedAt < timeoutMs) {
-    if (control.vncProtocolError) {
-      throw new Error(`The noVNC RFB handshake failed: ${control.vncProtocolError}`)
-    }
-    if (control.vncRfbConnections === 1) {
-      try {
-        const rawState = await control.command('getEmbeddedBrowserVncState', 'workspace-browser', {
-          timeoutMs: 5_000,
-        })
-        lastState = JSON.parse(rawState)
-        if (lastState?.connected === 'true' && String(lastState.title ?? '').includes(sandboxId)) {
-          return lastState
-        }
-      } catch (error) {
-        lastState = { error: error instanceof Error ? error.message : String(error) }
-      }
-    }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-  }
-  throw new Error(
-    `The native VNC page did not emit its connected state after the authenticated RFB handshake: ${JSON.stringify(lastState)}`
-  )
 }
 
 async function waitForControlValue(control, selector, expected, message) {
@@ -762,71 +736,6 @@ function cors(response) {
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
 }
 
-function websocketBinaryFrame(payload) {
-  const data = Buffer.from(payload)
-  assert.ok(data.length < 126, 'Desktop E2E RFB frame unexpectedly requires extended length')
-  return Buffer.concat([Buffer.from([0x82, data.length]), data])
-}
-
-function consumeWebSocketFrames(buffer) {
-  const frames = []
-  let offset = 0
-  while (buffer.length - offset >= 2) {
-    const first = buffer[offset]
-    const second = buffer[offset + 1]
-    let payloadLength = second & 0x7f
-    let headerLength = 2
-    if (payloadLength === 126) {
-      if (buffer.length - offset < 4) break
-      payloadLength = buffer.readUInt16BE(offset + 2)
-      headerLength = 4
-    } else if (payloadLength === 127) {
-      if (buffer.length - offset < 10) break
-      const extendedLength = buffer.readBigUInt64BE(offset + 2)
-      assert.ok(extendedLength <= BigInt(Number.MAX_SAFE_INTEGER), 'WebSocket frame is too large')
-      payloadLength = Number(extendedLength)
-      headerLength = 10
-    }
-
-    const masked = Boolean(second & 0x80)
-    const maskLength = masked ? 4 : 0
-    const frameLength = headerLength + maskLength + payloadLength
-    if (buffer.length - offset < frameLength) break
-
-    const maskOffset = offset + headerLength
-    const payloadOffset = maskOffset + maskLength
-    const payload = Buffer.from(buffer.subarray(payloadOffset, payloadOffset + payloadLength))
-    if (masked) {
-      const mask = buffer.subarray(maskOffset, maskOffset + 4)
-      for (let index = 0; index < payload.length; index += 1) {
-        payload[index] ^= mask[index % 4]
-      }
-    }
-    frames.push({ opcode: first & 0x0f, payload })
-    offset += frameLength
-  }
-  return { frames, remaining: buffer.subarray(offset) }
-}
-
-function rfbServerInit() {
-  const name = Buffer.from('Wework Desktop E2E VNC')
-  const header = Buffer.alloc(24)
-  header.writeUInt16BE(4, 0)
-  header.writeUInt16BE(4, 2)
-  header[4] = 32
-  header[5] = 24
-  header[6] = 0
-  header[7] = 1
-  header.writeUInt16BE(255, 8)
-  header.writeUInt16BE(255, 10)
-  header.writeUInt16BE(255, 12)
-  header[14] = 16
-  header[15] = 8
-  header[16] = 0
-  header.writeUInt32BE(name.length, 20)
-  return Buffer.concat([header, name])
-}
-
 function requestContainsToolOutput(request) {
   const input = JSON.stringify(request.input ?? [])
   return input.includes('function_call_output') || input.includes('custom_tool_call_output')
@@ -1091,9 +1000,11 @@ class DesktopE2EServer {
     this.server = createServer((request, response) => {
       void this.handle(request, response)
     })
-    this.server.on('upgrade', (request, socket, head) => {
-      this.handleVncUpgrade(request, socket, head)
+    this.wecodeDesktopScenario = createWecodeDesktopScenario({
+      deviceId: CLOUD_DEVICE_ID,
+      uiTimeoutMs: UI_TIMEOUT_MS,
     })
+    this.wecodeDesktopScenario.attachServer(this.server)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response)
     })
@@ -1111,10 +1022,6 @@ class DesktopE2EServer {
     this.failCloudModels = false
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
-    this.vncConfigRequests = 0
-    this.vncProtocolError = null
-    this.vncRfbConnections = 0
-    this.vncSockets = new Set()
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.cloudModelStage = 'initial'
@@ -1172,85 +1079,13 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
-    for (const socket of this.vncSockets) socket.destroy()
-    this.vncSockets.clear()
+    this.wecodeDesktopScenario.close()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
     await Promise.all([
       new Promise(resolvePromise => this.server.close(resolvePromise)),
       new Promise(resolvePromise => this.controlServer.close(resolvePromise)),
     ])
-  }
-
-  handleVncUpgrade(request, socket, head) {
-    const url = new URL(request.url ?? '/', this.url ?? 'http://127.0.0.1')
-    if (
-      url.pathname !== `/vnc-proxy/${CLOUD_DEVICE_ID}` ||
-      url.searchParams.get('token') !== CLOUD_DEVICE_TOKEN
-    ) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
-      socket.destroy()
-      return
-    }
-
-    const key = request.headers['sec-websocket-key']
-    if (typeof key !== 'string') {
-      socket.destroy()
-      return
-    }
-    const accept = createHash('sha1')
-      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
-      .digest('base64')
-    socket.write(
-      [
-        'HTTP/1.1 101 Switching Protocols',
-        'Upgrade: websocket',
-        'Connection: Upgrade',
-        `Sec-WebSocket-Accept: ${accept}`,
-        '',
-        '',
-      ].join('\r\n')
-    )
-    this.vncSockets.add(socket)
-    socket.once('close', () => this.vncSockets.delete(socket))
-    socket.once('error', () => this.vncSockets.delete(socket))
-
-    let buffered = Buffer.from(head)
-    let stage = 0
-    const handleData = chunk => {
-      try {
-        buffered = Buffer.concat([buffered, chunk])
-        const decoded = consumeWebSocketFrames(buffered)
-        buffered = decoded.remaining
-        for (const frame of decoded.frames) {
-          if (frame.opcode === 8) {
-            socket.end()
-            return
-          }
-          if (frame.opcode !== 1 && frame.opcode !== 2) continue
-          if (stage === 0) {
-            assert.match(frame.payload.toString('ascii'), /^RFB 003\.00[378]\n$/)
-            socket.write(websocketBinaryFrame(Buffer.from([1, 1])))
-            stage = 1
-          } else if (stage === 1) {
-            assert.equal(frame.payload[0], 1, 'noVNC did not select None security')
-            socket.write(websocketBinaryFrame(Buffer.from([0, 0, 0, 0])))
-            stage = 2
-          } else if (stage === 2) {
-            assert.equal(frame.payload.length, 1, 'noVNC sent an invalid ClientInit message')
-            socket.write(websocketBinaryFrame(rfbServerInit()))
-            this.vncRfbConnections += 1
-            stage = 3
-          }
-        }
-      } catch (error) {
-        this.vncProtocolError = error instanceof Error ? error.message : String(error)
-        socket.destroy()
-      }
-    }
-    socket.on('data', handleData)
-    socket.write(websocketBinaryFrame(Buffer.from('RFB 003.008\n', 'ascii')))
-    if (buffered.length > 0) handleData(Buffer.alloc(0))
   }
 
   awaitReady() {
@@ -1423,6 +1258,7 @@ class DesktopE2EServer {
 
     const url = new URL(request.url ?? '/', this.url)
     if (await this.handleControlRoute(request, response, url)) return
+    if (await this.wecodeDesktopScenario.handleHttp(request, response, url)) return
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -1446,31 +1282,10 @@ class DesktopE2EServer {
             bind_shell: 'claudecode',
             executor_version: '1.8.5',
             client_ip: '127.0.0.1',
-            cloud_config: {
-              sandboxId: CLOUD_DEVICE_SANDBOX_ID,
-              deviceId: CLOUD_DEVICE_ID,
-              deviceName: 'Wework Desktop E2E Cloud Device',
-            },
+            cloud_config: this.wecodeDesktopScenario.cloudDeviceConfig,
           },
         ],
         total: 1,
-      })
-      return
-    }
-
-    if (
-      request.method === 'GET' &&
-      url.pathname === `/api/cloud-devices/${CLOUD_DEVICE_ID}/vnc-config`
-    ) {
-      if (request.headers.authorization !== `Bearer ${CLOUD_DEVICE_TOKEN}`) {
-        json(response, 401, { error: 'Desktop E2E VNC authorization is missing' })
-        return
-      }
-      this.vncConfigRequests += 1
-      json(response, 200, {
-        wss_url: 'wss://unused.example.test/vnc',
-        signature: 'unused-signature',
-        sandbox_id: CLOUD_DEVICE_SANDBOX_ID,
       })
       return
     }
@@ -2145,7 +1960,7 @@ async function main() {
     const desktopApp = await buildDesktopApp(
       control.controlUrl,
       cloudEnvironment?.backendUrl ?? control.url,
-      cloudEnvironment?.authToken ?? 'wework-desktop-e2e-cloud-token',
+      cloudEnvironment?.authToken ?? control.wecodeDesktopScenario.authToken,
       appIdentifier
     )
     const appBinary = desktopApp.binaryPath
@@ -2213,71 +2028,17 @@ async function main() {
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
 
-    phase = 'cloud-vnc-browser'
-    await control.command('prepareEmbeddedBrowserRelabelRegression', '')
-    await control.command('click', '[data-testid="settings-button"]')
-    await control.command('click', '[data-testid="settings-menu-button"]')
-    await control.command('waitFor', '[data-testid="wework-settings-page"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="settings-nav-connections"]')
-    await control.command('waitFor', `[data-testid="connection-vnc-button-${CLOUD_DEVICE_ID}"]`, {
-      enabled: true,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('click', `[data-testid="connection-vnc-button-${CLOUD_DEVICE_ID}"]`)
-    await control.command(
-      'waitFor',
-      '[data-testid="right-workspace-browser-tab"][aria-selected="true"]',
-      { timeoutMs: UI_TIMEOUT_MS }
-    )
-    await control.command('waitFor', '[data-testid="workspace-browser-panel"]:not(.hidden)', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command(
-      'waitFor',
-      '[data-testid="workspace-browser-url-input"][value*="/vnc.html?"][value*="sessionId="]:not([value*="token"]):not([value*="wsUrl"])',
-      { timeoutMs: UI_TIMEOUT_MS }
-    )
-    const vncState = await waitForVncConnection(control, CLOUD_DEVICE_SANDBOX_ID)
-    await control.command('waitFor', '[data-testid="right-workspace-browser-tab"]', {
-      text: CLOUD_DEVICE_SANDBOX_ID,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const vncBrowserSnapshot = await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('wework-settings-page'),
-      'Opening the cloud desktop did not leave settings'
-    )
-    assert.equal(
-      vncBrowserSnapshot.testIds.includes('workspace-browser-panel'),
-      true,
-      'Opening the cloud desktop did not show the built-in browser panel'
-    )
-    assert.equal(
-      control.vncConfigRequests,
-      1,
-      'Opening the cloud desktop did not make exactly one real VNC configuration request'
-    )
-    assert.equal(control.vncProtocolError, null, 'The noVNC RFB handshake failed')
-    assert.equal(
-      control.vncRfbConnections,
-      1,
-      'The native VNC page did not complete exactly one authenticated RFB handshake'
-    )
-    assert.equal(vncState.connected, 'true', 'The noVNC connect event did not reveal the desktop')
-    assert.match(
-      vncState.title,
-      new RegExp(CLOUD_DEVICE_SANDBOX_ID),
-      'The connected VNC page did not identify its sandbox'
-    )
-    await control.command('click', '[data-testid="right-workspace-browser-tab-close-button"]')
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('right-workspace-browser-tab'),
-      'The VNC browser tab did not close after verification'
-    )
-    await control.command('closeEmbeddedBrowser', 'workspace-browser-regression-owner')
+    phase = 'wecode-desktop-scenario'
+    await control.wecodeDesktopScenario.verify(control)
+    if (WECODE_ONLY) {
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop Wecode scenario E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -2831,9 +2592,7 @@ async function main() {
           phase,
           scenario: control.scenario,
           modelStage: control.modelStage,
-          vncConfigRequests: control.vncConfigRequests,
-          vncProtocolError: control.vncProtocolError,
-          vncRfbConnections: control.vncRfbConnections,
+          ...control.wecodeDesktopScenario.diagnostics(),
           cloudModelStage: control.cloudModelStage,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
