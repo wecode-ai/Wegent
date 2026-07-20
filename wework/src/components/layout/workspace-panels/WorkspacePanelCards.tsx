@@ -210,8 +210,20 @@ export function WorkspacePanelCards({
   const projectDevice = activeWorkspaceDeviceId
     ? devices.find(device => device.device_id === activeWorkspaceDeviceId)
     : undefined
+  const cloudToolsAvailable = Boolean(projectDevice && supportsCloudSessions(projectDevice))
+  const remoteIdeAvailable = Boolean(
+    projectDevice && (supportsCloudSessions(projectDevice) || supportsRemoteSessions(projectDevice))
+  )
+  const remoteTerminalAvailable = Boolean(
+    projectDevice && supportsRemoteTerminalSessions(projectDevice)
+  )
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
+  )
   const localProjectConfigTerminal =
-    workspaceSource !== 'runtime' && (preferLocalTerminal || usesLocalProjectConfig(currentProject))
+    workspaceSource !== 'runtime' &&
+    !remoteWorkspaceSession &&
+    (preferLocalTerminal || usesLocalProjectConfig(currentProject))
   const localTerminalSupported = Boolean(
     localProjectConfigTerminal || (projectDevice && supportsLocalTerminalLaunch(projectDevice))
   )
@@ -229,13 +241,6 @@ export function WorkspacePanelCards({
     pathExists: false,
   })
   const localTerminalCheckReady = localTerminalCheck.key === localTerminalCheckKey
-  const cloudToolsAvailable = Boolean(projectDevice && supportsCloudSessions(projectDevice))
-  const remoteIdeAvailable = Boolean(
-    projectDevice && (supportsCloudSessions(projectDevice) || supportsRemoteSessions(projectDevice))
-  )
-  const remoteTerminalAvailable = Boolean(
-    projectDevice && supportsRemoteTerminalSessions(projectDevice)
-  )
   const hasWorkspaceContext = Boolean(currentProject || workspaceTarget)
   const canUseLocalTerminalCheck = useCallback(
     (check: LocalTerminalCheckState) => {
@@ -264,10 +269,12 @@ export function WorkspacePanelCards({
     localTerminalSupported && localTerminalRuntimeAvailable && !localTerminalCheckReady
   )
   const localTerminalLaunchable = Boolean(localTerminalSupported && localTerminalRuntimeAvailable)
-  const remoteWorkspaceSession = Boolean(
-    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
-  )
   const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
+  const useDeviceTerminalSession = Boolean(
+    workspaceTarget &&
+    (workspaceSource === 'runtime' ||
+      (remoteWorkspaceSession && usesLocalProjectConfig(currentProject)))
+  )
   const localIdeLaunchable = Boolean(
     !remoteWorkspaceSession &&
     localTerminalLaunchable &&
@@ -493,7 +500,7 @@ export function WorkspacePanelCards({
         return
       }
 
-      if (workspaceSource === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
+      if (useDeviceTerminalSession && activeWorkspaceDeviceId && activeWorkspacePath) {
         if (!workspaceSessionApi) {
           throw new Error('Remote workspace session service is unavailable')
         }
@@ -564,8 +571,8 @@ export function WorkspacePanelCards({
     setLocalTerminalCheck,
     setProjectError,
     terminalContextTitle,
+    useDeviceTerminalSession,
     workspaceSessionApi,
-    workspaceSource,
   ])
 
   useEffect(() => {
