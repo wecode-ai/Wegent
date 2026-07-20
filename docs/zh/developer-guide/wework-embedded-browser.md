@@ -55,13 +55,14 @@ WebSocket 地址和 Bearer token 不得放入浏览器地址、历史记录或 R
 
 VNC 是 Wecode 发行版能力，不是公共 Wework 内置浏览器的默认能力。代码按以下边界组织：
 
-- `wework/wecode/features/vnc/` 持有 VNC API、会话编排、按钮、打开流程、页面、noVNC 资源和对应单元测试。
-- `wework/wecode/extensions/cloud-desktop.tsx` 把 VNC feature 绑定到通用 `cloudDesktopExtension` 契约。
+- `wework/wecode/features/vnc/` 持有 VNC API、会话编排、设置页按钮、工作区桌面入口、打开流程、页面、noVNC 资源和对应单元测试。
+- `wework/wecode/extensions/cloud-desktop.tsx` 把 VNC feature 的设置页 `DeviceAction` 和工作区 `WorkspaceAction` 绑定到通用 `cloudDesktopExtension` 契约。
+- `wework/wecode/extensions/desktop-control.ts` 持有关闭、求值和重命名内置浏览器等 Wecode 桌面自动化动作；公共自动化层只通过 `wework/src/extensions/desktop-control-contract.ts` 委派未处理的命令。
 - `wework/wecode/vitePlugins.mjs` 持有 Wecode 构建插件集合，并在内部加载 VNC 资源插件；公共 `vite.config.ts` 只负责可选加载 Wecode 插件集合，不识别 VNC 文件或资源名称。
-- `wework/wecode/e2e/desktop/` 持有 RFB 模拟服务、VNC HTTP/WebSocket fixture、专用状态和云桌面验证流程；公共 Desktop E2E 只调用 Wecode 场景入口。
+- `wework/wecode/e2e/desktop/` 持有 RFB 模拟服务、VNC HTTP/WebSocket fixture、专用状态和云桌面验证流程。Wecode 包装入口通过 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` 向公共 Desktop E2E 注入可选场景，公共 runner 不直接导入 Wecode。
 - `wework/src-tauri/src/wecode/vnc_session.rs` 持有 VNC 凭据交接、TTL、安全校验和原生单元测试。
 
-公共 `wework/src/` 只保留与协议无关的云桌面扩展契约、空实现和宿主调用。Desktop Control 可以提供通用的嵌入式浏览器 JSON 求值命令，但不得暴露 `getEmbeddedBrowserVncState` 等 VNC 专用 action。公共组件测试只验证扩展契约接线；实际 VNC 集成断言放在 Wecode feature 测试或 Desktop E2E 中。
+公共 `wework/src/` 只保留与协议无关的云桌面扩展契约、空实现、宿主调用，以及桌面控制扩展契约和委派入口，不实现具体的内置浏览器求值动作。公共组件测试只验证扩展契约接线；实际 VNC 集成断言放在 Wecode feature 测试或 Desktop E2E 中。
 
 `wework/src-tauri/src/lib.rs` 中的 `VncSessionState` 和两个 Tauri command 注册是原生宿主必须保留的静态接线。Backend 的 VNC 配置接口、WebSocket 代理和本文档也不迁入 Wecode。除这些必要接线外，公共 Vite 配置、React 组件、E2E 控制层和测试不得新增 VNC/noVNC/专用 IPC 实现。
 

@@ -26,6 +26,12 @@ pnpm --filter wework e2e
 pnpm --filter wework e2e:desktop
 ```
 
+仅运行 Wecode 云设备桌面场景：
+
+```bash
+pnpm --filter wework e2e:desktop:wecode
+```
+
 仅运行云端项目桌面 E2E：
 
 ```bash
@@ -55,7 +61,7 @@ node e2e/utils/mock-response-api-server.mjs
 
 ## 桌面端任务全链路 E2E
 
-`wework/e2e/desktop/task-flow.e2e.mjs` 覆盖本机工作区中的真实任务生命周期和云设备桌面链路：
+`wework/e2e/desktop/task-flow.e2e.mjs` 覆盖本机工作区中的真实任务生命周期，并允许产品扩展注入可选桌面场景：
 
 1. 构建并启动真实 Tauri Wework 应用，使用 `--open-workspace` 打开隔离工作区。
 2. 启动真实 `wegent-executor` sidecar，并由它启动真实 `codex app-server`。
@@ -64,7 +70,9 @@ node e2e/utils/mock-response-api-server.mjs
 5. 在同一会话中发送连续追问，并校验对应请求和页面回复。
 6. 启动流式回复后通过桌面端 UI 取消，校验任务已停止、停止提示已渲染，并在发送后续消息时恢复输入。
 7. 让模型首次请求确定性失败，点击错误卡中的重试，并校验重试请求和最终回复。
-8. 通过带 Bearer 认证的真实 HTTP 请求读取云设备 VNC 配置，从桌面入口打开内置 VNC 页，校验地址栏不含 WebSocket 地址或 token，并完成带 token 的 WebSocket upgrade、RFB 3.8 握手及连接标记断言。
+8. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载对应产品场景；公共 runner 不直接包含 VNC fixture 或断言。
+
+`pnpm --filter wework e2e:desktop:wecode` 使用 `wework/wecode/e2e/desktop/task-flow.e2e.mjs` 包装入口，并开启 `WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true`。Wecode 场景通过带 Bearer 认证的真实 HTTP 请求读取云设备 VNC 配置，从设置页和工作区桌面入口打开内置 VNC 页，校验地址栏不含 WebSocket 地址或 token，并完成带 token 的 WebSocket upgrade、RFB 3.8 握手及连接标记断言。RFB 模拟服务、VNC HTTP/WebSocket fixture、诊断状态和具体控制动作均位于 `wework/wecode/`。
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动一个 OpenAI Responses 兼容服务，作为 Codex 的自定义模型 provider。该服务会返回确定性的工具调用和最终文本；工具调用仍由真实 Codex 在隔离工作区内执行。
 
@@ -112,7 +120,7 @@ http://127.0.0.1:9998/v1
 
 桌面端 E2E 构建会额外注入 `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`。只有在 E2E 模式且该 URL 存在时，前端才会轮询本机 loopback 控制器来执行 `click`、`fill` 和等待断言；常规开发和生产构建不会包含控制端点。控制器只驱动真实 WebView DOM 事件，不替换任务、模型选择、Executor 或 Codex 的实现。
 
-控制器的 `getEmbeddedBrowserVncState` 动作会通过原生内置浏览器 eval 读取 VNC 页的连接标记和标题。桌面端链路用它确认 noVNC 只有在真实 RFB 握手完成后才进入已连接状态，并从标题确认 sandbox ID；地址栏是否含凭据由主 WebView 中的独立等待断言校验。
+公共控制器在内置动作未处理命令时，通过 `wework/src/extensions/desktop-control-contract.ts` 委派给产品扩展。Wecode 的 `wework/wecode/extensions/desktop-control.ts` 提供 `evalEmbeddedBrowserJson`、`closeEmbeddedBrowser` 和 `prepareEmbeddedBrowserRelabelRegression`；公共自动化层不识别 VNC。Wecode 桌面场景用通用求值动作读取连接标记和标题，确认 noVNC 只有在真实 RFB 握手完成后才进入已连接状态，并从标题确认 sandbox ID；地址栏是否含凭据由主 WebView 中的独立等待断言校验。
 
 控制器使用短轮询：没有待执行指令时服务端返回 `204`，前端短暂等待后再次请求。这避免了 WebView 刷新、任务切换或流结束时遗留的长轮询连接吞掉后续指令。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，用于定位控制通道问题。
 
@@ -150,6 +158,7 @@ pnpm --filter wework e2e
 ```bash
 pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop
+xvfb-run -a pnpm --filter wework e2e:desktop:wecode
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 

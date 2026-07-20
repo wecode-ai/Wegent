@@ -55,13 +55,14 @@ The internal VNC page sets its connected marker only after a real noVNC connecti
 
 VNC is a Wecode distribution capability, not a default capability of the public Wework embedded browser. Code follows these ownership rules:
 
-- `wework/wecode/features/vnc/` owns the VNC API, session orchestration, action button, open flow, page, noVNC assets, and unit tests.
-- `wework/wecode/extensions/cloud-desktop.tsx` binds the VNC feature to the generic `cloudDesktopExtension` contract.
+- `wework/wecode/features/vnc/` owns the VNC API, session orchestration, settings action, workspace desktop entry, open flow, page, noVNC assets, and unit tests.
+- `wework/wecode/extensions/cloud-desktop.tsx` binds the VNC feature's settings `DeviceAction` and workspace `WorkspaceAction` to the generic `cloudDesktopExtension` contract.
+- `wework/wecode/extensions/desktop-control.ts` owns Wecode desktop-automation actions for closing, evaluating, and relabeling embedded browsers. Public automation delegates unhandled commands only through `wework/src/extensions/desktop-control-contract.ts`.
 - `wework/wecode/vitePlugins.mjs` owns the Wecode build-plugin collection and loads the VNC asset plugin internally. Public `vite.config.ts` only loads the optional Wecode plugin collection and does not recognize VNC files or asset names.
-- `wework/wecode/e2e/desktop/` owns the simulated RFB server, VNC HTTP/WebSocket fixture, feature state, and cloud-desktop verification flow. Public Desktop E2E calls only the Wecode scenario entry point.
+- `wework/wecode/e2e/desktop/` owns the simulated RFB server, VNC HTTP/WebSocket fixture, feature state, and cloud-desktop verification flow. The Wecode wrapper injects an optional scenario into public Desktop E2E through `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`; the public runner does not import Wecode directly.
 - `wework/src-tauri/src/wecode/vnc_session.rs` owns VNC credential handoff, TTL, security validation, and native unit tests.
 
-Public `wework/src/` keeps only the protocol-neutral cloud-desktop extension contract, unavailable fallback, and host calls. Desktop Control may expose a generic embedded-browser JSON evaluation command, but it must not expose VNC-specific actions such as `getEmbeddedBrowserVncState`. Public component tests verify extension wiring only; concrete VNC integration assertions belong to Wecode feature tests or Desktop E2E.
+Public `wework/src/` keeps only the protocol-neutral cloud-desktop extension contract, unavailable fallback, host calls, and the desktop-control extension contract and delegation entry. It does not implement concrete embedded-browser evaluation actions. Public component tests verify extension wiring only; concrete VNC integration assertions belong to Wecode feature tests or Desktop E2E.
 
 The `VncSessionState` and two Tauri command registrations in `wework/src-tauri/src/lib.rs` remain as required static native-host wiring. Backend VNC configuration APIs, the WebSocket proxy, and this documentation also remain outside Wecode. Apart from those required integration points, public Vite configuration, React components, E2E control code, and tests must not add VNC, noVNC, or dedicated IPC implementations.
 
