@@ -14,6 +14,8 @@ use axum::body::Bytes;
 use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
 
+use crate::logging::log_executor_event;
+
 const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.";
 const APPLY_PATCH_OUTPUT_CONTRACT: &str = "Critical apply_patch input contract:\n- Set the function's `input` field to the patch text itself. JSON escaping is handled by the function-call protocol.\n- The first characters must be exactly `*** Begin Patch\\n`; put the first file hunk immediately on the next line with no blank line.\n- The final marker must be `*** End Patch`, optionally followed by one newline, with no text after it.\n- Do not include Markdown code fences, prose, labels, or any characters before `*** Begin Patch` or after `*** End Patch`.\n- Follow the embedded Lark grammar exactly; every added-file content line must start with `+`.";
@@ -920,21 +922,81 @@ fn meaningful_error_message(value: &Value) -> Option<String> {
 }
 
 fn custom_input(tool_name: &str, arguments: &str) -> String {
-    let input = serde_json::from_str::<Value>(arguments)
-        .ok()
-        .and_then(|value| {
-            [CUSTOM_TOOL_INPUT_FIELD, "patch", "content"]
-                .iter()
-                .find_map(|field| value.get(*field))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
+    let parsed = serde_json::from_str::<Value>(arguments).ok();
+    let input_field = parsed.as_ref().and_then(|value| {
+        [CUSTOM_TOOL_INPUT_FIELD, "patch", "content"]
+            .iter()
+            .find(|field| value.get(**field).and_then(Value::as_str).is_some())
+            .copied()
+    });
+    let input = input_field
+        .and_then(|field| parsed.as_ref()?.get(field)?.as_str().map(str::to_owned))
         .unwrap_or_else(|| arguments.to_owned());
     if tool_name == "apply_patch" {
-        normalize_apply_patch_input(&input)
+        let normalized = normalize_apply_patch_input(&input);
+        log_apply_patch_diagnostics(arguments, input_field, &input, &normalized);
+        normalized
     } else {
         input
     }
+}
+
+fn log_apply_patch_diagnostics(
+    arguments: &str,
+    input_field: Option<&str>,
+    input: &str,
+    normalized: &str,
+) {
+    let trimmed = input.trim();
+    let first_line = trimmed.lines().next().unwrap_or_default();
+    let first_line_kind = if first_line == "*** Begin Patch" {
+        "begin_patch"
+    } else if first_line.starts_with("```") {
+        "markdown_fence"
+    } else if first_line.starts_with("*** Add File:")
+        || first_line.starts_with("*** Update File:")
+        || first_line.starts_with("*** Delete File:")
+    {
+        "file_directive"
+    } else if first_line.is_empty() {
+        "empty"
+    } else {
+        "other"
+    };
+    let begin = trimmed.find("*** Begin Patch");
+    let end = trimmed.find("*** End Patch");
+    let action = if normalized == input {
+        "unchanged"
+    } else if begin.is_some() && end.is_some() {
+        "extracted_envelope"
+    } else if first_line.starts_with("```") {
+        "removed_fence_and_added_envelope"
+    } else {
+        "added_envelope"
+    };
+    log_executor_event(
+        "local model proxy apply_patch normalized",
+        &[
+            ("arguments_bytes", arguments.len().to_string()),
+            (
+                "json_parsed",
+                serde_json::from_str::<Value>(arguments).is_ok().to_string(),
+            ),
+            ("input_field", input_field.unwrap_or("raw").to_owned()),
+            ("input_bytes", input.len().to_string()),
+            ("first_line_kind", first_line_kind.to_owned()),
+            (
+                "begin_offset",
+                begin.map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            ),
+            (
+                "end_offset",
+                end.map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            ),
+            ("normalized_bytes", normalized.len().to_string()),
+            ("action", action.to_owned()),
+        ],
+    );
 }
 
 fn normalize_apply_patch_input(input: &str) -> String {

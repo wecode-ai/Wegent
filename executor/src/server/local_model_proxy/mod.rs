@@ -149,6 +149,7 @@ fn registry() -> &'static Mutex<HashMap<String, RegisteredUpstream>> {
 }
 
 pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
+    let request_started_at = Instant::now();
     let token = local_token(&headers).ok_or_else(|| HttpError {
         status: StatusCode::UNAUTHORIZED,
         detail: "missing local model proxy token".to_owned(),
@@ -207,6 +208,17 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         detail: format!("Local model proxy request failed: {error}"),
     })?;
     let status = upstream_response.status();
+    log_executor_event(
+        "local model proxy upstream headers received",
+        &[
+            ("api_format", upstream.api_format.clone()),
+            ("status", status.as_u16().to_string()),
+            (
+                "elapsed_ms",
+                request_started_at.elapsed().as_millis().to_string(),
+            ),
+        ],
+    );
     let content_type = upstream_response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -285,25 +297,28 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         return Ok(response);
     }
     let is_converted = conversion.is_some();
+    let response_stream = diagnostic_upstream_stream(
+        upstream_response.bytes_stream(),
+        upstream.api_format.clone(),
+        request_started_at,
+    );
     let mut response = match conversion {
         Some(Conversion::Chat(context)) => {
-            let responses_stream =
-                chat::chat_sse_to_responses(upstream_response.bytes_stream(), context);
+            let responses_stream = chat::chat_sse_to_responses(response_stream, context);
             Response::new(Body::from_stream(history::record_responses_stream(
                 responses_stream,
                 history,
             )))
         }
         Some(Conversion::Anthropic(context)) => {
-            let responses_stream =
-                anthropic::anthropic_sse_to_responses(upstream_response.bytes_stream(), context);
+            let responses_stream = anthropic::anthropic_sse_to_responses(response_stream, context);
             Response::new(Body::from_stream(history::record_responses_stream(
                 responses_stream,
                 history,
             )))
         }
         None => Response::new(Body::from_stream(normalize_responses_stream(
-            upstream_response.bytes_stream(),
+            response_stream,
         ))),
     };
     *response.status_mut() = status;
@@ -316,6 +331,49 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         response.headers_mut().insert(header::CONTENT_TYPE, value);
     }
     Ok(response)
+}
+
+fn diagnostic_upstream_stream<S, E>(
+    stream: S,
+    api_format: String,
+    started_at: Instant,
+) -> impl Stream<Item = Result<Bytes, E>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+{
+    futures_util::stream::unfold(
+        (Box::pin(stream), api_format, started_at, false, 0_u64),
+        |(mut stream, api_format, started_at, first_seen, total_bytes)| async move {
+            match stream.next().await {
+                Some(item) => {
+                    let chunk_bytes = item.as_ref().map_or(0, Bytes::len) as u64;
+                    let next_total = total_bytes.saturating_add(chunk_bytes);
+                    if !first_seen {
+                        log_executor_event(
+                            "local model proxy upstream first chunk received",
+                            &[
+                                ("api_format", api_format.clone()),
+                                ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                                ("chunk_bytes", chunk_bytes.to_string()),
+                            ],
+                        );
+                    }
+                    Some((item, (stream, api_format, started_at, true, next_total)))
+                }
+                None => {
+                    log_executor_event(
+                        "local model proxy upstream stream completed",
+                        &[
+                            ("api_format", api_format),
+                            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                            ("body_bytes", total_bytes.to_string()),
+                        ],
+                    );
+                    None
+                }
+            }
+        },
+    )
 }
 
 async fn prepare_request_with_history(
