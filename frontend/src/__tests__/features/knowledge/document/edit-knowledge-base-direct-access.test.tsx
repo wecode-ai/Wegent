@@ -18,7 +18,34 @@ jest.mock('@/apis/knowledge', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({
-  KnowledgeBaseForm: () => <div data-testid="knowledge-base-form" />,
+  KnowledgeBaseForm: ({
+    directAccessRequirement,
+    onDirectAccessRequirementChange,
+  }: {
+    directAccessRequirement: 'read' | 'edit'
+    onDirectAccessRequirementChange: (value: 'read' | 'edit') => void
+  }) => (
+    <div data-testid="knowledge-base-form">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={directAccessRequirement === 'read'}
+        data-testid="knowledge-base-direct-access-read"
+        onClick={() => onDirectAccessRequirementChange('read')}
+      >
+        read
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={directAccessRequirement === 'edit'}
+        data-testid="knowledge-base-direct-access-edit"
+        onClick={() => onDirectAccessRequirementChange('edit')}
+      >
+        edit
+      </button>
+    </div>
+  ),
 }))
 
 jest.mock('@/features/knowledge/document/components/ConvertKnowledgeBaseTypeDialog', () => ({
@@ -59,7 +86,7 @@ const knowledgeBase: KnowledgeBase = {
 }
 
 describe('EditKnowledgeBaseDialog direct access requirement', () => {
-  it('loads and saves the non-editor visibility switch', async () => {
+  it('loads and saves the direct access requirement', async () => {
     const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
     jest.mocked(getKnowledgeBase).mockResolvedValue(knowledgeBase)
 
@@ -72,13 +99,12 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
       />
     )
 
-    const visibilitySwitch = await screen.findByTestId(
-      'knowledge-base-direct-access-requirement-switch'
-    )
-    await waitFor(() => expect(visibilitySwitch).toBeChecked())
+    const editorsOnlyOption = await screen.findByTestId('knowledge-base-direct-access-edit')
+    const allMembersOption = screen.getByTestId('knowledge-base-direct-access-read')
+    await waitFor(() => expect(editorsOnlyOption).toBeChecked())
 
-    fireEvent.click(visibilitySwitch)
-    await waitFor(() => expect(visibilitySwitch).not.toBeChecked())
+    fireEvent.click(allMembersOption)
+    await waitFor(() => expect(allMembersOption).toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
     await waitFor(() => {
