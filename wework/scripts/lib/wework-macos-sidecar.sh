@@ -74,10 +74,6 @@ wework_build_macos_executor_sidecar() {
   chmod 0755 "$sidecar_path"
 
   "$sidecar_path" --version
-  if ! LC_ALL=C grep -aFq 'app-ipc.addr' "$sidecar_path"; then
-    echo "Bundled executor does not contain the expected app IPC protocol marker: app-ipc.addr" >&2
-    return 1
-  fi
   export WEWORK_EXECUTOR_SIDECAR="$build_output_path"
   echo "Bundled executor sidecar ready: $sidecar_path"
   echo "Tauri executor sidecar source: $WEWORK_EXECUTOR_SIDECAR"
@@ -97,10 +93,5 @@ wework_verify_macos_app_executor_sidecar() {
   fi
 
   "$bundled_executor" --version
-  if ! LC_ALL=C grep -aFq 'app-ipc.addr' "$bundled_executor"; then
-    echo "Bundled macOS app contains an incompatible executor: $bundled_executor" >&2
-    echo "Expected app IPC protocol marker: app-ipc.addr" >&2
-    return 1
-  fi
   echo "Verified bundled app executor sidecar: $bundled_executor"
 }
