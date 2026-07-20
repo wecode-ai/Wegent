@@ -1746,7 +1746,7 @@ def _get_bound_knowledge_base_ids(
     Args:
         db: Database session
         task_id: Task ID
-        user_id: User ID used to enforce direct-access requirements
+        user_id: User ID used to enforce access to the current task
 
     Returns:
         List of knowledge base IDs bound to the task

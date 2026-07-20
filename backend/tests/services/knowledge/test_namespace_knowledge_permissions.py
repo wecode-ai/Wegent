@@ -37,6 +37,9 @@ from app.services.knowledge.knowledge_visibility_query import (
     get_acl_accessible_knowledge_base_ids,
     get_directly_accessible_knowledge_base_ids,
 )
+from app.services.knowledge.task_knowledge_base_service import (
+    TaskKnowledgeBaseService,
+)
 from app.services.share import knowledge_share_service
 
 
@@ -326,43 +329,38 @@ def test_single_and_paginated_direct_access_policies_match(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("requirement", "expected_direct_access"),
-    [("read", True), ("edit", False)],
-)
-def test_task_binding_access_matches_single_and_batch_policies(
-    test_db: Session,
-    requirement: str,
-    expected_direct_access: bool,
-) -> None:
-    owner = _create_user(test_db, f"task-binding-owner-{requirement}")
-    member = _create_user(test_db, f"task-binding-member-{requirement}")
+def test_task_binding_is_scoped_to_the_task(test_db: Session) -> None:
+    owner = _create_user(test_db, "task-binding-owner")
+    member = _create_user(test_db, "task-binding-member")
+    outsider = _create_user(test_db, "task-binding-outsider")
     knowledge_base_id = KnowledgeService.create_knowledge_base(
         test_db,
         owner.id,
         KnowledgeBaseCreate(
-            name=f"task-binding-kb-{requirement}",
-            direct_access_requirement=requirement,
+            name="task-binding-kb",
+            direct_access_requirement="read",
         ),
     )
-    test_db.add(
-        TaskResource(
-            user_id=member.id,
-            kind="Task",
-            name=f"task-binding-chat-{requirement}",
-            namespace="default",
-            json={
-                "kind": "Task",
-                "spec": {
-                    "is_group_chat": True,
-                    "knowledgeBaseRefs": [{"id": knowledge_base_id}],
-                },
+    task = TaskResource(
+        user_id=member.id,
+        kind="Task",
+        name="task-binding-chat",
+        namespace="default",
+        json={
+            "kind": "Task",
+            "spec": {
+                "is_group_chat": True,
+                "knowledgeBaseRefs": [
+                    {"id": knowledge_base_id, "name": "task-binding-kb"}
+                ],
             },
-            is_active=TaskResource.STATE_ACTIVE,
-            is_group_chat=True,
-        )
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+        is_group_chat=True,
     )
+    test_db.add(task)
     test_db.commit()
+    test_db.refresh(task)
 
     _, single_access = KnowledgeService.get_knowledge_base(
         test_db,
@@ -390,17 +388,26 @@ def test_task_binding_access_matches_single_and_batch_policies(
         ResourceScope.PERSONAL,
     )
     grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, member.id)
+    task_service = TaskKnowledgeBaseService()
+    member_task_ids = task_service.get_bound_knowledge_base_ids(
+        test_db,
+        task.id,
+        user_id=member.id,
+    )
+    outsider_task_ids = task_service.get_bound_knowledge_base_ids(
+        test_db,
+        task.id,
+        user_id=outsider.id,
+    )
 
-    assert single_access is expected_direct_access
-    assert (knowledge_base_id in direct_ids) is expected_direct_access
-    assert acl_ids == {knowledge_base_id}
-    assert (knowledge_base_id in {kb.id for kb in page}) is expected_direct_access
-    assert (
-        knowledge_base_id in {kb.id for kb in legacy_list}
-    ) is expected_direct_access
-    assert (
-        knowledge_base_id in {kb.id for kb in grouped.personal.shared_with_me}
-    ) is expected_direct_access
+    assert single_access is False
+    assert direct_ids == set()
+    assert acl_ids == set()
+    assert knowledge_base_id not in {kb.id for kb in page}
+    assert knowledge_base_id not in {kb.id for kb in legacy_list}
+    assert knowledge_base_id not in {kb.id for kb in grouped.personal.shared_with_me}
+    assert member_task_ids == [knowledge_base_id]
+    assert outsider_task_ids == []
 
 
 @pytest.mark.unit

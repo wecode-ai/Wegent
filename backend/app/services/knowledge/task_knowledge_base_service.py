@@ -118,68 +118,9 @@ class TaskKnowledgeBaseService:
         if resolved_kb is not None:
             return True
 
-        if not KnowledgeService.can_directly_access_knowledge_base(
+        return KnowledgeService.can_directly_access_knowledge_base(
             db, kb.id, user_id, kb=kb
-        ):
-            return False
-
-        if kb_namespace != "default":
-            return False
-
-        # Backward compatibility for default-namespace KB refs that were granted
-        # implicitly via existing group-chat bindings before share records existed.
-        return self._is_kb_bound_to_user_group_chat(db, kb.id, user_id)
-
-    def _is_kb_bound_to_user_group_chat(
-        self, db: Session, kb_id: int, user_id: int
-    ) -> bool:
-        """Check if a knowledge base is bound to any group chat that the user is a member of.
-
-        When a knowledge base is bound to a group chat, all members of that group chat
-        should have access to the knowledge base (reporter permission level).
-
-        Args:
-            db: Database session
-            kb_id: Knowledge base Kind.id
-            user_id: User ID to check
-
-        Returns:
-            True if KB is bound to at least one group chat where user is a member
-        """
-        # Query all group chat tasks where this KB is bound and user is a member
-        # We need to check task.json->spec->knowledgeBaseRefs for the KB binding
-        tasks_with_kb = task_store.list_accessible_active_tasks_for_user(
-            db,
-            user_id=user_id,
         )
-
-        for task in tasks_with_kb:
-            task_json = task.json if isinstance(task.json, dict) else {}
-            spec = task_json.get("spec", {})
-            kb_refs = spec.get("knowledgeBaseRefs", []) or []
-
-            for ref in kb_refs:
-                # Check if this KB is bound (match by ID or by name+namespace)
-                ref_id = ref.get("id")
-                ref_name = ref.get("name")
-                ref_namespace = ref.get("namespace", "default")
-
-                if ref_id == kb_id:
-                    return True
-
-                # Fallback: check by name+namespace if ID not available (legacy data)
-                if ref_id is None and ref_name and ref_namespace:
-                    kb = self.get_knowledge_base_by_id(db, kb_id)
-                    if kb:
-                        kb_spec = kb.json.get("spec", {}) if kb.json else {}
-                        kb_display_name = kb_spec.get("name")
-                        if (
-                            kb_display_name == ref_name
-                            and kb.namespace == ref_namespace
-                        ):
-                            return True
-
-        return False
 
     def get_knowledge_base_by_name(
         self, db: Session, name: str, namespace: str
@@ -570,11 +511,6 @@ class TaskKnowledgeBaseService:
         refs_to_migrate = []
 
         for idx, kb, needs_migration in found_kbs:
-            if not KnowledgeService.can_directly_access_knowledge_base(
-                db, kb.id, user_id, kb=kb
-            ):
-                continue
-
             ref = kb_refs[idx]
             kb_name = ref.get("name")
             # Get namespace from the actual KB object, not from ref (ref may not have namespace for new data)
@@ -615,9 +551,9 @@ class TaskKnowledgeBaseService:
     ) -> List[int]:
         """
         Get IDs of knowledge bases bound to a task.
-        When user_id is provided, knowledge bases that the user cannot directly
-        access are excluded. Internal callers may omit user_id only when they do
-        not expose or inject the result on behalf of an end user.
+        When user_id is provided, the user must be a member of the task. The
+        binding grants use only inside this task and does not grant global KB access.
+        Internal callers may omit user_id when task access was checked upstream.
 
         This method uses batch queries to avoid N+1 query problem:
         - Single query for refs with ID field
@@ -635,6 +571,10 @@ class TaskKnowledgeBaseService:
         task = self.get_task(db, task_id)
         if not task:
             return []
+        if user_id is not None and not task_member_service.is_member(
+            db, task_id, user_id
+        ):
+            return []
 
         task_json = task.json if isinstance(task.json, dict) else {}
         spec = task_json.get("spec", {})
@@ -651,13 +591,6 @@ class TaskKnowledgeBaseService:
         refs_to_migrate = []
 
         for idx, kb, needs_migration in found_kbs:
-            if (
-                user_id is not None
-                and not KnowledgeService.can_directly_access_knowledge_base(
-                    db, kb.id, user_id, kb=kb
-                )
-            ):
-                continue
             result.append(kb.id)
             if needs_migration:
                 refs_to_migrate.append((idx, kb.id))

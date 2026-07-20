@@ -29,7 +29,6 @@ from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_base_documents,
 )
-from app.stores.tasks import task_store
 from shared.models.knowledge import KnowledgeBaseToolAccessMode
 
 DEFAULT_DIRECT_ACCESS_REQUIREMENT = "read"
@@ -95,9 +94,6 @@ def resolve_knowledge_base_permission(
         return KnowledgeBasePermission(False, None, is_creator, tuple(sources))
     _append_entity_sources(db, roles, sources, kb, user_id, include_sources)
 
-    if kb.namespace == "default" and not roles:
-        _append_group_chat_source(db, roles, sources, kb, user_id, include_sources)
-
     effective_role = get_highest_role(roles) if roles else None
     return KnowledgeBasePermission(
         has_access=bool(roles) or is_creator,
@@ -127,28 +123,6 @@ def get_user_knowledge_base_permission(
     if knowledge_base is None:
         return KnowledgeBasePermission(False, None, False)
     return resolve_knowledge_base_permission(db, knowledge_base, user_id)
-
-
-def get_task_bound_knowledge_base_ids(
-    db: Session,
-    user_id: int,
-    *,
-    candidate_ids: list[int] | None = None,
-) -> frozenset[int]:
-    """Return KB IDs bound to active tasks accessible by the user."""
-    candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
-    bound_ids: set[int] = set()
-    tasks = task_store.list_accessible_active_tasks_for_user(db, user_id=user_id)
-    for task in tasks:
-        task_json = task.json if isinstance(task.json, dict) else {}
-        refs = task_json.get("spec", {}).get("knowledgeBaseRefs", []) or []
-        for ref in refs:
-            knowledge_base_id = ref.get("id") if isinstance(ref, dict) else None
-            if not isinstance(knowledge_base_id, int):
-                continue
-            if candidate_id_set is None or knowledge_base_id in candidate_id_set:
-                bound_ids.add(knowledge_base_id)
-    return frozenset(bound_ids)
 
 
 def meets_direct_access_requirement(
@@ -432,39 +406,6 @@ def _append_entity_sources(
                         entity_id=entity_id,
                     )
                 )
-
-
-def _append_group_chat_source(
-    db: Session,
-    roles: list[str],
-    sources: list[PermissionSourceInfo],
-    kb: Kind,
-    user_id: int,
-    include_sources: bool,
-) -> None:
-    if not _is_kb_bound_to_user_group_chat(db, kb.id, user_id):
-        return
-    roles.append(BaseRole.Reporter.value)
-    if include_sources:
-        sources.append(
-            PermissionSourceInfo(
-                source_type="group_chat_binding",
-                display_name="Group Chat",
-                role=BaseRole.Reporter.value,
-            )
-        )
-
-
-def _is_kb_bound_to_user_group_chat(
-    db: Session,
-    kb_id: int,
-    user_id: int,
-) -> bool:
-    return kb_id in get_task_bound_knowledge_base_ids(
-        db,
-        user_id,
-        candidate_ids=[kb_id],
-    )
 
 
 def _resolve_source_type(member: ResourceMember) -> str:
