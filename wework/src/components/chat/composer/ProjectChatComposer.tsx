@@ -336,33 +336,35 @@ export function ProjectChatComposer({
             {disabledReason}
           </div>
         )}
-        <ComposerTextarea
-          textareaRef={textareaRef}
-          value={value}
-          onChange={onChange}
-          onSubmit={onSubmit}
-          canSend={canSend}
-          disabled={disabled}
-          placeholder={placeholder}
-          rows={2}
-          onPasteFiles={onFileSelect}
-          onOpenSkillFile={onOpenSkillFile}
-          workspaceTarget={workspaceTarget}
-          workspaceFileApi={workspaceFileApi}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-secondary outline-none placeholder:text-text-muted/55"
-          skillMenuClassName="left-[-1rem] right-[-0.5rem]"
-          onListLocalSkills={onListLocalSkills}
-          onListLocalApps={onListLocalApps}
-          models={models}
-          selectedModel={selectedModel}
-          selectedModelOptions={selectedModelOptions}
-          planModeActive={planModeActive}
-          onSetPlanMode={onSetPlanMode}
-          onSetGoal={onSetGoal}
-          onSelectModel={onSelectModel}
-          onBlockedModelSelect={onBlockedModelSelect}
-          isModelSelectionReady={isModelSelectionReady}
-        />
+        <div className="min-h-[48px] w-full" data-testid="project-chat-composer-editor-shell">
+          <ComposerTextarea
+            textareaRef={textareaRef}
+            value={value}
+            onChange={onChange}
+            onSubmit={onSubmit}
+            canSend={canSend}
+            disabled={disabled}
+            placeholder={placeholder}
+            rows={2}
+            onPasteFiles={onFileSelect}
+            onOpenSkillFile={onOpenSkillFile}
+            workspaceTarget={workspaceTarget}
+            workspaceFileApi={workspaceFileApi}
+            className="max-h-[112px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-chat text-text-secondary outline-none placeholder:text-text-muted/55"
+            skillMenuClassName="left-[-1rem] right-[-0.5rem]"
+            onListLocalSkills={onListLocalSkills}
+            onListLocalApps={onListLocalApps}
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={selectedModelOptions}
+            planModeActive={planModeActive}
+            onSetPlanMode={onSetPlanMode}
+            onSetGoal={onSetGoal}
+            onSelectModel={onSelectModel}
+            onBlockedModelSelect={onBlockedModelSelect}
+            isModelSelectionReady={isModelSelectionReady}
+          />
+        </div>
         <ComposerToolbar
           canSend={canSend}
           disabled={disabled}

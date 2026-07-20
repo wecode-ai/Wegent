@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { RuntimeTurnNavigationItem } from '@/types/api'
@@ -17,6 +18,7 @@ const MARKER_ROW_HEIGHT_PX = 8
 const MARKER_ROW_GAP_PX = 20 / 9
 const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
+const TURN_VISIBILITY_TOP_INSET_PX = 16
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -54,11 +56,14 @@ export function MessageTurnNavigation({
   const { t } = useTranslation('chat')
   const [markers, setMarkers] = useState<MessageTurnMarker[]>([])
   const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null)
+  const [visibleMarkerIds, setVisibleMarkerIds] = useState<Set<string>>(() => new Set())
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [loadingMarkerId, setLoadingMarkerId] = useState<string | null>(null)
   const [pendingScrollTargetId, setPendingScrollTargetId] = useState<string | null>(null)
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
+  const [railPortalContainer, setRailPortalContainer] = useState<HTMLElement | null>(null)
   const markersRef = useRef<MessageTurnMarker[]>([])
+  const railRef = useRef<HTMLDivElement>(null)
   const rafRef = useRef<number | null>(null)
   const timerRef = useRef<number | null>(null)
 
@@ -74,28 +79,38 @@ export function MessageTurnNavigation({
       const scroller = scrollRef.current
       if (!scroller || nextMarkers.length === 0) {
         setActiveMarkerId(null)
+        setVisibleMarkerIds(new Set())
         return
       }
 
-      const currentPosition = scroller.scrollTop + SCROLL_OFFSET_PX
-      const loadedMarkers = nextMarkers.filter(
-        (marker): marker is MessageTurnMarker & { targetTop: number } => marker.targetTop !== null
+      const loadedMarkers = nextMarkers.flatMap((marker, index) =>
+        marker.targetTop === null ? [] : [{ index, marker, targetTop: marker.targetTop }]
       )
       if (loadedMarkers.length === 0) {
         setActiveMarkerId(null)
+        setVisibleMarkerIds(new Set())
         return
       }
 
-      let activeMarker = loadedMarkers[0]
-      for (const marker of loadedMarkers) {
-        if (marker.targetTop !== null && marker.targetTop <= currentPosition) {
-          activeMarker = marker
-        } else {
-          break
-        }
+      const viewportTop = scroller.scrollTop + TURN_VISIBILITY_TOP_INSET_PX
+      const viewportBottom = scroller.scrollTop + scroller.clientHeight
+      const intersectingMarkers = loadedMarkers.filter((entry, index) => {
+        const turnEnd = loadedMarkers[index + 1]?.targetTop ?? scroller.scrollHeight
+        return entry.targetTop < viewportBottom && turnEnd > viewportTop
+      })
+      if (intersectingMarkers.length === 0) {
+        return
       }
 
-      setActiveMarkerId(activeMarker.id)
+      const firstVisibleIndex = intersectingMarkers[0].index
+      const lastVisibleIndex = intersectingMarkers[intersectingMarkers.length - 1].index
+      const nextVisibleMarkerIds = new Set(
+        nextMarkers.slice(firstVisibleIndex, lastVisibleIndex + 1).map(marker => marker.id)
+      )
+      setActiveMarkerId(nextMarkers[firstVisibleIndex].id)
+      setVisibleMarkerIds(current =>
+        haveSameMarkerIds(current, nextVisibleMarkerIds) ? current : nextVisibleMarkerIds
+      )
     },
     [scrollRef]
   )
@@ -108,6 +123,7 @@ export function MessageTurnNavigation({
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
+        setVisibleMarkerIds(new Set())
         return
       }
 
@@ -115,6 +131,7 @@ export function MessageTurnNavigation({
         markersRef.current = []
         setMarkers([])
         setActiveMarkerId(null)
+        setVisibleMarkerIds(new Set())
         return
       }
 
@@ -181,6 +198,7 @@ export function MessageTurnNavigation({
 
     scrollToMessageAnchor(scroller, anchor)
     setActiveMarkerId(pendingScrollTargetId)
+    setVisibleMarkerIds(new Set([pendingScrollTargetId]))
     setLoadingMarkerId(current => (current === pendingScrollTargetId ? null : current))
     setPendingScrollTargetId(null)
     finishNavigationLoad(onNavigationLoadStateChange)
@@ -190,6 +208,7 @@ export function MessageTurnNavigation({
     const scroller = scrollRef.current
     const content = contentRef.current
     if (!scroller || !content) return
+    setRailPortalContainer(scroller.parentElement)
 
     const handleScroll = () => updateActiveMarker(markersRef.current, 'scroll')
     const handleResize = () => scheduleCalculateMarkers('window-resize')
@@ -203,6 +222,7 @@ export function MessageTurnNavigation({
       typeof ResizeObserver === 'undefined'
         ? null
         : new ResizeObserver(() => scheduleCalculateMarkers('resize-observer'))
+    resizeObserver?.observe(scroller)
     resizeObserver?.observe(content)
 
     return () => {
@@ -220,6 +240,22 @@ export function MessageTurnNavigation({
       }
     }
   }, [contentRef, scheduleCalculateMarkers, scrollRef, updateActiveMarker])
+
+  useLayoutEffect(() => {
+    const rail = railRef.current
+    if (!rail || !activeMarkerId) return
+
+    const activeIndex = markers.findIndex(marker => marker.id === activeMarkerId)
+    if (activeIndex === -1) return
+    const markerTop = getMarkerTopPx(activeIndex)
+    const markerBottom = markerTop + MARKER_HOVER_ROW_HEIGHT_PX
+    if (markerTop < rail.scrollTop) {
+      rail.scrollTop = markerTop
+    } else if (markerBottom > rail.scrollTop + rail.clientHeight) {
+      rail.scrollTop = markerBottom - rail.clientHeight + 1
+    }
+    setNavigationScrollTop(rail.scrollTop)
+  }, [activeMarkerId, markers])
 
   const handleMarkerClick = useCallback(
     async (marker: MessageTurnMarker) => {
@@ -247,6 +283,7 @@ export function MessageTurnNavigation({
         }
         scrollToMessageAnchor(scroller, currentAnchor, 'smooth')
         setActiveMarkerId(marker.id)
+        setVisibleMarkerIds(new Set([marker.id]))
         return
       }
 
@@ -271,13 +308,13 @@ export function MessageTurnNavigation({
     [activeMarkerId, contentRef, onLoadTurnNavigationItem, onNavigationLoadStateChange, scrollRef]
   )
 
-  if (markers.length === 0) return null
+  if (markers.length === 0 || railPortalContainer === null) return null
 
   const navigationHeight = getNavigationHeight(markers.length)
   const hoveredMarkerIndex =
     hoveredMarkerId === null ? -1 : markers.findIndex(marker => marker.id === hoveredMarkerId)
 
-  return (
+  return createPortal(
     <nav
       aria-label={t('message_navigation.label', '历史发言导航')}
       className="pointer-events-none absolute top-1/2 z-popover hidden -translate-y-1/2 lg:block"
@@ -290,6 +327,7 @@ export function MessageTurnNavigation({
       }}
     >
       <div
+        ref={railRef}
         className="pointer-events-auto h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         data-testid="message-turn-navigation-rail"
         style={{
@@ -300,7 +338,7 @@ export function MessageTurnNavigation({
       >
         <div className="relative w-full" style={{ height: `${navigationHeight}px` }}>
           {markers.map((marker, index) => {
-            const isActive = activeMarkerId === marker.id
+            const isActive = visibleMarkerIds.has(marker.id)
             const isLoading = loadingMarkerId === marker.id
             const hoverDistance =
               hoveredMarkerIndex === -1 ? null : Math.abs(index - hoveredMarkerIndex)
@@ -368,7 +406,8 @@ export function MessageTurnNavigation({
           )}
         </div>
       ))}
-    </nav>
+    </nav>,
+    railPortalContainer
   )
 }
 
@@ -586,4 +625,8 @@ function finishNavigationLoad(onNavigationLoadStateChange?: (loading: boolean) =
   }
 
   void Promise.resolve().then(() => onNavigationLoadStateChange(false))
+}
+
+function haveSameMarkerIds(current: Set<string>, next: Set<string>) {
+  return current.size === next.size && [...current].every(markerId => next.has(markerId))
 }

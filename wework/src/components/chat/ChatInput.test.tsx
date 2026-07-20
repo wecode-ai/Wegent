@@ -180,11 +180,12 @@ describe('ChatInput', () => {
     )
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
-      'min-h-[48px]',
       'max-h-[112px]',
       'pt-1',
       'placeholder:text-text-muted/55'
     )
+    expect(screen.getByTestId('chat-message-input')).not.toHaveClass('min-h-[48px]')
+    expect(screen.getByTestId('project-chat-composer-editor-shell')).toHaveClass('min-h-[48px]')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()

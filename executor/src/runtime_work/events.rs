@@ -156,6 +156,7 @@ pub(crate) struct CodexNotificationEventMapper {
     agent_message_phases: CodexAgentMessagePhaseTracker,
     subagent_item_ids: BTreeSet<String>,
     root_thread_id: Option<String>,
+    active_turn_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
     final_text_offset: usize,
@@ -182,13 +183,26 @@ impl CodexNotificationEventMapper {
         request: &ExecutionRequest,
         message: Value,
     ) {
+        let notification = codex_notification(&message);
+        let notification_turn_id = notification_turn_id(notification.params);
+        if notification.method == "turn/started" {
+            self.active_turn_id = notification_turn_id.clone();
+        }
+        let effective_request = notification_turn_id
+            .or_else(|| self.active_turn_id.clone())
+            .map(|turn_id| {
+                let mut request = request.clone();
+                request.subtask_id = turn_id;
+                request
+            })
+            .unwrap_or_else(|| request.clone());
         let emit_context = EventEmitContext {
             event_tx,
             device_id,
             local_task_id,
-            request,
+            request: &effective_request,
         };
-        let notification = codex_notification(&message);
+        let request = &effective_request;
         match notification.method.as_str() {
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(notification.params) {
@@ -1021,6 +1035,21 @@ impl CodexNotificationEventMapper {
     }
 }
 
+fn notification_turn_id(params: &Value) -> Option<String> {
+    string_field(params, "turnId")
+        .or_else(|| string_field(params, "turn_id"))
+        .or_else(|| {
+            params
+                .get("turn")
+                .and_then(|turn| string_field(turn, "id").or_else(|| string_field(turn, "turnId")))
+        })
+        .or_else(|| {
+            params.get("item").and_then(|item| {
+                string_field(item, "turnId").or_else(|| string_field(item, "turn_id"))
+            })
+        })
+}
+
 fn log_unhandled_codex_raw_message(
     local_task_id: &str,
     task_id: &str,
@@ -1683,6 +1712,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn uses_provider_turn_identity_for_stream_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "local-subtask".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thread-1",
+                    "turn": {"id": "turn-1", "status": "inProgress"}
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "thread/tokenUsage/updated",
+                "params": {
+                    "threadId": "thread-1",
+                    "tokenUsage": {"totalTokens": 1}
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["payload"]["subtaskId"], "turn-1");
+    }
+
+    #[test]
     fn emits_guidance_applied_for_second_completed_user_message() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -1878,7 +1948,7 @@ mod tests {
         let event = event_rx.try_recv().expect("event should be emitted");
         assert_eq!(event["event"], "thread/tokenUsage/updated");
         assert_eq!(event["payload"]["taskId"], "local-1");
-        assert_eq!(event["payload"]["subtaskId"], "8");
+        assert_eq!(event["payload"]["subtaskId"], "turn-1");
         assert_eq!(
             event["payload"]["data"]["tokenUsage"]["modelContextWindow"],
             json!(258_000)

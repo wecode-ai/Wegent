@@ -338,7 +338,7 @@ describe('ScrollableMessageArea', () => {
     mockRect(scroller, 0, 300)
     scroller.scrollTo = vi.fn()
     mockRect(screen.getByText('第一条用户需求').closest('[data-message-id]')!, 120, 180)
-    mockRect(screen.getByText('第二条用户需求').closest('[data-message-id]')!, 620, 680)
+    mockRect(screen.getByText('第二条用户需求').closest('[data-message-id]')!, 920, 980)
 
     fireEvent.resize(window)
     flushScheduledTimers()
@@ -346,7 +346,10 @@ describe('ScrollableMessageArea', () => {
     const navigation = screen.getByTestId('message-turn-navigation')
     const markers = screen.getAllByTestId('message-turn-navigation-marker')
     expect(navigation).toHaveAccessibleName('历史发言导航')
-    expect(navigation).toHaveClass('z-popover')
+    expect(navigation).toHaveClass('absolute', 'top-1/2', '-translate-y-1/2', 'z-popover')
+    expect(navigation).not.toHaveClass('fixed')
+    expect(navigation.parentElement).toBe(scroller.parentElement)
+    expect(navigation).toHaveStyle({ left: '16px' })
     expect(Number.parseFloat(navigation.style.height)).toBeCloseTo(18.222)
     expect(markers).toHaveLength(2)
     expect(markers[0]).toHaveAccessibleName('跳转到第 1 条发言')
@@ -363,11 +366,12 @@ describe('ScrollableMessageArea', () => {
     expect(nearbyMarkerIndicator).toHaveStyle({ width: '8px' })
 
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 620,
+      value: 700,
       writable: true,
       configurable: true,
     })
     fireEvent.scroll(scroller)
+    expect(activeMarkerIndicator).toHaveClass('bg-text-primary')
     expect(nearbyMarkerIndicator).toHaveClass('bg-text-primary')
     fireEvent.focus(markers[0])
     expect(nearbyMarkerIndicator).not.toHaveClass('bg-text-primary')
@@ -430,6 +434,20 @@ describe('ScrollableMessageArea', () => {
       10.222
     )
     expect(Number.parseFloat(markerRows[0].style.height)).toBeCloseTo(10.222)
+
+    Object.defineProperty(navigationRail, 'clientHeight', {
+      value: 40,
+      configurable: true,
+    })
+    Object.defineProperty(navigationRail, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTop = 1500
+    fireEvent.scroll(scroller)
+
+    expect(navigationRail.scrollTop).toBeGreaterThan(0)
   })
 
   test('calculates turn navigation anchors with a single message-anchor query', () => {
