@@ -1236,6 +1236,31 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByText(/\d+ 秒/)).toBeInTheDocument()
   })
 
+  test('shows a subtle one-line reconnecting status only while it is active', () => {
+    const reconnectingBlock: ProcessingBlock = {
+      id: 'reconnecting-1',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'runtime_reconnecting',
+      status: 'streaming',
+      createdAt: 1770000000000,
+    }
+
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[reconnectingBlock]} isStreaming={true} />
+    )
+
+    const status = screen.getByTestId('runtime-reconnecting-status')
+    expect(status).toHaveTextContent('连接中断，正在重连…')
+    expect(status).toHaveClass('truncate')
+    expect(status.firstElementChild).toHaveClass('tool-activity-shimmer')
+
+    rerender(
+      <ToolBlocksDisplay blocks={[{ ...reconnectingBlock, status: 'done' }]} isStreaming={true} />
+    )
+    expect(screen.queryByTestId('runtime-reconnecting-status')).not.toBeInTheDocument()
+  })
+
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
     const thinkingBlock: ProcessingBlock = {
       id: 'thinking-1',

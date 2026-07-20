@@ -95,6 +95,20 @@ export function ToolBlockItem({
     )
   }
 
+  if (block.toolName === 'runtime_reconnecting') {
+    return (
+      <div
+        className="min-w-0 truncate py-1 text-sm text-text-muted"
+        data-testid="runtime-reconnecting-status"
+        role="status"
+      >
+        <span className="tool-activity-shimmer">
+          {t('tool_activity.reconnecting', '连接中断，正在重连…')}
+        </span>
+      </div>
+    )
+  }
+
   const { icon, label } = getBlockLabel(block, {
     waitRunning: t('tool_activity.wait_running'),
     waitDone: t('tool_activity.wait_done'),
