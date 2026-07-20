@@ -169,8 +169,10 @@ class _DirectAccessPermissionContext:
     accessible_groups: frozenset[str]
     organization_names: frozenset[str]
     group_roles: dict[str, GroupRole]
+    accessible_namespace_ids: frozenset[str]
+    external_member_role_map: dict[int, tuple[str, ...]]
     direct_members: tuple["ResourceMember", ...]
-    entity_result: "KnowledgeService.EntityAuthorizedKbsResult"
+    entity_result: "KnowledgeService.EntityAuthorizedKbsResult | None"
 
 
 class KnowledgeService:
@@ -437,14 +439,20 @@ class KnowledgeService:
             return []
 
         candidate_ids = [kb.id for kb in knowledge_bases]
+        permission_context = permission_context or (
+            KnowledgeService._build_direct_access_permission_context(
+                db,
+                user_id,
+                candidate_ids=candidate_ids,
+            )
+        )
         allowed_ids = {
             row[0]
             for row in KnowledgeService._apply_direct_access_filter(
                 db,
                 db.query(Kind.id).filter(Kind.id.in_(candidate_ids)),
                 user_id,
-                candidate_ids=candidate_ids,
-                permission_context=permission_context,
+                permission_context,
             ).all()
         }
         return [kb for kb in knowledge_bases if kb.id in allowed_ids]
@@ -454,6 +462,7 @@ class KnowledgeService:
         db: Session,
         user_id: int,
         accessible_groups: list[str] | None = None,
+        candidate_ids: list[int] | None = None,
     ) -> _DirectAccessPermissionContext:
         """Load reusable direct-access permission sources once."""
         from app.models.resource_member import MemberStatus, ResourceMember
@@ -479,13 +488,76 @@ class KnowledgeService:
             user_id,
             [name for name in groups if name not in organization_names],
         )
-        direct_members = tuple(
-            db.query(ResourceMember)
+        namespace_ids = frozenset(
+            str(row[0])
+            for row in db.query(Namespace.id)
             .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                Namespace.name.in_(groups),
+                Namespace.is_active == True,
+            )
+            .all()
+        )
+        direct_member_query = db.query(ResourceMember).filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        if candidate_ids is not None:
+            direct_member_query = direct_member_query.filter(
+                ResourceMember.resource_id.in_(candidate_ids)
+            )
+        direct_members = tuple(direct_member_query.all())
+        entity_result = KnowledgeService._collect_entity_authorized_kbs(
+            db,
+            user_id,
+            groups,
+            candidate_ids=candidate_ids,
+        )
+        return _DirectAccessPermissionContext(
+            user=user,
+            accessible_groups=frozenset(groups),
+            organization_names=organization_names,
+            group_roles=group_roles,
+            accessible_namespace_ids=namespace_ids,
+            external_member_role_map={
+                kb_id: tuple(roles)
+                for kb_id, roles in entity_result.member_role_map.items()
+            },
+            direct_members=direct_members,
+            entity_result=entity_result,
+        )
+
+    @staticmethod
+    def _build_direct_access_query_context(
+        db: Session,
+        user_id: int,
+        *,
+        candidate_ids: list[int] | None = None,
+    ) -> _DirectAccessPermissionContext:
+        """Load non-relational permission inputs for a direct-access query."""
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+        groups = get_user_groups(db, user_id)
+        organization_names = frozenset(
+            row[0]
+            for row in db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .all()
+        )
+        group_roles = get_effective_roles_in_groups(
+            db,
+            user_id,
+            [name for name in groups if name not in organization_names],
+        )
+        namespace_ids = frozenset(
+            str(row[0])
+            for row in db.query(Namespace.id)
+            .filter(
+                Namespace.name.in_(groups),
+                Namespace.is_active == True,
             )
             .all()
         )
@@ -494,72 +566,138 @@ class KnowledgeService:
             accessible_groups=frozenset(groups),
             organization_names=organization_names,
             group_roles=group_roles,
-            direct_members=direct_members,
-            entity_result=KnowledgeService._collect_entity_authorized_kbs(
+            accessible_namespace_ids=namespace_ids,
+            external_member_role_map=(
+                KnowledgeService._collect_external_entity_member_roles(
+                    db,
+                    user_id,
+                    candidate_ids=candidate_ids,
+                )
+            ),
+            direct_members=(),
+            entity_result=None,
+        )
+
+    @staticmethod
+    def _collect_external_entity_member_roles(
+        db: Session,
+        user_id: int,
+        *,
+        candidate_ids: list[int] | None = None,
+    ) -> dict[int, tuple[str, ...]]:
+        """Collect roles from extension-defined entity resolvers only."""
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+        from app.services.share.external_entity_resolver import (
+            get_all_entity_types,
+            get_entity_resolver,
+        )
+
+        candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
+        role_map: dict[int, list[str]] = {}
+        for entity_type in get_all_entity_types():
+            if entity_type in {"namespace", "user"}:
+                continue
+            resolver = get_entity_resolver(entity_type)
+            if resolver is None:
+                continue
+            resource_ids = resolver.get_resource_ids_by_entity(
                 db,
                 user_id,
-                groups,
-            ),
-        )
+                entity_type,
+            )
+            if candidate_id_set is not None:
+                resource_ids = [
+                    resource_id
+                    for resource_id in resource_ids
+                    if resource_id in candidate_id_set
+                ]
+            if not resource_ids:
+                continue
+            rows = (
+                db.query(
+                    ResourceMember.resource_id,
+                    ResourceMember.entity_id,
+                    ResourceMember.role,
+                )
+                .filter(
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.resource_id.in_(resource_ids),
+                    ResourceMember.entity_type == entity_type,
+                    ResourceMember.status == MemberStatus.APPROVED.value,
+                )
+                .all()
+            )
+            matched_ids = set(
+                resolver.match_entity_bindings(
+                    db,
+                    user_id,
+                    entity_type,
+                    [row.entity_id for row in rows if row.entity_id],
+                )
+            )
+            for resource_id, entity_id, role in rows:
+                if entity_id in matched_ids:
+                    role_map.setdefault(resource_id, []).append(
+                        role or BaseRole.Reporter.value
+                    )
+        return {kb_id: tuple(roles) for kb_id, roles in role_map.items()}
 
     @staticmethod
     def _apply_direct_access_filter(
         db: Session,
         query,
         user_id: int,
-        *,
-        candidate_ids: list[int] | None = None,
-        permission_context: _DirectAccessPermissionContext | None = None,
+        context: _DirectAccessPermissionContext,
     ):
-        """Apply read/edit direct-access requirements to a Kind query."""
-        context = permission_context or (
-            KnowledgeService._build_direct_access_permission_context(db, user_id)
-        )
+        """Apply direct-access policy without materializing relational grants."""
         if context.user.id != user_id:
             raise ValueError("Permission context user does not match request user")
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        editable_roles = (
+            BaseRole.Owner.value,
+            BaseRole.Maintainer.value,
+            BaseRole.Developer.value,
+        )
+        member_query = db.query(ResourceMember.id).filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_id == Kind.id,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        direct_member_query = member_query.filter(
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+        )
+        direct_editable = direct_member_query.filter(
+            ResourceMember.role.in_(editable_roles)
+        ).exists()
+        direct_restricted = direct_member_query.filter(
+            ResourceMember.role == BaseRole.RestrictedAnalyst.value
+        ).exists()
+
+        edit_conditions = [Kind.user_id == user_id, direct_editable]
+        if context.accessible_namespace_ids:
+            namespace_editable = member_query.filter(
+                ResourceMember.entity_type == "namespace",
+                ResourceMember.entity_id.in_(context.accessible_namespace_ids),
+                ResourceMember.role.in_(editable_roles),
+            ).exists()
+            edit_conditions.append(namespace_editable)
+        external_editable_ids = {
+            kb_id
+            for kb_id, roles in context.external_member_role_map.items()
+            if any(has_permission(role, BaseRole.Developer) for role in roles)
+        }
+        if external_editable_ids:
+            edit_conditions.append(Kind.id.in_(external_editable_ids))
+
         editable_group_names = [
             group_name
             for group_name, role in context.group_roles.items()
             if has_permission(role, BaseRole.Developer)
         ]
-        restricted_group_names = [
-            group_name
-            for group_name, role in context.group_roles.items()
-            if role == GroupRole.RestrictedAnalyst
-        ]
-
-        candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
-        direct_members = (
-            context.direct_members
-            if candidate_id_set is None
-            else tuple(
-                member
-                for member in context.direct_members
-                if member.resource_id in candidate_id_set
-            )
-        )
-        direct_editable_ids = {
-            member.resource_id
-            for member in direct_members
-            if has_permission(member.get_effective_role(), BaseRole.Developer)
-        }
-        direct_restricted_ids = {
-            member.resource_id
-            for member in direct_members
-            if member.get_effective_role() == BaseRole.RestrictedAnalyst.value
-        }
-
-        entity_editable_ids = {
-            knowledge_base_id
-            for knowledge_base_id, roles in context.entity_result.member_role_map.items()
-            if candidate_id_set is None or knowledge_base_id in candidate_id_set
-            if any(has_permission(role, BaseRole.Developer) for role in roles)
-        }
-        editable_ids = direct_editable_ids | entity_editable_ids
-
-        edit_conditions = [Kind.user_id == user_id]
-        if editable_ids:
-            edit_conditions.append(Kind.id.in_(editable_ids))
         if editable_group_names:
             edit_conditions.append(Kind.namespace.in_(editable_group_names))
         if context.user.role == "admin" and context.organization_names:
@@ -574,13 +712,49 @@ class KnowledgeService:
                 requirement == "",
                 requirement == "read",
                 and_(requirement == "edit", or_(*edit_conditions)),
-            )
+            ),
+            ~direct_restricted,
         )
-        if direct_restricted_ids:
-            query = query.filter(Kind.id.notin_(direct_restricted_ids))
+        restricted_group_names = [
+            group_name
+            for group_name, role in context.group_roles.items()
+            if role == GroupRole.RestrictedAnalyst
+        ]
         if restricted_group_names:
             query = query.filter(Kind.namespace.notin_(restricted_group_names))
         return query
+
+    @staticmethod
+    def get_directly_accessible_knowledge_base_ids(
+        db: Session,
+        *,
+        user_id: int,
+        candidate_ids: list[int],
+    ) -> set[int]:
+        """Resolve direct access for a bounded set of knowledge base IDs."""
+        candidate_ids = list(dict.fromkeys(candidate_ids))
+        if not candidate_ids:
+            return set()
+
+        permission_context = KnowledgeService._build_direct_access_query_context(
+            db,
+            user_id,
+            candidate_ids=candidate_ids,
+        )
+        query = _KnowledgeBaseVisibilityQueryBuilder.build(
+            db,
+            user_id=user_id,
+            scope=ResourceScope.ALL,
+            permission_context=permission_context,
+        )
+        query = query.filter(Kind.id.in_(candidate_ids))
+        query = KnowledgeService._apply_direct_access_filter(
+            db,
+            query.with_entities(Kind.id),
+            user_id,
+            permission_context,
+        )
+        return {row[0] for row in query.all()}
 
     @staticmethod
     def list_knowledge_bases(
@@ -815,7 +989,7 @@ class KnowledgeService:
         limit: int = 50,
     ) -> tuple[list[Kind], int]:
         """List accessible knowledge bases with SQL-level pagination."""
-        permission_context = KnowledgeService._build_direct_access_permission_context(
+        permission_context = KnowledgeService._build_direct_access_query_context(
             db, user_id
         )
         query = _KnowledgeBaseVisibilityQueryBuilder.build(
@@ -832,7 +1006,7 @@ class KnowledgeService:
             db,
             query,
             user_id,
-            permission_context=permission_context,
+            permission_context,
         )
         total = query.order_by(None).count()
 
@@ -876,7 +1050,7 @@ class KnowledgeService:
         filters: ExternalKnowledgeBaseListFilters,
     ) -> tuple[list[Kind], int]:
         """List externally visible knowledge bases with SQL filtering and paging."""
-        permission_context = KnowledgeService._build_direct_access_permission_context(
+        permission_context = KnowledgeService._build_direct_access_query_context(
             db, user_id
         )
         query = _KnowledgeBaseVisibilityQueryBuilder.build(
@@ -908,7 +1082,7 @@ class KnowledgeService:
             db,
             query,
             user_id,
-            permission_context=permission_context,
+            permission_context,
         )
 
         total = query.order_by(None).count()
@@ -2196,6 +2370,8 @@ class KnowledgeService:
         # Get team knowledge bases grouped by namespace
         # Include KBs shared via entity-type bindings (namespace / external resolvers)
         entity_result = permission_context.entity_result
+        if entity_result is None:
+            raise RuntimeError("Full permission context is required")
         entity_shared_ids = {kb.id for kb in entity_result.entity_shared_to_me_kbs}
 
         extra_shared_ids = (
@@ -2389,6 +2565,8 @@ class KnowledgeService:
         # Include KBs accessible via entity-type bindings (namespace / external resolvers).
         # Restrict to personal-scope (namespace=default) to match this grouping's semantics.
         entity_result = permission_context.entity_result
+        if entity_result is None:
+            raise RuntimeError("Full permission context is required")
         if entity_result.entity_personal_kb_ids:
             shared_kb_ids = list(
                 set(shared_kb_ids) | entity_result.entity_personal_kb_ids
@@ -2502,6 +2680,7 @@ class KnowledgeService:
         db: Session,
         user_id: int,
         accessible_groups: list[str],
+        candidate_ids: list[int] | None = None,
     ) -> "KnowledgeService.EntityAuthorizedKbsResult":
         """Collect KBs accessible via entity-type ResourceMember bindings."""
         from app.models.resource_member import MemberStatus, ResourceMember
@@ -2530,19 +2709,19 @@ class KnowledgeService:
             namespace_name_to_id = {ns.name: ns.id for ns in group_namespaces}
 
             if namespace_name_to_id:
-                entity_members = (
-                    db.query(ResourceMember)
-                    .filter(
-                        ResourceMember.resource_type
-                        == ResourceType.KNOWLEDGE_BASE.value,
-                        ResourceMember.entity_type == "namespace",
-                        ResourceMember.entity_id.in_(
-                            [str(ns_id) for ns_id in namespace_name_to_id.values()]
-                        ),
-                        ResourceMember.status == MemberStatus.APPROVED.value,
-                    )
-                    .all()
+                entity_member_query = db.query(ResourceMember).filter(
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.entity_type == "namespace",
+                    ResourceMember.entity_id.in_(
+                        [str(ns_id) for ns_id in namespace_name_to_id.values()]
+                    ),
+                    ResourceMember.status == MemberStatus.APPROVED.value,
                 )
+                if candidate_ids is not None:
+                    entity_member_query = entity_member_query.filter(
+                        ResourceMember.resource_id.in_(candidate_ids)
+                    )
+                entity_members = entity_member_query.all()
 
                 for em in entity_members:
                     kb_id = em.resource_id
@@ -2575,6 +2754,11 @@ class KnowledgeService:
             resolved_kb_ids = resolver.get_resource_ids_by_entity(
                 db, user_id, entity_type_str
             )
+            if candidate_ids is not None:
+                candidate_id_set = set(candidate_ids)
+                resolved_kb_ids = [
+                    kb_id for kb_id in resolved_kb_ids if kb_id in candidate_id_set
+                ]
             if not resolved_kb_ids:
                 continue
             entity_type_members = (
@@ -3135,6 +3319,8 @@ class KnowledgeService:
 
         # 4b. Collect entity-authorized KBs via external resolver
         entity_result = permission_context.entity_result
+        if entity_result is None:
+            raise RuntimeError("Full permission context is required")
         entity_personal_kb_ids = entity_result.entity_personal_kb_ids
         entity_shared_to_me_kbs = (
             KnowledgeService._filter_directly_accessible_knowledge_bases(
@@ -3818,14 +4004,15 @@ class _KnowledgeBaseVisibilityQueryBuilder:
         user_id: int,
         permission_context: _DirectAccessPermissionContext,
     ):
-        shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
+        shared_access = _KnowledgeBaseVisibilityQueryBuilder._shared_access_condition(
+            db,
             permission_context=permission_context,
         )
         bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
 
         conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
-        if shared_kb_ids:
-            conditions.append(Kind.id.in_(shared_kb_ids))
+        if shared_access is not None:
+            conditions.append(shared_access)
         if bound_kb_ids:
             conditions.append(Kind.id.in_(bound_kb_ids))
 
@@ -3840,7 +4027,8 @@ class _KnowledgeBaseVisibilityQueryBuilder:
         permission_context: _DirectAccessPermissionContext,
     ):
         accessible_groups = permission_context.accessible_groups
-        shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
+        shared_access = _KnowledgeBaseVisibilityQueryBuilder._shared_access_condition(
+            db,
             permission_context=permission_context,
         )
         org_namespace_names = permission_context.organization_names
@@ -3851,23 +4039,47 @@ class _KnowledgeBaseVisibilityQueryBuilder:
             conditions.append(Kind.namespace.in_(accessible_groups))
         if org_namespace_names:
             conditions.append(Kind.namespace.in_(org_namespace_names))
-        if shared_kb_ids:
-            conditions.append(Kind.id.in_(shared_kb_ids))
+        if shared_access is not None:
+            conditions.append(shared_access)
         if bound_kb_ids:
             conditions.append(Kind.id.in_(bound_kb_ids))
 
         return base_query.filter(or_(*conditions))
 
     @staticmethod
-    def _shared_kb_ids(
+    def _shared_access_condition(
+        db: Session,
         *,
         permission_context: _DirectAccessPermissionContext,
-    ) -> list[int]:
-        shared_kb_ids = [
-            permission.resource_id for permission in permission_context.direct_members
+    ):
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        member_query = db.query(ResourceMember.id).filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_id == Kind.id,
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        conditions = [
+            member_query.filter(
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(permission_context.user.id),
+            ).exists()
         ]
-        entity_kb_ids = {kb.id for kb in permission_context.entity_result.entity_kbs}
-        return list(set(shared_kb_ids) | entity_kb_ids)
+        if permission_context.accessible_namespace_ids:
+            conditions.append(
+                member_query.filter(
+                    ResourceMember.entity_type == "namespace",
+                    ResourceMember.entity_id.in_(
+                        permission_context.accessible_namespace_ids
+                    ),
+                ).exists()
+            )
+        if permission_context.external_member_role_map:
+            conditions.append(
+                Kind.id.in_(tuple(permission_context.external_member_role_map))
+            )
+        return or_(*conditions)
 
 
 def _knowledge_base_json_text(db: Session, path: str):

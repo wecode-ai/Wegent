@@ -345,17 +345,20 @@ def test_share_info_remains_available_to_first_time_visitor(
 
 
 @pytest.mark.unit
-def test_paginated_lists_reuse_direct_access_permission_context(
+def test_paginated_lists_do_not_materialize_all_entity_authorized_kbs(
     test_db: Session,
 ) -> None:
     user = _create_user(test_db, "permission-context-user")
-    collect_entity_permissions = KnowledgeService._collect_entity_authorized_kbs
+    collect_external_roles = KnowledgeService._collect_external_entity_member_roles
 
-    with patch.object(
-        KnowledgeService,
-        "_collect_entity_authorized_kbs",
-        wraps=collect_entity_permissions,
-    ) as collect:
+    with (
+        patch.object(KnowledgeService, "_collect_entity_authorized_kbs") as collect_all,
+        patch.object(
+            KnowledgeService,
+            "_collect_external_entity_member_roles",
+            wraps=collect_external_roles,
+        ) as collect_external,
+    ):
         KnowledgeService.list_knowledge_bases_paginated(
             test_db,
             user.id,
@@ -364,20 +367,75 @@ def test_paginated_lists_reuse_direct_access_permission_context(
             limit=50,
         )
 
-    assert collect.call_count == 1
+    collect_all.assert_not_called()
+    assert collect_external.call_count == 1
 
-    with patch.object(
-        KnowledgeService,
-        "_collect_entity_authorized_kbs",
-        wraps=collect_entity_permissions,
-    ) as collect:
+    with (
+        patch.object(KnowledgeService, "_collect_entity_authorized_kbs") as collect_all,
+        patch.object(
+            KnowledgeService,
+            "_collect_external_entity_member_roles",
+            wraps=collect_external_roles,
+        ) as collect_external,
+    ):
         KnowledgeService.list_external_knowledge_bases(
             test_db,
             user_id=user.id,
             filters=ExternalKnowledgeBaseListFilters(scope=ResourceScope.ALL),
         )
 
-    assert collect.call_count == 1
+    collect_all.assert_not_called()
+    assert collect_external.call_count == 1
+
+
+@pytest.mark.unit
+def test_paginated_list_applies_namespace_entity_role_in_sql(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "entity-policy-owner")
+    member = _create_user(test_db, "entity-policy-member")
+    namespace = _create_namespace(test_db, owner, "entity-policy-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, member, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="entity-policy-kb",
+            direct_access_requirement="edit",
+        ),
+    )
+    entity_member = ResourceMember.create(
+        resource_type="KnowledgeBase",
+        resource_id=knowledge_base_id,
+        entity_type="namespace",
+        entity_id=str(namespace.id),
+        role=ResourceRole.Reporter.value,
+        status=MemberStatus.APPROVED.value,
+        invited_by_user_id=owner.id,
+    )
+    test_db.add(entity_member)
+    test_db.commit()
+
+    hidden, hidden_total = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+
+    assert hidden_total == 0
+    assert knowledge_base_id not in {kb.id for kb in hidden}
+
+    entity_member.role = ResourceRole.Developer.value
+    test_db.commit()
+    visible, visible_total = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+
+    assert visible_total == 1
+    assert [kb.id for kb in visible] == [knowledge_base_id]
 
 
 @pytest.mark.unit

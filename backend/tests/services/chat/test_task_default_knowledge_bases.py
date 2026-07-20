@@ -79,6 +79,36 @@ def _make_kb(kb_id: int, name: str):
     return kb
 
 
+def test_team_default_refs_batch_load_bots_and_ghosts():
+    from app.services.chat.task_default_knowledge_bases import (
+        _iter_team_member_default_knowledge_base_ids,
+    )
+
+    db = Mock()
+    team = _make_team()
+    bots = {
+        ("default", "bot-one"): _make_bot("bot-one", "ghost-one"),
+        ("default", "bot-two"): _make_bot("bot-two", "ghost-two"),
+    }
+    ghosts = {
+        ("default", "ghost-one"): _make_ghost(
+            "ghost-one", [{"id": 11, "name": "Product Docs"}]
+        ),
+        ("default", "ghost-two"): _make_ghost(
+            "ghost-two", [{"id": 22, "name": "Runbooks"}]
+        ),
+    }
+
+    with patch(
+        "app.services.chat.task_default_knowledge_bases.batch_load_kinds_by_refs",
+        side_effect=[bots, ghosts],
+    ) as batch_load:
+        result = _iter_team_member_default_knowledge_base_ids(db, team)
+
+    assert result == [11, 22]
+    assert batch_load.call_count == 2
+
+
 def test_build_initial_task_knowledge_base_refs_persists_only_explicit_selection():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_knowledge_base_refs,
@@ -93,31 +123,16 @@ def test_build_initial_task_knowledge_base_refs_persists_only_explicit_selection
         33: _make_kb(33, "Release Notes"),
     }
 
-    def _kind_lookup(_, __, kind_type, ___, name):
-        if kind_type.value == "Bot":
-            return {
-                "bot-one": _make_bot("bot-one", "ghost-one"),
-                "bot-two": _make_bot("bot-two", "ghost-two"),
-            }.get(name)
-        return {
-            "ghost-one": _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
-            "ghost-two": _make_ghost("ghost-two", [{"id": 22, "name": "Runbooks"}]),
-        }.get(name)
-
     with patch(
-        "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
-        side_effect=_kind_lookup,
+        "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
+        side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
     ):
-        with patch(
-            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-            side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
-        ):
-            refs = build_initial_task_knowledge_base_refs(
-                db=db,
-                user=user,
-                team=team,
-                knowledge_base_id=33,
-            )
+        refs = build_initial_task_knowledge_base_refs(
+            db=db,
+            user=user,
+            team=team,
+            knowledge_base_id=33,
+        )
 
     assert [ref["id"] for ref in refs] == [33]
 
@@ -135,36 +150,15 @@ def test_build_initial_task_knowledge_base_refs_does_not_snapshot_agent_defaults
         22: _make_kb(22, "Runbooks"),
     }
 
-    def _kind_lookup(_, __, kind_type, ___, name):
-        if kind_type.value == "Bot":
-            return {
-                "bot-one": _make_bot("bot-one", "ghost-one"),
-                "bot-two": _make_bot("bot-two", "ghost-two"),
-            }.get(name)
-        return {
-            "ghost-one": _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
-            "ghost-two": _make_ghost(
-                "ghost-two",
-                [
-                    {"id": 11, "name": "Product Docs"},
-                    {"id": 22, "name": "Runbooks"},
-                ],
-            ),
-        }.get(name)
-
     with patch(
-        "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
-        side_effect=_kind_lookup,
+        "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
+        side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
     ):
-        with patch(
-            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-            side_effect=lambda _db, _user_id, kb_id: kb_map.get(kb_id),
-        ):
-            refs = build_initial_task_knowledge_base_refs(
-                db=db,
-                user=user,
-                team=team,
-            )
+        refs = build_initial_task_knowledge_base_refs(
+            db=db,
+            user=user,
+            team=team,
+        )
 
     assert refs == []
 
@@ -178,33 +172,18 @@ def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
     team = _make_team()
     user = _make_user()
 
-    def _kind_lookup(_, __, kind_type, ___, name):
-        if kind_type.value == "Bot":
-            return {
-                "bot-one": _make_bot("bot-one", "ghost-one"),
-                "bot-two": _make_bot("bot-two", "ghost-two"),
-            }.get(name)
-        return {
-            "ghost-one": _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
-            "ghost-two": _make_ghost("ghost-two", [{"id": 22, "name": "Secret Docs"}]),
-        }.get(name)
-
     with patch(
-        "app.services.chat.task_default_knowledge_bases.kindReader.get_by_name_and_namespace",
-        side_effect=_kind_lookup,
+        "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
+        side_effect=lambda _db, _user_id, kb_id: (
+            _make_kb(11, "Product Docs") if kb_id == 11 else None
+        ),
     ):
-        with patch(
-            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-            side_effect=lambda _db, _user_id, kb_id: (
-                _make_kb(11, "Product Docs") if kb_id == 11 else None
-            ),
-        ):
-            refs = build_initial_task_knowledge_base_refs(
-                db=db,
-                user=user,
-                team=team,
-                knowledge_base_id=22,
-            )
+        refs = build_initial_task_knowledge_base_refs(
+            db=db,
+            user=user,
+            team=team,
+            knowledge_base_id=22,
+        )
 
     assert refs == []
 
@@ -241,17 +220,18 @@ def test_resolve_task_defaults_uses_current_agent_configuration():
             return_value=[11, 22, 11],
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-            side_effect=lambda _db, _user_id, kb_id: _make_kb(kb_id, str(kb_id)),
-        ) as get_accessible,
+            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_directly_accessible_knowledge_base_ids",
+            return_value={11, 22},
+        ) as get_accessible_ids,
     ):
         result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)
 
     assert result == [11, 22]
-    assert [call.args[1:] for call in get_accessible.call_args_list] == [
-        (team.user_id, 11),
-        (team.user_id, 22),
-    ]
+    get_accessible_ids.assert_called_once_with(
+        db,
+        user_id=team.user_id,
+        candidate_ids=[11, 22],
+    )
 
 
 def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
@@ -285,10 +265,8 @@ def test_resolve_task_defaults_drops_kbs_revoked_from_team_owner():
             return_value=[11, 22],
         ),
         patch(
-            "app.services.chat.task_default_knowledge_bases._get_accessible_knowledge_base",
-            side_effect=lambda _db, _user_id, kb_id: (
-                _make_kb(kb_id, str(kb_id)) if kb_id == 11 else None
-            ),
+            "app.services.chat.task_default_knowledge_bases.KnowledgeService.get_directly_accessible_knowledge_base_ids",
+            return_value={11},
         ),
     ):
         result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)

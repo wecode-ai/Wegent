@@ -13,7 +13,9 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.adapters.task_kinds.converters import resolve_task_ref_team
-from app.services.readers import KindType, kindReader
+from app.services.kind_ref_resolver import batch_load_kinds_by_refs
+from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.readers import KindType
 from app.services.share import team_share_service
 from app.stores.tasks import task_store
 
@@ -54,29 +56,35 @@ def _iter_team_member_default_knowledge_base_ids(
     """Collect default knowledge base IDs from all team member Ghosts."""
     team_crd = Team.model_validate(team.json)
     knowledge_base_ids: list[int] = []
+    bot_refs = [
+        (member.botRef.namespace, member.botRef.name)
+        for member in team_crd.spec.members or []
+    ]
+    bots = batch_load_kinds_by_refs(
+        db,
+        user_id=team.user_id,
+        kind_type=KindType.BOT,
+        refs=set(bot_refs),
+    )
+    bot_crds = [
+        Bot.model_validate(bots[ref].json)
+        for ref in bot_refs
+        if ref in bots and bots[ref].json
+    ]
+    ghost_refs = [
+        (bot.spec.ghostRef.namespace, bot.spec.ghostRef.name) for bot in bot_crds
+    ]
+    ghosts = batch_load_kinds_by_refs(
+        db,
+        user_id=team.user_id,
+        kind_type=KindType.GHOST,
+        refs=set(ghost_refs),
+    )
 
-    for member in team_crd.spec.members or []:
-        bot = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.BOT,
-            member.botRef.namespace,
-            member.botRef.name,
-        )
-        if not bot or not bot.json:
-            continue
-
-        bot_crd = Bot.model_validate(bot.json)
-        ghost = kindReader.get_by_name_and_namespace(
-            db,
-            team.user_id,
-            KindType.GHOST,
-            bot_crd.spec.ghostRef.namespace,
-            bot_crd.spec.ghostRef.name,
-        )
+    for ref in ghost_refs:
+        ghost = ghosts.get(ref)
         if not ghost or not ghost.json:
             continue
-
         ghost_crd = Ghost.model_validate(ghost.json)
         for ref in ghost_crd.spec.defaultKnowledgeBaseRefs or []:
             knowledge_base_ids.append(ref.id)
@@ -88,6 +96,7 @@ def _resolve_task_default_knowledge_bases(
     db: Session,
     task_id: int,
     user_id: int,
+    knowledge_base_id: int | None = None,
 ) -> tuple[Kind | None, list[int]]:
     """Resolve the current Team and defaults its owner may still access."""
     task = task_store.get_active_task(db, task_id=task_id)
@@ -106,12 +115,16 @@ def _resolve_task_default_knowledge_bases(
     candidate_ids = list(
         dict.fromkeys(_iter_team_member_default_knowledge_base_ids(db, team))
     )
-    accessible_ids = [
-        knowledge_base_id
-        for knowledge_base_id in candidate_ids
-        if _get_accessible_knowledge_base(db, team.user_id, knowledge_base_id)
-        is not None
-    ]
+    if knowledge_base_id is not None:
+        if knowledge_base_id not in candidate_ids:
+            return team, []
+        candidate_ids = [knowledge_base_id]
+    allowed_ids = KnowledgeService.get_directly_accessible_knowledge_base_ids(
+        db,
+        user_id=team.user_id,
+        candidate_ids=candidate_ids,
+    )
+    accessible_ids = [kb_id for kb_id in candidate_ids if kb_id in allowed_ids]
     return team, accessible_ids
 
 
@@ -140,6 +153,7 @@ def resolve_task_default_knowledge_base_access_user_id(
         db,
         task_id,
         user_id,
+        knowledge_base_id,
     )
     if team is None or knowledge_base_id not in knowledge_base_ids:
         return None
