@@ -112,9 +112,10 @@ def _add_kb_member(
     role: ResourceRole,
     invited_by_user_id: int,
     status: str = MemberStatus.APPROVED.value,
+    resource_type: str = "KnowledgeBase",
 ) -> ResourceMember:
     member = ResourceMember(
-        resource_type="KnowledgeBase",
+        resource_type=resource_type,
         resource_id=knowledge_base_id,
         entity_type="user",
         entity_id=str(user.id),
@@ -363,6 +364,69 @@ def test_acl_access_denies_direct_restriction_over_other_grants(
     )
 
     assert acl_ids == set()
+
+
+@pytest.mark.unit
+def test_acl_access_denies_legacy_restricted_member(test_db: Session) -> None:
+    owner = _create_user(test_db, "legacy-restricted-owner")
+    reporter = _create_user(test_db, "legacy-restricted-member")
+    namespace = _create_namespace(test_db, owner, "legacy-restricted-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="legacy-restricted-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        reporter,
+        ResourceRole.RestrictedAnalyst,
+        owner.id,
+        status="APPROVED",
+        resource_type="KNOWLEDGE_BASE",
+    )
+
+    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == set()
+
+
+@pytest.mark.unit
+def test_acl_access_allows_legacy_reporter_member(test_db: Session) -> None:
+    owner = _create_user(test_db, "legacy-reporter-owner")
+    reporter = _create_user(test_db, "legacy-reporter-member")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="legacy-reporter-kb",
+            namespace="default",
+            direct_access_requirement="edit",
+        ),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        reporter,
+        ResourceRole.Reporter,
+        owner.id,
+        status="APPROVED",
+        resource_type="KNOWLEDGE_BASE",
+    )
+
+    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == {knowledge_base_id}
 
 
 @pytest.mark.unit

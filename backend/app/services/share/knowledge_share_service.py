@@ -19,7 +19,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.namespace import Namespace
-from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.resource_member import (
+    APPROVED_MEMBER_STATUS_VALUES,
+    KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES,
+    MemberStatus,
+    ResourceMember,
+    ResourceRole,
+)
 from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.base_role import BaseRole, get_highest_role, has_permission
@@ -76,11 +82,11 @@ def get_knowledge_base_tool_access_mode_by_ids(
     explicit_restricted_member = (
         db.query(ResourceMember.resource_id)
         .filter(
-            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
             ResourceMember.resource_id.in_([kb.id for kb in kbs]),
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
             ResourceMember.role == ResourceRole.RestrictedAnalyst.value,
         )
         .first()

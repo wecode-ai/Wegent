@@ -23,6 +23,10 @@ from app.models.knowledge import (
     KnowledgeFolder,
 )
 from app.models.namespace import Namespace
+from app.models.resource_member import (
+    APPROVED_MEMBER_STATUS_VALUES,
+    KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES,
+)
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
 from app.schemas.kind import KnowledgeBase as KnowledgeBaseCRD
@@ -465,8 +469,7 @@ class KnowledgeService:
         candidate_ids: list[int] | None = None,
     ) -> _DirectAccessPermissionContext:
         """Load reusable direct-access permission sources once."""
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        from app.models.resource_member import ResourceMember
 
         user = KnowledgeService._get_user_or_raise(db, user_id)
         groups = (
@@ -498,10 +501,10 @@ class KnowledgeService:
             .all()
         )
         direct_member_query = db.query(ResourceMember).filter(
-            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
             ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
         )
         if candidate_ids is not None:
             direct_member_query = direct_member_query.filter(
@@ -586,8 +589,7 @@ class KnowledgeService:
         candidate_ids: list[int] | None = None,
     ) -> dict[int, tuple[str, ...]]:
         """Collect roles from extension-defined entity resolvers only."""
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        from app.models.resource_member import ResourceMember
         from app.services.share.external_entity_resolver import (
             get_all_entity_types,
             get_entity_resolver,
@@ -621,10 +623,12 @@ class KnowledgeService:
                     ResourceMember.role,
                 )
                 .filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.resource_type.in_(
+                        KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES
+                    ),
                     ResourceMember.resource_id.in_(resource_ids),
                     ResourceMember.entity_type == entity_type,
-                    ResourceMember.status == MemberStatus.APPROVED.value,
+                    ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
                 )
                 .all()
             )
@@ -653,8 +657,7 @@ class KnowledgeService:
         """Apply direct-access policy without materializing relational grants."""
         if context.user.id != user_id:
             raise ValueError("Permission context user does not match request user")
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        from app.models.resource_member import ResourceMember
 
         editable_roles = (
             BaseRole.Owner.value,
@@ -662,9 +665,9 @@ class KnowledgeService:
             BaseRole.Developer.value,
         )
         member_query = db.query(ResourceMember.id).filter(
-            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
             ResourceMember.resource_id == Kind.id,
-            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
         )
         direct_member_query = member_query.filter(
             ResourceMember.entity_type == "user",
@@ -728,17 +731,16 @@ class KnowledgeService:
         """Apply explicit ACL denials shared by direct and agent access."""
         if context.user.id != user_id:
             raise ValueError("Permission context user does not match request user")
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        from app.models.resource_member import ResourceMember
 
         direct_restricted = (
             db.query(ResourceMember.id)
             .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
                 ResourceMember.resource_id == Kind.id,
                 ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
                 ResourceMember.role == BaseRole.RestrictedAnalyst.value,
             )
             .exists()
@@ -852,17 +854,18 @@ class KnowledgeService:
             List of accessible knowledge bases
         """
         if scope == ResourceScope.PERSONAL:
-            from app.models.resource_member import MemberStatus, ResourceMember
-            from app.models.share_link import ResourceType
+            from app.models.resource_member import ResourceMember
 
             # Get knowledge bases with explicit approved permission (shared to user)
             shared_permissions = (
                 db.query(ResourceMember.resource_id)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.resource_type.in_(
+                        KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES
+                    ),
                     ResourceMember.entity_type == "user",
                     ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED.value,
+                    ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
                 )
                 .all()
             )
@@ -955,8 +958,7 @@ class KnowledgeService:
             )
 
         else:  # ALL
-            from app.models.resource_member import MemberStatus, ResourceMember
-            from app.models.share_link import ResourceType
+            from app.models.resource_member import ResourceMember
 
             # Get team knowledge bases from accessible groups
             accessible_groups = get_user_groups(db, user_id)
@@ -965,10 +967,12 @@ class KnowledgeService:
             shared_permissions = (
                 db.query(ResourceMember.resource_id)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.resource_type.in_(
+                        KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES
+                    ),
                     ResourceMember.entity_type == "user",
                     ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED.value,
+                    ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
                 )
                 .all()
             )
@@ -2759,8 +2763,7 @@ class KnowledgeService:
         candidate_ids: list[int] | None = None,
     ) -> "KnowledgeService.EntityAuthorizedKbsResult":
         """Collect KBs accessible via entity-type ResourceMember bindings."""
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        from app.models.resource_member import ResourceMember
         from app.services.share.external_entity_resolver import (
             get_all_entity_types,
             get_entity_resolver,
@@ -2786,12 +2789,14 @@ class KnowledgeService:
 
             if namespace_name_to_id:
                 entity_member_query = db.query(ResourceMember).filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.resource_type.in_(
+                        KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES
+                    ),
                     ResourceMember.entity_type == "namespace",
                     ResourceMember.entity_id.in_(
                         [str(ns_id) for ns_id in namespace_name_to_id.values()]
                     ),
-                    ResourceMember.status == MemberStatus.APPROVED.value,
+                    ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
                 )
                 if candidate_ids is not None:
                     entity_member_query = entity_member_query.filter(
@@ -2840,10 +2845,12 @@ class KnowledgeService:
             entity_type_members = (
                 db.query(ResourceMember)
                 .filter(
-                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.resource_type.in_(
+                        KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES
+                    ),
                     ResourceMember.entity_type == entity_type_str,
                     ResourceMember.resource_id.in_(resolved_kb_ids),
-                    ResourceMember.status == MemberStatus.APPROVED.value,
+                    ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
                 )
                 .all()
             )
@@ -4128,13 +4135,12 @@ class _KnowledgeBaseVisibilityQueryBuilder:
         *,
         permission_context: _DirectAccessPermissionContext,
     ):
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        from app.models.resource_member import ResourceMember
 
         member_query = db.query(ResourceMember.id).filter(
-            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.resource_type.in_(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES),
             ResourceMember.resource_id == Kind.id,
-            ResourceMember.status == MemberStatus.APPROVED.value,
+            ResourceMember.status.in_(APPROVED_MEMBER_STATUS_VALUES),
         )
         conditions = [
             member_query.filter(
