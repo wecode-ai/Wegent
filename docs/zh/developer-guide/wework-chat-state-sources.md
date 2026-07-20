@@ -62,6 +62,11 @@ Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App
 - 此派生只影响 Wework 的展示与计时，不会自动调用 goal 暂停接口。用户点击“暂停目标”才会持久化 `paused` 状态。
 - 任务重新处于 `running: true` 时，goal 继续使用 runtime goal API 返回的原始状态。
 
+用户停止一个带有 active goal 的当前回复时，Wework 必须先通过 runtime goal API
+持久化 `paused`，确认成功后再取消当前 turn。这个顺序先关闭自动续跑源，避免当前
+turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal 暂停失败，不得继续把
+当前回复标记为已停止。
+
 ## Composer 模式提示
 
 当 composer 处于计划模式或目标草稿模式时，底部模式胶囊必须在标签左侧显示对应的语义图标：计划模式使用清单图标，目标草稿使用靶心图标。桌面和紧凑布局必须复用同一个模式胶囊实现，确保表达一致。
