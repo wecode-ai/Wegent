@@ -102,7 +102,7 @@ for (const protocol of [
     expectedToolType: undefined,
   },
 ]) {
-  test(`runs a forced Agent capability probe through ${protocol.name}`, async ({ page }) => {
+  test(`runs an Agent capability probe through ${protocol.name}`, async ({ page }) => {
     const app = new WeworkApp(page)
     await app.goto('/')
 
@@ -126,6 +126,7 @@ for (const protocol of [
     const body = request.postDataJSON()
     expect(body.model).toBe(protocol.modelId)
     expect(request.postData()).toContain('wework_capability_probe')
+    expect(body.tool_choice).toBeUndefined()
     if (protocol.expectedToolType) {
       expect(body.tools[0].type).toBe(protocol.expectedToolType)
     } else {

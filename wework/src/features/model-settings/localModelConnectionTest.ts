@@ -44,7 +44,6 @@ function testRequestBody(
       messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
       max_tokens: 64,
       stream: false,
-      tool_choice: { type: 'tool', name: PROBE_TOOL_NAME },
       tools: [
         {
           name: PROBE_TOOL_NAME,
@@ -64,7 +63,6 @@ function testRequestBody(
       messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
       max_tokens: 64,
       stream: false,
-      tool_choice: { type: 'function', function: { name: PROBE_TOOL_NAME } },
       tools: [
         {
           type: 'function',
@@ -88,9 +86,6 @@ function testRequestBody(
     max_output_tokens: 64,
     stream: false,
     store: false,
-    tool_choice: custom
-      ? { type: 'custom', name: PROBE_TOOL_NAME }
-      : { type: 'function', name: PROBE_TOOL_NAME },
     tools: custom
       ? [
           {

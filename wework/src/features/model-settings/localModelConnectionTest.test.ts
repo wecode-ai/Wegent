@@ -59,8 +59,8 @@ describe('localModelConnectionTest', () => {
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'gpt-oss:20b',
       input: 'Call the capability probe with value PING.',
-      tool_choice: { type: 'custom', name: 'wework_capability_probe' },
     })
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
   })
 
   test('uses the provided API key and surfaces HTTP errors', async () => {
@@ -195,9 +195,9 @@ describe('localModelConnectionTest', () => {
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'kimi-for-coding',
       messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
-      tool_choice: { type: 'function', function: { name: 'wework_capability_probe' } },
       stream: false,
     })
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
   })
 
   test('tests Anthropic Messages endpoints with the matching headers and body', async () => {
@@ -233,8 +233,8 @@ describe('localModelConnectionTest', () => {
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({
       model: 'kimi-for-coding',
       messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
-      tool_choice: { type: 'tool', name: 'wework_capability_probe' },
       stream: false,
     })
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('tool_choice')
   })
 })

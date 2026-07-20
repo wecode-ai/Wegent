@@ -121,12 +121,9 @@ function capabilityRequestError(req, request, apiFormat) {
       return 'Responses probe options are incorrect'
     }
     if (!String(request?.input || '').includes('PING')) return 'Responses probe prompt is missing'
-    if (request?.tool_choice?.name !== 'wework_capability_probe') {
-      return 'Responses probe did not force the tool'
-    }
+    if (request?.tool_choice !== undefined) return 'Responses probe must not force a tool'
     if (tool.type === 'custom') {
       if (
-        request.tool_choice.type !== 'custom' ||
         tool.format?.type !== 'grammar' ||
         tool.format?.syntax !== 'lark' ||
         tool.format?.definition !== 'start: "PING"'
@@ -137,7 +134,6 @@ function capabilityRequestError(req, request, apiFormat) {
     }
     if (
       tool.type !== 'function' ||
-      request.tool_choice.type !== 'function' ||
       tool.parameters?.properties?.input?.type !== 'string' ||
       !tool.parameters?.required?.includes('input')
     ) {
@@ -157,9 +153,9 @@ function capabilityRequestError(req, request, apiFormat) {
     if (
       tool.type !== 'function' ||
       tool.function?.parameters?.properties?.input?.type !== 'string' ||
-      request?.tool_choice?.function?.name !== 'wework_capability_probe'
+      request?.tool_choice !== undefined
     ) {
-      return 'Chat function tool schema or tool_choice is incorrect'
+      return 'Chat function tool schema is incorrect or the probe forced a tool'
     }
     return null
   }
@@ -167,17 +163,16 @@ function capabilityRequestError(req, request, apiFormat) {
     req.headers['x-api-key'] !== 'test-token' ||
     req.headers['anthropic-version'] !== '2023-06-01' ||
     tool.input_schema?.properties?.input?.type !== 'string' ||
-    request?.tool_choice?.type !== 'tool' ||
-    request?.tool_choice?.name !== 'wework_capability_probe'
+    request?.tool_choice !== undefined
   ) {
-    return 'Anthropic headers, tool schema, or tool_choice is incorrect'
+    return 'Anthropic headers or tool schema is incorrect, or the probe forced a tool'
   }
   return null
 }
 
 function responsesCapabilityBody(request) {
   const createdAt = Math.floor(Date.now() / 1000)
-  const custom = request?.tool_choice?.type === 'custom'
+  const custom = request?.tools?.[0]?.type === 'custom'
   return {
     id: `resp_probe_${createdAt}`,
     object: 'response',
