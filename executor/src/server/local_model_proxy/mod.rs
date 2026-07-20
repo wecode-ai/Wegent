@@ -154,6 +154,7 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
     Ok(response)
 }
 
+#[allow(clippy::type_complexity)]
 fn prepare_request(
     api_format: &str,
     body: &[u8],
@@ -164,8 +165,8 @@ fn prepare_request(
                 status: StatusCode::BAD_REQUEST,
                 detail: format!("Invalid Codex Responses request: {error}"),
             })?;
-        let expanded_browser_tools = codex_responses_proxy_transform
-            ::expand_wework_browser_namespace_tools(
+        let expanded_browser_tools =
+            codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
                 &mut request_value,
             );
         let body = serde_json::to_vec(&request_value).map_err(|error| HttpError {
@@ -279,16 +280,13 @@ where
                         let normalized = if state.expanded_browser_tools.is_empty() {
                             normalize_responses_event(&event)
                         } else {
-                            let rewritten = rewrite_responses_event(
-                                &event,
-                                &state.expanded_browser_tools,
-                            );
+                            let rewritten =
+                                rewrite_responses_event(&event, &state.expanded_browser_tools);
                             normalize_responses_event(&rewritten)
                         };
-                        state.output.push_back(Ok(Bytes::from(format!(
-                            "{}\n\n",
-                            normalized
-                        ))));
+                        state
+                            .output
+                            .push_back(Ok(Bytes::from(format!("{}\n\n", normalized))));
                     }
                 }
                 Some(Err(error)) => {

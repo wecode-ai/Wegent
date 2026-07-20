@@ -29,7 +29,7 @@ use crate::{
         CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
-    logging::{log_executor_event},
+    logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };
