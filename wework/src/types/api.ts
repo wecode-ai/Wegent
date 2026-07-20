@@ -288,6 +288,7 @@ export interface NormalizedRuntimeMessage {
   messageIndex?: number | null
   message_index?: number | null
   subtaskId?: string | null
+  subtask_id?: string | null
   status?: string | null
   createdAt?: string | null
   completedAt?: string | number | null

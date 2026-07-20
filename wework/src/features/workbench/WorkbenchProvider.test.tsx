@@ -4966,7 +4966,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           id: 'assistant-1',
           role: 'assistant',
           content: '恢复的回答',
-          subtaskId: '901',
+          subtask_id: '901',
           fileChanges: {
             version: 1,
             status: 'active',
