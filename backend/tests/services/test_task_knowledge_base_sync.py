@@ -793,7 +793,11 @@ class TestGetBoundKnowledgeBaseIds:
         mock_query.first.return_value = mock_task
         mock_query.all.return_value = [mock_kb]
 
-        result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
+        with patch(
+            "app.services.knowledge.knowledge_service.KnowledgeService.can_directly_access_knowledge_base",
+            return_value=True,
+        ):
+            result = _get_bound_knowledge_base_ids(mock_db, task_id=100, user_id=1)
 
         # Should return the KB ID even for non-group chat
         assert result == [10]
@@ -817,7 +821,7 @@ class TestGetBoundKnowledgeBaseIds:
         mock_query.filter.return_value = mock_query
         mock_query.first.return_value = mock_task
 
-        result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
+        result = _get_bound_knowledge_base_ids(mock_db, task_id=100, user_id=1)
 
         assert result == []
 
@@ -832,7 +836,7 @@ class TestGetBoundKnowledgeBaseIds:
         mock_query.filter.return_value = mock_query
         mock_query.first.return_value = None
 
-        result = _get_bound_knowledge_base_ids(mock_db, task_id=999)
+        result = _get_bound_knowledge_base_ids(mock_db, task_id=999, user_id=1)
 
         assert result == []
 
@@ -1310,9 +1314,7 @@ class TestKBRefIdBasedLookup:
         mock_query.first.return_value = selected_kb
         mock_query.all.return_value = [other_user_same_name_kb, selected_kb]
 
-        with patch.object(
-            service, "_is_kb_bound_to_user_group_chat", return_value=False
-        ):
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
             with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
                 result = service.sync_subtask_kb_to_task(
                     db=mock_db,
@@ -1491,11 +1493,11 @@ class TestContextsIdBasedLookup:
         ) as mock_service:
             mock_service.get_bound_knowledge_base_ids.return_value = [10, 20, 30]
 
-            result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
+            result = _get_bound_knowledge_base_ids(mock_db, task_id=100, user_id=1)
 
             # Should delegate to service layer
             mock_service.get_bound_knowledge_base_ids.assert_called_once_with(
-                mock_db, 100
+                mock_db, 100, user_id=1
             )
             assert result == [10, 20, 30]
 
@@ -1512,7 +1514,7 @@ class TestContextsIdBasedLookup:
                 "DB connection failed"
             )
 
-            result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
+            result = _get_bound_knowledge_base_ids(mock_db, task_id=100, user_id=1)
 
             # Should return empty list on exception
             assert result == []
@@ -1528,7 +1530,7 @@ class TestContextsIdBasedLookup:
         ) as mock_service:
             mock_service.get_bound_knowledge_base_ids.return_value = []
 
-            result = _get_bound_knowledge_base_ids(mock_db, task_id=100)
+            result = _get_bound_knowledge_base_ids(mock_db, task_id=100, user_id=1)
 
             assert result == []
 

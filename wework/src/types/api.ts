@@ -358,6 +358,7 @@ export interface RuntimeTaskSummary {
   pinnedOrder?: number | null
   sidebarOrder?: number | null
   status?: string | null
+  goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null

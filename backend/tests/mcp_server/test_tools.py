@@ -139,6 +139,8 @@ class TestKnowledgeTool:
             user_name="alice",
         )
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
+        mock_user = SimpleNamespace(id=3)
         access = MagicMock(
             downloadable=True,
             previewable=False,
@@ -153,6 +155,11 @@ class TestKnowledgeTool:
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ) as mock_get_read_user,
             patch.object(
                 module,
                 "get_document_access_or_raise",
@@ -182,6 +189,7 @@ class TestKnowledgeTool:
         assert "/home/user/1:executor:knowledge/2" in result["download_command"]
         assert 'mkdir -p "$download_dir"' in result["download_command"]
         assert '-o "$output_path"' in result["download_command"]
+        mock_get_read_user.assert_called_once_with(mock_session, token_info, 77)
         mock_get_access.assert_called_once_with(
             mock_session,
             user_id=3,
@@ -398,10 +406,15 @@ class TestKnowledgeTool:
             "kb_id": 77,
         }
         mock_result.model_dump.return_value = expected_payload
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ) as mock_get_read_user,
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
@@ -416,6 +429,11 @@ class TestKnowledgeTool:
             )
 
         assert result == expected_payload
+        mock_get_read_user.assert_called_once_with(
+            mock_session,
+            token_info,
+            77,
+        )
         mock_read.assert_called_once_with(
             db=mock_session,
             user=mock_user,
@@ -436,10 +454,15 @@ class TestKnowledgeTool:
         )
         mock_user = object()
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
@@ -467,10 +490,15 @@ class TestKnowledgeTool:
         )
         mock_user = object()
         mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.scalar.return_value = 77
 
         with (
             patch.object(module, "SessionLocal", return_value=mock_session),
-            patch.object(module, "_get_user_from_token", return_value=mock_user),
+            patch.object(
+                module,
+                "_get_read_user_for_knowledge_base",
+                return_value=mock_user,
+            ),
             patch.object(
                 module.knowledge_orchestrator,
                 "read_document_content",
