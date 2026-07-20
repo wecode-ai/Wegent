@@ -608,6 +608,58 @@ class DocumentParser:
             logger.warning(f"OCR processing failed: {e}")
             return None
 
+    @staticmethod
+    @staticmethod
+    def _sanitize_docx(binary_data: bytes) -> io.BytesIO:
+        """Rebuild docx ZIP, removing relationships with Target='NULL' or '/NULL'.
+
+        Some editors (WPS, old Word) write relationship entries with
+        Target="NULL" in *_rels/*.rels files.  python-docx resolves that
+        as a ZIP member named 'NULL', which doesn't exist → KeyError.
+        We strip those <Relationship> nodes from every .rels file.
+        """
+        import re
+
+        NULL_REL_RE = re.compile(
+            rb"<Relationship\b[^>]*/?>",
+            re.IGNORECASE,
+        )
+
+        def _strip_null_rels(data: bytes) -> bytes:
+            def keep(m: re.Match) -> bytes:
+                tag = m.group(0)
+                target_m = re.search(
+                    rb'Target\s*=\s*["\'](?:[^"\']*\/)?NULL["\']', tag, re.IGNORECASE
+                )
+                if target_m:
+                    logger.debug(
+                        "Stripping NULL relationship: %s",
+                        tag.decode("utf-8", errors="replace"),
+                    )
+                    return b""
+                return tag
+
+            return NULL_REL_RE.sub(keep, data)
+
+        buf_in = io.BytesIO(binary_data)
+        buf_out = io.BytesIO()
+        with (
+            zipfile.ZipFile(buf_in, "r") as zin,
+            zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout,
+        ):
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename.endswith(".rels"):
+                    logger.debug(
+                        "Processing rels file: %s\n%s",
+                        item.filename,
+                        data.decode("utf-8", errors="replace"),
+                    )
+                    data = _strip_null_rels(data)
+                zout.writestr(item, data)
+        buf_out.seek(0)
+        return buf_out
+
     def _parse_word(self, binary_data: bytes, extension: str) -> str:
         """Parse Word document and extract text."""
         try:
@@ -621,7 +673,7 @@ class DocumentParser:
 
             from docx import Document
 
-            doc_file = io.BytesIO(binary_data)
+            doc_file = self._sanitize_docx(binary_data)
             doc = Document(doc_file)
 
             text_parts = []
@@ -1156,7 +1208,7 @@ class DocumentParser:
 
             from docx import Document
 
-            doc_file = io.BytesIO(binary_data)
+            doc_file = self._sanitize_docx(binary_data)
             doc = Document(doc_file)
 
             # Extract paragraphs
