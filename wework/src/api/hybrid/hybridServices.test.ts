@@ -36,7 +36,6 @@ const mocks = vi.hoisted(() => {
     startProjectCodeServer: vi.fn(),
     startDeviceTerminal: vi.fn(),
     startDeviceCodeServer: vi.fn(),
-    getDeviceVncConfig: vi.fn(),
     createRemoteTerminalClient: vi.fn(),
   }
 
