@@ -541,13 +541,13 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
   })
 
-  test('restores historical blocks that use a snake-case subtask identity', () => {
+  test('restores historical blocks that use a numeric subtask identity', () => {
     const messages = runtimeMessagesToWorkbenchMessages([
       {
         id: 'assistant-history',
         role: 'assistant',
         content: '已完成',
-        subtask_id: 'subtask-history',
+        subtaskId: 901,
         blocks: [
           {
             id: 'tool-history',
@@ -585,7 +585,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     ])
 
     expect(messages[0]).toMatchObject({
-      subtaskId: 'subtask-history',
+      subtaskId: '901',
       blocks: [
         { type: 'tool', toolName: 'exec_command' },
         { type: 'file_changes', fileChanges: { files: [{ path: 'history.txt' }] } },

@@ -584,7 +584,8 @@ function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean
 }
 
 function runtimeMessageSubtaskId(message: NormalizedRuntimeMessage): string | undefined {
-  const subtaskId = message.subtaskId ?? message.subtask_id
+  const subtaskId = message.subtaskId
+  if (typeof subtaskId === 'number') return String(subtaskId)
   return typeof subtaskId === 'string' && subtaskId.trim() ? subtaskId : undefined
 }
 
