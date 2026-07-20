@@ -187,6 +187,140 @@ describe('SitesWorkspace', () => {
     })
   })
 
+  test('does not inject a published project missing from a pending search response', async () => {
+    const searchRequest = deferred<SiteListResponse>()
+    const publishRequest = deferred<SiteProject>()
+    const api = createApi()
+    vi.mocked(api.listSites).mockImplementationOnce(() =>
+      Promise.resolve({
+        items: [innerProject],
+        next_cursor: null,
+      })
+    )
+    vi.mocked(api.listSites).mockImplementationOnce(() => searchRequest.promise)
+    vi.mocked(api.publishSite).mockImplementationOnce(() => publishRequest.promise)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    fireEvent.change(screen.getByTestId('sites-search-input'), {
+      target: { value: '完全不匹配的发布搜索' },
+    })
+    await waitFor(() =>
+      expect(api.listSites).toHaveBeenLastCalledWith({
+        q: '完全不匹配的发布搜索',
+        cursor: null,
+        limit: 20,
+      })
+    )
+
+    await userEvent.click(screen.getByTestId('site-publish-prj-site-1'))
+    await act(async () => {
+      publishRequest.resolve(outerProject)
+    })
+    expect(screen.getByTestId('site-published-prj-site-1')).toBeInTheDocument()
+
+    await act(async () => {
+      searchRequest.resolve({ items: [], next_cursor: null })
+    })
+
+    expect(screen.queryByTestId('site-row-prj-site-1')).not.toBeInTheDocument()
+    expect(screen.getByText('还没有站点')).toBeInTheDocument()
+  })
+
+  test('does not inject a renamed project missing from a pending search response', async () => {
+    const searchRequest = deferred<SiteListResponse>()
+    const renameRequest = deferred<SiteProject>()
+    const renamedProject = { ...innerProject, title: '搜索期间重命名' }
+    const api = createApi()
+    vi.mocked(api.listSites).mockImplementationOnce(() =>
+      Promise.resolve({
+        items: [innerProject],
+        next_cursor: null,
+      })
+    )
+    vi.mocked(api.listSites).mockImplementationOnce(() => searchRequest.promise)
+    vi.mocked(api.renameSite).mockImplementationOnce(() => renameRequest.promise)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    fireEvent.change(screen.getByTestId('sites-search-input'), {
+      target: { value: '完全不匹配的重命名搜索' },
+    })
+    await waitFor(() =>
+      expect(api.listSites).toHaveBeenLastCalledWith({
+        q: '完全不匹配的重命名搜索',
+        cursor: null,
+        limit: 20,
+      })
+    )
+
+    await userEvent.click(screen.getByTestId('site-more-prj-site-1'))
+    await userEvent.click(screen.getByTestId('site-rename-menu-item-prj-site-1'))
+    await userEvent.clear(screen.getByTestId('site-rename-input'))
+    await userEvent.type(screen.getByTestId('site-rename-input'), '搜索期间重命名')
+    await userEvent.click(screen.getByTestId('site-rename-confirm-button'))
+    await act(async () => {
+      renameRequest.resolve(renamedProject)
+    })
+    expect(await screen.findByText('搜索期间重命名')).toBeInTheDocument()
+
+    await act(async () => {
+      searchRequest.resolve({ items: [], next_cursor: null })
+    })
+
+    expect(screen.queryByTestId('site-row-prj-site-1')).not.toBeInTheDocument()
+    expect(screen.getByText('还没有站点')).toBeInTheDocument()
+  })
+
+  test('does not inject a late mutation override into a later page that omits the project', async () => {
+    const searchRequest = deferred<SiteListResponse>()
+    const publishRequest = deferred<SiteProject>()
+    const matchingProject = {
+      ...innerProject,
+      id: 'prj-search-result',
+      title: '匹配搜索的站点',
+      url: 'http://sites.internal/search-result',
+    }
+    const api = createApi()
+    vi.mocked(api.listSites)
+      .mockImplementationOnce(() =>
+        Promise.resolve({
+          items: [innerProject],
+          next_cursor: null,
+        })
+      )
+      .mockImplementationOnce(() => searchRequest.promise)
+      .mockResolvedValueOnce({ items: [matchingProject], next_cursor: null })
+    vi.mocked(api.publishSite).mockImplementationOnce(() => publishRequest.promise)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-publish-prj-site-1'))
+    fireEvent.change(screen.getByTestId('sites-search-input'), {
+      target: { value: '匹配搜索' },
+    })
+    await waitFor(() =>
+      expect(api.listSites).toHaveBeenLastCalledWith({
+        q: '匹配搜索',
+        cursor: null,
+        limit: 20,
+      })
+    )
+    await act(async () => {
+      searchRequest.resolve({ items: [], next_cursor: 'matching-next-page' })
+    })
+    expect(await screen.findByText('还没有站点')).toBeInTheDocument()
+
+    await act(async () => {
+      publishRequest.resolve(outerProject)
+    })
+    expect(screen.queryByTestId('site-row-prj-site-1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('sites-load-more-button'))
+    expect(await screen.findByTestId('site-row-prj-search-result')).toBeInTheDocument()
+    expect(screen.queryByTestId('site-row-prj-site-1')).not.toBeInTheDocument()
+  })
+
   test('does not expose an old cursor after a new search first page fails', async () => {
     const api = createApi()
     vi.mocked(api.listSites).mockImplementation(({ q }) => {

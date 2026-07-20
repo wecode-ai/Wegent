@@ -72,17 +72,6 @@ function reconcileSiteProjects(
     return [override && generation <= override.generation ? override.project : project]
   })
 
-  for (const [projectId, override] of projectOverrides) {
-    if (
-      generation <= override.generation &&
-      !seenIds.has(projectId) &&
-      !deletedProjectIds.has(projectId)
-    ) {
-      reconciledProjects.push(override.project)
-      seenIds.add(projectId)
-    }
-  }
-
   return reconciledProjects
 }
 
