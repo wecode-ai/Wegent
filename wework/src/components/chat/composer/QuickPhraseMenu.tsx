@@ -2,6 +2,7 @@ import { File, FileText, MessageSquareText, Search, Settings, X } from 'lucide-r
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import { navigateTo } from '@/lib/navigation'
 import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
@@ -9,6 +10,7 @@ import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 interface QuickPhraseMenuProps {
   disabled?: boolean
   compact?: boolean
+  iconOnly?: boolean
   onSelect: (phrase: QuickPhrase) => void
 }
 
@@ -148,7 +150,7 @@ function StashPreview({ phrase }: { phrase: QuickPhrase }) {
   )
 }
 
-export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenuProps) {
+export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: QuickPhraseMenuProps) {
   const { t } = useTranslation('common')
   const phrases = useQuickPhrases()
   const [open, setOpen] = useState(false)
@@ -207,16 +209,18 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
         data-testid="quick-phrase-button"
         disabled={disabled}
         onClick={() => setOpen(value => !value)}
-        className={
-          compact
-            ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted disabled:opacity-40'
-            : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40'
-        }
+        className={cn(
+          iconOnly
+            ? 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-secondary hover:bg-muted disabled:opacity-40'
+            : compact
+              ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted disabled:opacity-40'
+              : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40'
+        )}
         aria-label={t('workbench.quick_phrases', '快捷短语')}
         aria-expanded={open}
       >
         <MessageSquareText className="h-4 w-4" />
-        {!compact && <span>{t('workbench.quick_phrases', '快捷短语')}</span>}
+        {!compact && !iconOnly && <span>{t('workbench.quick_phrases', '快捷短语')}</span>}
       </button>
       {open && (
         <div

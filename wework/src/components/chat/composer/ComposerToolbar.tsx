@@ -1,4 +1,5 @@
 import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -9,6 +10,9 @@ import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
 import { QuickPhraseMenu } from './QuickPhraseMenu'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+
+const COMPACT_QUICK_PHRASE_MAX_WIDTH = 475
+const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 interface ComposerToolbarProps {
   canSend: boolean
@@ -64,9 +68,29 @@ export function ComposerToolbar({
   onSubmit,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const [isNarrow, setIsNarrow] = useState(false)
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current
+    if (!toolbar) return undefined
+
+    const updateWidth = () => {
+      setIsNarrow(toolbar.getBoundingClientRect().width <= COMPACT_QUICK_PHRASE_MAX_WIDTH)
+    }
+
+    updateWidth()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateWidth)
+    observer?.observe(toolbar)
+    return () => observer?.disconnect()
+  }, [])
 
   return (
-    <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
+    <div
+      ref={toolbarRef}
+      data-testid="composer-toolbar"
+      className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1"
+    >
       <div className="flex min-w-0 items-center gap-2">
         <AddContextMenu
           disabled={disabled}
@@ -74,7 +98,7 @@ export function ComposerToolbar({
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
-        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
+        <QuickPhraseMenu disabled={disabled} iconOnly={isNarrow} onSelect={onQuickPhraseSelect} />
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
@@ -108,6 +132,7 @@ export function ComposerToolbar({
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
             buttonClassName="opacity-90 hover:opacity-100"
+            maxClosedWidth={isNarrow ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
           />
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />

@@ -139,28 +139,170 @@ describe('ModelSelector desktop layout', () => {
     expect(left).toBeLessThanOrEqual(SHELL_LEFT - 16)
   })
 
-  test('uses the viewport right edge when the right workspace panel is collapsed', async () => {
+  test('caps the trigger width when maxClosedWidth is provided', () => {
     createShellElement({ hidden: true })
 
-    render(
-      <ModelSelector
-        models={[SAMPLE_MODEL]}
-        selectedModel={SAMPLE_MODEL}
-        selectedModelOptions={{}}
-        disabled={false}
-        onSelectModel={vi.fn()}
-        onSelectModelOption={vi.fn()}
-      />
-    )
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.getAttribute('data-testid') === 'model-selector-button') {
+        return {
+          top: 500,
+          left: 700,
+          right: 940,
+          bottom: 540,
+          width: 240,
+          height: 40,
+          x: 700,
+          y: 500,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      if (this.getAttribute('aria-hidden') === 'true' && this.tagName === 'SPAN') {
+        return {
+          top: 0,
+          left: 0,
+          right: 300,
+          bottom: 0,
+          width: 300,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      return originalGetBoundingClientRect.call(this)
+    }
 
-    const button = screen.getByTestId('model-selector-button')
-    setButtonRect(button, 1150)
-    fireEvent.click(button)
+    try {
+      render(
+        <ModelSelector
+          models={[SAMPLE_MODEL]}
+          selectedModel={SAMPLE_MODEL}
+          selectedModelOptions={{}}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          maxClosedWidth={160}
+        />
+      )
 
-    const menu = await waitFor(() => screen.getByTestId('model-selector-menu'))
-    const wrapper = menu.parentElement
-    expect(wrapper).not.toBeNull()
-    const left = parseInt(wrapper!.style.left, 10)
-    expect(left).toBeGreaterThan(SHELL_LEFT - 16)
+      const button = screen.getByTestId('model-selector-button')
+      expect(button.style.getPropertyValue('--model-selector-width')).toBe('160px')
+      expect(button.style.width).toBe('var(--model-selector-width, auto)')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
+    }
+  })
+
+  test('keeps the trigger capped when opened with maxClosedWidth', async () => {
+    createShellElement({ hidden: true })
+
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.getAttribute('data-testid') === 'model-selector-button') {
+        return {
+          top: 500,
+          left: 700,
+          right: 940,
+          bottom: 540,
+          width: 240,
+          height: 40,
+          x: 700,
+          y: 500,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      if (this.getAttribute('aria-hidden') === 'true' && this.tagName === 'SPAN') {
+        return {
+          top: 0,
+          left: 0,
+          right: 300,
+          bottom: 0,
+          width: 300,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      return originalGetBoundingClientRect.call(this)
+    }
+
+    try {
+      render(
+        <ModelSelector
+          models={[SAMPLE_MODEL]}
+          selectedModel={SAMPLE_MODEL}
+          selectedModelOptions={{}}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+          maxClosedWidth={160}
+        />
+      )
+
+      const button = screen.getByTestId('model-selector-button')
+      fireEvent.click(button)
+      await waitFor(() => screen.getByTestId('model-selector-menu'))
+
+      expect(button.style.getPropertyValue('--model-selector-width')).toBe('160px')
+      expect(button.style.width).toBe('var(--model-selector-width, auto)')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
+    }
+  })
+
+  test('uses the default closed width cap when maxClosedWidth is omitted', () => {
+    createShellElement({ hidden: true })
+
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.getAttribute('data-testid') === 'model-selector-button') {
+        return {
+          top: 500,
+          left: 700,
+          right: 940,
+          bottom: 540,
+          width: 240,
+          height: 40,
+          x: 700,
+          y: 500,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      if (this.getAttribute('aria-hidden') === 'true' && this.tagName === 'SPAN') {
+        return {
+          top: 0,
+          left: 0,
+          right: 300,
+          bottom: 0,
+          width: 300,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => {},
+        } as DOMRect
+      }
+      return originalGetBoundingClientRect.call(this)
+    }
+
+    try {
+      render(
+        <ModelSelector
+          models={[SAMPLE_MODEL]}
+          selectedModel={SAMPLE_MODEL}
+          selectedModelOptions={{}}
+          disabled={false}
+          onSelectModel={vi.fn()}
+          onSelectModelOption={vi.fn()}
+        />
+      )
+
+      const button = screen.getByTestId('model-selector-button')
+      expect(button.style.getPropertyValue('--model-selector-width')).toBe('208px')
+      expect(button.style.width).toBe('var(--model-selector-width, auto)')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
+    }
   })
 })

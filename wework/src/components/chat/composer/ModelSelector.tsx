@@ -86,6 +86,7 @@ export function ModelSelector({
   menuPlacement = 'above',
   buttonClassName = '',
   menuClassName = '',
+  maxClosedWidth,
 }: ModelSelectorProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -1014,6 +1015,7 @@ export function ModelSelector({
         ariaLabel={t('workbench.model_selector')}
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
         buttonClassName={buttonClassName}
+        maxClosedWidth={maxClosedWidth}
         onToggle={() => {
           if (disabled) return
           setOpen(current => {

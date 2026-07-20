@@ -1253,7 +1253,7 @@ describe('ChatInput', () => {
       'data-enter-animation',
       'main'
     )
-    expect(selectorButton).toHaveStyle({ width: '240px' })
+    expect(selectorButton).toHaveStyle({ width: 'var(--model-selector-width, auto)' })
     expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
