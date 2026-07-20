@@ -517,7 +517,7 @@ function LiveProcessingPreview({
     const scrollArea = scrollRef.current
     if (!scrollArea) return
     scrollArea.scrollTop = scrollArea.scrollHeight
-  }, [rows.length])
+  }, [rows.length, showThinking])
 
   return (
     <div className="ml-2 min-w-0 border-l border-border pl-3" data-testid="processing-live-preview">
