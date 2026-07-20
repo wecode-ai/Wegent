@@ -316,6 +316,30 @@ def test_share_info_remains_available_to_first_time_visitor(
     assert permission_sources.has_access is False
     assert permission_sources.sources == []
 
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        visitor,
+        ResourceRole.Reporter,
+        owner.id,
+    )
+
+    reporter_share_info = knowledge_share_service.get_kb_share_info(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+    reporter_permission_sources = knowledge_share_service.get_my_permission_sources(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+
+    assert reporter_share_info.name == "share-info-kb"
+    assert reporter_share_info.my_permission.has_access is False
+    assert reporter_permission_sources.has_access is False
+    assert reporter_permission_sources.effective_role == ResourceRole.Reporter.value
+
 
 @pytest.mark.unit
 def test_edit_direct_access_requirement_allows_developer(

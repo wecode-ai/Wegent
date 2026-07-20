@@ -161,6 +161,17 @@ class ExternalKnowledgeBaseListFilters:
     limit: int = 50
 
 
+@dataclass(frozen=True)
+class _DirectAccessPermissionContext:
+    """Permission inputs reused within one knowledge-list request."""
+
+    user: User
+    organization_names: frozenset[str]
+    group_roles: dict[str, GroupRole]
+    direct_members: tuple["ResourceMember", ...]
+    entity_result: "KnowledgeService.EntityAuthorizedKbsResult"
+
+
 class KnowledgeService:
     """Service for managing knowledge bases and documents using kinds table."""
 
@@ -418,6 +429,7 @@ class KnowledgeService:
         db: Session,
         knowledge_bases: list[Kind],
         user_id: int,
+        permission_context: _DirectAccessPermissionContext | None = None,
     ) -> list[Kind]:
         """Filter a bounded candidate set with batched permission sources."""
         if not knowledge_bases:
@@ -431,9 +443,62 @@ class KnowledgeService:
                 db.query(Kind.id).filter(Kind.id.in_(candidate_ids)),
                 user_id,
                 candidate_ids=candidate_ids,
+                permission_context=permission_context,
             ).all()
         }
         return [kb for kb in knowledge_bases if kb.id in allowed_ids]
+
+    @staticmethod
+    def _build_direct_access_permission_context(
+        db: Session,
+        user_id: int,
+        accessible_groups: list[str] | None = None,
+    ) -> _DirectAccessPermissionContext:
+        """Load reusable direct-access permission sources once."""
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+        groups = (
+            accessible_groups
+            if accessible_groups is not None
+            else get_user_groups(db, user_id)
+        )
+        organization_names = frozenset(
+            row[0]
+            for row in db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .all()
+        )
+        group_roles = get_effective_roles_in_groups(
+            db,
+            user_id,
+            [name for name in groups if name not in organization_names],
+        )
+        direct_members = tuple(
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        return _DirectAccessPermissionContext(
+            user=user,
+            organization_names=organization_names,
+            group_roles=group_roles,
+            direct_members=direct_members,
+            entity_result=KnowledgeService._collect_entity_authorized_kbs(
+                db,
+                user_id,
+                groups,
+            ),
+        )
 
     @staticmethod
     def _apply_direct_access_filter(
@@ -442,50 +507,35 @@ class KnowledgeService:
         user_id: int,
         *,
         candidate_ids: list[int] | None = None,
+        permission_context: _DirectAccessPermissionContext | None = None,
     ):
         """Apply read/edit direct-access requirements to a Kind query."""
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        user = KnowledgeService._get_user_or_raise(db, user_id)
-        accessible_groups = get_user_groups(db, user_id)
-        organization_names = {
-            row[0]
-            for row in db.query(Namespace.name)
-            .filter(
-                Namespace.level == GroupLevel.organization.value,
-                Namespace.is_active == True,
-            )
-            .all()
-        }
-        group_names = [
-            group_name
-            for group_name in accessible_groups
-            if group_name not in organization_names
-        ]
-        group_roles = get_effective_roles_in_groups(db, user_id, group_names)
+        context = permission_context or (
+            KnowledgeService._build_direct_access_permission_context(db, user_id)
+        )
+        if context.user.id != user_id:
+            raise ValueError("Permission context user does not match request user")
         editable_group_names = [
             group_name
-            for group_name, role in group_roles.items()
+            for group_name, role in context.group_roles.items()
             if has_permission(role, BaseRole.Developer)
         ]
         restricted_group_names = [
             group_name
-            for group_name, role in group_roles.items()
+            for group_name, role in context.group_roles.items()
             if role == GroupRole.RestrictedAnalyst
         ]
 
-        member_query = db.query(ResourceMember).filter(
-            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-            ResourceMember.entity_type == "user",
-            ResourceMember.entity_id == str(user_id),
-            ResourceMember.status == MemberStatus.APPROVED.value,
-        )
-        if candidate_ids is not None:
-            member_query = member_query.filter(
-                ResourceMember.resource_id.in_(candidate_ids)
+        candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
+        direct_members = (
+            context.direct_members
+            if candidate_id_set is None
+            else tuple(
+                member
+                for member in context.direct_members
+                if member.resource_id in candidate_id_set
             )
-        direct_members = member_query.all()
+        )
         direct_editable_ids = {
             member.resource_id
             for member in direct_members
@@ -497,15 +547,10 @@ class KnowledgeService:
             if member.get_effective_role() == BaseRole.RestrictedAnalyst.value
         }
 
-        entity_result = KnowledgeService._collect_entity_authorized_kbs(
-            db,
-            user_id,
-            accessible_groups,
-        )
         entity_editable_ids = {
             knowledge_base_id
-            for knowledge_base_id, roles in entity_result.member_role_map.items()
-            if candidate_ids is None or knowledge_base_id in candidate_ids
+            for knowledge_base_id, roles in context.entity_result.member_role_map.items()
+            if candidate_id_set is None or knowledge_base_id in candidate_id_set
             if any(has_permission(role, BaseRole.Developer) for role in roles)
         }
         editable_ids = direct_editable_ids | entity_editable_ids
@@ -515,8 +560,8 @@ class KnowledgeService:
             edit_conditions.append(Kind.id.in_(editable_ids))
         if editable_group_names:
             edit_conditions.append(Kind.namespace.in_(editable_group_names))
-        if user.role == "admin" and organization_names:
-            edit_conditions.append(Kind.namespace.in_(organization_names))
+        if context.user.role == "admin" and context.organization_names:
+            edit_conditions.append(Kind.namespace.in_(context.organization_names))
 
         requirement = _knowledge_base_json_text(
             db,
@@ -2058,8 +2103,12 @@ class KnowledgeService:
         Returns:
             AccessibleKnowledgeResponse with personal, team, and organization knowledge bases
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        accessible_groups = get_user_groups(db, user_id)
+        permission_context = KnowledgeService._build_direct_access_permission_context(
+            db,
+            user_id,
+            accessible_groups,
+        )
 
         # Get personal knowledge bases (created by user)
         personal_kbs = (
@@ -2074,7 +2123,7 @@ class KnowledgeService:
             .all()
         )
         personal_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-            db, personal_kbs, user_id
+            db, personal_kbs, user_id, permission_context
         )
 
         personal = [
@@ -2108,7 +2157,7 @@ class KnowledgeService:
                 .all()
             )
             bound_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, bound_kbs, user_id
+                db, bound_kbs, user_id, permission_context
             )
 
             for kb in bound_kbs:
@@ -2128,25 +2177,13 @@ class KnowledgeService:
                 )
 
         # Include KBs shared directly to the user via ResourceMember (entity_type=user)
-        direct_shared_rows = (
-            db.query(ResourceMember.resource_id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        direct_shared_ids = {row[0] for row in direct_shared_rows}
+        direct_shared_ids = {
+            member.resource_id for member in permission_context.direct_members
+        }
 
         # Get team knowledge bases grouped by namespace
-        accessible_groups = get_user_groups(db, user_id)
-
         # Include KBs shared via entity-type bindings (namespace / external resolvers)
-        entity_result = KnowledgeService._collect_entity_authorized_kbs(
-            db, user_id, accessible_groups
-        )
+        entity_result = permission_context.entity_result
         entity_shared_ids = {kb.id for kb in entity_result.entity_shared_to_me_kbs}
 
         extra_shared_ids = (
@@ -2165,7 +2202,7 @@ class KnowledgeService:
                 .all()
             )
             shared_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, shared_kbs, user_id
+                db, shared_kbs, user_id, permission_context
             )
             for kb in shared_kbs:
                 if kb.id in included_personal_ids:
@@ -2209,7 +2246,7 @@ class KnowledgeService:
                 .all()
             )
             group_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, group_kbs, user_id
+                db, group_kbs, user_id, permission_context
             )
 
             if group_kbs:
@@ -2247,12 +2284,17 @@ class KnowledgeService:
             .order_by(Kind.updated_at.desc())
             .all()
         )
-        org_kbs = [
-            (kb, namespace)
-            for kb, namespace in org_kbs
-            if KnowledgeService.can_directly_access_knowledge_base(
-                db, kb.id, user_id, kb=kb
+        accessible_org_ids = {
+            kb.id
+            for kb in KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db,
+                [kb for kb, _namespace in org_kbs],
+                user_id,
+                permission_context,
             )
+        }
+        org_kbs = [
+            (kb, namespace) for kb, namespace in org_kbs if kb.id in accessible_org_ids
         ]
 
         if org_kbs:
@@ -2307,8 +2349,9 @@ class KnowledgeService:
         Returns:
             Dict with 'created_by_me' and 'shared_with_me' lists
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
+        permission_context = KnowledgeService._build_direct_access_permission_context(
+            db, user_id
+        )
 
         # Get KBs created by user (personal knowledge bases, namespace=default)
         created_kbs = (
@@ -2323,28 +2366,17 @@ class KnowledgeService:
             .all()
         )
         created_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-            db, created_kbs, user_id
+            db, created_kbs, user_id, permission_context
         )
 
         # Get KB IDs that are shared with the user via ResourceMember
-        shared_kb_ids = (
-            db.query(ResourceMember.resource_id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        shared_kb_ids = [p[0] for p in shared_kb_ids]
+        shared_kb_ids = [
+            member.resource_id for member in permission_context.direct_members
+        ]
 
         # Include KBs accessible via entity-type bindings (namespace / external resolvers).
         # Restrict to personal-scope (namespace=default) to match this grouping's semantics.
-        accessible_groups = get_user_groups(db, user_id)
-        entity_result = KnowledgeService._collect_entity_authorized_kbs(
-            db, user_id, accessible_groups
-        )
+        entity_result = permission_context.entity_result
         if entity_result.entity_personal_kb_ids:
             shared_kb_ids = list(
                 set(shared_kb_ids) | entity_result.entity_personal_kb_ids
@@ -2366,7 +2398,7 @@ class KnowledgeService:
                 .all()
             )
             shared_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, shared_kbs, user_id
+                db, shared_kbs, user_id, permission_context
             )
 
         # Batch fetch document counts for all KBs to avoid N+1 queries
@@ -2956,10 +2988,10 @@ class KnowledgeService:
         Returns:
             AllGroupedKnowledgeResponse with personal, groups, organization, and summary sections
         """
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        user = KnowledgeService._get_user_or_raise(db, user_id)
+        permission_context = KnowledgeService._build_direct_access_permission_context(
+            db, user_id
+        )
+        user = permission_context.user
 
         # 1. Get personal knowledge bases created by user (single query)
         personal_created = (
@@ -2974,28 +3006,19 @@ class KnowledgeService:
             .all()
         )
         personal_created = KnowledgeService._filter_directly_accessible_knowledge_bases(
-            db, personal_created, user_id
+            db, personal_created, user_id, permission_context
         )
 
         # 2. Get shared knowledge bases with their roles and inviters (single query)
-        shared_members = (
-            db.query(
-                ResourceMember.resource_id,
-                ResourceMember.role,
-                ResourceMember.invited_by_user_id,
-            )
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        shared_kb_ids = [p[0] for p in shared_members]
-        shared_kb_roles: dict[int, str] = {p[0]: p[1] for p in shared_members}
+        shared_members = permission_context.direct_members
+        shared_kb_ids = [member.resource_id for member in shared_members]
+        shared_kb_roles: dict[int, str] = {
+            member.resource_id: member.role for member in shared_members
+        }
         shared_kb_inviter_map: dict[int, int] = {
-            p[0]: p[2] for p in shared_members if p[2]
+            member.resource_id: member.invited_by_user_id
+            for member in shared_members
+            if member.invited_by_user_id
         }
 
         shared_kbs: list[Kind] = []
@@ -3012,7 +3035,7 @@ class KnowledgeService:
                 .all()
             )
             shared_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, shared_kbs, user_id
+                db, shared_kbs, user_id, permission_context
             )
 
         shared_namespace_names = {
@@ -3087,7 +3110,7 @@ class KnowledgeService:
                 .all()
             )
             group_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, group_kbs, user_id
+                db, group_kbs, user_id, permission_context
             )
         group_kb_map = {kb.id: kb for kb in group_kbs}
 
@@ -3099,18 +3122,22 @@ class KnowledgeService:
                 remaining_shared_group_kbs.append(kb)
 
         # 4b. Collect entity-authorized KBs via external resolver
-        entity_result = KnowledgeService._collect_entity_authorized_kbs(
-            db, user_id, accessible_groups
-        )
+        entity_result = permission_context.entity_result
         entity_personal_kb_ids = entity_result.entity_personal_kb_ids
         entity_shared_to_me_kbs = (
             KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, entity_result.entity_shared_to_me_kbs, user_id
+                db,
+                entity_result.entity_shared_to_me_kbs,
+                user_id,
+                permission_context,
             )
         )
         shared_into_group_kbs = (
             KnowledgeService._filter_directly_accessible_knowledge_bases(
-                db, entity_result.shared_into_group_kbs, user_id
+                db,
+                entity_result.shared_into_group_kbs,
+                user_id,
+                permission_context,
             )
         )
         entity_member_group_map = entity_result.member_group_map
@@ -3136,7 +3163,7 @@ class KnowledgeService:
             .all()
         )
         org_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
-            db, org_kbs, user_id
+            db, org_kbs, user_id, permission_context
         )
 
         organization_namespaces = (

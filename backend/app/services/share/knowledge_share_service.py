@@ -131,7 +131,8 @@ class KnowledgeShareService(UnifiedShareService):
         4. Team membership (for team knowledge bases)
 
         Note: For group KBs, Restricted Analysts are denied access regardless of
-        explicit permissions (creator or ResourceMember grants).
+        explicit permissions (creator or ResourceMember grants). The KB's direct-
+        access requirement is applied after these ACL checks.
         """
         logger.info(
             f"[_get_resource] Fetching KnowledgeBase: resource_id={resource_id}, user_id={user_id}"
@@ -817,8 +818,15 @@ class KnowledgeShareService(UnifiedShareService):
         # Check if user is creator
         is_creator = kb.user_id == user_id
         if is_creator and not is_restricted:
+            from app.services.knowledge.knowledge_service import KnowledgeService
+
             return MyKBPermissionResponse(
-                has_access=True,
+                has_access=KnowledgeService._meets_direct_access_requirement(
+                    kb=kb,
+                    has_access=True,
+                    role=BaseRole.Owner,
+                    is_creator=True,
+                ),
                 role=SchemaMemberRole.Owner,
                 is_creator=True,
                 pending_request=None,
@@ -849,14 +857,16 @@ class KnowledgeShareService(UnifiedShareService):
 
         from app.services.knowledge.knowledge_service import KnowledgeService
 
-        has_access, merged_role, is_creator = KnowledgeService._get_user_kb_permission(
-            db, knowledge_base_id, user_id, kb=kb
+        raw_has_access, merged_role, is_creator = (
+            KnowledgeService._get_user_kb_permission(
+                db, knowledge_base_id, user_id, kb=kb
+            )
         )
 
         # If user already has access and the pending role is not higher than
         # the current effective role, suppress the pending request to avoid
         # UX confusion (user already has access via entity permission, etc.)
-        if pending_request and has_access and merged_role:
+        if pending_request and raw_has_access and merged_role:
             pending_role = (
                 pending_request.role.value
                 if hasattr(pending_request.role, "value")
@@ -864,6 +874,13 @@ class KnowledgeShareService(UnifiedShareService):
             )
             if has_permission(merged_role, pending_role):
                 pending_request = None
+
+        has_access = KnowledgeService._meets_direct_access_requirement(
+            kb=kb,
+            has_access=raw_has_access,
+            role=merged_role,
+            is_creator=is_creator,
+        )
 
         return MyKBPermissionResponse(
             has_access=has_access,
@@ -1103,6 +1120,15 @@ class KnowledgeShareService(UnifiedShareService):
 
         has_access, is_creator, effective_role, sources = self._compute_kb_access_core(
             db, kb, user_id, include_sources=True
+        )
+
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        has_access = KnowledgeService._meets_direct_access_requirement(
+            kb=kb,
+            has_access=has_access,
+            role=(BaseRole(effective_role) if effective_role is not None else None),
+            is_creator=is_creator,
         )
 
         return MyPermissionSourcesResponse(
