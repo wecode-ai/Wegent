@@ -46,6 +46,12 @@ fn run() -> Result<(), String> {
     let mut restart_requested = true;
 
     loop {
+        if parent_process_exited(parent_process_id) {
+            eprintln!("wegent-executor dev reload parent exited; shutting down");
+            stop_child(&mut child);
+            return Ok(());
+        }
+
         if restart_requested {
             stop_child(&mut child);
             child = rebuild_and_spawn(&manifest_dir, &manifest_path, &executor_args)?;
@@ -70,12 +76,6 @@ fn run() -> Result<(), String> {
                 stop_child(&mut child);
                 return Err("dev reload event channel disconnected".to_owned());
             }
-        }
-
-        if parent_process_exited(parent_process_id) {
-            eprintln!("wegent-executor dev reload parent exited; shutting down");
-            stop_child(&mut child);
-            return Ok(());
         }
 
         if child_exited(&mut child)? {
