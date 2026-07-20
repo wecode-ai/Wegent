@@ -129,11 +129,12 @@ describe('createVncAssetsMiddleware', () => {
     middleware(request('/wework/unknown.js'), res.value, next)
 
     expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith()
     expect(res.setHeader).not.toHaveBeenCalled()
     expect(res.end).not.toHaveBeenCalled()
   })
 
-  test('calls next when a matching source file cannot be read', () => {
+  test('passes a matching source read error to next', () => {
     const middleware = createVncAssetsMiddleware('/', resolve(assetsDirectory, 'missing-directory'))
     const next = vi.fn()
     const res = response()
@@ -141,6 +142,7 @@ describe('createVncAssetsMiddleware', () => {
     middleware(request('/vnc.html'), res.value, next)
 
     expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(res.setHeader).not.toHaveBeenCalled()
     expect(res.end).not.toHaveBeenCalled()
   })

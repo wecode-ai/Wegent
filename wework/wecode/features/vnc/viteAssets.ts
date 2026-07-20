@@ -60,8 +60,8 @@ export function createVncAssetsMiddleware(
       response.statusCode = 200
       response.setHeader('Content-Type', asset.mime)
       response.end(source)
-    } catch {
-      next()
+    } catch (error) {
+      next(error)
     }
   }
 }
