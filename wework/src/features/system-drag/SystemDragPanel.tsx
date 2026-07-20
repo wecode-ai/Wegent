@@ -195,64 +195,75 @@ export function SystemDragPanel() {
   return (
     <main data-testid="system-drag-panel" className="mx-auto h-[72px] w-[440px] bg-transparent p-1">
       <section className="relative h-full overflow-hidden rounded-xl border border-border bg-background/95 shadow-lg backdrop-blur-md">
-        <div
-          data-testid="system-drag-brand"
-          className="pointer-events-none absolute left-3 top-1.5 z-10 text-xs font-semibold leading-none tracking-[0.02em] text-text-muted"
-        >
-          Wework
-        </div>
-        {dropStatus && completedZone ? (
-          <div
-            data-testid={`system-drag-${dropStatus.kind}-feedback`}
-            className="flex h-full items-center justify-center gap-2 px-4 pt-2 text-center"
-            role="status"
+        <div className="flex h-full">
+          <aside
+            data-testid="system-drag-brand"
+            className="pointer-events-none flex w-16 shrink-0 flex-col items-center justify-center gap-0.5 border-r border-border/70 bg-muted/40"
           >
-            <span
-              className={`flex h-7 w-7 items-center justify-center rounded-lg ${dropStatus.kind === 'success' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}`}
-            >
-              {dropStatus.kind === 'success' ? (
-                <Check className="h-4 w-4" />
-              ) : (
-                <AlertCircle className="h-4 w-4" />
-              )}
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-text-primary text-xs font-bold text-background">
+              W
             </span>
-            <div>
-              <div className="text-xs font-medium">
-                {dropStatus.kind === 'success'
-                  ? t('workbench.system_drag_added', '已添加')
-                  : t('workbench.system_drag_failed', '添加失败')}
-              </div>
-              <div className="text-xs text-text-muted">{completedZone.title}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex h-full items-stretch p-1 pt-2.5">
-            {zones
-              .filter(zone => zone.action !== 'follow-up' || conversationTitle)
-              .map(({ action, icon: Icon, title, detail }) => (
-                <div
-                  key={action}
-                  data-testid={`system-drag-${action}-zone`}
-                  className={`relative flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 text-left transition-colors duration-150 after:absolute after:-right-0.5 after:top-2 after:h-[calc(100%-1rem)] after:w-px after:bg-border last:after:hidden ${activeAction === action ? 'border-text-primary/15 bg-muted shadow-sm' : 'border-transparent'}`}
-                  onDragOver={event => {
-                    event.preventDefault()
-                    setActiveAction(action)
-                  }}
-                  onDrop={event => handleTextDrop(action, event)}
-                >
-                  <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${activeAction === action ? 'bg-text-primary text-background' : 'bg-muted text-text-secondary'}`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </span>
-                  <div className="min-w-0 max-w-full">
-                    <div className="truncate text-xs font-medium">{title}</div>
-                    <div className="truncate text-xs leading-none text-text-muted">{detail}</div>
-                  </div>
+            <span className="text-xs font-semibold leading-none tracking-tight text-text-secondary">
+              Wework
+            </span>
+          </aside>
+          {dropStatus && completedZone ? (
+            <div
+              data-testid={`system-drag-${dropStatus.kind}-feedback`}
+              className="flex min-w-0 flex-1 items-center justify-center gap-2 px-4 text-center"
+              role="status"
+            >
+              <span
+                className={`flex h-7 w-7 items-center justify-center rounded-lg ${dropStatus.kind === 'success' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}`}
+              >
+                {dropStatus.kind === 'success' ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <AlertCircle className="h-4 w-4" />
+                )}
+              </span>
+              <div>
+                <div className="text-xs font-medium">
+                  {dropStatus.kind === 'success'
+                    ? t('workbench.system_drag_added', '已添加')
+                    : t('workbench.system_drag_failed', '添加失败')}
                 </div>
-              ))}
-          </div>
-        )}
+                <div className="text-xs text-text-muted">{completedZone.title}</div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-stretch p-1">
+              {zones
+                .filter(zone => zone.action !== 'follow-up' || conversationTitle)
+                .map(({ action, icon: Icon, title, detail }) => (
+                  <div
+                    key={action}
+                    data-testid={`system-drag-${action}-zone`}
+                    className={`relative flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 text-left transition-colors duration-150 after:absolute after:-right-0.5 after:top-2 after:h-[calc(100%-1rem)] after:w-px after:bg-border last:after:hidden ${activeAction === action ? 'border-text-primary/15 bg-muted shadow-sm' : 'border-transparent'}`}
+                    onDragOver={event => {
+                      event.preventDefault()
+                      setActiveAction(action)
+                    }}
+                    onDrop={event => handleTextDrop(action, event)}
+                  >
+                    <span
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${activeAction === action ? 'bg-text-primary text-background' : 'bg-muted text-text-secondary'}`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="min-w-0 max-w-full">
+                      <div className="truncate text-xs font-medium">{title}</div>
+                      <div className="truncate text-xs leading-none text-text-muted">
+                        {activeAction === action
+                          ? t('workbench.system_drag_release', '松开即可添加')
+                          : detail}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
       </section>
     </main>
   )

@@ -90,6 +90,7 @@ describe('SystemDragPanel', () => {
     fireEvent.dragOver(stashZone)
 
     expect(stashZone).toHaveClass('border-text-primary/15', 'bg-muted', 'shadow-sm')
+    expect(stashZone).toHaveTextContent('松开即可添加')
   })
 
   test('accepts dragged text through the browser drop event', async () => {
