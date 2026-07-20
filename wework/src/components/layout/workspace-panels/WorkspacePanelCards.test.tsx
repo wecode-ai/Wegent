@@ -825,6 +825,34 @@ describe('WorkspacePanelCards', () => {
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
 
+  test('starts a device terminal for a remote workspace with local-looking project config', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('local-device')
+    localPathExistsMock.mockResolvedValue(false)
+
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        workspaceTarget={{
+          deviceId: 'device-1',
+          path: '/workspace/cloud/Desktop',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startDeviceTerminalMock).toHaveBeenCalledWith('device-1', '/workspace/cloud/Desktop')
+    )
+    expect(localPathExistsMock).not.toHaveBeenCalled()
+    expect(startLocalTerminalMock).not.toHaveBeenCalled()
+    expect(startProjectTerminalMock).not.toHaveBeenCalled()
+    expect(screen.queryByText('启动失败')).not.toBeInTheDocument()
+  })
+
   test('starts remote IDE on the active runtime workspace device and path', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
 
