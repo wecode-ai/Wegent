@@ -173,6 +173,10 @@ mod tests {
     const SESSION_ID: &str = "123e4567-e89b-42d3-a456-426614174000";
     const WS_URL: &str = "wss://cloud.example.com/vnc-proxy/device-1?quality=high";
     const TOKEN: &str = "bearer-token_123";
+    const VNC_HTML: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../wecode/features/vnc/assets/vnc.html"
+    ));
 
     #[test]
     fn stores_and_returns_a_valid_session_without_changing_its_expiry() {
@@ -331,7 +335,7 @@ mod tests {
 
     #[test]
     fn vnc_page_fetches_credentials_over_ipc_instead_of_the_page_url() {
-        let html = include_str!("../../public/vnc.html");
+        let html = VNC_HTML;
 
         assert!(html.contains("params.get('sessionId')"));
         assert!(html.contains("get_vnc_session_config"));
@@ -344,7 +348,7 @@ mod tests {
 
     #[test]
     fn vnc_page_does_not_render_errors_with_html_injection_sinks() {
-        let html = include_str!("../../public/vnc.html");
+        let html = VNC_HTML;
 
         assert!(html.contains("errorText.textContent = msg"));
         assert!(!html.contains(".innerHTML"));

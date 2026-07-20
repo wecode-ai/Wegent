@@ -1,6 +1,7 @@
 import path from 'path'
 import fs from 'fs'
-import { createLogger, defineConfig } from 'vite'
+import { pathToFileURL } from 'node:url'
+import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
@@ -20,6 +21,14 @@ const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
   ? internalExtensionsDir
   : path.resolve(__dirname, './src/extensions')
+const internalVncAssetsPluginPath = path.resolve(__dirname, './wecode/features/vnc/viteAssets.ts')
+const internalVncAssetsPlugin = fs.existsSync(internalVncAssetsPluginPath)
+  ? (
+      (await import(pathToFileURL(internalVncAssetsPluginPath).href)) as {
+        createVncAssetsPlugin: () => Plugin
+      }
+    ).createVncAssetsPlugin()
+  : null
 const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
@@ -42,6 +51,7 @@ export default defineConfig({
       copyAssets: true,
       chunkStrategy: 'renderer',
     }),
+    ...(internalVncAssetsPlugin ? [internalVncAssetsPlugin] : []),
   ],
   define: {
     __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),

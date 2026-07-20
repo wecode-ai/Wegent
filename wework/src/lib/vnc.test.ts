@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { buildVncPageUrl, isInternalVncPageUrl, prepareVncSession } from './vnc'
 
 const invokeMock = vi.hoisted(() => vi.fn())
-const vncHtml = readFileSync(resolve(process.cwd(), 'public/vnc.html'), 'utf8')
+const vncHtml = readFileSync(resolve(process.cwd(), 'wecode/features/vnc/assets/vnc.html'), 'utf8')
 const vncInlineScript = Array.from(vncHtml.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))
   .map(match => match[1])
   .find(script => script.includes('authenticatedWebSocketUrl'))
