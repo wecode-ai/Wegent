@@ -66,7 +66,7 @@ export function AddContextMenu({
             type="button"
             data-testid="attach-files-button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm font-medium leading-[18px] text-text-primary hover:bg-muted"
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base font-medium leading-[18px] text-text-primary hover:bg-muted"
           >
             <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
             <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
@@ -76,7 +76,7 @@ export function AddContextMenu({
               type="button"
               data-testid="set-plan-mode-button"
               onClick={handleSetPlanMode}
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary hover:bg-muted"
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
             >
               <ClipboardList className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
               <span className="min-w-0 truncate">
@@ -92,7 +92,7 @@ export function AddContextMenu({
               type="button"
               data-testid="set-goal-button"
               onClick={handleSetGoal}
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary hover:bg-muted"
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-base leading-[18px] text-text-primary hover:bg-muted"
             >
               <Target className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
               <span className="min-w-0 truncate">

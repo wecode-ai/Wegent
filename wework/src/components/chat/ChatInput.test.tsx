@@ -723,7 +723,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'py-[14px]',
       'scrollbar-none',
-      'text-sm',
+      'text-chat',
       'leading-5'
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(

@@ -858,7 +858,7 @@ function UserMessage({
         ) : displayContent ? (
           <div
             className={[
-              'overflow-hidden rounded-2xl bg-muted text-sm leading-5 text-text-primary',
+              'overflow-hidden rounded-2xl bg-muted text-base leading-5 text-text-primary',
               hasImagePreviews ? 'max-w-[80%]' : 'max-w-full',
             ].join(' ')}
           >
@@ -979,7 +979,7 @@ function UserMessageEditForm({
   return (
     <div
       data-testid="edit-user-message-form"
-      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-sm leading-5 text-text-primary"
+      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-base leading-5 text-text-primary"
     >
       <textarea
         ref={textareaRef}
@@ -1000,7 +1000,7 @@ function UserMessageEditForm({
             onCancel?.()
           }
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-sm leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -1008,7 +1008,7 @@ function UserMessageEditForm({
           data-testid="cancel-edit-user-message-button"
           disabled={submitting}
           onClick={onCancel}
-          className="flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md px-3 text-base font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
         >
           取消
         </button>
@@ -1017,7 +1017,7 @@ function UserMessageEditForm({
           data-testid="submit-edit-user-message-button"
           disabled={submitDisabled}
           onClick={submit}
-          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-base font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           发送
         </button>

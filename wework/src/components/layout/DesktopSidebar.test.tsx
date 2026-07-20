@@ -686,9 +686,9 @@ describe('DesktopSidebar', () => {
       expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
     }
     expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
-    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
-    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
-    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
+    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
     expect(newTaskIcon).toHaveClass('text-current')
     expect(cloudIcon).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     expect(projectsTitle).toHaveClass(
