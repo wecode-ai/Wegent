@@ -14,6 +14,7 @@
     "api_keys": "API Keys",
     "system_config": "System Config",
     "im_channels": "IM Channels",
+    "connector_apps": "Apps",
     "monitor": "Subscription Monitor",
     "device_monitor": "Device Monitor"
   },
@@ -1055,6 +1056,72 @@
       "restart_all_cloud_title": "Confirm Restart All Cloud Devices",
       "restart_all_cloud_message": "This will send restart commands to all cloud devices and may interrupt running tasks. Confirm before continuing.",
       "restart_all_cloud_confirm": "Confirm Restart"
+    }
+  },
+  "connector_apps": {
+    "title": "App Connections",
+    "description": "Publish remote MCP apps and control their authentication, visibility, and tool access.",
+    "create": "Add App",
+    "edit": "Edit app",
+    "disable": "Disable app",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "empty": "No apps have been configured.",
+    "connections": "{{count}} user connections",
+    "confirm_disable": "Disable “{{name}}”? Existing connections will be deleted and users must authorize again after re-enabling.",
+    "auth": {
+      "none": "No user auth",
+      "bearer": "Bearer token",
+      "oauth2": "OAuth 2.0"
+    },
+    "visibility": {
+      "all": "All users",
+      "roles": "Selected roles"
+    },
+    "dialog": {
+      "create_title": "Add app",
+      "edit_title": "Edit app",
+      "description": "The upstream service must expose a Streamable HTTP or SSE MCP endpoint. Secrets are encrypted and never returned by the API."
+    },
+    "fields": {
+      "name": "Display name",
+      "slug": "Unique slug",
+      "description": "Description",
+      "mcp_url": "MCP endpoint URL",
+      "transport": "MCP transport",
+      "icon_url": "Icon URL",
+      "auth_type": "User authentication",
+      "visibility": "Visibility",
+      "allowed_roles": "Allowed roles",
+      "oauth_authorization_url": "OAuth authorization URL",
+      "oauth_token_url": "OAuth token URL",
+      "oauth_client_id": "OAuth client ID",
+      "oauth_client_auth_method": "OAuth token endpoint authentication",
+      "oauth_client_secret": "OAuth client secret",
+      "clear_oauth_secret": "Clear the saved OAuth client secret",
+      "oauth_scopes": "OAuth scopes",
+      "provider_headers": "Provider headers",
+      "clear_provider_headers": "Clear saved provider headers",
+      "tool_allowlist": "Tool allowlist",
+      "enabled": "Make this app available to users"
+    },
+    "hints": {
+      "lines": "Enter one value per line.",
+      "allowlist": "One upstream tool name per line. Leave empty to expose all tools.",
+      "headers_json": "Optional JSON object. Values are stored encrypted.",
+      "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them.",
+      "secret_configured": "A secret is configured. Leave empty to retain it."
+    },
+    "success": {
+      "saved": "App saved",
+      "disabled": "App disabled"
+    },
+    "errors": {
+      "load_failed": "Failed to load apps",
+      "save_failed": "Failed to save app",
+      "disable_failed": "Failed to disable app",
+      "required": "Name, slug, and MCP URL are required",
+      "provider_headers_invalid": "Provider headers must be a JSON object with string values"
     }
   },
   "templates": {

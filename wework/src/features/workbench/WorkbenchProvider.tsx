@@ -18,6 +18,8 @@ import {
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
   LocalDeviceSkill,
@@ -1196,23 +1198,63 @@ export function WorkbenchProvider({
     } catch (error) {
       console.warn('[Wework] Failed to load local Codex apps; continuing with skills only.', error)
     }
+    if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
+      try {
+        const connectorApps = await listWegentConnectorApps(
+          cloudConnection.apiBaseUrl,
+          cloudConnection.token
+        )
+        const connectedApps = connectorApps.filter(app => app.connection.status === 'connected')
+        const synced = await requestLocalExecutor<{
+          apps: Array<{ slug: string; skillPath: string }>
+        }>('runtime.connectors.apps.sync', {
+          apps: connectedApps.map(app => ({
+            slug: app.slug,
+            name: app.name,
+            description: app.description,
+          })),
+        })
+        const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
+        apps.push(
+          ...connectedApps.map(app => ({
+            id: `wegent:${app.slug}`,
+            name: app.name,
+            description: app.description,
+            logoUrl: app.icon_url,
+            isAccessible: true,
+            isEnabled: true,
+            pluginDisplayNames: ['Wegent Cloud'],
+            source: 'wegent-connector',
+            skillPath: skillPathBySlug.get(app.slug) ?? null,
+          }))
+        )
+      } catch (error) {
+        console.warn('[Wework] Failed to load Wegent connector apps.', error)
+      }
+    }
     localAppsCacheRef.current = {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       apps,
     }
     return apps
-  }, [localPluginApi])
+  }, [
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.token,
+    localPluginApi,
+  ])
 
   useEffect(() => {
     const clearLocalSkillCache = () => {
       localSkillsCacheRef.current.clear()
       localAppsCacheRef.current = null
     }
+    clearLocalSkillCache()
     window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     return () => {
       window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
     }
-  }, [])
+  }, [cloudConnection.apiBaseUrl, cloudConnection.isConnected, cloudConnection.token])
 
   const workspaceFileApi = useMemo(
     () => ({
@@ -1646,6 +1688,7 @@ export function WorkbenchProvider({
       <WorkbenchPaneContext.Provider value={paneValue}>
         <RuntimeTaskCloseGuard runtimeWork={state.runtimeWork} />
         <LocalExecutorCloudBridge
+          apiBaseUrl={cloudConnection.apiBaseUrl}
           backendUrl={cloudConnection.backendUrl}
           isConnected={cloudConnection.isConnected}
           token={cloudConnection.token}
