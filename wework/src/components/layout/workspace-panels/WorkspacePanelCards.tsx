@@ -1,8 +1,7 @@
-import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { File, FileDiff, Globe2, Loader2, SquareTerminal, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -55,7 +54,7 @@ interface WorkspacePanelCardsProps {
   workspaceSessionApi?: WorkspaceSessionApi
 }
 
-type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
+type WorkspaceTool = 'terminal' | 'ide'
 
 type WorkspaceToolAvailability = Record<WorkspaceTool, boolean>
 
@@ -69,20 +68,10 @@ interface WorkspaceToolErrorState {
   message: string | null
 }
 
-type WorkspaceToolLoadingState =
-  | {
-      tool: 'terminal' | 'ide'
-      projectKey: string
-    }
-  | {
-      tool: 'desktop'
-      projectKey: string
-      connectedAt: string | null
-      deviceId: string
-      requestGeneration: number
-      serviceKey: string
-      token: string | null
-    }
+interface WorkspaceToolLoadingState {
+  tool: WorkspaceTool | 'extension'
+  projectKey: string
+}
 
 interface LocalTerminalCheckState {
   key: string
@@ -108,7 +97,6 @@ function createAvailableTools(): WorkspaceToolAvailability {
   return {
     terminal: true,
     ide: true,
-    desktop: true,
   }
 }
 
@@ -196,7 +184,6 @@ export function WorkspacePanelCards({
   workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
-  const cloudConnection = useOptionalCloudConnection()
   const testId = useCallback(
     (value: string) => (testIdsEnabled ? value : undefined),
     [testIdsEnabled]
@@ -207,8 +194,6 @@ export function WorkspacePanelCards({
   const defaultOpenedProjectKeyRef = useRef<string | null>(null)
   const terminalSessionsRef = useRef<WorkspaceTerminalSession[]>([])
   const terminalProjectKeyRef = useRef<string | null>(null)
-  const mountedRef = useRef(true)
-  const desktopRequestGenerationRef = useRef(0)
   const [toolAvailability, setToolAvailability] = useState<WorkspaceToolAvailabilityState>(() => ({
     projectKey: '',
     tools: createAvailableTools(),
@@ -313,25 +298,8 @@ export function WorkspacePanelCards({
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
-  const loadingTool =
-    loadingToolState?.projectKey === projectKey &&
-    (loadingToolState.tool !== 'desktop' ||
-      (cloudConnection.isConnected &&
-        loadingToolState.connectedAt === cloudConnection.connectedAt &&
-        loadingToolState.deviceId === activeWorkspaceDeviceId &&
-        loadingToolState.serviceKey === cloudConnection.serviceKey &&
-        loadingToolState.token === cloudConnection.token))
-      ? loadingToolState.tool
-      : null
+  const loadingTool = loadingToolState?.projectKey === projectKey ? loadingToolState.tool : null
   const toolsDisabled = !hasWorkspaceContext || Boolean(loadingTool)
-  const latestDesktopRequestContextRef = useRef({
-    connectedAt: cloudConnection.connectedAt,
-    deviceId: activeWorkspaceDeviceId,
-    isConnected: cloudConnection.isConnected,
-    projectKey,
-    serviceKey: cloudConnection.serviceKey,
-    token: cloudConnection.token,
-  })
   const activeTerminalSession =
     terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
     terminalSessions[0] ??
@@ -348,13 +316,6 @@ export function WorkspacePanelCards({
     }
   }, [activeTerminalTitle, onTerminalTitleChange])
 
-  useLayoutEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-
   useEffect(() => {
     return () => {
       terminalSessionsRef.current.forEach(session => {
@@ -364,34 +325,6 @@ export function WorkspacePanelCards({
       })
     }
   }, [])
-
-  useLayoutEffect(() => {
-    latestDesktopRequestContextRef.current = {
-      connectedAt: cloudConnection.connectedAt,
-      deviceId: activeWorkspaceDeviceId,
-      isConnected: cloudConnection.isConnected,
-      projectKey,
-      serviceKey: cloudConnection.serviceKey,
-      token: cloudConnection.token,
-    }
-    const contextGeneration = desktopRequestGenerationRef.current + 1
-    desktopRequestGenerationRef.current = contextGeneration
-    queueMicrotask(() => {
-      if (!mountedRef.current) return
-      setLoadingToolState(current =>
-        current?.tool === 'desktop' && current.requestGeneration < contextGeneration
-          ? null
-          : current
-      )
-    })
-  }, [
-    activeWorkspaceDeviceId,
-    cloudConnection.connectedAt,
-    cloudConnection.isConnected,
-    cloudConnection.serviceKey,
-    cloudConnection.token,
-    projectKey,
-  ])
 
   useEffect(() => {
     if (terminalProjectKeyRef.current === null) {
@@ -490,6 +423,21 @@ export function WorkspacePanelCards({
     },
     [projectKey]
   )
+
+  const handleExtensionBusyChange = useCallback(
+    (busy: boolean) => {
+      setLoadingToolState(current => {
+        if (busy) return { projectKey, tool: 'extension' }
+        if (current?.projectKey === projectKey && current.tool === 'extension') return null
+        return current
+      })
+    },
+    [projectKey]
+  )
+
+  const handleExtensionOpened = useCallback(() => {
+    onRequestClose?.()
+  }, [onRequestClose])
 
   const getSessionStartErrorMessage = useCallback(
     () => t('workbench.project_tool_start_failed', '启动失败'),
@@ -760,68 +708,6 @@ export function WorkspacePanelCards({
       )
       if (shouldClosePanel) {
         onRequestClose?.()
-      }
-    }
-  }
-
-  const handleDesktopClick = async () => {
-    if (
-      !activeWorkspaceDeviceId ||
-      loadingTool ||
-      !availableTools.desktop ||
-      !cloudDesktopExtension.available ||
-      !cloudConnection.isConnected ||
-      projectDevice?.status !== 'online'
-    ) {
-      return
-    }
-    const requestGeneration = desktopRequestGenerationRef.current + 1
-    desktopRequestGenerationRef.current = requestGeneration
-    const requestContext = {
-      connectedAt: cloudConnection.connectedAt,
-      deviceId: activeWorkspaceDeviceId,
-      projectKey,
-      serviceKey: cloudConnection.serviceKey,
-      token: cloudConnection.token,
-    }
-    setLoadingToolState({
-      tool: 'desktop',
-      ...requestContext,
-      requestGeneration,
-    })
-    setProjectError(null)
-    const isCurrentRequest = () => {
-      const latest = latestDesktopRequestContextRef.current
-      return (
-        mountedRef.current &&
-        desktopRequestGenerationRef.current === requestGeneration &&
-        latest.isConnected &&
-        latest.connectedAt === requestContext.connectedAt &&
-        latest.deviceId === requestContext.deviceId &&
-        latest.projectKey === requestContext.projectKey &&
-        latest.serviceKey === requestContext.serviceKey &&
-        latest.token === requestContext.token
-      )
-    }
-    try {
-      const opened = await cloudDesktopExtension.open({
-        connection: cloudConnection,
-        deviceId: activeWorkspaceDeviceId,
-        isCurrent: isCurrentRequest,
-      })
-      if (!opened) return
-      onRequestClose?.()
-    } catch (e) {
-      if (!isCurrentRequest()) return
-      console.error('Failed to open project desktop:', e)
-      setProjectError(t('workbench.project_tool_start_failed', '启动失败'))
-    } finally {
-      if (mountedRef.current && desktopRequestGenerationRef.current === requestGeneration) {
-        setLoadingToolState(current =>
-          current?.tool === 'desktop' && current.requestGeneration === requestGeneration
-            ? null
-            : current
-        )
       }
     }
   }
@@ -1102,35 +988,19 @@ export function WorkspacePanelCards({
                         </span>
                       </button>
                     )}
-                    {cloudToolsAvailable && cloudDesktopExtension.available && (
-                      <button
-                        type="button"
-                        data-testid={testId('workspace-desktop-card')}
-                        onClick={handleDesktopClick}
-                        disabled={
-                          toolsDisabled ||
-                          !activeWorkspaceDeviceId ||
-                          !availableTools.desktop ||
-                          !cloudConnection.isConnected ||
-                          projectDevice?.status !== 'online'
-                        }
-                        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {loadingTool === 'desktop' ? (
-                          <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                        ) : (
-                          <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
-                        )}
-                        <span className="text-sm font-semibold text-text-primary">
-                          {t('workbench.desktop', '桌面')}
-                        </span>
-                        <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                          {availableTools.desktop
-                            ? t('workbench.open_project_desktop', '打开项目桌面')
-                            : t('workbench.project_tool_unavailable', '暂不可用')}
-                        </span>
-                      </button>
-                    )}
+                    {cloudToolsAvailable &&
+                      cloudDesktopExtension.available &&
+                      activeWorkspaceDeviceId && (
+                        <cloudDesktopExtension.WorkspaceAction
+                          contextKey={projectKey}
+                          deviceId={activeWorkspaceDeviceId}
+                          disabled={toolsDisabled || projectDevice?.status !== 'online'}
+                          onBusyChange={handleExtensionBusyChange}
+                          onErrorChange={setProjectError}
+                          onOpened={handleExtensionOpened}
+                          testIdsEnabled={testIdsEnabled}
+                        />
+                      )}
                   </>
                 )}
               </div>

@@ -7,6 +7,8 @@ import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { loadDesktopScenario } from './scenario-loader.mjs'
+
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
@@ -38,11 +40,11 @@ const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
-const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -60,6 +62,7 @@ const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
+const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -991,12 +994,14 @@ class RealCloudEnvironment {
 }
 
 class DesktopE2EServer {
-  constructor(workspacePath, cloudWorkspacePath = workspacePath) {
+  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
+    this.desktopScenario = desktopScenario
     this.server = createServer((request, response) => {
       void this.handle(request, response)
     })
+    this.desktopScenario?.attachServer?.(this.server)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response)
     })
@@ -1071,6 +1076,7 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
+    this.desktopScenario?.close?.()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
     await Promise.all([
@@ -1249,6 +1255,7 @@ class DesktopE2EServer {
 
     const url = new URL(request.url ?? '/', this.url)
     if (await this.handleControlRoute(request, response, url)) return
+    if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -1899,7 +1906,14 @@ async function main() {
     cwd: workspacePath,
   })
 
-  const control = new DesktopE2EServer(workspacePath, workspacePath)
+  const desktopScenario = await loadDesktopScenario(
+    process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
+    { uiTimeoutMs: UI_TIMEOUT_MS }
+  )
+  if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
+    throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
+  }
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
   let app
   let appBundlePath
   let cloudEnvironment
@@ -1929,7 +1943,7 @@ async function main() {
     const desktopApp = await buildDesktopApp(
       control.controlUrl,
       cloudEnvironment?.backendUrl ?? control.url,
-      cloudEnvironment?.authToken ?? 'wework-desktop-e2e-cloud-token',
+      cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
       appIdentifier
     )
     const appBinary = desktopApp.binaryPath
@@ -1996,6 +2010,20 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+
+    if (desktopScenario) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+      if (DESKTOP_SCENARIO_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -2549,6 +2577,7 @@ async function main() {
           phase,
           scenario: control.scenario,
           modelStage: control.modelStage,
+          desktopScenario: desktopScenario?.diagnostics?.() ?? null,
           cloudModelStage: control.cloudModelStage,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
