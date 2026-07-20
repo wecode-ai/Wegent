@@ -40,6 +40,7 @@ type DesktopControlAction =
   | 'waitFor'
   | 'press'
   | 'selectText'
+  | 'scrollIntoView'
 
 interface DesktopControlCommand {
   id: string
@@ -499,6 +500,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlElementText(command.selector)
     case 'snapshot':
       return desktopControlSnapshot()
+    case 'scrollIntoView': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      return element.textContent?.trim() ?? ''
+    }
     case 'click': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

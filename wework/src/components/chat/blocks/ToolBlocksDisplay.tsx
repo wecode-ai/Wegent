@@ -354,6 +354,7 @@ export function ToolBlocksDisplay({
           }
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           fileEditDurations={fileEditDurations}
+          stateKey={stateKey}
         />
       ) : null}
     </>
@@ -483,11 +484,13 @@ function LiveProcessingPreview({
   showThinking,
   onOpenWorkspaceFile,
   fileEditDurations,
+  stateKey,
 }: {
   rows: ProcessingDisplayRow[]
   showThinking: boolean
   onOpenWorkspaceFile?: (path: string) => void
   fileEditDurations: ReadonlyMap<string, FileEditDuration>
+  stateKey?: string
 }) {
   const { t } = useTranslation('chat')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -535,6 +538,7 @@ function LiveProcessingPreview({
             onOpenWorkspaceFile={onOpenWorkspaceFile}
             fileEditDurations={fileEditDurations}
             onExpandedChange={updateExpandedRow}
+            stateKey={stateKey ? `${stateKey}:${row.id}` : undefined}
           />
         ))}
         {showThinking ? (
@@ -555,6 +559,7 @@ function LiveProcessingPreviewRow({
   fileEditDurations,
   onOpenWorkspaceFile,
   onExpandedChange,
+  stateKey,
 }: {
   row: ProcessingDisplayRow
   shimmer: boolean
@@ -563,6 +568,7 @@ function LiveProcessingPreviewRow({
   fileEditDurations: ReadonlyMap<string, FileEditDuration>
   onOpenWorkspaceFile?: (path: string) => void
   onExpandedChange: (rowId: string, expanded: boolean) => void
+  stateKey?: string
 }) {
   const handleExpandedChange = useCallback(
     (expanded: boolean) => onExpandedChange(row.id, expanded),
@@ -596,6 +602,7 @@ function LiveProcessingPreviewRow({
         fileEditDurations={fileEditDurations}
         onOpenWorkspaceFile={onOpenWorkspaceFile}
         onExpandedChange={handleExpandedChange}
+        stateKey={stateKey}
       />
     )
   }
@@ -608,6 +615,7 @@ function LiveProcessingPreviewRow({
       durationEndAt={durationEndAt}
       fileEditDurations={fileEditDurations}
       onExpandedChange={handleExpandedChange}
+      stateKey={stateKey}
     />
   )
 }

@@ -1640,9 +1640,16 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
     if (process.platform === 'darwin') {
+      await control.command('scrollIntoView', '[data-testid="processing-summary-header"]')
+      await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
+        visible: true,
+        stableMs: 500,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const processingSummaryScreenshot = await control.command(
         'capture',
-        '[data-testid="processing-summary-header"]'
+        '[data-testid="processing-summary-toggle"]'
       )
       await writeFile(
         join(resultDir, 'processing-summary.png'),
@@ -1653,15 +1660,43 @@ async function main() {
     await control.command('waitFor', '[data-processing-block-id="wework-e2e-view-image"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await captureVerificationScreenshot(control, '03-view-image-collapsed.png')
+    await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+    await control.command(
+      'waitFor',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
+      { visible: true, stableMs: 300, timeoutMs: UI_TIMEOUT_MS }
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await captureVerificationScreenshot(
+      control,
+      '03-view-image-collapsed.png',
+      '[data-testid="processing-live-preview"]'
+    )
     await control.command(
       'click',
       '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
     )
     await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      stableMs: 500,
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await captureVerificationScreenshot(control, '04-view-image-expanded.png')
+    await control.command(
+      'waitFor',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
+      { stableMs: 500, timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+    await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      visible: true,
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await captureVerificationScreenshot(
+      control,
+      '04-view-image-expanded.png',
+      '[data-testid="processing-live-preview"]'
+    )
     await control.command('click', '[data-testid="processing-summary-toggle"]')
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',

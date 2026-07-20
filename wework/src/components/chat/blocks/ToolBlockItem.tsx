@@ -27,6 +27,7 @@ import {
 } from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 const INLINE_DIFF_MAX_LINES = 96
@@ -55,6 +56,7 @@ export function ToolBlockItem({
   durationEndAt,
   fileEditDurations,
   forceExpanded = false,
+  stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
   onLoadFullTranscript,
@@ -62,7 +64,7 @@ export function ToolBlockItem({
   onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const duration = useToolDuration(
     durationStartedAt ?? block.createdAt,

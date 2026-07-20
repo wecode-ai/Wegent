@@ -248,6 +248,34 @@ describe('ToolBlockItem', () => {
     expect(screen.getByTestId('image-view-preview')).toHaveAttribute('alt', '工具查看的图片')
   })
 
+  test('keeps view_image details expanded after remounting', async () => {
+    const user = userEvent.setup()
+    const block: ProcessingBlock = {
+      id: 'view-image-remount',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'view_image',
+      toolInput: { path: '/tmp/remount.png' },
+      toolOutput: { image_url: 'data:image/png;base64,aW1hZ2U=' },
+      status: 'done',
+      createdAt: 1770000000002,
+    }
+    const stateKey = 'view-image-remount-expansion'
+    const firstRender = render(<ToolBlockItem block={block} stateKey={stateKey} />)
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+    expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<ToolBlockItem block={block} stateKey={stateKey} />)
+
+    expect(screen.getByRole('button', { name: /收起工具详情/ })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
+  })
+
   test('uses Codex filePath aliases for file tool labels and open actions', async () => {
     const user = userEvent.setup()
     const onOpenWorkspaceFile = vi.fn()
