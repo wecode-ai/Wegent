@@ -8,7 +8,7 @@ sidebar_position: 6
 
 **Goal:** 让在线云设备的“桌面”操作使用当前云连接的 VNC 代理地址，在退出设置页后于工作台右侧内置浏览器展示 VNC 页面。
 
-**Architecture:** 保留现有 VNC 配置接口、本地 `vnc.html` 和 `DesktopWorkbenchMain` 浏览器监听器。前端把云端 `/vnc-proxy/{deviceId}` WebSocket URL 与 token 注册到具有两分钟 IPC 交接 TTL 的 Tauri 内存会话，本地页面 URL 只携带随机 `sessionId`；VNC 子页取回配置后，在自身生命周期内缓存认证 WebSocket URL 以便断线重连。设置页只有在 `requestEmbeddedBrowserOpen` 接受请求后才返回工作台。Tauri 内置浏览器使用可迁移的逻辑路由标签和不可变的唯一原生 WebView ID，避免任务切换后逻辑标签迁移与原生标签注册表失去一致性。
+**Architecture:** 保留现有 VNC 配置接口、本地 `vnc.html` 和 `DesktopWorkbenchMain` 浏览器监听器。前端把云端 `/vnc-proxy/{deviceId}` WebSocket URL 与 token 注册到具有两分钟 IPC 交接 TTL 的 Tauri 内存会话，本地页面 URL 只携带随机 `sessionId`；VNC 子页取回配置后，在自身生命周期内缓存认证 WebSocket URL 以便断线重连。设置页只有在 `requestEmbeddedBrowserOpen` 接受请求后才返回工作台。
 
 **Tech Stack:** React 19、TypeScript、Vitest、Testing Library、Tauri WebView、noVNC、Wework Desktop E2E controller
 
@@ -569,129 +569,6 @@ Expected: 真实 Tauri 应用完成云设备设置到右侧浏览器的回归，
 git add wework
 git commit -m "chore(wework): finish cloud VNC verification"
 ```
-
-### Task 5: 修复逻辑标签迁移后的原生 WebView 冲突
-
-**Files:**
-
-- Modify: `wework/src-tauri/src/embedded_browser.rs`
-- Modify: `wework/src/lib/embedded-browser.ts`
-- Modify: `wework/src/components/layout/DesktopWorkbenchLayout.test.tsx`
-- Modify: `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx`
-- Modify: `wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx`
-- Modify: `wework/src/e2e/automation.ts`
-- Modify: `wework/e2e/desktop/task-flow.e2e.mjs`
-
-- [ ] **Step 1: 先写真实桌面失败回归**
-
-在 Desktop E2E 控制桥增加仅在 E2E 模式可用的准备动作：先以逻辑标签
-`workspace-browser` 打开一个 1px WebView，再把逻辑所有权迁移到
-`workspace-browser-regression-owner` 并隐藏它：
-
-```ts
-case 'prepareEmbeddedBrowserRelabelRegression':
-  await openEmbeddedBrowser(
-    'https://example.com/',
-    { x: 0, y: 0, width: 1, height: 1 },
-    'workspace-browser'
-  )
-  await relabelEmbeddedBrowser('workspace-browser', 'workspace-browser-regression-owner')
-  await setEmbeddedBrowserBounds(
-    { x: 0, y: 0, width: 1, height: 1 },
-    false,
-    'workspace-browser-regression-owner'
-  )
-  return ''
-```
-
-在 `task-flow.e2e.mjs` 的 `cloud-vnc-browser` 阶段进入设置前执行该动作。现有实现随后
-再次打开 `workspace-browser` 时会因 Tauri 原生标签仍被旧实例占用而失败。
-
-- [ ] **Step 2: 运行 Desktop E2E 并确认 RED**
-
-```bash
-pnpm --filter wework e2e:desktop
-```
-
-Expected: FAIL 于云桌面浏览器打开阶段，日志包含
-`a webview with label \`workspace-browser\` already exists`。不得把环境或超时错误当作
-目标失败证据。
-
-- [ ] **Step 3: 先写原生身份与回调路由单元测试**
-
-为纯函数增加测试，锁定两个行为：同一个逻辑标签的不同创建序列必须生成不同的原生
-ID；回调持有的原生 ID 必须能在逻辑 relabel 后找到新的逻辑所有者。
-
-```rust
-#[test]
-fn native_browser_labels_are_unique_across_logical_label_reuse() {
-    assert_ne!(
-        browser_native_label("workspace-browser", 1),
-        browser_native_label("workspace-browser", 2)
-    );
-}
-
-#[test]
-fn native_identity_resolves_the_relabelled_logical_owner() {
-    let routes = [("workspace-browser-task-1", "workspace-browser-native-1")];
-    assert_eq!(
-        logical_label_for_native(
-            routes.into_iter(),
-            "workspace-browser-native-1"
-        ),
-        Some("workspace-browser-task-1")
-    );
-}
-```
-
-运行 `cargo test --manifest-path wework/src-tauri/Cargo.toml --locked --lib`，确认测试在实现
-前失败。
-
-- [ ] **Step 4: 分离逻辑路由标签和原生 WebView ID**
-
-在 `EmbeddedBrowserEntry` 保存 `native_label`。`embedded_browser_open` 每次真正创建时
-使用单调序列生成唯一原生标签，`state.webviews` 继续按调用方逻辑标签索引：
-
-```rust
-fn browser_native_label(logical_label: &str, sequence: u64) -> String {
-    format!("{BROWSER_WEBVIEW_LABEL}-native-{sequence}-{logical_label}")
-}
-```
-
-page-load、document-title 和 download 回调只捕获 `native_label`，回调执行时通过
-`logical_label_for_native` 找到当前逻辑 key 后再更新状态或发事件。为 open、close 和
-relabel 使用同一个生命周期锁，防止同一逻辑标签并发创建或关闭时覆盖状态；新建 WebView
-在 `show` 失败时主动关闭。不得通过 `app.get_webview(logical_label)` 认领旧实例，因为该
-实例可能已经迁移给另一个任务。
-
-下载事件和页面状态同时向前端返回稳定的 `nativeLabel`。`WorkspaceBrowserPanel` 使用该
-原生身份过滤下载事件，并在首次取得页面状态前短暂缓冲事件；逻辑标签迁移前后的终态事件
-都必须交给同一原生浏览器，复用旧逻辑标签的新实例不得收到旧下载事件。
-
-- [ ] **Step 5: 运行 GREEN 验证并清理 E2E 所有者**
-
-在真实流程关闭 VNC 标签后，通过 E2E 控制动作关闭
-`workspace-browser-regression-owner`。运行：
-
-```bash
-cargo fmt --manifest-path wework/src-tauri/Cargo.toml -- --check
-cargo test --manifest-path wework/src-tauri/Cargo.toml --locked --lib
-pnpm --filter wework test -- src/components/layout/DesktopWorkbenchLayout.test.tsx
-pnpm --filter wework test -- src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx src/lib/embedded-browser.test.ts
-pnpm --filter wework exec prettier --check src/lib/embedded-browser.ts src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx src/e2e/automation.ts e2e/desktop/task-flow.e2e.mjs
-pnpm --filter wework exec eslint src/lib/embedded-browser.ts src/components/layout/workspace-panels/WorkspaceBrowserPanel.tsx src/components/layout/workspace-panels/WorkspaceBrowserPanel.test.tsx src/e2e/automation.ts
-pnpm --filter wework typecheck
-pnpm --filter wework e2e:desktop
-```
-
-Expected: 全部 PASS；Desktop E2E 在保留已迁移旧浏览器的同时，新的云桌面完成一次
-认证 RFB 握手并进入 connected 状态。
-
-- [ ] **Step 6: 在隔离 Tauri 会话复验现场路径**
-
-使用 `pnpm --filter wework ai:verify start` 启动隔离应用，先打开普通内置浏览器并切换任务，
-再从在线云设备点击“桌面”。断言右侧浏览器 URL 仅含 `sessionId` / `sandboxId`，应用日志
-不再出现 `already exists`，并在结束时执行 `ai:verify stop`。
 
 ---
 
