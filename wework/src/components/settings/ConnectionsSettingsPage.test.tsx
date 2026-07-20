@@ -39,8 +39,7 @@ vi.mock('@extensions/cloud-desktop', () => ({
   cloudDesktopExtension: cloudDesktopExtensionMock,
 }))
 
-vi.mock('@/config/runtime', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/config/runtime')>()),
+vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => runtimeConfigMock.value,
   stripAppBasePath: (path: string) => path,
 }))

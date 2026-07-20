@@ -4,7 +4,6 @@ import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
 import { AuthContext } from '@/features/auth/useAuth'
@@ -109,16 +108,11 @@ const tauriMenuMocks = vi.hoisted(() => ({
 const authMocks = vi.hoisted(() => ({
   logout: vi.fn(),
 }))
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
-  available: true,
-  DeviceAction: vi.fn(),
-  isInternalPageUrl: vi.fn(() => false),
-  open: vi.fn(),
-}))
 
-vi.mock('@extensions/cloud-desktop', () => ({
-  cloudDesktopExtension: cloudDesktopExtensionMock,
-}))
+vi.mock('@extensions/cloud-desktop', async () => {
+  const { cloudDesktopExtension } = await import('@/extensions/cloud-desktop')
+  return { cloudDesktopExtension }
+})
 
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 
@@ -184,14 +178,8 @@ function getWorkspaceCodeViewSelectedLineNumbers() {
   )
 }
 
-vi.mock('@/config/runtime', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/config/runtime')>()),
-  getRuntimeConfig: () => ({
-    appBasePath: '',
-    apiBaseUrl: '/api',
-    socketBaseUrl: 'http://localhost:3000',
-    socketPath: '/socket.io',
-  }),
+vi.mock('@/config/runtime', () => ({
+  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
   stripAppBasePath: (path: string) => path,
 }))
 
@@ -363,11 +351,6 @@ vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: tauriMenuMocks.getCurrentWindow,
 }))
 
-vi.mock('@tauri-apps/api/event', async importOriginal => ({
-  ...(await importOriginal<typeof import('@tauri-apps/api/event')>()),
-  listen: vi.fn().mockResolvedValue(vi.fn()),
-}))
-
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({
     active,
@@ -406,7 +389,6 @@ vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
-const createHttpClientMock = vi.mocked(createHttpClient)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
@@ -502,7 +484,6 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    createHttpClientMock.mockReturnValue({} as never)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024,
@@ -540,20 +521,6 @@ describe('DesktopWorkbenchLayout', () => {
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
-    cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
-      ({ deviceId, disabled, onOpened }) => (
-        <button
-          type="button"
-          data-testid={`connection-cloud-desktop-button-${deviceId}`}
-          disabled={disabled}
-          onClick={onOpened}
-        >
-          桌面
-        </button>
-      )
-    )
-    cloudDesktopExtensionMock.open.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
     getLocalCodexUsageDisplayMock.mockResolvedValue({
@@ -4072,13 +4039,14 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-cloud-desktop-button-24a59054-4638-4744-983d-372706c30fcd')
-    ).toBeInTheDocument()
+      screen.queryByTestId('connection-cloud-desktop-button-24a59054-4638-4744-983d-372706c30fcd')
+    ).not.toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
     expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.queryByText('桌面')).not.toBeInTheDocument()
     expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
     expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
+    expect(screen.queryByText('云桌面')).not.toBeInTheDocument()
     expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
     expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
     expect(screen.queryByText('CPU')).not.toBeInTheDocument()

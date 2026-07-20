@@ -2,13 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { OpenCloudDesktopOptions } from '@/extensions/cloud-desktop-contract'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
-import {
-  CloudConnectionContext,
-  DISCONNECTED_STATE,
-  type CloudConnectionContextValue,
-} from '@/features/cloud-connection/CloudConnectionContext'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -23,6 +17,16 @@ import type { DeviceInfo } from '@/types/api'
 const cloudDesktopExtensionMock = vi.hoisted(() => ({
   available: true,
   DeviceAction: vi.fn(),
+  WorkspaceAction: vi.fn(({ disabled, onOpened }: { disabled: boolean; onOpened: () => void }) => (
+    <button
+      type="button"
+      data-testid="workspace-desktop-card"
+      disabled={disabled}
+      onClick={onOpened}
+    >
+      桌面
+    </button>
+  )),
   isInternalPageUrl: vi.fn(() => false),
   open: vi.fn(),
 }))
@@ -207,40 +211,6 @@ function createDeferred<T>() {
   return { promise, resolve, reject }
 }
 
-function createDisconnectedCloudConnection(): CloudConnectionContextValue {
-  return {
-    ...DISCONNECTED_STATE,
-    isConnected: false,
-    serviceKey: 'disconnected',
-    connectWithAuthorization: vi.fn(),
-    refreshUser: vi.fn(),
-    disconnect: vi.fn(),
-  }
-}
-
-function createConnectedCloudConnection(
-  overrides: Partial<CloudConnectionContextValue> = {}
-): CloudConnectionContextValue {
-  return {
-    status: 'connected',
-    backendUrl: 'https://cloud.example.com',
-    apiBaseUrl: 'https://cloud.example.com/api',
-    socketBaseUrl: 'https://cloud.example.com',
-    socketPath: '/socket.io',
-    token: 'connected-token',
-    tokenExpiresAt: null,
-    user: { id: 1, user_name: 'cloud-user', email: 'cloud@example.com' },
-    connectedAt: '2026-07-17T00:00:00.000Z',
-    error: null,
-    isConnected: true,
-    serviceKey: 'connected:1',
-    connectWithAuthorization: vi.fn(),
-    refreshUser: vi.fn(),
-    disconnect: vi.fn(),
-    ...overrides,
-  }
-}
-
 describe('WorkspacePanelCards', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -249,7 +219,6 @@ describe('WorkspacePanelCards', () => {
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
     cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.open.mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
@@ -420,7 +389,7 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('opens the project desktop through the cloud desktop extension', async () => {
+  test('renders the project desktop through the cloud desktop workspace extension', async () => {
     const onRequestClose = vi.fn()
     render(
       <WorkspacePanelCards
@@ -430,118 +399,19 @@ describe('WorkspacePanelCards', () => {
       />
     )
 
+    expect(cloudDesktopExtensionMock.WorkspaceAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextKey: expect.stringContaining('7:device-1'),
+        deviceId: 'device-1',
+        disabled: false,
+      }),
+      undefined
+    )
+
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
-    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledOnce())
-    const options = cloudDesktopExtensionMock.open.mock.calls[0][0] as OpenCloudDesktopOptions
-    expect(options.deviceId).toBe('device-1')
-    expect(options.connection).toMatchObject({
-      isConnected: true,
-      token: 'token-1',
-    })
-    expect(options.isCurrent()).toBe(true)
-    expect(window.open).not.toHaveBeenCalled()
     expect(onRequestClose).toHaveBeenCalledTimes(1)
-  })
-
-  test('keeps the project desktop retryable when the extension rejects it', async () => {
-    const onRequestClose = vi.fn()
-    cloudDesktopExtensionMock.open
-      .mockRejectedValueOnce(new Error('Cloud desktop is unavailable'))
-      .mockResolvedValueOnce(true)
-    render(
-      <WorkspacePanelCards
-        currentProject={cloudProject}
-        devices={cloudDevices}
-        onRequestClose={onRequestClose}
-      />
-    )
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('启动失败')
-    expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
-    expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(1)
-    expect(window.open).not.toHaveBeenCalled()
-    expect(onRequestClose).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-
-    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(2))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(onRequestClose).toHaveBeenCalledTimes(1)
-  })
-
-  test('releases a pending desktop launch when the project changes', async () => {
-    const firstOpen = createDeferred<void>()
-    let firstRequestWasCurrent: boolean | undefined
-    cloudDesktopExtensionMock.open
-      .mockImplementationOnce(async (options: OpenCloudDesktopOptions) => {
-        await firstOpen.promise
-        firstRequestWasCurrent = options.isCurrent()
-        return firstRequestWasCurrent
-      })
-      .mockResolvedValueOnce(true)
-    const nextProject = { ...cloudProject, id: 8, name: 'project39' }
-    const view = render(
-      <WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />
-    )
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-    expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled()
-
-    view.rerender(<WorkspacePanelCards currentProject={nextProject} devices={cloudDevices} />)
-    await waitFor(() => expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled())
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(2))
-
-    firstOpen.resolve()
-    await firstOpen.promise
-    await waitFor(() => expect(firstRequestWasCurrent).toBe(false))
-
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  test('releases a pending desktop launch after disconnect and reconnect', async () => {
-    const firstOpen = createDeferred<void>()
-    let firstRequestWasCurrent: boolean | undefined
-    cloudDesktopExtensionMock.open
-      .mockImplementationOnce(async (options: OpenCloudDesktopOptions) => {
-        await firstOpen.promise
-        firstRequestWasCurrent = options.isCurrent()
-        return firstRequestWasCurrent
-      })
-      .mockResolvedValueOnce(true)
-    const connectedConnection = createConnectedCloudConnection()
-    const disconnectedConnection = createDisconnectedCloudConnection()
-    const view = render(
-      <CloudConnectionContext.Provider value={connectedConnection}>
-        <WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />
-      </CloudConnectionContext.Provider>
-    )
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-    expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled()
-
-    view.rerender(
-      <CloudConnectionContext.Provider value={disconnectedConnection}>
-        <WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />
-      </CloudConnectionContext.Provider>
-    )
-    view.rerender(
-      <CloudConnectionContext.Provider value={connectedConnection}>
-        <WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />
-      </CloudConnectionContext.Provider>
-    )
-    await waitFor(() => expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled())
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(2))
-
-    firstOpen.resolve()
-    await firstOpen.promise
-    await waitFor(() => expect(firstRequestWasCurrent).toBe(false))
-
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(cloudDesktopExtensionMock.open).not.toHaveBeenCalled()
   })
 
   test('hides the desktop card when the cloud desktop extension is unavailable', () => {
@@ -790,28 +660,26 @@ describe('WorkspacePanelCards', () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
 
     render(
-      <CloudConnectionContext.Provider value={createDisconnectedCloudConnection()}>
-        <WorkspacePanelCards
-          currentProject={project}
-          devices={[
-            ...localDevices,
-            {
-              id: 22,
-              device_id: 'device-2',
-              name: 'Remote Device',
-              status: 'online',
-              is_default: false,
-              device_type: 'remote',
-              bind_shell: 'claudecode',
-            },
-          ]}
-          workspaceTarget={{
-            deviceId: 'device-2',
-            path: '/workspace/worktrees/9/project38',
-            source: 'runtime',
-          }}
-        />
-      </CloudConnectionContext.Provider>
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={[
+          ...localDevices,
+          {
+            id: 22,
+            device_id: 'device-2',
+            name: 'Remote Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+          },
+        ]}
+        workspaceTarget={{
+          deviceId: 'device-2',
+          path: '/workspace/worktrees/9/project38',
+          source: 'runtime',
+        }}
+      />
     )
 
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
@@ -971,26 +839,6 @@ describe('WorkspacePanelCards', () => {
     expect(window.open).not.toHaveBeenCalled()
     expect(startProjectCodeServerMock).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert')).toHaveTextContent('启动失败')
-  })
-
-  test('keeps desktop retryable when the extension rejects a launch', async () => {
-    cloudDesktopExtensionMock.open
-      .mockRejectedValueOnce(new Error('desktop unavailable'))
-      .mockResolvedValueOnce(true)
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('启动失败')
-    expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
-    expect(window.open).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-
-    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(2))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
-    expect(screen.getByTestId('workspace-ide-card')).not.toBeDisabled()
   })
 
   test('resets unavailable tools when the project changes', async () => {
