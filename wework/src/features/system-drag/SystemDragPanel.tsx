@@ -197,7 +197,7 @@ export function SystemDragPanel() {
       <section className="relative h-full overflow-hidden rounded-xl border border-border bg-background/95 shadow-lg backdrop-blur-md">
         <div
           data-testid="system-drag-brand"
-          className="pointer-events-none absolute left-1/2 top-1 z-10 -translate-x-1/2 rounded-full border border-border bg-background px-2 py-0.5 text-xs font-semibold leading-none tracking-[0.02em] text-text-secondary shadow-sm"
+          className="pointer-events-none absolute left-3 top-1.5 z-10 text-xs font-semibold leading-none tracking-[0.02em] text-text-muted"
         >
           Wework
         </div>
