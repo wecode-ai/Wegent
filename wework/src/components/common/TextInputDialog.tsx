@@ -126,75 +126,81 @@ function TextInputDialogContent({
         className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 text-text-primary shadow-2xl"
         onKeyDown={handleKeyDown}
       >
-        <div className="flex items-center justify-between gap-4">
-          <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-text-primary">
-            {title}
-          </h2>
-          <button
-            type="button"
-            data-testid={`${inputTestId}-close-button`}
-            onClick={closeDialog}
-            disabled={submitting}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-            aria-label={cancelLabel}
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        {description && (
-          <p
-            id={`${inputTestId}-description`}
-            className="mt-2 text-sm leading-[18px] text-text-secondary"
-          >
-            {description}
-          </p>
-        )}
-        <label
-          htmlFor={`${inputTestId}-field`}
-          className="mt-5 block text-sm font-medium leading-[18px] text-text-secondary"
-        >
-          {label}
-        </label>
-        <input
-          id={`${inputTestId}-field`}
-          data-testid={inputTestId}
-          aria-describedby={description ? `${inputTestId}-description` : undefined}
-          value={value}
-          autoFocus
-          maxLength={maxLength}
-          disabled={submitting}
-          onFocus={event => event.currentTarget.select()}
-          onChange={event => {
-            setValue(event.target.value)
-            setError(null)
+        <form
+          onSubmit={event => {
+            event.preventDefault()
+            void submit()
           }}
-          className="mt-2 h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 md:h-9"
-        />
-        {error && (
-          <p className="mt-2 text-xs text-red-500" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            type="button"
-            data-testid={`${inputTestId}-cancel-button`}
-            onClick={closeDialog}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <h2 id={`${inputTestId}-title`} className="text-base font-semibold text-text-primary">
+              {title}
+            </h2>
+            <button
+              type="button"
+              data-testid={`${inputTestId}-close-button`}
+              onClick={closeDialog}
+              disabled={submitting}
+              className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={cancelLabel}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {description && (
+            <p
+              id={`${inputTestId}-description`}
+              className="mt-2 text-sm leading-[18px] text-text-secondary"
+            >
+              {description}
+            </p>
+          )}
+          <label
+            htmlFor={`${inputTestId}-field`}
+            className="mt-5 block text-sm font-medium leading-[18px] text-text-secondary"
+          >
+            {label}
+          </label>
+          <input
+            id={`${inputTestId}-field`}
+            data-testid={inputTestId}
+            aria-describedby={description ? `${inputTestId}-description` : undefined}
+            value={value}
+            autoFocus
+            maxLength={maxLength}
             disabled={submitting}
-            className="h-11 min-w-[44px] rounded-md border border-border px-4 text-sm font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            data-testid={confirmTestId}
-            disabled={!trimmedValue || submitting}
-            onClick={() => void submit()}
-            className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {confirmLabel}
-          </button>
-        </div>
+            onFocus={event => event.currentTarget.select()}
+            onChange={event => {
+              setValue(event.target.value)
+              setError(null)
+            }}
+            className="mt-2 h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 md:h-9"
+          />
+          {error && (
+            <p className="mt-2 text-xs text-red-500" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              data-testid={`${inputTestId}-cancel-button`}
+              onClick={closeDialog}
+              disabled={submitting}
+              className="h-11 min-w-[44px] rounded-md border border-border px-4 text-sm font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {cancelLabel}
+            </button>
+            <button
+              type="submit"
+              data-testid={confirmTestId}
+              disabled={!trimmedValue || submitting}
+              className="h-11 min-w-[44px] rounded-md bg-text-primary px-4 text-sm font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {confirmLabel}
+            </button>
+          </div>
+        </form>
       </div>
     </div>,
     document.body

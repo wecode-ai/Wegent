@@ -23,7 +23,9 @@ export function DeleteSiteDialog({
 }: DeleteSiteDialogProps) {
   const { t } = useTranslation('sites')
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
+  const confirmButtonRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const wasLoading = useRef(false)
 
   useEffect(() => {
     cancelButtonRef.current?.focus()
@@ -33,6 +35,16 @@ export function DeleteSiteDialog({
       if (returnFocusButton?.isConnected) returnFocusButton.focus()
     }
   }, [returnFocusContainer])
+
+  useEffect(() => {
+    if (loading) {
+      wasLoading.current = true
+      dialogRef.current?.focus()
+    } else if (wasLoading.current) {
+      wasLoading.current = false
+      confirmButtonRef.current?.focus()
+    }
+  }, [loading])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -52,6 +64,7 @@ export function DeleteSiteDialog({
     ).filter(element => !element.hasAttribute('aria-hidden'))
     if (focusableElements.length === 0) {
       event.preventDefault()
+      dialogRef.current.focus()
       return
     }
 
@@ -80,6 +93,7 @@ export function DeleteSiteDialog({
         aria-modal="true"
         aria-labelledby="site-delete-dialog-title"
         aria-describedby="site-delete-dialog-description"
+        tabIndex={-1}
         data-testid="site-delete-dialog"
         className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
         onClick={event => event.stopPropagation()}
@@ -122,6 +136,7 @@ export function DeleteSiteDialog({
             {t('cancel', '取消')}
           </button>
           <button
+            ref={confirmButtonRef}
             type="button"
             data-testid="site-delete-confirm-button"
             onClick={onConfirm}

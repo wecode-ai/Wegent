@@ -302,6 +302,26 @@ describe('SitesWorkspace', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  test('does not install a stale publish error after refresh already returned the project as outer', async () => {
+    const api = createApi()
+    const publishRequest = deferred<SiteProject>()
+    vi.mocked(api.publishSite).mockImplementationOnce(() => publishRequest.promise)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-publish-prj-site-1'))
+    vi.mocked(api.listSites).mockResolvedValueOnce({ items: [outerProject], next_cursor: null })
+    await userEvent.click(screen.getByTestId('sites-refresh-button'))
+    expect(await screen.findByTestId('site-published-prj-site-1')).toBeInTheDocument()
+
+    await act(async () => {
+      publishRequest.reject(new Error('过期的发布失败'))
+    })
+
+    expect(screen.getByTestId('site-published-prj-site-1')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   test('clears a missing project publish error before a later cursor page restores the row', async () => {
     const api = createApi()
     vi.mocked(api.publishSite).mockRejectedValueOnce(new Error('旧发布错误'))
@@ -549,6 +569,88 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('site-url-prj-site-1')).toHaveTextContent(
       'http://sites.internal/renamed-during-refresh'
     )
+  })
+
+  test('accepts a refresh started after rename as authoritative and retires the local override', async () => {
+    const renamedProject = { ...innerProject, title: '本地重命名结果' }
+    const serverProject = {
+      ...innerProject,
+      title: '服务器后续结果',
+      url: 'http://sites.internal/server-authoritative',
+    }
+    const api = createApi()
+    vi.mocked(api.renameSite).mockResolvedValueOnce(renamedProject)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-prj-site-1'))
+    await userEvent.click(screen.getByTestId('site-rename-menu-item-prj-site-1'))
+    await userEvent.clear(screen.getByTestId('site-rename-input'))
+    await userEvent.type(screen.getByTestId('site-rename-input'), '本地重命名结果')
+    await userEvent.click(screen.getByTestId('site-rename-confirm-button'))
+    expect(await screen.findByText('本地重命名结果')).toBeInTheDocument()
+
+    vi.mocked(api.listSites).mockResolvedValueOnce({ items: [serverProject], next_cursor: null })
+    await userEvent.click(screen.getByTestId('sites-refresh-button'))
+
+    expect(await screen.findByText('服务器后续结果')).toBeInTheDocument()
+    expect(screen.queryByText('本地重命名结果')).not.toBeInTheDocument()
+    expect(screen.getByTestId('site-url-prj-site-1')).toHaveTextContent(
+      'http://sites.internal/server-authoritative'
+    )
+  })
+
+  test('clears overrides, tombstones, and pending operations when the API identity changes', async () => {
+    const deletedProject = {
+      ...innerProject,
+      id: 'prj-site-2',
+      title: '待删除站点',
+      url: 'http://sites.internal/delete',
+    }
+    const publishingProject = {
+      ...innerProject,
+      id: 'prj-site-3',
+      title: '待发布站点',
+      url: 'http://sites.internal/publish',
+    }
+    const publishRequest = deferred<SiteProject>()
+    const firstApi = createApi([innerProject, deletedProject, publishingProject])
+    vi.mocked(firstApi.renameSite).mockResolvedValueOnce({
+      ...innerProject,
+      title: '旧 API 本地覆盖',
+    })
+    vi.mocked(firstApi.publishSite).mockImplementationOnce(() => publishRequest.promise)
+    const { rerender } = render(<SitesWorkspace api={firstApi} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-prj-site-1'))
+    await userEvent.click(screen.getByTestId('site-rename-menu-item-prj-site-1'))
+    await userEvent.clear(screen.getByTestId('site-rename-input'))
+    await userEvent.type(screen.getByTestId('site-rename-input'), '旧 API 本地覆盖')
+    await userEvent.click(screen.getByTestId('site-rename-confirm-button'))
+    expect(await screen.findByText('旧 API 本地覆盖')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('site-more-prj-site-2'))
+    await userEvent.click(screen.getByTestId('site-delete-menu-item-prj-site-2'))
+    await userEvent.click(screen.getByTestId('site-delete-confirm-button'))
+    await waitFor(() => expect(screen.queryByTestId('site-row-prj-site-2')).not.toBeInTheDocument())
+
+    await userEvent.click(screen.getByTestId('site-publish-prj-site-3'))
+    expect(screen.getByTestId('site-publish-prj-site-3')).toBeDisabled()
+
+    const nextApiProject = { ...innerProject, title: '新 API 服务端结果' }
+    const nextApi = createApi([nextApiProject, deletedProject, publishingProject])
+    rerender(<SitesWorkspace api={nextApi} onCreate={vi.fn()} />)
+
+    expect(await screen.findByText('新 API 服务端结果')).toBeInTheDocument()
+    expect(screen.getByTestId('site-row-prj-site-2')).toBeInTheDocument()
+    expect(screen.getByTestId('site-publish-prj-site-3')).toBeEnabled()
+    expect(screen.queryByText('旧 API 本地覆盖')).not.toBeInTheDocument()
+
+    await act(async () => {
+      publishRequest.reject(new Error('旧 API 发布失败'))
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   test('appends a cursor page, ignores duplicate ids, and hides load more at the end', async () => {
@@ -816,6 +918,9 @@ describe('SitesWorkspace', () => {
     expect(screen.getByTestId('site-delete-confirm-button')).toBeDisabled()
     expect(screen.getByTestId('site-publish-prj-site-1')).toBeDisabled()
     expect(screen.getByTestId('site-more-prj-site-1')).toBeDisabled()
+    expect(screen.getByTestId('site-delete-dialog')).toHaveFocus()
+    fireEvent.keyDown(screen.getByTestId('site-delete-dialog'), { key: 'Tab' })
+    expect(screen.getByTestId('site-delete-dialog')).toHaveFocus()
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(screen.getByTestId('site-delete-dialog-overlay'))
     expect(screen.getByTestId('site-delete-dialog')).toBeInTheDocument()
@@ -841,7 +946,8 @@ describe('SitesWorkspace', () => {
 
   test('keeps the row and dialog open when deletion fails so it can be retried', async () => {
     const api = createApi()
-    vi.mocked(api.deleteSite).mockRejectedValueOnce(new Error('公网撤销失败'))
+    const deleteRequest = deferred<void>()
+    vi.mocked(api.deleteSite).mockImplementationOnce(() => deleteRequest.promise)
     render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
@@ -849,8 +955,15 @@ describe('SitesWorkspace', () => {
     await userEvent.click(screen.getByTestId('site-delete-menu-item-prj-site-1'))
     await userEvent.click(screen.getByTestId('site-delete-confirm-button'))
 
+    expect(screen.getByTestId('site-delete-dialog')).toHaveFocus()
+    await act(async () => {
+      deleteRequest.reject(new Error('公网撤销失败'))
+    })
+
     expect(await screen.findByRole('alert')).toHaveTextContent('公网撤销失败')
     expect(screen.getByTestId('site-row-prj-site-1')).toBeInTheDocument()
     expect(screen.getByTestId('site-delete-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('site-delete-confirm-button')).toBeEnabled()
+    expect(screen.getByTestId('site-delete-confirm-button')).toHaveFocus()
   })
 })

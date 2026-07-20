@@ -34,17 +34,56 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
+interface VersionedProject {
+  project: SiteProject
+  generation: number
+}
+
+function retireProjectMutations(
+  generation: number,
+  projectOverrides: Map<string, VersionedProject>,
+  deletedProjectIds: Map<string, number>
+) {
+  for (const [projectId, override] of projectOverrides) {
+    if (override.generation < generation) projectOverrides.delete(projectId)
+  }
+  for (const [projectId, deletedGeneration] of deletedProjectIds) {
+    if (deletedGeneration < generation) deletedProjectIds.delete(projectId)
+  }
+}
+
 function reconcileSiteProjects(
   projects: SiteProject[],
-  projectOverrides: ReadonlyMap<string, SiteProject>,
-  deletedProjectIds: ReadonlySet<string>
+  generation: number,
+  projectOverrides: ReadonlyMap<string, VersionedProject>,
+  deletedProjectIds: ReadonlyMap<string, number>
 ): SiteProject[] {
   const seenIds = new Set<string>()
-  return projects.flatMap(project => {
-    if (deletedProjectIds.has(project.id) || seenIds.has(project.id)) return []
+  const reconciledProjects = projects.flatMap(project => {
+    const deletedGeneration = deletedProjectIds.get(project.id)
+    if (
+      (deletedGeneration !== undefined && generation <= deletedGeneration) ||
+      seenIds.has(project.id)
+    ) {
+      return []
+    }
     seenIds.add(project.id)
-    return [projectOverrides.get(project.id) ?? project]
+    const override = projectOverrides.get(project.id)
+    return [override && generation <= override.generation ? override.project : project]
   })
+
+  for (const [projectId, override] of projectOverrides) {
+    if (
+      generation <= override.generation &&
+      !seenIds.has(projectId) &&
+      !deletedProjectIds.has(projectId)
+    ) {
+      reconciledProjects.push(override.project)
+      seenIds.add(projectId)
+    }
+  }
+
+  return reconciledProjects
 }
 
 function reconcilePublishErrors(
@@ -220,14 +259,28 @@ export function SitesWorkspace({
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const requestGeneration = useRef(0)
-  const projectOverrides = useRef<Map<string, SiteProject>>(new Map())
-  const deletedProjectIds = useRef<Set<string>>(new Set())
+  const apiGeneration = useRef(0)
+  const currentApi = useRef(api)
+  const latestSites = useRef<SiteProject[]>([])
+  const projectOverrides = useRef<Map<string, VersionedProject>>(new Map())
+  const deletedProjectIds = useRef<Map<string, number>>(new Map())
   const publishingProjectIds = useRef<Set<string>>(new Set())
   const pendingRenameSiteId = useRef<string | null>(null)
   const renamingProjectId = useRef<string | null>(null)
   const pendingDeleteSiteId = useRef<string | null>(null)
   const deletingProjectId = useRef<string | null>(null)
   const deleteReturnFocusContainer = useRef<HTMLElement | null>(null)
+
+  const replaceSites = useCallback((projects: SiteProject[]) => {
+    latestSites.current = projects
+    setSites(projects)
+  }, [])
+
+  const updateSites = useCallback((updater: (projects: SiteProject[]) => SiteProject[]) => {
+    const projects = updater(latestSites.current)
+    latestSites.current = projects
+    setSites(projects)
+  }, [])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
@@ -247,12 +300,14 @@ export function SitesWorkspace({
         limit: pageSize,
       })
       if (generation !== requestGeneration.current) return
+      retireProjectMutations(generation, projectOverrides.current, deletedProjectIds.current)
       const projects = reconcileSiteProjects(
         response.items,
+        generation,
         projectOverrides.current,
         deletedProjectIds.current
       )
-      setSites(projects)
+      replaceSites(projects)
       setPublishErrors(current => reconcilePublishErrors(current, projects, true))
       setNextCursor(response.next_cursor)
       setNextCursorOwner(requestQuery)
@@ -260,7 +315,7 @@ export function SitesWorkspace({
     } catch (error) {
       if (generation !== requestGeneration.current) return
       if (isSitesUnavailableError(error)) {
-        setSites([])
+        replaceSites([])
         setNextCursor(null)
         setNextCursorOwner(null)
         setSitesUnavailable(true)
@@ -271,7 +326,36 @@ export function SitesWorkspace({
     } finally {
       if (generation === requestGeneration.current) setLoading(false)
     }
-  }, [api, debouncedQuery, pageSize, t])
+  }, [api, debouncedQuery, pageSize, replaceSites, t])
+
+  useEffect(() => {
+    if (currentApi.current === api) return
+
+    currentApi.current = api
+    apiGeneration.current += 1
+    requestGeneration.current += 1
+    projectOverrides.current.clear()
+    deletedProjectIds.current.clear()
+    publishingProjectIds.current.clear()
+    pendingRenameSiteId.current = null
+    renamingProjectId.current = null
+    pendingDeleteSiteId.current = null
+    deletingProjectId.current = null
+    deleteReturnFocusContainer.current = null
+    replaceSites([])
+    setNextCursor(null)
+    setNextCursorOwner(null)
+    setLoading(true)
+    setLoadingMore(false)
+    setLoadError(null)
+    setSitesUnavailable(false)
+    setPublishingIds(new Set())
+    setPublishErrors({})
+    setPendingRenameSite(null)
+    setPendingDeleteSite(null)
+    setDeletingSiteId(null)
+    setDeleteError(null)
+  }, [api, replaceSites])
 
   useEffect(() => {
     void loadFirstPage()
@@ -293,10 +377,11 @@ export function SitesWorkspace({
       if (generation !== requestGeneration.current) return
       const projects = reconcileSiteProjects(
         response.items,
+        generation,
         projectOverrides.current,
         deletedProjectIds.current
       )
-      setSites(current => {
+      updateSites(current => {
         const knownIds = new Set(current.map(site => site.id))
         const newSites = projects.filter(site => {
           if (knownIds.has(site.id)) return false
@@ -312,7 +397,7 @@ export function SitesWorkspace({
       if (generation !== requestGeneration.current) return
       if (isSitesUnavailableError(error)) {
         setSitesUnavailable(true)
-        setSites([])
+        replaceSites([])
         setNextCursor(null)
         setNextCursorOwner(null)
         setLoadError(null)
@@ -336,6 +421,7 @@ export function SitesWorkspace({
       return
     }
     publishingProjectIds.current.add(site.id)
+    const operationApiGeneration = apiGeneration.current
     setPublishingIds(current => new Set(current).add(site.id))
     setPublishErrors(current => {
       if (!(site.id in current)) return current
@@ -345,20 +431,29 @@ export function SitesWorkspace({
     })
     try {
       const published = await api.publishSite(site.id)
-      projectOverrides.current.set(site.id, published)
-      setSites(current => current.map(item => (item.id === site.id ? published : item)))
+      if (operationApiGeneration !== apiGeneration.current) return
+      projectOverrides.current.set(site.id, {
+        project: published,
+        generation: requestGeneration.current,
+      })
+      updateSites(current => current.map(item => (item.id === site.id ? published : item)))
     } catch (error) {
+      if (operationApiGeneration !== apiGeneration.current) return
+      const latestProject = latestSites.current.find(project => project.id === site.id)
+      if (latestProject?.network === 'outer') return
       setPublishErrors(current => ({
         ...current,
         [site.id]: errorMessage(error, t('publish_failed', '发布失败')),
       }))
     } finally {
-      publishingProjectIds.current.delete(site.id)
-      setPublishingIds(current => {
-        const next = new Set(current)
-        next.delete(site.id)
-        return next
-      })
+      if (operationApiGeneration === apiGeneration.current) {
+        publishingProjectIds.current.delete(site.id)
+        setPublishingIds(current => {
+          const next = new Set(current)
+          next.delete(site.id)
+          return next
+        })
+      }
     }
   }
 
@@ -396,10 +491,15 @@ export function SitesWorkspace({
     }
 
     renamingProjectId.current = projectId
+    const operationApiGeneration = apiGeneration.current
     try {
       const renamed = await api.renameSite(projectId, title)
-      projectOverrides.current.set(projectId, renamed)
-      setSites(current => current.map(item => (item.id === projectId ? renamed : item)))
+      if (operationApiGeneration !== apiGeneration.current) return
+      projectOverrides.current.set(projectId, {
+        project: renamed,
+        generation: requestGeneration.current,
+      })
+      updateSites(current => current.map(item => (item.id === projectId ? renamed : item)))
       setPublishErrors(current => {
         if (!(projectId in current)) return current
         const next = { ...current }
@@ -407,7 +507,9 @@ export function SitesWorkspace({
         return next
       })
     } finally {
-      renamingProjectId.current = null
+      if (operationApiGeneration === apiGeneration.current) {
+        renamingProjectId.current = null
+      }
     }
   }
 
@@ -447,13 +549,15 @@ export function SitesWorkspace({
       return
     }
     deletingProjectId.current = projectId
+    const operationApiGeneration = apiGeneration.current
     setDeletingSiteId(projectId)
     setDeleteError(null)
     try {
       await api.deleteSite(projectId)
-      deletedProjectIds.current.add(projectId)
+      if (operationApiGeneration !== apiGeneration.current) return
+      deletedProjectIds.current.set(projectId, requestGeneration.current)
       projectOverrides.current.delete(projectId)
-      setSites(current => current.filter(item => item.id !== projectId))
+      updateSites(current => current.filter(item => item.id !== projectId))
       setPublishErrors(current => {
         if (!(projectId in current)) return current
         const next = { ...current }
@@ -463,10 +567,13 @@ export function SitesWorkspace({
       pendingDeleteSiteId.current = null
       setPendingDeleteSite(null)
     } catch (error) {
+      if (operationApiGeneration !== apiGeneration.current) return
       setDeleteError(errorMessage(error, t('delete_failed', '站点删除失败')))
     } finally {
-      deletingProjectId.current = null
-      setDeletingSiteId(null)
+      if (operationApiGeneration === apiGeneration.current) {
+        deletingProjectId.current = null
+        setDeletingSiteId(null)
+      }
     }
   }
 

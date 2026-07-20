@@ -95,7 +95,38 @@ describe('TextInputDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  test('disables every action while submitting and ignores duplicate dismissal or submit attempts', async () => {
+  test('submits a trimmed non-empty value with Enter and ignores an empty value', async () => {
+    const onClose = vi.fn()
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <TextInputDialog
+        open
+        title="重命名项目"
+        label="项目名称"
+        initialValue="   "
+        confirmLabel="保存"
+        cancelLabel="取消"
+        inputTestId="rename-project-input"
+        confirmTestId="confirm-rename-project-button"
+        onClose={onClose}
+        onSubmit={onSubmit}
+      />
+    )
+
+    const input = screen.getByTestId('rename-project-input')
+    await userEvent.keyboard('{Enter}')
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    await userEvent.type(input, '  hello  ')
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('hello'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('disables every action while submitting and ignores click plus Enter duplicate attempts', async () => {
     const submitRequest = deferred<void>()
     const onClose = vi.fn()
     const onSubmit = vi.fn(() => submitRequest.promise)
@@ -119,10 +150,13 @@ describe('TextInputDialog', () => {
     const closeButton = screen.getByTestId('rename-project-input-close-button')
     const cancelButton = screen.getByTestId('rename-project-input-cancel-button')
     const confirmButton = screen.getByTestId('confirm-rename-project-button')
+    const form = confirmButton.closest('form')
+    expect(form).not.toBeNull()
 
     act(() => {
       fireEvent.click(confirmButton)
-      fireEvent.click(confirmButton)
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+      fireEvent.submit(form!)
     })
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
