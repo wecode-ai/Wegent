@@ -35,6 +35,7 @@ interface ToolBlockItemProps {
   shimmer?: boolean
   durationStartedAt?: number
   durationEndAt?: number
+  fileEditDurations?: ReadonlyMap<string, FileEditDuration>
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
@@ -50,6 +51,7 @@ export function ToolBlockItem({
   shimmer = false,
   durationStartedAt,
   durationEndAt,
+  fileEditDurations,
   forceExpanded = false,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
@@ -87,6 +89,7 @@ export function ToolBlockItem({
         block={block}
         shimmer={shimmer}
         duration={duration}
+        fileEditDurations={fileEditDurations}
         onExpandedChange={onExpandedChange}
       />
     )
@@ -202,11 +205,13 @@ function ProcessFileChangesBlockItem({
   block,
   shimmer,
   duration,
+  fileEditDurations,
   onExpandedChange,
 }: {
   block: Extract<ProcessingBlock, { type: 'file_changes' }>
   shimmer: boolean
   duration: string
+  fileEditDurations?: ReadonlyMap<string, FileEditDuration>
   onExpandedChange?: (expanded: boolean) => void
 }) {
   const { t } = useTranslation('chat')
@@ -228,6 +233,7 @@ function ProcessFileChangesBlockItem({
     >
       <div className="flex min-w-0 flex-col">
         {summary.files.map(file => {
+          const fileDuration = formatFileEditDuration(fileEditDurations?.get(file.path)) ?? duration
           const previewLines = fileDiffPreviewLines(file, summary)
           const fileExpanded = expandedFilePath === file.path && previewLines.length > 0
           return (
@@ -262,7 +268,7 @@ function ProcessFileChangesBlockItem({
                   />
                 ) : null}
                 <span className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted">
-                  {duration}
+                  {fileDuration}
                 </span>
               </button>
               {fileExpanded ? <InlineDiffPreview file={file} lines={previewLines} /> : null}
@@ -272,6 +278,16 @@ function ProcessFileChangesBlockItem({
       </div>
     </div>
   )
+}
+
+export interface FileEditDuration {
+  startedAt: number
+  completedAt: number
+}
+
+function formatFileEditDuration(duration: FileEditDuration | undefined): string | undefined {
+  if (!duration) return undefined
+  return `${(Math.max(0, duration.completedAt - duration.startedAt) / 1000).toFixed(1)}s`
 }
 
 function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, isRunning: boolean) {
