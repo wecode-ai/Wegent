@@ -174,7 +174,7 @@ export function CloudConnectionSidebarButton({
           }}
           title={statusTitle}
           className={cn(
-            'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-sm font-normal leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
+            'flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[10px] py-0 pl-0 pr-2 text-left text-base font-normal leading-5 text-[rgb(var(--color-sidebar-text-primary))]',
             (needsAttention || cloudWorkUnavailable) && 'text-red-500'
           )}
         >

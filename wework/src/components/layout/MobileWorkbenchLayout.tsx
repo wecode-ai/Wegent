@@ -198,10 +198,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     !activeDeviceId &&
     !state.devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    paneSession.status.isSubmitting ||
-    activeDeviceUnavailable ||
-    activeDeviceVersionUnsupported ||
-    noStandaloneCompatibleDevice
+    activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
         device:
@@ -417,6 +414,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}
+                    submitDisabled={paneSession.status.isSubmitting}
                     error={paneSession.error}
                     disabledReason={inlineComposerDisabledReason}
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
@@ -521,6 +519,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 onChange={paneSession.setInput}
                 onSubmit={paneSession.send}
                 disabled={composerDisabled}
+                submitDisabled={paneSession.status.isSubmitting}
                 error={paneSession.error}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}

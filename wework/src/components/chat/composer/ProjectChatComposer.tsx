@@ -30,6 +30,7 @@ interface ProjectChatComposerProps {
   onChange: (value: string) => void
   onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
+  submitDisabled?: boolean
   disabledReason?: string
   placeholder: string
   models: UnifiedModel[]
@@ -152,6 +153,7 @@ export function ProjectChatComposer({
   onChange,
   onSubmit,
   disabled,
+  submitDisabled = false,
   disabledReason,
   placeholder,
   models,
@@ -193,7 +195,9 @@ export function ProjectChatComposer({
   const onFileSelectRef = useRef(onFileSelect)
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
+    (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
+    !disabled &&
+    !submitDisabled
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
