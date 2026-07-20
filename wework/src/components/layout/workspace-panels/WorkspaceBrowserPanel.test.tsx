@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import { resetEmbeddedBrowserDownloadStoreForTests } from '@/lib/embedded-browser-download-store'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ function mockBrowserHostRect() {
 describe('WorkspaceBrowserPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetEmbeddedBrowserDownloadStoreForTests()
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
@@ -256,7 +258,7 @@ describe('WorkspaceBrowserPanel', () => {
     act(() => {
       handleDownload({
         id: 'download-after-handoff',
-        label: 'workspace-browser',
+        label: 'workspace-browser-owner',
         nativeLabel: 'workspace-browser-native-1',
         url: 'https://example.com/handoff.dmg',
         path: '/Users/test/Downloads/handoff.dmg',
@@ -269,6 +271,127 @@ describe('WorkspaceBrowserPanel', () => {
     expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
       'handoff.dmg'
     )
+  })
+
+  test('restores download state when ownership moves to a separately mounted panel', async () => {
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return Promise.resolve(vi.fn())
+    })
+
+    const source = render(<WorkspaceBrowserPanel active label="workspace-browser-blank-0" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser-blank-0'
+      )
+    )
+
+    act(() => {
+      handleDownload({
+        id: 'download-before-handoff',
+        label: 'workspace-browser-blank-0',
+        nativeLabel: 'workspace-browser-native-1',
+        url: 'https://example.com/handoff.dmg',
+        path: '/Users/test/Downloads/handoff.dmg',
+        status: 'progress',
+        receivedBytes: 512,
+        totalBytes: 1024,
+      })
+    })
+    expect(
+      await within(source.container).findByTestId('workspace-browser-download-item')
+    ).toHaveTextContent('handoff.dmg')
+    embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValueOnce(true)
+    source.unmount()
+
+    act(() => {
+      handleDownload({
+        id: 'download-before-handoff',
+        label: 'workspace-browser-task-1',
+        nativeLabel: 'workspace-browser-native-1',
+        url: 'https://example.com/handoff.dmg',
+        path: '/Users/test/Downloads/handoff.dmg',
+        status: 'finished',
+        receivedBytes: 1024,
+        totalBytes: 1024,
+      })
+    })
+
+    const destination = render(<WorkspaceBrowserPanel active label="workspace-browser-task-1" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser-task-1'
+      )
+    )
+
+    expect(
+      await within(destination.container).findByTestId('workspace-browser-download-item')
+    ).toHaveTextContent('下载完成')
+  })
+
+  test('only the current logical owner processes live events for a shared native browser', async () => {
+    const handlers: Array<
+      (download: {
+        id: string
+        label: string
+        nativeLabel: string
+        url: string
+        path: string | null
+        status: string
+        receivedBytes: number | null
+        totalBytes: number | null
+      }) => void
+    > = []
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handlers.push(handler)
+      return null
+    })
+
+    const source = render(<WorkspaceBrowserPanel active label="workspace-browser-blank-0" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser-blank-0'
+      )
+    )
+    source.rerender(<WorkspaceBrowserPanel active={false} label="workspace-browser-blank-0" />)
+    const destination = render(<WorkspaceBrowserPanel active label="workspace-browser-task-1" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser-task-1'
+      )
+    )
+
+    act(() => {
+      handlers.forEach(handler =>
+        handler({
+          id: 'download-after-handoff',
+          label: 'workspace-browser-task-1',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'https://example.com/current-owner.dmg',
+          path: '/Users/test/Downloads/current-owner.dmg',
+          status: 'progress',
+          receivedBytes: 512,
+          totalBytes: 1024,
+        })
+      )
+    })
+
+    expect(
+      within(source.container).queryByTestId('workspace-browser-download-item')
+    ).not.toBeInTheDocument()
+    expect(
+      await within(destination.container).findByTestId('workspace-browser-download-item')
+    ).toHaveTextContent('current-owner.dmg')
   })
 
   test('discards buffered events when a logical label resolves to a different native browser', async () => {
@@ -322,6 +445,71 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+  })
+
+  test('retains a terminal event when another browser emits repeated progress before adoption', async () => {
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    let resolvePageState!: (state: { nativeLabel: string; title: string; url: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return null
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolvePageState = resolve
+      })
+    )
+
+    render(<WorkspaceBrowserPanel active label="workspace-browser" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
+    )
+
+    act(() => {
+      handleDownload({
+        id: 'target-finished',
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        url: 'https://example.com/target.dmg',
+        path: '/Users/test/Downloads/target.dmg',
+        status: 'finished',
+        receivedBytes: 1024,
+        totalBytes: 1024,
+      })
+      Array.from({ length: 20 }, (_, index) => index).forEach(index => {
+        handleDownload({
+          id: `noise-${index}`,
+          label: 'workspace-browser-other',
+          nativeLabel: 'workspace-browser-native-other',
+          url: `https://example.com/noise-${index}.dmg`,
+          path: `/Users/test/Downloads/noise-${index}.dmg`,
+          status: 'progress',
+          receivedBytes: index,
+          totalBytes: 1024,
+        })
+      })
+    })
+
+    await act(async () => {
+      resolvePageState({
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Target browser',
+        url: 'https://example.com/',
+      })
+    })
+
+    expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
+      'target.dmg'
+    )
   })
 
   test('opens the embedded browser from an external open request', async () => {

@@ -36,6 +36,7 @@ const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
 const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+const EMBEDDED_BROWSER_INITIAL_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -270,11 +271,11 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
-fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
-    match url.scheme() {
-        "http" | "https" => WebviewUrl::External(url),
-        _ => WebviewUrl::CustomProtocol(url),
-    }
+fn browser_initial_webview_url() -> WebviewUrl {
+    WebviewUrl::External(
+        tauri::Url::parse(EMBEDDED_BROWSER_INITIAL_URL)
+            .expect("embedded browser initial URL must be valid"),
+    )
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -315,6 +316,44 @@ fn remove_logical_entry_if_native_matches<T>(
     matches_identity
         .then(|| entries.remove(logical_label))
         .flatten()
+}
+
+fn update_logical_entry_if_native_matches<T>(
+    entries: &mut HashMap<String, T>,
+    native_label: &str,
+    identity: impl Fn(&T) -> &str,
+    update: impl FnOnce(&mut T),
+) -> bool {
+    let Some(entry) = entries
+        .values_mut()
+        .find(|entry| identity(entry) == native_label)
+    else {
+        return false;
+    };
+    update(entry);
+    true
+}
+
+fn relabel_logical_entry<T>(
+    entries: &mut HashMap<String, T>,
+    from_label: &str,
+    to_label: &str,
+) -> Result<(), String> {
+    if from_label == to_label {
+        return Ok(());
+    }
+    if entries.contains_key(to_label) {
+        return if entries.contains_key(from_label) {
+            Err("Embedded browser destination label is already open".to_string())
+        } else {
+            Ok(())
+        };
+    }
+    let entry = entries
+        .remove(from_label)
+        .ok_or_else(|| "Embedded browser is not open".to_string())?;
+    entries.insert(to_label.to_string(), entry);
+    Ok(())
 }
 
 fn browser_data_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -423,17 +462,12 @@ fn update_entry_for_native_label(
         .webviews
         .lock()
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-    let logical_owner = logical_owner_for_native_label(
-        webviews
-            .iter()
-            .map(|(logical_label, entry)| (logical_label.as_str(), entry.native_label.as_str())),
+    update_logical_entry_if_native_matches(
+        &mut webviews,
         native_label,
+        |entry| entry.native_label.as_str(),
+        update,
     );
-    if let Some(logical_owner) = logical_owner {
-        if let Some(entry) = webviews.get_mut(&logical_owner) {
-            update(entry);
-        }
-    }
     Ok(())
 }
 
@@ -498,7 +532,7 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
         .webview
         .navigate(parsed_url)
         .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
-    set_entry_url(state, label, Some(url))
+    set_entry_url_for_native_label(state, &entry.native_label, url)
 }
 
 fn is_browser_open(state: &EmbeddedBrowserState, label: &str) -> Result<bool, String> {
@@ -1120,28 +1154,27 @@ pub async fn embedded_browser_open(
     let native_label_for_load = native_label.clone();
     let native_label_for_title = native_label.clone();
 
-    let builder =
-        tauri::webview::WebviewBuilder::new(&native_label, browser_webview_url(parsed_url))
-            .user_agent(EMBEDDED_BROWSER_USER_AGENT)
-            .data_directory(browser_data_directory(&app)?)
-            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
-            .accept_first_mouse(true)
-            .on_page_load(move |_webview, payload| {
-                if matches!(payload.event(), PageLoadEvent::Finished) {
-                    let _ = set_entry_url_for_native_label(
-                        &load_state_handle,
-                        &native_label_for_load,
-                        payload.url().to_string(),
-                    );
-                }
-            })
-            .on_document_title_changed(move |_webview, title| {
-                let _ = update_entry_for_native_label(
-                    &title_state_handle,
-                    &native_label_for_title,
-                    |entry| entry.title = Some(title),
+    let builder = tauri::webview::WebviewBuilder::new(&native_label, browser_initial_webview_url())
+        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
+        .data_directory(browser_data_directory(&app)?)
+        .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+        .accept_first_mouse(true)
+        .on_page_load(move |_webview, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                let _ = set_entry_url_for_native_label(
+                    &load_state_handle,
+                    &native_label_for_load,
+                    payload.url().to_string(),
                 );
-            });
+            }
+        })
+        .on_document_title_changed(move |_webview, title| {
+            let _ = update_entry_for_native_label(
+                &title_state_handle,
+                &native_label_for_title,
+                |entry| entry.title = Some(title),
+            );
+        });
 
     #[cfg(desktop)]
     let builder = {
@@ -1206,10 +1239,6 @@ pub async fn embedded_browser_open(
     let webview = window
         .add_child(builder, normalized_bounds.position, normalized_bounds.size)
         .map_err(|error| format!("Failed to create embedded browser: {error}"))?;
-    if let Err(error) = webview.show() {
-        let _ = webview.close();
-        return Err(format!("Failed to show embedded browser: {error}"));
-    }
 
     let entry = EmbeddedBrowserEntry {
         webview: webview.clone(),
@@ -1219,12 +1248,33 @@ pub async fn embedded_browser_open(
     };
     match state.webviews.lock() {
         Ok(mut webviews) => {
-            webviews.insert(label, entry);
+            webviews.insert(label.clone(), entry);
         }
         Err(_) => {
             let _ = webview.close();
             return Err("Embedded browser state lock poisoned".to_string());
         }
+    }
+
+    let finish_open = webview
+        .navigate(parsed_url)
+        .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
+        .and_then(|_| {
+            webview
+                .show()
+                .map_err(|error| format!("Failed to show embedded browser: {error}"))
+        });
+    if let Err(error) = finish_open {
+        if let Ok(mut webviews) = state.webviews.lock() {
+            remove_logical_entry_if_native_matches(
+                &mut webviews,
+                &label,
+                &native_label,
+                |current| current.native_label.as_str(),
+            );
+        }
+        let _ = webview.close();
+        return Err(error);
     }
 
     Ok(EmbeddedBrowserPageState {
@@ -1239,25 +1289,21 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        browser_webview_url, download_event_owner, logical_owner_for_native_label,
-        native_webview_label, remove_logical_entry_if_native_matches,
-        EmbeddedBrowserDownloadPayload, EmbeddedBrowserPageState,
+        browser_initial_webview_url, download_event_owner, logical_owner_for_native_label,
+        native_webview_label, relabel_logical_entry, remove_logical_entry_if_native_matches,
+        update_logical_entry_if_native_matches, EmbeddedBrowserDownloadPayload,
+        EmbeddedBrowserPageState,
     };
     use tauri::WebviewUrl;
 
     #[test]
-    fn browser_webview_url_uses_custom_protocol_for_tauri_pages() {
-        let app_url = tauri::Url::parse("tauri://localhost/vnc.html?sessionId=test").unwrap();
-        let external_url = tauri::Url::parse("https://example.com/").unwrap();
+    fn new_browser_starts_blank_before_requested_navigation() {
+        let initial_url = browser_initial_webview_url();
 
-        assert!(matches!(
-            browser_webview_url(app_url),
-            WebviewUrl::CustomProtocol(_)
-        ));
-        assert!(matches!(
-            browser_webview_url(external_url),
-            WebviewUrl::External(_)
-        ));
+        let WebviewUrl::External(url) = initial_url else {
+            panic!("Embedded browser must start from an external about:blank URL");
+        };
+        assert_eq!(url.as_str(), "about:blank");
     }
 
     #[test]
@@ -1370,6 +1416,54 @@ mod tests {
 
         assert_eq!(removed.as_deref(), Some(native_label.as_str()));
         assert!(!owners.contains_key("workspace-browser"));
+    }
+
+    #[test]
+    fn native_scoped_update_follows_relabel_without_mutating_reused_logical_label() {
+        let original_native = native_webview_label("workspace-browser", 41);
+        let replacement_native = native_webview_label("workspace-browser", 42);
+        let mut entries = HashMap::from([
+            (
+                "workspace-browser-task-1".to_string(),
+                (original_native.clone(), None),
+            ),
+            ("workspace-browser".to_string(), (replacement_native, None)),
+        ]);
+
+        let updated = update_logical_entry_if_native_matches(
+            &mut entries,
+            &original_native,
+            |entry| entry.0.as_str(),
+            |entry| entry.1 = Some("https://openai.com/".to_string()),
+        );
+
+        assert!(updated);
+        assert_eq!(
+            entries["workspace-browser-task-1"].1.as_deref(),
+            Some("https://openai.com/")
+        );
+        assert_eq!(entries["workspace-browser"].1, None);
+    }
+
+    #[test]
+    fn relabel_rejects_an_occupied_destination_without_orphaning_the_source() {
+        let mut entries = HashMap::from([
+            ("workspace-browser-source".to_string(), "source-native"),
+            ("workspace-browser-target".to_string(), "target-native"),
+        ]);
+
+        let result = relabel_logical_entry(
+            &mut entries,
+            "workspace-browser-source",
+            "workspace-browser-target",
+        );
+
+        assert_eq!(
+            result,
+            Err("Embedded browser destination label is already open".to_string())
+        );
+        assert_eq!(entries["workspace-browser-source"], "source-native");
+        assert_eq!(entries["workspace-browser-target"], "target-native");
     }
 }
 
@@ -1573,22 +1667,11 @@ pub async fn embedded_browser_relabel(
     to_label: String,
 ) -> Result<(), String> {
     let _lifecycle = state.lifecycle.lock().await;
-    if from_label == to_label {
-        return Ok(());
-    }
-
     let mut webviews = state
         .webviews
         .lock()
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-    if webviews.contains_key(&to_label) {
-        return Ok(());
-    }
-    let entry = webviews
-        .remove(&from_label)
-        .ok_or_else(|| "Embedded browser is not open".to_string())?;
-    webviews.insert(to_label, entry);
-    Ok(())
+    relabel_logical_entry(&mut webviews, &from_label, &to_label)
 }
 
 #[tauri::command]
