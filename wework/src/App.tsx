@@ -68,6 +68,7 @@ import {
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -369,6 +370,10 @@ function AppShell() {
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     }
   }, [isTauri])
+
+  useEffect(() => {
+    return installMacOSInputArrowKeyGuard()
+  }, [])
 
   useEffect(() => {
     if (
