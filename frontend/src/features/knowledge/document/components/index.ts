@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { KnowledgeBaseCard } from './KnowledgeBaseCard'
 export { GroupCard } from './GroupCard'
 export { MigrateKnowledgeBaseDialog } from './MigrateKnowledgeBaseDialog'
 export { KnowledgeDocumentPage } from './KnowledgeDocumentPage'

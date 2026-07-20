@@ -14,8 +14,8 @@ from app.models.resource_member import MemberStatus, ResourceMember, ResourceRol
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.share.base_service import UnifiedShareService
-from app.services.share.external_entity_resolver import register_entity_resolver
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
 
 
