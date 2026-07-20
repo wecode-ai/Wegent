@@ -199,6 +199,35 @@ describe('reduceWorkbenchMessages', () => {
     })
   })
 
+  test('keeps repeated optimistic user message delivery idempotent', () => {
+    const message: WorkbenchMessage = {
+      id: 'runtime-local-pane-1',
+      role: 'user',
+      content: 'inspect the latest screenshot',
+      status: 'done',
+      createdAt: '2026-05-25T00:00:00.000Z'
+    }
+
+    const optimistic = reduceWorkbenchMessages([], {
+      type: 'user_added',
+      message
+    })
+    const reconciled = reduceWorkbenchMessages(optimistic, {
+      type: 'user_added',
+      message: {
+        ...message,
+        subtaskId: 'runtime-worktree-0'
+      }
+    })
+
+    expect(reconciled).toHaveLength(1)
+    expect(reconciled[0]).toMatchObject({
+      id: 'runtime-local-pane-1',
+      content: 'inspect the latest screenshot',
+      subtaskId: 'runtime-worktree-0'
+    })
+  })
+
   test('uses chunk offsets to ignore duplicate assistant chunks', () => {
     const started = reduceWorkbenchMessages([], {
       type: 'assistant_started',
