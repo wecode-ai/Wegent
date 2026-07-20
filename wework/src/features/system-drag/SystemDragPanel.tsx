@@ -195,14 +195,24 @@ export function SystemDragPanel() {
   return (
     <main data-testid="system-drag-panel" className="mx-auto h-[72px] w-[440px] bg-transparent p-1">
       <section className="relative h-full overflow-hidden rounded-xl border border-border bg-background/95 shadow-lg backdrop-blur-md">
+        <header className="flex h-[18px] items-center justify-between border-b border-border/70 px-2.5">
+          <div className="flex items-center" data-testid="system-drag-brand">
+            <span className="text-xs font-semibold leading-none tracking-[0.02em] text-text-secondary">
+              Wework
+            </span>
+          </div>
+          <span className="text-xs leading-none text-text-muted">
+            {t('workbench.system_drag_hint', '拖放到操作区')}
+          </span>
+        </header>
         {dropStatus && completedZone ? (
           <div
             data-testid={`system-drag-${dropStatus.kind}-feedback`}
-            className="flex h-full items-center justify-center gap-2.5 px-4 text-center"
+            className="flex h-[44px] items-center justify-center gap-2 px-4 text-center"
             role="status"
           >
             <span
-              className={`flex h-8 w-8 items-center justify-center rounded-lg ${dropStatus.kind === 'success' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}`}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg ${dropStatus.kind === 'success' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'}`}
             >
               {dropStatus.kind === 'success' ? (
                 <Check className="h-4 w-4" />
@@ -211,23 +221,23 @@ export function SystemDragPanel() {
               )}
             </span>
             <div>
-              <div className="text-sm font-medium">
+              <div className="text-xs font-medium">
                 {dropStatus.kind === 'success'
                   ? t('workbench.system_drag_added', '已添加')
                   : t('workbench.system_drag_failed', '添加失败')}
               </div>
-              <div className="mt-0.5 text-xs text-text-muted">{completedZone.title}</div>
+              <div className="text-xs text-text-muted">{completedZone.title}</div>
             </div>
           </div>
         ) : (
-          <div className="flex h-full items-stretch p-1">
+          <div className="flex h-[44px] items-stretch p-0.5">
             {zones
               .filter(zone => zone.action !== 'follow-up' || conversationTitle)
               .map(({ action, icon: Icon, title, detail }) => (
                 <div
                   key={action}
                   data-testid={`system-drag-${action}-zone`}
-                  className={`relative flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 text-left transition-colors duration-150 after:absolute after:-right-0.5 after:top-2.5 after:h-[calc(100%-1.25rem)] after:w-px after:bg-border last:after:hidden ${activeAction === action ? 'border-foreground/15 bg-muted shadow-sm' : 'border-transparent'}`}
+                  className={`relative flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 text-left transition-colors duration-150 after:absolute after:-right-0.5 after:top-2 after:h-[calc(100%-1rem)] after:w-px after:bg-border last:after:hidden ${activeAction === action ? 'border-text-primary/15 bg-muted shadow-sm' : 'border-transparent'}`}
                   onDragOver={event => {
                     event.preventDefault()
                     setActiveAction(action)
@@ -235,13 +245,13 @@ export function SystemDragPanel() {
                   onDrop={event => handleTextDrop(action, event)}
                 >
                   <span
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${activeAction === action ? 'bg-foreground text-background' : 'bg-muted text-text-secondary'}`}
+                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${activeAction === action ? 'bg-text-primary text-background' : 'bg-muted text-text-secondary'}`}
                   >
-                    <Icon className="h-4 w-4" />
+                    <Icon className="h-3.5 w-3.5" />
                   </span>
                   <div className="min-w-0 max-w-full">
-                    <div className="truncate text-sm font-medium">{title}</div>
-                    <div className="mt-0.5 truncate text-xs text-text-muted">{detail}</div>
+                    <div className="truncate text-xs font-medium">{title}</div>
+                    <div className="truncate text-xs leading-none text-text-muted">{detail}</div>
                   </div>
                 </div>
               ))}

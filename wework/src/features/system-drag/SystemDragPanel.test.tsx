@@ -35,6 +35,13 @@ describe('SystemDragPanel', () => {
     mocks.invoke.mockResolvedValue(undefined)
   })
 
+  test('identifies the panel as part of Wework', () => {
+    render(<SystemDragPanel />)
+
+    expect(screen.getByTestId('system-drag-brand')).toHaveTextContent('Wework')
+    expect(screen.getByText('拖放到操作区')).toBeInTheDocument()
+  })
+
   test('only shows follow-up when a conversation is selected', async () => {
     render(<SystemDragPanel />)
 
@@ -83,7 +90,7 @@ describe('SystemDragPanel', () => {
 
     fireEvent.dragOver(stashZone)
 
-    expect(stashZone).toHaveClass('border-foreground/15', 'bg-muted', 'shadow-sm')
+    expect(stashZone).toHaveClass('border-text-primary/15', 'bg-muted', 'shadow-sm')
   })
 
   test('accepts dragged text through the browser drop event', async () => {
@@ -135,7 +142,7 @@ describe('SystemDragPanel', () => {
     })
 
     expect(screen.getByTestId('system-drag-stash-zone')).toHaveClass(
-      'border-foreground/15',
+      'border-text-primary/15',
       'bg-muted'
     )
   })
