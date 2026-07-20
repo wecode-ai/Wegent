@@ -153,153 +153,35 @@ class KnowledgeShareService(UnifiedShareService):
             )
             return None
 
-        from app.services.knowledge.knowledge_service import KnowledgeService
-
-        if not KnowledgeService.can_directly_access_knowledge_base(
-            db,
-            resource_id,
-            user_id,
-            kb=kb,
-        ):
-            logger.warning(
-                "[_get_resource] Direct access requirement denied KB %s for user %s",
-                resource_id,
-                user_id,
-            )
-            return None
-
         logger.info(
             f"[_get_resource] KnowledgeBase found: id={kb.id}, "
             f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
         )
 
-        # For group knowledge bases, check Restricted Analyst status FIRST
-        # This check must run before creator/explicit-share checks to prevent bypass
-        if kb.namespace != "default" and not is_organization_namespace(
-            db, kb.namespace
+        has_access, is_creator, effective_role, _ = self._compute_kb_access_core(
+            db,
+            kb,
+            user_id,
+            include_sources=False,
+        )
+
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        role = BaseRole(effective_role) if effective_role is not None else None
+        if not KnowledgeService._meets_direct_access_requirement(
+            kb=kb,
+            has_access=has_access,
+            role=role,
+            is_creator=is_creator,
         ):
-            if is_restricted_analyst(db, user_id, kb.namespace):
-                logger.warning(
-                    f"[_get_resource] User {user_id} is Restricted Analyst in group "
-                    f"'{kb.namespace}', blocking access to KB {resource_id}"
-                )
-                return None
-
-        # Check if user is creator
-        if kb.user_id == user_id:
-            logger.info(
-                f"[_get_resource] User is creator: user_id={user_id} == kb.user_id={kb.user_id}"
+            logger.warning(
+                "[_get_resource] Access denied for KB %s and user %s",
+                resource_id,
+                user_id,
             )
-            return kb
+            return None
 
-        logger.info(
-            f"[_get_resource] User is NOT creator: user_id={user_id} != kb.user_id={kb.user_id}"
-        )
-
-        # Check if user has explicit shared access
-        resource_type_variants = self._resource_type_variants
-        approved_status_variants = self._approved_status_variants
-
-        member = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(resource_type_variants),
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status.in_(approved_status_variants),
-            )
-            .first()
-        )
-        if member:
-            # RestrictedAnalyst is not allowed to access knowledge base details
-            if member.get_effective_role() == ResourceRole.RestrictedAnalyst.value:
-                logger.warning(
-                    f"[_get_resource] User has explicit access but is RestrictedAnalyst: member_id={member.id}"
-                )
-                return None
-            logger.info(
-                f"[_get_resource] User has explicit shared access: member_id={member.id}"
-            )
-            return kb
-
-        logger.info("[_get_resource] User has NO explicit shared access")
-
-        # Check entity-type memberships (e.g., namespace)
-        entity_members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(resource_type_variants),
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type != "user",
-                ResourceMember.entity_type != "",
-                ResourceMember.entity_id.isnot(None),
-                ResourceMember.status.in_(approved_status_variants),
-            )
-            .all()
-        )
-        if entity_members:
-            from app.services.share.external_entity_resolver import (
-                get_entity_resolver,
-            )
-
-            entity_groups: dict[str, list[str]] = {}
-            for em in entity_members:
-                if em.entity_type and em.entity_id:
-                    entity_groups.setdefault(em.entity_type, []).append(em.entity_id)
-
-            for entity_type_str, entity_ids in entity_groups.items():
-                resolver = get_entity_resolver(entity_type_str)
-                if resolver:
-                    matched = resolver.match_entity_bindings(
-                        db,
-                        user_id,
-                        entity_type_str,
-                        entity_ids,
-                    )
-                    if matched:
-                        logger.info(
-                            f"[_get_resource] User {user_id} matched entity "
-                            f"type='{entity_type_str}' via resolver"
-                        )
-                        return kb
-
-        # For organization knowledge bases, all authenticated users have access
-        if is_organization_namespace(db, kb.namespace):
-            logger.info(
-                f"[_get_resource] Organization KB - granting access to user_id={user_id}"
-            )
-            return kb
-
-        # For team knowledge bases, check group permission
-        if kb.namespace != "default":
-            logger.info(
-                f"[_get_resource] Checking team permission: namespace={kb.namespace}"
-            )
-            role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if role is not None:
-                # RestrictedAnalyst is not allowed to access knowledge base details
-                if role == GroupRole.RestrictedAnalyst:
-                    logger.warning(
-                        "[_get_resource] User has team role but is RestrictedAnalyst"
-                    )
-                    return None
-                logger.info(f"[_get_resource] User has team role: role={role}")
-                return kb
-            logger.info(
-                f"[_get_resource] User has NO team role in namespace={kb.namespace}"
-            )
-        else:
-            logger.info(
-                f"[_get_resource] KnowledgeBase is personal (namespace=default)"
-            )
-
-        logger.error(
-            f"[_get_resource] User has NO access to KnowledgeBase: "
-            f"resource_id={resource_id}, user_id={user_id}, "
-            f"kb.user_id={kb.user_id}, namespace={kb.namespace}"
-        )
-        return None  # Only return KB for authorized users
+        return kb
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get KnowledgeBase display name."""

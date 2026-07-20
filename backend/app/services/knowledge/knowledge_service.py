@@ -49,6 +49,7 @@ from app.schemas.knowledge import (
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
     get_effective_role_in_group,
+    get_effective_roles_in_groups,
     get_user_groups,
     get_view_role_in_group,
 )
@@ -418,17 +419,121 @@ class KnowledgeService:
         knowledge_bases: list[Kind],
         user_id: int,
     ) -> list[Kind]:
-        """Filter KBs before response pagination or aggregation."""
-        return [
-            kb
-            for kb in knowledge_bases
-            if KnowledgeService.can_directly_access_knowledge_base(
+        """Filter a bounded candidate set with batched permission sources."""
+        if not knowledge_bases:
+            return []
+
+        candidate_ids = [kb.id for kb in knowledge_bases]
+        allowed_ids = {
+            row[0]
+            for row in KnowledgeService._apply_direct_access_filter(
                 db,
-                kb.id,
+                db.query(Kind.id).filter(Kind.id.in_(candidate_ids)),
                 user_id,
-                kb=kb,
+                candidate_ids=candidate_ids,
+            ).all()
+        }
+        return [kb for kb in knowledge_bases if kb.id in allowed_ids]
+
+    @staticmethod
+    def _apply_direct_access_filter(
+        db: Session,
+        query,
+        user_id: int,
+        *,
+        candidate_ids: list[int] | None = None,
+    ):
+        """Apply read/edit direct-access requirements to a Kind query."""
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        user = KnowledgeService._get_user_or_raise(db, user_id)
+        accessible_groups = get_user_groups(db, user_id)
+        organization_names = {
+            row[0]
+            for row in db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
             )
+            .all()
+        }
+        group_names = [
+            group_name
+            for group_name in accessible_groups
+            if group_name not in organization_names
         ]
+        group_roles = get_effective_roles_in_groups(db, user_id, group_names)
+        editable_group_names = [
+            group_name
+            for group_name, role in group_roles.items()
+            if has_permission(role, BaseRole.Developer)
+        ]
+        restricted_group_names = [
+            group_name
+            for group_name, role in group_roles.items()
+            if role == GroupRole.RestrictedAnalyst
+        ]
+
+        member_query = db.query(ResourceMember).filter(
+            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        if candidate_ids is not None:
+            member_query = member_query.filter(
+                ResourceMember.resource_id.in_(candidate_ids)
+            )
+        direct_members = member_query.all()
+        direct_editable_ids = {
+            member.resource_id
+            for member in direct_members
+            if has_permission(member.get_effective_role(), BaseRole.Developer)
+        }
+        direct_restricted_ids = {
+            member.resource_id
+            for member in direct_members
+            if member.get_effective_role() == BaseRole.RestrictedAnalyst.value
+        }
+
+        entity_result = KnowledgeService._collect_entity_authorized_kbs(
+            db,
+            user_id,
+            accessible_groups,
+        )
+        entity_editable_ids = {
+            knowledge_base_id
+            for knowledge_base_id, roles in entity_result.member_role_map.items()
+            if candidate_ids is None or knowledge_base_id in candidate_ids
+            if any(has_permission(role, BaseRole.Developer) for role in roles)
+        }
+        editable_ids = direct_editable_ids | entity_editable_ids
+
+        edit_conditions = [Kind.user_id == user_id]
+        if editable_ids:
+            edit_conditions.append(Kind.id.in_(editable_ids))
+        if editable_group_names:
+            edit_conditions.append(Kind.namespace.in_(editable_group_names))
+        if user.role == "admin" and organization_names:
+            edit_conditions.append(Kind.namespace.in_(organization_names))
+
+        requirement = _knowledge_base_json_text(
+            db,
+            "$.spec.directAccessRequirement",
+        )
+        query = query.filter(
+            or_(
+                requirement == "",
+                requirement == "read",
+                and_(requirement == "edit", or_(*edit_conditions)),
+            )
+        )
+        if direct_restricted_ids:
+            query = query.filter(Kind.id.notin_(direct_restricted_ids))
+        if restricted_group_names:
+            query = query.filter(Kind.namespace.notin_(restricted_group_names))
+        return query
 
     @staticmethod
     def list_knowledge_bases(
@@ -662,15 +767,58 @@ class KnowledgeService:
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[Kind], int]:
-        """List accessible knowledge bases with offset/limit pagination."""
-        knowledge_bases = KnowledgeService.list_knowledge_bases(
-            db=db,
+        """List accessible knowledge bases with SQL-level pagination."""
+        query = _KnowledgeBaseVisibilityQueryBuilder.build(
+            db,
             user_id=user_id,
             scope=scope,
             group_name=group_name,
         )
-        total = len(knowledge_bases)
-        return knowledge_bases[offset : offset + limit], total
+        if query is None:
+            return [], 0
+
+        query = KnowledgeService._apply_direct_access_filter(db, query, user_id)
+        total = query.order_by(None).count()
+
+        if scope == ResourceScope.ALL:
+            accessible_groups = get_user_groups(db, user_id)
+            organization_names = [
+                row[0]
+                for row in db.query(Namespace.name)
+                .filter(
+                    Namespace.level == GroupLevel.organization.value,
+                    Namespace.is_active == True,
+                )
+                .all()
+            ]
+            team_names = [
+                name for name in accessible_groups if name not in organization_names
+            ]
+            category_order = case(
+                (
+                    and_(Kind.user_id == user_id, Kind.namespace == "default"),
+                    0,
+                ),
+                (Kind.namespace.in_(team_names), 1) if team_names else (False, 1),
+                (
+                    (
+                        Kind.namespace.in_(organization_names),
+                        2,
+                    )
+                    if organization_names
+                    else (False, 2)
+                ),
+                else_=3,
+            )
+            query = query.order_by(
+                category_order,
+                Kind.updated_at.desc(),
+                Kind.id.desc(),
+            )
+        else:
+            query = query.order_by(Kind.updated_at.desc(), Kind.id.desc())
+
+        return query.offset(offset).limit(limit).all(), total
 
     @staticmethod
     def list_external_knowledge_bases(
@@ -704,19 +852,7 @@ class KnowledgeService:
                 )
             )
 
-        directly_accessible_ids = [
-            kb.id
-            for kb in query.all()
-            if KnowledgeService.can_directly_access_knowledge_base(
-                db,
-                kb.id,
-                user_id,
-                kb=kb,
-            )
-        ]
-        if not directly_accessible_ids:
-            return [], 0
-        query = query.filter(Kind.id.in_(directly_accessible_ids))
+        query = KnowledgeService._apply_direct_access_filter(db, query, user_id)
 
         total = query.order_by(None).count()
         knowledge_bases = (

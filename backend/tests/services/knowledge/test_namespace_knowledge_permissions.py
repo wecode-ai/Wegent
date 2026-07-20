@@ -232,6 +232,92 @@ def test_edit_direct_access_requirement_hides_kb_from_reporter(
 
 
 @pytest.mark.unit
+def test_updating_direct_access_requirement_immediately_hides_kb_from_reporter(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "updated-policy-owner")
+    reporter = _create_user(test_db, "updated-policy-reporter")
+    namespace = _create_namespace(test_db, owner, "updated-policy-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="updated-policy-kb",
+            namespace=namespace.name,
+            direct_access_requirement="read",
+        ),
+    )
+
+    _, initially_has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        reporter.id,
+    )
+    assert initially_has_access is True
+
+    updated = KnowledgeService.update_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeBaseUpdate(direct_access_requirement="edit"),
+    )
+
+    assert updated is not None
+    assert updated.json["spec"]["directAccessRequirement"] == "edit"
+    _, updated_has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        reporter.id,
+    )
+    paginated_ids, total = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        reporter.id,
+        ResourceScope.ALL,
+        offset=0,
+        limit=50,
+    )
+
+    assert updated_has_access is False
+    assert knowledge_base_id not in {kb.id for kb in paginated_ids}
+    assert total == 0
+
+
+@pytest.mark.unit
+def test_share_info_remains_available_to_first_time_visitor(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "share-info-owner")
+    visitor = _create_user(test_db, "share-info-visitor")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="share-info-kb",
+            direct_access_requirement="edit",
+        ),
+    )
+
+    share_info = knowledge_share_service.get_kb_share_info(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+    permission_sources = knowledge_share_service.get_my_permission_sources(
+        test_db,
+        knowledge_base_id,
+        visitor.id,
+    )
+
+    assert share_info.name == "share-info-kb"
+    assert share_info.my_permission.has_access is False
+    assert permission_sources.has_access is False
+    assert permission_sources.sources == []
+
+
+@pytest.mark.unit
 def test_edit_direct_access_requirement_allows_developer(
     test_db: Session,
 ) -> None:
