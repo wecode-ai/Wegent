@@ -1,40 +1,32 @@
 import { ApiError, createHttpClient } from './http'
 
-export type SitePublishStatus = 'unpublished' | 'publishing' | 'published' | 'failed'
+export type SiteNetwork = 'inner' | 'outer'
 
-export interface Site {
-  siteid: string
-  taskid: string
-  username: string
-  name: string
-  slug: string
-  internal_url: string
-  external_url: string | null
-  publish_status: SitePublishStatus
-  last_publish_error?: string | null
-  thumbnail_url?: string | null
+export interface SiteProject {
+  id: string
+  network: SiteNetwork
+  title: string
+  url: string
+  snapshot: string
   created_at: string
-  updated_at: string
-  published_at?: string | null
 }
 
 export interface SiteListResponse {
-  items: Site[]
-  total: number
-  offset: number
-  limit: number
+  items: SiteProject[]
+  next_cursor: string | null
 }
 
 export interface ListSitesInput {
   q?: string
-  offset: number
+  cursor?: string | null
   limit: number
 }
 
 export interface SitesApi {
   listSites(input: ListSitesInput): Promise<SiteListResponse>
-  publishSite(siteid: string): Promise<Site>
-  deleteSite(siteid: string): Promise<void>
+  publishSite(projectId: string): Promise<SiteProject>
+  renameSite(projectId: string, title: string): Promise<SiteProject>
+  deleteSite(projectId: string): Promise<void>
 }
 
 interface SitesApiOptions {
@@ -56,16 +48,21 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
       if (query) {
         params.set('q', query)
       }
-      params.set('offset', String(input.offset))
+      if (input.cursor) {
+        params.set('cursor', input.cursor)
+      }
       params.set('limit', String(input.limit))
 
       return client.get(`/v1/sites?${params.toString()}`)
     },
-    publishSite(siteid) {
-      return client.post(`/v1/sites/${encodeURIComponent(siteid)}/publish`)
+    publishSite(projectId) {
+      return client.post(`/v1/sites/${encodeURIComponent(projectId)}/publish`)
     },
-    deleteSite(siteid) {
-      return client.delete<void>(`/v1/sites/${encodeURIComponent(siteid)}`)
+    renameSite(projectId, title) {
+      return client.post(`/v1/sites/${encodeURIComponent(projectId)}/rename`, { title })
+    },
+    deleteSite(projectId) {
+      return client.delete<void>(`/v1/sites/${encodeURIComponent(projectId)}`)
     },
   }
 }
@@ -77,6 +74,7 @@ export function createUnavailableSitesApi(): SitesApi {
   return {
     listSites: unavailable,
     publishSite: unavailable,
+    renameSite: unavailable,
     deleteSite: unavailable,
   }
 }

@@ -12,7 +12,8 @@ import {
   Upload,
 } from 'lucide-react'
 import { isSitesUnavailableError } from '@/api/sites'
-import type { Site, SitesApi } from '@/api/sites'
+import type { SiteProject, SitesApi } from '@/api/sites'
+import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
@@ -33,17 +34,52 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
-function SiteThumbnail({ site }: { site: Site }) {
-  const [imageFailed, setImageFailed] = useState(false)
+function reconcileSiteProjects(
+  projects: SiteProject[],
+  projectOverrides: ReadonlyMap<string, SiteProject>,
+  deletedProjectIds: ReadonlySet<string>
+): SiteProject[] {
+  const seenIds = new Set<string>()
+  return projects.flatMap(project => {
+    if (deletedProjectIds.has(project.id) || seenIds.has(project.id)) return []
+    seenIds.add(project.id)
+    return [projectOverrides.get(project.id) ?? project]
+  })
+}
+
+function reconcilePublishErrors(
+  current: Record<string, string>,
+  projects: SiteProject[],
+  replaceAll: boolean
+): Record<string, string> {
+  const projectsById = new Map(projects.map(project => [project.id, project]))
+  let changed = false
+  const next: Record<string, string> = {}
+
+  for (const [projectId, message] of Object.entries(current)) {
+    const project = projectsById.get(projectId)
+    if ((replaceAll && !project) || project?.network === 'outer') {
+      changed = true
+    } else {
+      next[projectId] = message
+    }
+  }
+
+  return changed ? next : current
+}
+
+function SiteThumbnail({ site }: { site: SiteProject }) {
+  const [failedSnapshot, setFailedSnapshot] = useState<string | null>(null)
+  const imageFailed = failedSnapshot === site.snapshot
 
   return (
     <div className="flex h-[50px] w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-surface">
-      {site.thumbnail_url && !imageFailed ? (
+      {site.snapshot && !imageFailed ? (
         <img
-          src={site.thumbnail_url}
+          src={site.snapshot}
           alt=""
           className="h-full w-full object-cover"
-          onError={() => setImageFailed(true)}
+          onError={() => setFailedSnapshot(site.snapshot)}
         />
       ) : (
         <Globe2 className="h-5 w-5 text-text-muted" aria-hidden="true" />
@@ -53,18 +89,28 @@ function SiteThumbnail({ site }: { site: Site }) {
 }
 
 interface SiteRowProps {
-  site: Site
+  site: SiteProject
   publishing: boolean
   deleting: boolean
-  onPublish: (site: Site) => void
-  onDelete: (site: Site) => void
+  renaming: boolean
+  publishError?: string
+  onPublish: (site: SiteProject) => void
+  onRename: (site: SiteProject) => void
+  onDelete: (site: SiteProject, returnFocusContainer: HTMLElement | null) => void
 }
 
-function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowProps) {
+function SiteRow({
+  site,
+  publishing,
+  deleting,
+  renaming,
+  publishError,
+  onPublish,
+  onRename,
+  onDelete,
+}: SiteRowProps) {
   const { t } = useTranslation('sites')
-  const isPublished = site.publish_status === 'published'
-  const isPublishing = publishing || site.publish_status === 'publishing'
-  const isFailed = site.publish_status === 'failed'
+  const isOuter = site.network === 'outer'
 
   const openUrl = (url: string) => {
     void openExternalUrl(url).catch(error => {
@@ -74,23 +120,23 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
 
   return (
     <article
-      data-testid={`site-row-${site.siteid}`}
+      data-testid={`site-row-${site.id}`}
       className="grid gap-4 border-b border-border py-4 md:grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)] md:items-center md:gap-8"
     >
       <div className="flex min-w-0 items-center gap-4">
         <SiteThumbnail site={site} />
         <div className="min-w-0">
           <h2 className="truncate text-base font-medium leading-5 text-text-primary">
-            {site.name}
+            {site.title}
           </h2>
           <button
             type="button"
-            data-testid={`site-internal-url-${site.siteid}`}
-            aria-label={t('open_internal', { name: site.name })}
-            onClick={() => openUrl(site.internal_url)}
+            data-testid={`site-url-${site.id}`}
+            aria-label={t(isOuter ? 'open_external' : 'open_internal', { name: site.title })}
+            onClick={() => openUrl(site.url)}
             className="mt-1 flex max-w-full items-center gap-1 text-left text-sm leading-5 text-text-secondary transition-colors hover:text-text-primary"
           >
-            <span className="truncate">{site.internal_url}</span>
+            <span className="truncate">{site.url}</span>
             <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           </button>
         </div>
@@ -98,51 +144,50 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
 
       <div className="flex min-w-0 items-center justify-between gap-4 pl-24 md:pl-0">
         <div className="min-w-0 flex-1" aria-live="polite">
-          {site.external_url ? (
-            <button
-              type="button"
-              data-testid={`site-external-url-${site.siteid}`}
-              aria-label={t('open_external', { name: site.name })}
-              onClick={() => openUrl(site.external_url!)}
-              className="flex max-w-full items-center gap-1 text-left text-sm leading-5 text-text-secondary transition-colors hover:text-text-primary"
-            >
-              <span className="truncate">{site.external_url}</span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            </button>
-          ) : isFailed ? (
-            <span className="flex items-center gap-1.5 text-sm text-danger">
+          {publishError ? (
+            <span className="flex items-center gap-1.5 text-sm text-danger" role="alert">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              <span className="truncate">
-                {site.last_publish_error || t('publish_failed', '发布失败')}
-              </span>
+              <span className="truncate">{publishError}</span>
+            </span>
+          ) : isOuter ? (
+            <span
+              data-testid={`site-published-${site.id}`}
+              className="flex items-center gap-1.5 text-sm text-text-secondary"
+            >
+              <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {t('published', '已发布')}
             </span>
           ) : (
-            <span className="text-sm text-text-muted">—</span>
+            <span
+              data-testid={`site-publish-placeholder-${site.id}`}
+              className="text-sm text-text-muted"
+            >
+              —
+            </span>
           )}
         </div>
-        <button
-          type="button"
-          data-testid={`site-publish-${site.siteid}`}
-          disabled={isPublished || isPublishing || deleting}
-          onClick={() => onPublish(site)}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
-        >
-          {isPublishing ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          ) : isPublished ? (
-            <Check className="h-3.5 w-3.5" aria-hidden="true" />
-          ) : (
-            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-          )}
-          {isPublishing
-            ? t('publishing', '发布中')
-            : isPublished
-              ? t('published', '已发布')
-              : isFailed
-                ? t('retry_publish', '重试发布')
-                : t('publish', '发布到外网')}
-        </button>
-        <SiteActionsMenu site={site} disabled={isPublishing || deleting} onDelete={onDelete} />
+        {!isOuter && (
+          <button
+            type="button"
+            data-testid={`site-publish-${site.id}`}
+            disabled={publishing || deleting || renaming}
+            onClick={() => onPublish(site)}
+            className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-default disabled:text-text-secondary disabled:opacity-70 md:h-8"
+          >
+            {publishing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {publishing ? t('publishing', '发布中') : t('publish', '发布到外网')}
+          </button>
+        )}
+        <SiteActionsMenu
+          site={site}
+          disabled={publishing || deleting || renaming}
+          onRename={onRename}
+          onDelete={onDelete}
+        />
       </div>
     </article>
   )
@@ -161,17 +206,28 @@ export function SitesWorkspace({
   const { t } = useTranslation('sites')
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const [sites, setSites] = useState<Site[]>([])
-  const [total, setTotal] = useState(0)
+  const [sites, setSites] = useState<SiteProject[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [nextCursorOwner, setNextCursorOwner] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sitesUnavailable, setSitesUnavailable] = useState(false)
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
-  const [pendingDeleteSite, setPendingDeleteSite] = useState<Site | null>(null)
+  const [publishErrors, setPublishErrors] = useState<Record<string, string>>({})
+  const [pendingRenameSite, setPendingRenameSite] = useState<SiteProject | null>(null)
+  const [pendingDeleteSite, setPendingDeleteSite] = useState<SiteProject | null>(null)
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const requestId = useRef(0)
+  const requestGeneration = useRef(0)
+  const projectOverrides = useRef<Map<string, SiteProject>>(new Map())
+  const deletedProjectIds = useRef<Set<string>>(new Set())
+  const publishingProjectIds = useRef<Set<string>>(new Set())
+  const pendingRenameSiteId = useRef<string | null>(null)
+  const renamingProjectId = useRef<string | null>(null)
+  const pendingDeleteSiteId = useRef<string | null>(null)
+  const deletingProjectId = useRef<string | null>(null)
+  const deleteReturnFocusContainer = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
@@ -179,31 +235,41 @@ export function SitesWorkspace({
   }, [query])
 
   const loadFirstPage = useCallback(async () => {
-    const currentRequest = ++requestId.current
+    const generation = ++requestGeneration.current
+    const requestQuery = debouncedQuery
     setLoading(true)
+    setLoadingMore(false)
     setLoadError(null)
     try {
       const response = await api.listSites({
-        q: debouncedQuery,
-        offset: 0,
+        q: requestQuery,
+        cursor: null,
         limit: pageSize,
       })
-      if (currentRequest !== requestId.current) return
-      setSites(response.items)
-      setTotal(response.total)
+      if (generation !== requestGeneration.current) return
+      const projects = reconcileSiteProjects(
+        response.items,
+        projectOverrides.current,
+        deletedProjectIds.current
+      )
+      setSites(projects)
+      setPublishErrors(current => reconcilePublishErrors(current, projects, true))
+      setNextCursor(response.next_cursor)
+      setNextCursorOwner(requestQuery)
       setSitesUnavailable(false)
     } catch (error) {
-      if (currentRequest !== requestId.current) return
-      setSites([])
-      setTotal(0)
+      if (generation !== requestGeneration.current) return
       if (isSitesUnavailableError(error)) {
+        setSites([])
+        setNextCursor(null)
+        setNextCursorOwner(null)
         setSitesUnavailable(true)
         setLoadError(null)
       } else {
         setLoadError(errorMessage(error, t('load_failed', '站点加载失败')))
       }
     } finally {
-      if (currentRequest === requestId.current) setLoading(false)
+      if (generation === requestGeneration.current) setLoading(false)
     }
   }, [api, debouncedQuery, pageSize, t])
 
@@ -212,87 +278,194 @@ export function SitesWorkspace({
   }, [loadFirstPage])
 
   const loadMore = async () => {
+    if (loading || nextCursor === null || nextCursorOwner !== debouncedQuery) return
+    const generation = requestGeneration.current
+    const cursor = nextCursor
+    const requestQuery = debouncedQuery
     setLoadingMore(true)
     setLoadError(null)
     try {
       const response = await api.listSites({
-        q: debouncedQuery,
-        offset: sites.length,
+        q: requestQuery,
+        cursor,
         limit: pageSize,
       })
-      setSites(current => [...current, ...response.items])
-      setTotal(response.total)
+      if (generation !== requestGeneration.current) return
+      const projects = reconcileSiteProjects(
+        response.items,
+        projectOverrides.current,
+        deletedProjectIds.current
+      )
+      setSites(current => {
+        const knownIds = new Set(current.map(site => site.id))
+        const newSites = projects.filter(site => {
+          if (knownIds.has(site.id)) return false
+          knownIds.add(site.id)
+          return true
+        })
+        return [...current, ...newSites]
+      })
+      setPublishErrors(current => reconcilePublishErrors(current, projects, false))
+      setNextCursor(response.next_cursor)
+      setNextCursorOwner(requestQuery)
     } catch (error) {
+      if (generation !== requestGeneration.current) return
       if (isSitesUnavailableError(error)) {
         setSitesUnavailable(true)
         setSites([])
-        setTotal(0)
+        setNextCursor(null)
+        setNextCursorOwner(null)
         setLoadError(null)
       } else {
         setLoadError(errorMessage(error, t('load_failed', '站点加载失败')))
       }
     } finally {
-      setLoadingMore(false)
+      if (generation === requestGeneration.current) setLoadingMore(false)
     }
   }
 
-  const publish = async (site: Site) => {
-    if (deletingSiteId === site.siteid) return
-    setPublishingIds(current => new Set(current).add(site.siteid))
-    setSites(current =>
-      current.map(item =>
-        item.siteid === site.siteid
-          ? { ...item, publish_status: 'publishing', last_publish_error: null }
-          : item
-      )
-    )
+  const publish = async (site: SiteProject) => {
+    if (
+      site.network === 'outer' ||
+      pendingRenameSiteId.current === site.id ||
+      renamingProjectId.current === site.id ||
+      pendingDeleteSiteId.current === site.id ||
+      deletingProjectId.current === site.id ||
+      publishingProjectIds.current.has(site.id)
+    ) {
+      return
+    }
+    publishingProjectIds.current.add(site.id)
+    setPublishingIds(current => new Set(current).add(site.id))
+    setPublishErrors(current => {
+      if (!(site.id in current)) return current
+      const next = { ...current }
+      delete next[site.id]
+      return next
+    })
     try {
-      const published = await api.publishSite(site.siteid)
-      setSites(current => current.map(item => (item.siteid === site.siteid ? published : item)))
+      const published = await api.publishSite(site.id)
+      projectOverrides.current.set(site.id, published)
+      setSites(current => current.map(item => (item.id === site.id ? published : item)))
     } catch (error) {
-      setSites(current =>
-        current.map(item =>
-          item.siteid === site.siteid
-            ? {
-                ...item,
-                publish_status: 'failed',
-                last_publish_error: errorMessage(error, t('publish_failed', '发布失败')),
-              }
-            : item
-        )
-      )
+      setPublishErrors(current => ({
+        ...current,
+        [site.id]: errorMessage(error, t('publish_failed', '发布失败')),
+      }))
     } finally {
+      publishingProjectIds.current.delete(site.id)
       setPublishingIds(current => {
         const next = new Set(current)
-        next.delete(site.siteid)
+        next.delete(site.id)
         return next
       })
     }
   }
 
-  const openDeleteDialog = (site: Site) => {
+  const openRenameDialog = (site: SiteProject) => {
+    if (
+      pendingRenameSiteId.current !== null ||
+      renamingProjectId.current !== null ||
+      pendingDeleteSiteId.current === site.id ||
+      deletingProjectId.current === site.id ||
+      publishingProjectIds.current.has(site.id)
+    ) {
+      return
+    }
+    pendingRenameSiteId.current = site.id
+    setPendingRenameSite(site)
+  }
+
+  const cancelRename = () => {
+    if (renamingProjectId.current) return
+    pendingRenameSiteId.current = null
+    setPendingRenameSite(null)
+  }
+
+  const renameSite = async (title: string) => {
+    if (!pendingRenameSite) return
+    const projectId = pendingRenameSite.id
+    if (
+      pendingRenameSiteId.current !== projectId ||
+      renamingProjectId.current !== null ||
+      pendingDeleteSiteId.current === projectId ||
+      deletingProjectId.current === projectId ||
+      publishingProjectIds.current.has(projectId)
+    ) {
+      return
+    }
+
+    renamingProjectId.current = projectId
+    try {
+      const renamed = await api.renameSite(projectId, title)
+      projectOverrides.current.set(projectId, renamed)
+      setSites(current => current.map(item => (item.id === projectId ? renamed : item)))
+      setPublishErrors(current => {
+        if (!(projectId in current)) return current
+        const next = { ...current }
+        delete next[projectId]
+        return next
+      })
+    } finally {
+      renamingProjectId.current = null
+    }
+  }
+
+  const openDeleteDialog = (site: SiteProject, returnFocusContainer: HTMLElement | null) => {
+    if (
+      pendingDeleteSiteId.current !== null ||
+      pendingRenameSiteId.current === site.id ||
+      renamingProjectId.current === site.id ||
+      deletingProjectId.current === site.id ||
+      publishingProjectIds.current.has(site.id)
+    ) {
+      return
+    }
+    pendingDeleteSiteId.current = site.id
+    deleteReturnFocusContainer.current = returnFocusContainer
     setDeleteError(null)
     setPendingDeleteSite(site)
   }
 
   const cancelDelete = () => {
-    if (deletingSiteId) return
+    if (deletingProjectId.current) return
+    pendingDeleteSiteId.current = null
     setDeleteError(null)
     setPendingDeleteSite(null)
   }
 
   const deleteSite = async () => {
-    if (!pendingDeleteSite || deletingSiteId) return
-    setDeletingSiteId(pendingDeleteSite.siteid)
+    if (!pendingDeleteSite) return
+    const projectId = pendingDeleteSite.id
+    if (
+      pendingDeleteSiteId.current !== projectId ||
+      deletingProjectId.current !== null ||
+      pendingRenameSiteId.current === projectId ||
+      renamingProjectId.current === projectId ||
+      publishingProjectIds.current.has(projectId)
+    ) {
+      return
+    }
+    deletingProjectId.current = projectId
+    setDeletingSiteId(projectId)
     setDeleteError(null)
     try {
-      await api.deleteSite(pendingDeleteSite.siteid)
-      setSites(current => current.filter(item => item.siteid !== pendingDeleteSite.siteid))
-      setTotal(current => Math.max(0, current - 1))
+      await api.deleteSite(projectId)
+      deletedProjectIds.current.add(projectId)
+      projectOverrides.current.delete(projectId)
+      setSites(current => current.filter(item => item.id !== projectId))
+      setPublishErrors(current => {
+        if (!(projectId in current)) return current
+        const next = { ...current }
+        delete next[projectId]
+        return next
+      })
+      pendingDeleteSiteId.current = null
       setPendingDeleteSite(null)
     } catch (error) {
       setDeleteError(errorMessage(error, t('delete_failed', '站点删除失败')))
     } finally {
+      deletingProjectId.current = null
       setDeletingSiteId(null)
     }
   }
@@ -425,7 +598,7 @@ export function SitesWorkspace({
             <span>{t('external_column', '外网发布')}</span>
           </div>
 
-          {loading ? (
+          {loading && sites.length === 0 ? (
             <div
               className="flex min-h-48 items-center justify-center text-text-secondary"
               aria-label={t('loading', '正在加载站点')}
@@ -459,11 +632,14 @@ export function SitesWorkspace({
             <div>
               {sites.map(site => (
                 <SiteRow
-                  key={site.siteid}
+                  key={site.id}
                   site={site}
-                  publishing={publishingIds.has(site.siteid)}
-                  deleting={deletingSiteId === site.siteid}
+                  publishing={publishingIds.has(site.id)}
+                  deleting={pendingDeleteSite?.id === site.id || deletingSiteId === site.id}
+                  renaming={pendingRenameSite?.id === site.id}
+                  publishError={publishErrors[site.id]}
                   onPublish={publish}
+                  onRename={openRenameDialog}
                   onDelete={openDeleteDialog}
                 />
               ))}
@@ -475,12 +651,12 @@ export function SitesWorkspace({
               {loadError}
             </p>
           )}
-          {sites.length < total && (
+          {nextCursor !== null && (
             <div className="flex justify-center pt-5">
               <button
                 type="button"
                 data-testid="sites-load-more-button"
-                disabled={loadingMore}
+                disabled={loading || loadingMore || nextCursorOwner !== debouncedQuery}
                 onClick={() => void loadMore()}
                 className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
               >
@@ -491,11 +667,28 @@ export function SitesWorkspace({
           )}
         </div>
       </div>
+      {pendingRenameSite && (
+        <TextInputDialog
+          open
+          title={t('rename_title', '重命名站点')}
+          label={t('rename_label', '站点名称')}
+          description={t('rename_description', '输入便于识别的站点名称。')}
+          initialValue={pendingRenameSite.title}
+          confirmLabel={t('confirm_rename', '保存')}
+          cancelLabel={t('cancel', '取消')}
+          inputTestId="site-rename-input"
+          confirmTestId="site-rename-confirm-button"
+          maxLength={255}
+          onClose={cancelRename}
+          onSubmit={renameSite}
+        />
+      )}
       {pendingDeleteSite && (
         <DeleteSiteDialog
           site={pendingDeleteSite}
-          loading={deletingSiteId === pendingDeleteSite.siteid}
+          loading={deletingSiteId === pendingDeleteSite.id}
           error={deleteError}
+          returnFocusContainer={deleteReturnFocusContainer.current}
           onCancel={cancelDelete}
           onConfirm={() => void deleteSite()}
         />
