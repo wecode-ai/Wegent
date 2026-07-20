@@ -37,11 +37,13 @@ type DesktopControlAction =
   | 'getValue'
   | 'hover'
   | 'pointerDown'
+  | 'navigate'
   | 'pointerMove'
   | 'snapshot'
   | 'waitFor'
   | 'press'
   | 'selectText'
+  | 'scrollIntoView'
 
 interface DesktopControlCommand {
   id: string
@@ -562,6 +564,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'snapshot':
       return desktopControlSnapshot()
+    case 'scrollIntoView': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      return element.textContent?.trim() ?? ''
+    }
     case 'click': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -601,6 +609,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return hoverDesktopControlElement(command.selector)
     case 'pointerDown':
       return pressDesktopControlPointer(command.selector)
+    case 'navigate': {
+      const appPath = normalizeAppPath(command.value ?? '/')
+      window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))
+      dispatchNavigationEvents()
+      return stripAppBasePath(window.location.pathname)
+    }
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {
@@ -668,6 +682,6 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
 function installDesktopControlClient() {
   const url = desktopControlUrl()
-  if (!url) return
+  if (!url || window.location.pathname.startsWith('/system-drag')) return
   void runDesktopControlClient(url)
 }

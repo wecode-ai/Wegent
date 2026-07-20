@@ -177,6 +177,12 @@ body {
   overflow: hidden;
 }
 
+html[data-system-drag-panel='true'],
+html[data-system-drag-panel='true'] body,
+html[data-system-drag-panel='true'] #root {
+  background: transparent;
+}
+
 button,
 input,
 textarea {

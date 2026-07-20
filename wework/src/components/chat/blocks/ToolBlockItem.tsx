@@ -6,6 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
+import { resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
@@ -21,10 +22,12 @@ import {
   isFileCreateToolName,
   isFileEditToolName,
   isGuidanceToolName,
+  isImageViewToolName,
   isFileReadToolName,
 } from './toolBlockKinds'
 import { WebSearchActivityRows } from './WebSearchSources'
 import { getWebSearchActivityItems } from './webSearchActivity'
+import { usePersistentProcessingExpansion } from './processingExpansionState'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 const INLINE_DIFF_MAX_LINES = 96
@@ -53,6 +56,7 @@ export function ToolBlockItem({
   durationEndAt,
   fileEditDurations,
   forceExpanded = false,
+  stateKey,
   onOpenWorkspaceFile,
   onOpenAssistantPlan,
   onLoadFullTranscript,
@@ -60,7 +64,7 @@ export function ToolBlockItem({
   onExpandedChange,
 }: ToolBlockItemProps) {
   const { t } = useTranslation('chat')
-  const [userExpanded, setUserExpanded] = useState(false)
+  const [userExpanded, setUserExpanded] = usePersistentProcessingExpansion(stateKey)
   const isRunning = block.status !== 'done' && block.status !== 'error'
   const duration = useToolDuration(
     durationStartedAt ?? block.createdAt,
@@ -121,6 +125,8 @@ export function ToolBlockItem({
     searchRunning: t('tool_activity.search_running'),
     searchDone: t('tool_activity.search_done'),
     searchError: t('tool_activity.search_error'),
+    imageView: filename => t('tool_activity.image_view', { filename }),
+    imageViewFallback: t('tool_activity.image_view_fallback'),
   })
   const workspaceFilePath = getWorkspaceFilePath(block)
   const labelContent = (
@@ -791,6 +797,8 @@ type GenericToolLabels = {
   searchRunning: string
   searchDone: string
   searchError: string
+  imageView: (filename: string) => string
+  imageViewFallback: string
 }
 
 function getBlockLabel(
@@ -841,6 +849,13 @@ function getBlockLabel(
     return {
       icon: <Search className="h-4 w-4" strokeWidth={1.7} />,
       label: prefix.webSearch,
+    }
+  }
+  if (isImageViewToolName(name)) {
+    const path = getInputField(block, 'path', 'file_path', 'filePath')
+    return {
+      icon: <FileIcon />,
+      label: path ? genericLabels.imageView(basename(path)) : genericLabels.imageViewFallback,
     }
   }
   if (isGuidanceToolName(name)) {
@@ -1030,6 +1045,9 @@ function renderBlockDetail(
   if (isWebSearchToolName(name)) {
     return <WebSearchBlockDetail block={block} />
   }
+  if (isImageViewToolName(name)) {
+    return <ImageViewBlockDetail block={block} />
+  }
   if (isGuidanceToolName(name)) {
     return null
   }
@@ -1043,7 +1061,60 @@ function hasBlockDetail(block: ToolBlock): boolean {
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
     isFileEditToolName(name) ||
-    isWebSearchToolName(name)
+    isWebSearchToolName(name) ||
+    isImageViewToolName(name)
+  )
+}
+
+function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
+  const { t } = useTranslation('chat')
+  const source = getImageViewSource(block)
+  const resolvedSource = source ? resolveDirectMarkdownImageSrc(source) : null
+
+  if (!resolvedSource) return null
+
+  return (
+    <div
+      className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface"
+      data-testid="image-view-block-detail"
+    >
+      <img
+        src={resolvedSource}
+        alt={t('tool_activity.image_preview_alt')}
+        className="max-h-96 w-full object-contain"
+        data-testid="image-view-preview"
+      />
+    </div>
+  )
+}
+
+function getImageViewSource(block: ToolBlock): string | undefined {
+  const output = block.toolOutput
+  if (typeof output === 'string' && isImageSource(output)) return output
+  if (isRecord(output)) {
+    const directSource = getStringField(output, 'image_url', 'imageUrl', 'url', 'path')
+    if (directSource && isImageSource(directSource)) return directSource
+
+    const nestedImageUrl = output.image_url
+    if (isRecord(nestedImageUrl)) {
+      const nestedSource = getStringField(nestedImageUrl, 'url')
+      if (nestedSource && isImageSource(nestedSource)) return nestedSource
+    }
+  }
+
+  return getInputField(block, 'path', 'file_path', 'filePath')
+}
+
+function isImageSource(value: string): boolean {
+  const source = value.trim()
+  return (
+    source.startsWith('data:image/') ||
+    source.startsWith('blob:') ||
+    source.startsWith('file://') ||
+    /^https?:\/\//i.test(source) ||
+    /^asset:/i.test(source) ||
+    source.startsWith('/') ||
+    /^[a-zA-Z]:[\\/]/.test(source)
   )
 }
 
