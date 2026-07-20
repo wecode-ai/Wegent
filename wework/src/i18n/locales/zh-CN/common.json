@@ -1165,6 +1165,8 @@
     "connection_device_version": "设备版本",
     "connection_device_status": "设备状态",
     "connection_device_actions": "操作",
+    "connection_device_desktop": "桌面",
+    "connection_device_desktop_open_failed": "无法在 Wework 中打开云桌面，请重试",
     "connection_resource_cpu": "CPU",
     "connection_resource_memory": "MEM",
     "connection_resource_disk": "磁盘",

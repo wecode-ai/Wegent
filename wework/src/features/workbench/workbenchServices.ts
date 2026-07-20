@@ -25,7 +25,7 @@ import type {
   ProjectDeviceSessionResponse,
   RuntimeWorkListResponse,
 } from '@/types/api'
-import type { DeviceSessionResponse, VncConfigResponse } from '@/types/devices'
+import type { DeviceSessionResponse } from '@/types/devices'
 import type { WorkspaceFileApi } from '@/types/workspace-files'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
 
@@ -34,7 +34,6 @@ export interface WorkspaceSessionApi {
   startProjectCodeServer: (projectId: number) => Promise<ProjectDeviceSessionResponse>
   startDeviceTerminal: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
   startDeviceCodeServer: (deviceId: string, cwd?: string) => Promise<DeviceSessionResponse>
-  getDeviceVncConfig: (deviceId: string) => Promise<VncConfigResponse>
   createRemoteTerminalClient: RemoteTerminalClientFactory
 }
 
