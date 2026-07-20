@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
 describe('buildAiVerifyEnvironment', () => {
-  test('uses isolated Codex, executor, and stdio gateway settings', () => {
+  test('isolates Codex, executor, stdio gateway, and Wework app preferences', () => {
     const environment = buildAiVerifyEnvironment(
       {
         PATH: '/usr/bin',
@@ -40,6 +40,7 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEGENT_EXECUTOR_SOURCE_DIR).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
     expect(environment.WEWORK_SHARED_EXECUTOR_HOME).toBeUndefined()
+    expect(environment.WEWORK_APP_CONFIG_DIR).toBe('/tmp/session/app-config')
     expect(environment.PATH).toBe('/usr/bin')
   })
 })

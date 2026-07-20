@@ -48,6 +48,7 @@ const SEARCH_TOOL_HINTS = ['search', 'grep', 'glob']
 const SEARCH_COMMANDS = new Set(['rg', 'grep', 'find', 'fd', 'ls', 'tree', 'ag', 'ack'])
 const FILE_COMMANDS = new Set(['cat', 'sed', 'head', 'tail', 'wc', 'nl', 'stat', 'file'])
 const HIDDEN_ACTIVITY_TOOLS = new Set(['write_stdin', 'functions.write_stdin'])
+const RECONNECTING_TOOL_NAME = 'runtime_reconnecting'
 
 export function buildProcessingDisplayRows(
   blocks: ProcessingBlock[],
@@ -639,7 +640,11 @@ function isRedundantPatchApplyBlock(block: ProcessingBlock): boolean {
 }
 
 function isHiddenToolActivityBlock(block: ProcessingBlock): boolean {
-  return block.type === 'tool' && HIDDEN_ACTIVITY_TOOLS.has(block.toolName.toLowerCase())
+  return (
+    block.type === 'tool' &&
+    (HIDDEN_ACTIVITY_TOOLS.has(block.toolName.toLowerCase()) ||
+      (block.toolName === RECONNECTING_TOOL_NAME && isCompletedToolBlock(block)))
+  )
 }
 
 export function isWebSearchToolName(name: string): boolean {

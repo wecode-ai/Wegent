@@ -26,6 +26,7 @@
     "e2e": "playwright test",
     "e2e:desktop": "node e2e/desktop/task-flow.e2e.mjs",
     "e2e:desktop:lifecycle": "node e2e/desktop/task-flow.e2e.mjs --lifecycle-only",
+    "e2e:desktop:reconnect": "node e2e/desktop/task-flow.e2e.mjs --reconnect-only",
     "ai:verify": "node scripts/ai-verify.mjs",
     "e2e:ui": "playwright test --ui"
   },

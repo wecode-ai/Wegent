@@ -7,6 +7,7 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
@@ -38,6 +39,7 @@ vi.mock('@/tauri/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
+    systemDragEnabled: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
@@ -137,6 +139,20 @@ describe('GeneralSettingsPage', () => {
 
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ experimentalFeaturesEnabled: true })
+    })
+  })
+
+  test('enables the system drag panel by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-system-drag-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ systemDragEnabled: false })
     })
   })
 

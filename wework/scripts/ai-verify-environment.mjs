@@ -32,5 +32,6 @@ export function buildAiVerifyEnvironment(
     WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'true',
     WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
     WEGENT_EXECUTOR_LOG_DIR: sessionDirectory,
+    WEWORK_APP_CONFIG_DIR: join(sessionDirectory, 'app-config'),
   }
 }

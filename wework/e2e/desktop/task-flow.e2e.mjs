@@ -24,8 +24,13 @@ const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response 
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
+const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
+const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
+const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
+const IMAGE_ARTIFACT_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const GIT_SEED_NAME = 'README.md'
 const GIT_SEED_CONTENT = '# Desktop E2E workspace\n'
 const MODEL_API_KEY = 'wework-e2e-test-key'
@@ -40,6 +45,8 @@ const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="cha
 const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
+const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
+const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -397,6 +404,61 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
 }
 
+async function verifyReconnectRecovery({ composerSelector, control }) {
+  control.setScenario('reconnect')
+  await sendPromptUntilScenarioRequest(control, composerSelector, RECONNECT_PROMPT, 'reconnect')
+  await withTimeout(
+    control.awaitReconnectResponseStarted(),
+    UI_TIMEOUT_MS,
+    'The reconnect response stream did not start'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-01-streaming.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  control.disconnectReconnectResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="runtime-reconnecting-status"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-02-reconnecting.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
+  await withTimeout(
+    control.awaitScenarioRequestCount('reconnect', 2),
+    UI_TIMEOUT_MS,
+    'Codex did not retry the disconnected response stream'
+  )
+  control.releaseReconnectResponse()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    { text: RECONNECT_COMPLETION_TEXT, timeoutMs: UI_TIMEOUT_MS }
+  )
+  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  assert.equal(
+    recoveredSnapshot.testIds.includes('runtime-reconnecting-status'),
+    false,
+    'The reconnecting status remained after model output recovered'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'reconnect-03-recovered.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -564,6 +626,12 @@ function selectApplyPatchTool(request) {
   ].join('\n')
 }
 
+function selectViewImageTool(request, workspacePath) {
+  return selectTool(request, 'view_image', {
+    path: join(workspacePath, IMAGE_ARTIFACT_NAME),
+  })
+}
+
 class DesktopE2EServer {
   constructor(workspacePath) {
     this.workspacePath = workspacePath
@@ -596,6 +664,15 @@ class DesktopE2EServer {
     })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
+    })
+    this.reconnectDisconnectRelease = new Promise(resolvePromise => {
+      this.releaseReconnectDisconnect = resolvePromise
+    })
+    this.reconnectResponseStarted = new Promise(resolvePromise => {
+      this.resolveReconnectResponseStarted = resolvePromise
+    })
+    this.reconnectCompletionRelease = new Promise(resolvePromise => {
+      this.releaseReconnectCompletion = resolvePromise
     })
     this.windowLifecycleRelease = new Promise(resolvePromise => {
       this.releaseWindowLifecycle = resolvePromise
@@ -701,9 +778,15 @@ class DesktopE2EServer {
 
   setScenario(scenario) {
     assert.ok(
-      ['initial', 'follow_up', 'window_lifecycle', 'cancellation', 'retry', 'fresh_chat'].includes(
-        scenario
-      ),
+      [
+        'initial',
+        'follow_up',
+        'window_lifecycle',
+        'cancellation',
+        'retry',
+        'reconnect',
+        'fresh_chat',
+      ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
@@ -728,12 +811,31 @@ class DesktopE2EServer {
     })
   }
 
+  async awaitScenarioRequestCount(scenario, count) {
+    while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+    }
+    return this.scenarioRequests.get(scenario).at(-1)
+  }
+
   releaseInitialToolExecution() {
     this.releaseInitialTool()
   }
 
   releaseRetryResponse() {
     this.releaseRetryCompletion()
+  }
+
+  awaitReconnectResponseStarted() {
+    return this.reconnectResponseStarted
+  }
+
+  disconnectReconnectResponse() {
+    this.releaseReconnectDisconnect()
+  }
+
+  releaseReconnectResponse() {
+    this.releaseReconnectCompletion()
   }
 
   awaitWindowLifecycleResponseStarted() {
@@ -925,11 +1027,13 @@ class DesktopE2EServer {
       )
       const tool = selectShellTool(body, this.workspacePath)
       const patch = selectApplyPatchTool(body)
+      const image = selectViewImageTool(body, this.workspacePath)
       this.modelStage = 'awaiting_tool_output'
       await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
         functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
+        functionCall('wework-e2e-view-image', image.name, image.arguments),
         customToolCall('wework-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -1046,6 +1150,35 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(RETRY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'reconnect') {
+      this.recordScenarioRequest('reconnect', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(RECONNECT_PROMPT),
+        'The real Codex request did not contain the reconnect prompt'
+      )
+      const reconnectRequests = this.scenarioRequests.get('reconnect') ?? []
+      if (reconnectRequests.length === 1) {
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(createSse([responseCreated(responseId)]))
+        this.resolveReconnectResponseStarted()
+        await this.reconnectDisconnectRelease
+        response.destroy()
+        return
+      }
+      await this.reconnectCompletionRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(RECONNECT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -1200,12 +1333,18 @@ async function main() {
   ])
   await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
   await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = true\n')
+  await writeFile(
+    join(workspacePath, IMAGE_ARTIFACT_NAME),
+    Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
+  )
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
     cwd: workspacePath,
   })
-  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts'], { cwd: workspacePath })
+  await runChecked('git', ['add', GIT_SEED_NAME, 'auth.ts', IMAGE_ARTIFACT_NAME], {
+    cwd: workspacePath,
+  })
   await runChecked('git', ['commit', '-m', 'test: initialize desktop e2e workspace'], {
     cwd: workspacePath,
   })
@@ -1402,6 +1541,17 @@ async function main() {
     const initialModelLabel = await control.command('waitFor', activeModelSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    if (RECONNECT_ONLY) {
+      phase = 'reconnect'
+      await verifyReconnectRecovery({ composerSelector, control })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop reconnect E2E passed. Evidence: ${resultDir}`)
+      return
+    }
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
     await withTimeout(
@@ -1410,41 +1560,45 @@ async function main() {
       'The model service did not receive the initial task request'
     )
 
-    phase = 'send-mode-menu'
-    await control.command('waitFor', '[data-testid="pause-response-button"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('fill', composerSelector, { value: SEND_MODE_DRAFT })
-    await control.command('waitFor', '[data-testid="send-mode-menu-button"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await captureVerificationScreenshot(control, '01-send-mode-follow-up-ready.png')
-    await control.command('click', '[data-testid="send-mode-menu-button"]')
-    await control.command('waitFor', '[data-testid="send-mode-menu-button-menu"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    const sendModeMenuText = await control.command(
-      'getText',
-      '[data-testid="send-mode-menu-button-menu"]'
-    )
-    assert.match(
-      sendModeMenuText,
-      /当前回复结束后发送|Send after current response/,
-      'The send-after-turn option was not visible in the send mode menu'
-    )
-    assert.match(
-      sendModeMenuText,
-      /引导当前回复|Guide current response/,
-      'The guide-current-turn option was not visible in the send mode menu'
-    )
-    assert.match(
-      sendModeMenuText,
-      /打断并立即发送|Interrupt and send now/,
-      'The interrupt-and-send option was not visible in the send mode menu'
-    )
-    await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
-    await control.command('press', 'body', { key: 'Escape' })
-    await control.command('fill', composerSelector, { value: '' })
+    if (VIEW_IMAGE_ONLY) {
+      control.releaseInitialToolExecution()
+    } else {
+      phase = 'send-mode-menu'
+      await control.command('waitFor', '[data-testid="pause-response-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await control.command('fill', composerSelector, { value: SEND_MODE_DRAFT })
+      await control.command('waitFor', '[data-testid="send-mode-menu-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await captureVerificationScreenshot(control, '01-send-mode-follow-up-ready.png')
+      await control.command('click', '[data-testid="send-mode-menu-button"]')
+      await control.command('waitFor', '[data-testid="send-mode-menu-button-menu"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      const sendModeMenuText = await control.command(
+        'getText',
+        '[data-testid="send-mode-menu-button-menu"]'
+      )
+      assert.match(
+        sendModeMenuText,
+        /当前回复结束后发送|Send after current response/,
+        'The send-after-turn option was not visible in the send mode menu'
+      )
+      assert.match(
+        sendModeMenuText,
+        /引导当前回复|Guide current response/,
+        'The guide-current-turn option was not visible in the send mode menu'
+      )
+      assert.match(
+        sendModeMenuText,
+        /打断并立即发送|Interrupt and send now/,
+        'The interrupt-and-send option was not visible in the send mode menu'
+      )
+      await captureVerificationScreenshot(control, '02-send-mode-menu-open.png')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('fill', composerSelector, { value: '' })
+    }
 
     phase = 'initial-task-completion'
     await control.command('waitFor', '[data-testid="environment-info-button"]', {
@@ -1479,26 +1633,84 @@ async function main() {
     )
     assert.match(
       processingSummaryText,
-      /调用 1 个工具，编辑 1 个文件|Called 1 tool, edited 1 file/,
+      /调用 2 个工具，编辑 1 个文件|Called 2 tools, edited 1 file/,
       'The processing summary did not report tool calls and edited files separately'
     )
     await control.command('waitFor', '[aria-label="编辑 1"], [aria-label="Edits 1"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
     if (process.platform === 'darwin') {
+      await control.command('scrollIntoView', '[data-testid="processing-summary-header"]')
+      await control.command('waitFor', '[data-testid="processing-summary-toggle"]', {
+        visible: true,
+        stableMs: 500,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
       const processingSummaryScreenshot = await control.command(
         'capture',
-        '[data-testid="processing-summary-header"]'
+        '[data-testid="processing-summary-toggle"]'
       )
       await writeFile(
         join(resultDir, 'processing-summary.png'),
         Buffer.from(processingSummaryScreenshot.replace(/^data:image\/png;base64,/, ''), 'base64')
       )
     }
+    await control.command('click', '[data-testid="processing-summary-toggle"]')
+    await control.command('waitFor', '[data-processing-block-id="wework-e2e-view-image"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+    await control.command(
+      'waitFor',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="false"]',
+      { visible: true, stableMs: 300, timeoutMs: UI_TIMEOUT_MS }
+    )
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await captureVerificationScreenshot(
+      control,
+      '03-view-image-collapsed.png',
+      '[data-testid="processing-live-preview"]'
+    )
+    await control.command(
+      'click',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle]'
+    )
+    await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      '[data-processing-block-id="wework-e2e-view-image"] [data-tool-detail-toggle][aria-expanded="true"]',
+      { stableMs: 500, timeoutMs: UI_TIMEOUT_MS }
+    )
+    await control.command('scrollIntoView', '[data-testid="processing-live-preview"]')
+    await control.command('waitFor', '[data-testid="image-view-preview"]', {
+      visible: true,
+      stableMs: 500,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await captureVerificationScreenshot(
+      control,
+      '04-view-image-expanded.png',
+      '[data-testid="processing-live-preview"]'
+    )
+    await control.command('click', '[data-testid="processing-summary-toggle"]')
     await control.command('waitFor', '[data-testid="environment-changes-button"]', {
       text: '+1',
       timeoutMs: UI_TIMEOUT_MS,
     })
+    if (VIEW_IMAGE_ONLY) {
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework view_image desktop E2E passed. Evidence: ${resultDir}`)
+      return
+    }
     const changedEnvironmentText = await control.command(
       'getText',
       '[data-testid="environment-changes-button"]'
@@ -1650,6 +1862,9 @@ async function main() {
       2,
       'Retry did not issue exactly one additional request for the failed user message'
     )
+
+    phase = 'reconnect'
+    await verifyReconnectRecovery({ composerSelector, control })
 
     phase = 'fresh-chat'
     control.setScenario('fresh_chat')

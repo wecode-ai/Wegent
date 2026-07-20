@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "system-drag-panel",
+  "description": "Allows the system drag panel to receive native drops and exchange context.",
+  "windows": ["system-drag-panel"],
+  "permissions": ["core:event:default"]
+}
