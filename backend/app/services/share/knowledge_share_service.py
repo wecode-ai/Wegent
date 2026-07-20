@@ -1118,15 +1118,15 @@ class KnowledgeShareService(UnifiedShareService):
                 sources=[],
             )
 
-        has_access, is_creator, effective_role, sources = self._compute_kb_access_core(
-            db, kb, user_id, include_sources=True
+        raw_has_access, is_creator, effective_role, sources = (
+            self._compute_kb_access_core(db, kb, user_id, include_sources=True)
         )
 
         from app.services.knowledge.knowledge_service import KnowledgeService
 
         has_access = KnowledgeService._meets_direct_access_requirement(
             kb=kb,
-            has_access=has_access,
+            has_access=raw_has_access,
             role=(BaseRole(effective_role) if effective_role is not None else None),
             is_creator=is_creator,
         )

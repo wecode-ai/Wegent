@@ -166,6 +166,7 @@ class _DirectAccessPermissionContext:
     """Permission inputs reused within one knowledge-list request."""
 
     user: User
+    accessible_groups: frozenset[str]
     organization_names: frozenset[str]
     group_roles: dict[str, GroupRole]
     direct_members: tuple["ResourceMember", ...]
@@ -490,6 +491,7 @@ class KnowledgeService:
         )
         return _DirectAccessPermissionContext(
             user=user,
+            accessible_groups=frozenset(groups),
             organization_names=organization_names,
             group_roles=group_roles,
             direct_members=direct_members,
@@ -813,29 +815,30 @@ class KnowledgeService:
         limit: int = 50,
     ) -> tuple[list[Kind], int]:
         """List accessible knowledge bases with SQL-level pagination."""
+        permission_context = KnowledgeService._build_direct_access_permission_context(
+            db, user_id
+        )
         query = _KnowledgeBaseVisibilityQueryBuilder.build(
             db,
             user_id=user_id,
             scope=scope,
             group_name=group_name,
+            permission_context=permission_context,
         )
         if query is None:
             return [], 0
 
-        query = KnowledgeService._apply_direct_access_filter(db, query, user_id)
+        query = KnowledgeService._apply_direct_access_filter(
+            db,
+            query,
+            user_id,
+            permission_context=permission_context,
+        )
         total = query.order_by(None).count()
 
         if scope == ResourceScope.ALL:
-            accessible_groups = get_user_groups(db, user_id)
-            organization_names = [
-                row[0]
-                for row in db.query(Namespace.name)
-                .filter(
-                    Namespace.level == GroupLevel.organization.value,
-                    Namespace.is_active == True,
-                )
-                .all()
-            ]
+            accessible_groups = permission_context.accessible_groups
+            organization_names = permission_context.organization_names
             team_names = [
                 name for name in accessible_groups if name not in organization_names
             ]
@@ -873,11 +876,15 @@ class KnowledgeService:
         filters: ExternalKnowledgeBaseListFilters,
     ) -> tuple[list[Kind], int]:
         """List externally visible knowledge bases with SQL filtering and paging."""
+        permission_context = KnowledgeService._build_direct_access_permission_context(
+            db, user_id
+        )
         query = _KnowledgeBaseVisibilityQueryBuilder.build(
             db,
             user_id=user_id,
             scope=filters.scope,
             group_name=filters.group_name,
+            permission_context=permission_context,
         )
 
         if query is None:
@@ -897,7 +904,12 @@ class KnowledgeService:
                 )
             )
 
-        query = KnowledgeService._apply_direct_access_filter(db, query, user_id)
+        query = KnowledgeService._apply_direct_access_filter(
+            db,
+            query,
+            user_id,
+            permission_context=permission_context,
+        )
 
         total = query.order_by(None).count()
         knowledge_bases = (
@@ -3760,7 +3772,10 @@ class _KnowledgeBaseVisibilityQueryBuilder:
         user_id: int,
         scope: ResourceScope,
         group_name: str | None = None,
+        permission_context: _DirectAccessPermissionContext,
     ):
+        if permission_context.user.id != user_id:
+            raise ValueError("Permission context user does not match request user")
         base_query = db.query(Kind).filter(
             Kind.kind == "KnowledgeBase",
             Kind.is_active == True,
@@ -3771,6 +3786,7 @@ class _KnowledgeBaseVisibilityQueryBuilder:
                 db,
                 base_query=base_query,
                 user_id=user_id,
+                permission_context=permission_context,
             )
 
         if scope == ResourceScope.GROUP:
@@ -3791,14 +3807,19 @@ class _KnowledgeBaseVisibilityQueryBuilder:
             db,
             base_query=base_query,
             user_id=user_id,
+            permission_context=permission_context,
         )
 
     @staticmethod
-    def _build_personal_query(db: Session, *, base_query, user_id: int):
+    def _build_personal_query(
+        db: Session,
+        *,
+        base_query,
+        user_id: int,
+        permission_context: _DirectAccessPermissionContext,
+    ):
         shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
-            db,
-            user_id=user_id,
-            accessible_groups=get_user_groups(db, user_id),
+            permission_context=permission_context,
         )
         bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
 
@@ -3811,22 +3832,18 @@ class _KnowledgeBaseVisibilityQueryBuilder:
         return base_query.filter(or_(*conditions))
 
     @staticmethod
-    def _build_all_query(db: Session, *, base_query, user_id: int):
-        accessible_groups = get_user_groups(db, user_id)
+    def _build_all_query(
+        db: Session,
+        *,
+        base_query,
+        user_id: int,
+        permission_context: _DirectAccessPermissionContext,
+    ):
+        accessible_groups = permission_context.accessible_groups
         shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
-            db,
-            user_id=user_id,
-            accessible_groups=accessible_groups,
+            permission_context=permission_context,
         )
-        org_namespace_names = [
-            namespace_name
-            for (namespace_name,) in db.query(Namespace.name)
-            .filter(
-                Namespace.level == GroupLevel.organization.value,
-                Namespace.is_active == True,
-            )
-            .all()
-        ]
+        org_namespace_names = permission_context.organization_names
         bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
 
         conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
@@ -3843,32 +3860,13 @@ class _KnowledgeBaseVisibilityQueryBuilder:
 
     @staticmethod
     def _shared_kb_ids(
-        db: Session,
         *,
-        user_id: int,
-        accessible_groups: list[str],
+        permission_context: _DirectAccessPermissionContext,
     ) -> list[int]:
-        from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
-
-        shared_permissions = (
-            db.query(ResourceMember.resource_id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id == str(user_id),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        shared_kb_ids = [permission.resource_id for permission in shared_permissions]
-
-        entity_result = KnowledgeService._collect_entity_authorized_kbs(
-            db,
-            user_id,
-            accessible_groups,
-        )
-        entity_kb_ids = {kb.id for kb in entity_result.entity_kbs}
+        shared_kb_ids = [
+            permission.resource_id for permission in permission_context.direct_members
+        ]
+        entity_kb_ids = {kb.id for kb in permission_context.entity_result.entity_kbs}
         return list(set(shared_kb_ids) | entity_kb_ids)
 
 

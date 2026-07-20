@@ -27,7 +27,10 @@ from app.schemas.knowledge import (
 )
 from app.schemas.namespace import GroupRole
 from app.services.knowledge.folder_service import KnowledgeFolderService
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    ExternalKnowledgeBaseListFilters,
+    KnowledgeService,
+)
 from app.services.share import knowledge_share_service
 
 
@@ -339,6 +342,42 @@ def test_share_info_remains_available_to_first_time_visitor(
     assert reporter_share_info.my_permission.has_access is False
     assert reporter_permission_sources.has_access is False
     assert reporter_permission_sources.effective_role == ResourceRole.Reporter.value
+
+
+@pytest.mark.unit
+def test_paginated_lists_reuse_direct_access_permission_context(
+    test_db: Session,
+) -> None:
+    user = _create_user(test_db, "permission-context-user")
+    collect_entity_permissions = KnowledgeService._collect_entity_authorized_kbs
+
+    with patch.object(
+        KnowledgeService,
+        "_collect_entity_authorized_kbs",
+        wraps=collect_entity_permissions,
+    ) as collect:
+        KnowledgeService.list_knowledge_bases_paginated(
+            test_db,
+            user.id,
+            ResourceScope.ALL,
+            offset=0,
+            limit=50,
+        )
+
+    assert collect.call_count == 1
+
+    with patch.object(
+        KnowledgeService,
+        "_collect_entity_authorized_kbs",
+        wraps=collect_entity_permissions,
+    ) as collect:
+        KnowledgeService.list_external_knowledge_bases(
+            test_db,
+            user_id=user.id,
+            filters=ExternalKnowledgeBaseListFilters(scope=ResourceScope.ALL),
+        )
+
+    assert collect.call_count == 1
 
 
 @pytest.mark.unit
