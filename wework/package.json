@@ -25,7 +25,7 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:desktop": "node e2e/desktop/task-flow.e2e.mjs",
-    "e2e:desktop:wecode": "node e2e/desktop/task-flow.e2e.mjs --wecode-only",
+    "e2e:desktop:wecode": "node wecode/e2e/desktop/task-flow.e2e.mjs",
     "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
     "e2e:desktop:lifecycle": "node e2e/desktop/task-flow.e2e.mjs --lifecycle-only",
     "e2e:desktop:reconnect": "node e2e/desktop/task-flow.e2e.mjs --reconnect-only",

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 const CLOUD_DEVICE_NAME = 'Wework Desktop E2E Cloud Device'
 const CLOUD_DEVICE_SANDBOX_ID = 'wework-desktop-e2e-sandbox'
 const CLOUD_DEVICE_TOKEN = 'wework-desktop-e2e-cloud-token'
+const DEFAULT_CLOUD_DEVICE_ID = 'wework-desktop-e2e-cloud-device'
 
 function json(response, statusCode, value) {
   response.writeHead(statusCode, {
@@ -133,6 +134,27 @@ class VncDesktopScenario {
   }
 
   async handleHttp(request, response, url) {
+    if (request.method === 'GET' && url.pathname === '/api/devices') {
+      json(response, 200, {
+        items: [
+          {
+            id: 9002,
+            device_id: this.deviceId,
+            name: CLOUD_DEVICE_NAME,
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            executor_version: '1.8.5',
+            client_ip: '127.0.0.1',
+            cloud_config: this.cloudDeviceConfig,
+          },
+        ],
+        total: 1,
+      })
+      return true
+    }
+
     if (
       request.method !== 'GET' ||
       url.pathname !== `/api/cloud-devices/${this.deviceId}/vnc-config`
@@ -326,6 +348,6 @@ class VncDesktopScenario {
   }
 }
 
-export function createVncDesktopScenario(options) {
-  return new VncDesktopScenario(options)
+export function createVncDesktopScenario({ deviceId = DEFAULT_CLOUD_DEVICE_ID, uiTimeoutMs } = {}) {
+  return new VncDesktopScenario({ deviceId, uiTimeoutMs })
 }

@@ -1,1 +1,1 @@
-export { createVncDesktopScenario as createWecodeDesktopScenario } from './vnc.mjs'
+export { createVncDesktopScenario as createDesktopScenario } from './vnc.mjs'

@@ -25,11 +25,10 @@ async function createScenario(): Promise<Scenario | null> {
   if (!existsSync(scenarioEntryPath)) return null
 
   const moduleUrl = pathToFileURL(scenarioEntryPath).href
-  const { createWecodeDesktopScenario } = (await import(/* @vite-ignore */ moduleUrl)) as {
-    createWecodeDesktopScenario: (options: { deviceId: string; uiTimeoutMs: number }) => Scenario
+  const { createDesktopScenario } = (await import(/* @vite-ignore */ moduleUrl)) as {
+    createDesktopScenario: (options: { uiTimeoutMs: number }) => Scenario
   }
-  return createWecodeDesktopScenario({
-    deviceId: 'wework-desktop-e2e-cloud-device',
+  return createDesktopScenario({
     uiTimeoutMs: 120_000,
   })
 }
@@ -86,6 +85,42 @@ describe('Wecode Desktop VNC scenario', () => {
     expect(handled).toBe(true)
     expect(result.statusCode).toBe(401)
     expect(JSON.parse(result.body)).toEqual({ error: 'Desktop E2E VNC authorization is missing' })
+  })
+
+  test('owns the cloud device fixture used by the desktop flow', async () => {
+    const scenario = await createScenario()
+    if (!scenario) return
+    const result = response()
+
+    const handled = await scenario.handleHttp(
+      { headers: {}, method: 'GET' },
+      result,
+      new URL('http://127.0.0.1/api/devices')
+    )
+
+    expect(handled).toBe(true)
+    expect(result.statusCode).toBe(200)
+    expect(JSON.parse(result.body)).toEqual({
+      items: [
+        {
+          id: 9002,
+          device_id: 'wework-desktop-e2e-cloud-device',
+          name: 'Wework Desktop E2E Cloud Device',
+          status: 'online',
+          is_default: false,
+          device_type: 'cloud',
+          bind_shell: 'claudecode',
+          executor_version: '1.8.5',
+          client_ip: '127.0.0.1',
+          cloud_config: {
+            sandboxId: 'wework-desktop-e2e-sandbox',
+            deviceId: 'wework-desktop-e2e-cloud-device',
+            deviceName: 'Wework Desktop E2E Cloud Device',
+          },
+        },
+      ],
+      total: 1,
+    })
   })
 
   test('returns the unchanged VNC configuration to an authorized request', async () => {
