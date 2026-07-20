@@ -66,7 +66,9 @@ When the user stops the current response for a task with an active goal, Wework 
 `paused` through the runtime goal API before cancelling the current turn. This ordering disables
 the automatic continuation source before the turn ends, so the goal cannot start another turn in
 the window before its pause request arrives. If pausing the goal fails, Wework must not mark the
-current response as stopped.
+current response as stopped. While goal details are still loading, the stop flow must use the
+`goalStatus` from the task-list snapshot to decide whether to pause; it must not skip persistence
+merely because the goal bar has not rendered yet.
 
 ## Composer Mode Indicators
 

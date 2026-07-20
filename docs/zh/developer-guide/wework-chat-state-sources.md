@@ -65,7 +65,8 @@ Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App
 用户停止一个带有 active goal 的当前回复时，Wework 必须先通过 runtime goal API
 持久化 `paused`，确认成功后再取消当前 turn。这个顺序先关闭自动续跑源，避免当前
 turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal 暂停失败，不得继续把
-当前回复标记为已停止。
+当前回复标记为已停止。Goal 详情仍在加载时，停止流程必须使用任务列表快照中的
+`goalStatus` 判断是否需要暂停，不能因为尚未渲染 Goal 条而跳过持久化。
 
 ## Composer 模式提示
 

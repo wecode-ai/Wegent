@@ -8291,7 +8291,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
   })
 
-  test('refreshes runtime work after cancelling the active runtime task', async () => {
+  test('pauses an active task goal before cancelling while goal details are loading', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -8318,6 +8318,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                   title: 'Runtime A',
                   runtime: 'codex',
                   running: true,
+                  goalStatus: 'active',
                 },
               ],
             },
@@ -8398,10 +8399,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         ],
       }),
       cancelRuntimeTask,
-      getRuntimeGoal: vi.fn().mockResolvedValue({
-        accepted: true,
-        goal: createRuntimeGoal({ status: 'active' }),
-      }),
+      getRuntimeGoal: vi.fn().mockReturnValue(new Promise(() => undefined)),
       setRuntimeGoal,
     })
     const services = createWorkbenchServices({
