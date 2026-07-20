@@ -17,6 +17,12 @@ export interface CloudConnectionRuntimeConfig {
   socketPath: string
 }
 
+export interface PreferredCloudSocketConfig {
+  backendUrls: string[]
+  socketBaseUrl: string
+  socketPath: string
+}
+
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
   token: string
   tokenExpiresAt: number | null
@@ -71,7 +77,10 @@ function normalizeBackendUrlPath(pathname: string): {
   }
 }
 
-export function normalizeCloudBackendUrl(input: string): CloudConnectionRuntimeConfig {
+export function normalizeCloudBackendUrl(
+  input: string,
+  preferredSocket?: PreferredCloudSocketConfig
+): CloudConnectionRuntimeConfig {
   const value = input.trim()
   if (!value) {
     throw new Error('Backend URL is required')
@@ -88,12 +97,27 @@ export function normalizeCloudBackendUrl(input: string): CloudConnectionRuntimeC
   const origin = url.origin
   const backendUrl = trimTrailingSlash(`${origin}${backendPath}`)
   const apiBaseUrl = trimTrailingSlash(`${origin}${apiPath}`)
+  const preferredSocketBaseUrl = preferredSocket?.socketBaseUrl.trim() ?? ''
+  const preferredSocketPath = preferredSocket?.socketPath.trim() ?? ''
+  const preferredBackendMatches = preferredSocket?.backendUrls.some(candidate => {
+    if (!candidate.trim()) return false
+    try {
+      return normalizeCloudBackendUrl(candidate).backendUrl === backendUrl
+    } catch {
+      return false
+    }
+  })
+  const usePreferredSocket = Boolean(
+    preferredBackendMatches && preferredSocketBaseUrl && preferredSocketPath
+  )
 
   return {
     backendUrl,
     apiBaseUrl,
-    socketBaseUrl: backendUrl || origin,
-    socketPath: DEFAULT_SOCKET_PATH,
+    socketBaseUrl: usePreferredSocket
+      ? trimTrailingSlash(preferredSocketBaseUrl)
+      : backendUrl || origin,
+    socketPath: usePreferredSocket ? preferredSocketPath : DEFAULT_SOCKET_PATH,
   }
 }
 
