@@ -161,12 +161,7 @@ impl ConnectorRuntime {
                     format!("Failed to locate executor binary: {error}"),
                 )
             })?;
-            json!({
-                "command": command.display().to_string(),
-                "args": ["connector-mcp-server"],
-                "startup_timeout_sec": 15,
-                "tool_timeout_sec": 180,
-            })
+            connector_mcp_server_config(&command, env::var_os("WEGENT_EXECUTOR_HOME"))
         } else {
             Value::Null
         };
@@ -206,6 +201,21 @@ impl ConnectorRuntime {
             .await
             .map_err(|error| AppIpcError::new(error.code, error.message))
     }
+}
+
+fn connector_mcp_server_config(command: &Path, executor_home: Option<std::ffi::OsString>) -> Value {
+    let mut config = json!({
+        "command": command.display().to_string(),
+        "args": ["connector-mcp-server"],
+        "startup_timeout_sec": 15,
+        "tool_timeout_sec": 180,
+    });
+    if let Some(executor_home) = executor_home {
+        config["env"] = json!({
+            "WEGENT_EXECUTOR_HOME": executor_home.to_string_lossy(),
+        });
+    }
+    config
 }
 
 fn is_valid_slug(value: &str) -> bool {
@@ -310,6 +320,19 @@ fn remove_inactive_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_child_uses_the_executor_instance_home() {
+        let config = connector_mcp_server_config(
+            Path::new("/opt/wegent-executor"),
+            Some(std::ffi::OsString::from("/private/runtime/instance")),
+        );
+
+        assert_eq!(
+            config["env"]["WEGENT_EXECUTOR_HOME"],
+            "/private/runtime/instance"
+        );
+    }
 
     #[test]
     fn skill_materialization_is_scoped_and_removes_only_managed_stale_dirs() {

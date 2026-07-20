@@ -1060,7 +1060,7 @@
   },
   "connector_apps": {
     "title": "应用连接",
-    "description": "发布远程 MCP 应用，并统一管理认证、可见范围和工具权限。",
+    "description": "发布 MCP 或 HTTP 应用，并统一管理认证、可见范围和工具权限。",
     "create": "添加应用",
     "edit": "编辑应用",
     "disable": "停用应用",
@@ -1081,14 +1081,16 @@
     "dialog": {
       "create_title": "添加应用",
       "edit_title": "编辑应用",
-      "description": "上游服务必须提供 Streamable HTTP 或 SSE MCP 端点。密钥会加密保存，且不会通过 API 返回。"
+      "description": "既可连接 Streamable HTTP/SSE MCP 服务，也可把普通 HTTP API 适配为工具。密钥会加密保存，且不会通过 API 返回。"
     },
     "fields": {
       "name": "显示名称",
       "slug": "唯一标识",
       "description": "应用描述",
       "mcp_url": "MCP 端点地址",
-      "transport": "MCP 传输协议",
+      "http_base_url": "HTTP API 基础地址",
+      "transport": "连接协议",
+      "http_tools": "HTTP 工具定义",
       "icon_url": "图标地址",
       "auth_type": "用户认证方式",
       "visibility": "可见范围",
@@ -1108,6 +1110,8 @@
     "hints": {
       "lines": "每行填写一个值。",
       "allowlist": "每行填写一个上游工具名；留空表示开放全部工具。",
+      "http_tools": "填写工具 JSON 数组。每个工具包含名称、描述、HTTP 方法、相对路径、input_schema，可选参数位置和超时时间。",
+      "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"查询工单\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
       "headers_json": "可选 JSON 对象，值会加密保存。",
       "headers_configured": "已配置请求头：{{names}}。留空会保留，填写 JSON 对象则整体替换；填写 {} 可清空。",
       "secret_configured": "已配置密钥；留空会保留原值。"
@@ -1120,8 +1124,9 @@
       "load_failed": "加载应用失败",
       "save_failed": "保存应用失败",
       "disable_failed": "停用应用失败",
-      "required": "名称、标识和 MCP 地址不能为空",
-      "provider_headers_invalid": "固定请求头必须是值均为字符串的 JSON 对象"
+      "required": "名称、标识、端点地址和所选协议的必要配置不能为空",
+      "provider_headers_invalid": "固定请求头必须是值均为字符串的 JSON 对象",
+      "http_tools_invalid": "HTTP 工具定义必须是 JSON 数组"
     }
   },
   "templates": {

@@ -117,8 +117,18 @@ export interface SystemStats {
 // Connector App Types
 export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
 export type ConnectorVisibility = 'all' | 'roles'
-export type ConnectorTransport = 'streamable-http' | 'sse'
+export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
 export type ConnectorOAuthClientAuthMethod = 'client_secret_post' | 'client_secret_basic' | 'none'
+
+export interface ConnectorHttpToolDefinition {
+  name: string
+  description: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  input_schema: Record<string, unknown>
+  argument_locations: Record<string, 'path' | 'query' | 'body'>
+  timeout_seconds: number
+}
 
 export interface AdminConnectorApp {
   id: number
@@ -141,6 +151,7 @@ export interface AdminConnectorApp {
   provider_header_names: string[]
   provider_headers_configured: boolean
   tool_allowlist: string[]
+  http_tools: ConnectorHttpToolDefinition[]
   connection_count: number
   created_at: string
   updated_at: string
@@ -165,6 +176,7 @@ export interface AdminConnectorAppCreate {
   oauth_scopes: string[]
   provider_headers: Record<string, string>
   tool_allowlist: string[]
+  http_tools: ConnectorHttpToolDefinition[]
 }
 
 export type AdminConnectorAppUpdate = Partial<

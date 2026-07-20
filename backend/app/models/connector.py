@@ -46,6 +46,7 @@ class ConnectorApp(Base):
     oauth_scopes = Column(JSON, nullable=False, default=list)
     provider_headers_encrypted = Column(Text, nullable=True)
     tool_allowlist = Column(JSON, nullable=False, default=list)
+    http_tools = Column(JSON, nullable=False, default=list)
     created_by = Column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

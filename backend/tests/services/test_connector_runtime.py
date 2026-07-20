@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -298,3 +299,128 @@ async def test_rejects_direct_calls_outside_tool_allowlist(
         )
 
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_http_connector_lists_and_calls_configured_tool(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = ConnectorApp(
+        slug="ticket-api",
+        name="Ticket API",
+        description="",
+        enabled=True,
+        visibility="all",
+        allowed_roles=[],
+        auth_type="none",
+        transport="http",
+        mcp_url="https://tickets.example.test/api",
+        oauth_scopes=[],
+        tool_allowlist=["get_ticket"],
+        http_tools=[
+            {
+                "name": "get_ticket",
+                "description": "Get a ticket",
+                "method": "GET",
+                "path": "/tickets/{id}",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "expand": {"type": "boolean"},
+                    },
+                    "required": ["id"],
+                },
+                "argument_locations": {"id": "path", "expand": "query"},
+                "timeout_seconds": 15,
+            },
+            {
+                "name": "delete_ticket",
+                "method": "DELETE",
+                "path": "/tickets/{id}",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                },
+                "argument_locations": {"id": "path"},
+            },
+        ],
+        created_by=test_admin_user.id,
+    )
+    test_db.add(app)
+    test_db.commit()
+
+    async def send(
+        _client: httpx.AsyncClient,
+        request: httpx.Request,
+        *,
+        stream: bool,
+    ) -> httpx.Response:
+        assert stream is True
+        assert request.method == "GET"
+        assert str(request.url) == (
+            "https://tickets.example.test/api/tickets/T%2F42?expand=true"
+        )
+        assert request.content == b""
+        return httpx.Response(
+            200,
+            json={"id": "T/42", "title": "HTTP adapter works"},
+            request=request,
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+
+    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
+    content, structured, is_error = await ConnectorRuntimeService.call_tool(
+        test_db,
+        test_user,
+        "ticket-api__get_ticket",
+        {"id": "T/42", "expand": True},
+    )
+
+    assert [tool.name for tool in tools] == ["ticket-api__get_ticket"]
+    assert content[0]["type"] == "text"
+    assert structured == {
+        "status_code": 200,
+        "data": {"id": "T/42", "title": "HTTP adapter works"},
+    }
+    assert is_error is False
+
+
+@pytest.mark.asyncio
+async def test_http_connector_validates_arguments_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    definition = ConnectorRuntimeService._http_tool_definition(
+        ConnectorApp(
+            http_tools=[
+                {
+                    "name": "lookup",
+                    "method": "GET",
+                    "path": "/lookup",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                }
+            ]
+        ),
+        "lookup",
+    )
+    send = AsyncMock()
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await ConnectorRuntimeService._call_http_tool(
+            {"url": "https://search.example.test", "headers": {}},
+            definition,
+            {"query": 42},
+        )
+
+    assert exc_info.value.status_code == 422
+    send.assert_not_awaited()

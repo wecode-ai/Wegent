@@ -4,16 +4,20 @@
 
 """API schemas for Wegent connector applications."""
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 AuthType = Literal["none", "bearer", "oauth2"]
 Visibility = Literal["all", "roles"]
-Transport = Literal["streamable-http", "sse"]
+Transport = Literal["streamable-http", "sse", "http"]
 OAuthClientAuthMethod = Literal["client_secret_post", "client_secret_basic", "none"]
+HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+HttpArgumentLocation = Literal["path", "query", "body"]
 
 
 def _validate_http_url(value: str | None) -> str | None:
@@ -28,6 +32,86 @@ def _validate_http_url(value: str | None) -> str | None:
     if parsed.username is not None or parsed.password is not None:
         raise ValueError("URL must not contain embedded credentials")
     return value
+
+
+class ConnectorHttpToolDefinition(BaseModel):
+    """One HTTP operation exposed as an MCP tool by Connector Runtime."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+    description: str = Field(default="", max_length=10000)
+    method: HttpMethod = "POST"
+    path: str = Field(min_length=1, max_length=2048)
+    input_schema: dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
+    argument_locations: dict[str, HttpArgumentLocation] = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+
+    @field_validator("path")
+    @classmethod
+    def validate_relative_path(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme
+            or parsed.netloc
+            or parsed.query
+            or parsed.fragment
+            or not value.startswith("/")
+        ):
+            raise ValueError("HTTP tool path must be an absolute-path reference")
+        return value
+
+    @field_validator("input_schema")
+    @classmethod
+    def validate_input_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if value.get("type", "object") != "object":
+            raise ValueError("HTTP tool input_schema must describe an object")
+        properties = value.get("properties", {})
+        if not isinstance(properties, dict):
+            raise ValueError("HTTP tool input_schema properties must be an object")
+        try:
+            Draft202012Validator.check_schema(value)
+        except SchemaError as exc:
+            raise ValueError(
+                "HTTP tool input_schema must be valid JSON Schema"
+            ) from exc
+        return value
+
+    @model_validator(mode="after")
+    def validate_argument_locations(self) -> "ConnectorHttpToolDefinition":
+        properties = self.input_schema.get("properties", {})
+        unknown = set(self.argument_locations) - set(properties)
+        if unknown:
+            raise ValueError(
+                "argument_locations must reference input_schema properties: "
+                + ", ".join(sorted(unknown))
+            )
+        path_arguments = {
+            name
+            for name, location in self.argument_locations.items()
+            if location == "path"
+        }
+        missing_placeholders = {
+            name for name in path_arguments if "{" + name + "}" not in self.path
+        }
+        if missing_placeholders:
+            raise ValueError(
+                "path arguments require matching placeholders: "
+                + ", ".join(sorted(missing_placeholders))
+            )
+        placeholders = set(re.findall(r"\{([A-Za-z0-9_.-]+)\}", self.path))
+        required = set(self.input_schema.get("required", []))
+        invalid_placeholders = placeholders - set(properties)
+        optional_placeholders = placeholders - required
+        if invalid_placeholders or optional_placeholders:
+            raise ValueError(
+                "path placeholders must be required input_schema properties"
+            )
+        return self
 
 
 class ConnectorAppWrite(BaseModel):
@@ -49,6 +133,9 @@ class ConnectorAppWrite(BaseModel):
     oauth_scopes: list[str] = Field(default_factory=list)
     provider_headers: dict[str, str] = Field(default_factory=dict)
     tool_allowlist: list[str] = Field(default_factory=list)
+    http_tools: list[ConnectorHttpToolDefinition] = Field(
+        default_factory=list, max_length=100
+    )
 
     @field_validator("mcp_url", "oauth_authorization_url", "oauth_token_url")
     @classmethod
@@ -73,6 +160,15 @@ class ConnectorAppWrite(BaseModel):
             and not self.oauth_client_secret
         ):
             raise ValueError("OAuth client secret is required for confidential clients")
+        if self.transport == "http" and not self.http_tools:
+            raise ValueError("http_tools is required for HTTP connectors")
+        if self.transport != "http" and self.http_tools:
+            raise ValueError("http_tools is only supported by HTTP connectors")
+        names = [tool.name for tool in self.http_tools]
+        if len(names) != len(set(names)):
+            raise ValueError("HTTP tool names must be unique")
+        if self.transport == "http" and set(self.tool_allowlist) - set(names):
+            raise ValueError("tool_allowlist must reference configured HTTP tools")
         return self
 
 
@@ -96,6 +192,9 @@ class ConnectorAppUpdate(BaseModel):
     provider_headers: dict[str, str] | None = None
     clear_provider_headers: bool = False
     tool_allowlist: list[str] | None = None
+    http_tools: list[ConnectorHttpToolDefinition] | None = Field(
+        default=None, max_length=100
+    )
 
     @field_validator("mcp_url", "oauth_authorization_url", "oauth_token_url")
     @classmethod
@@ -116,6 +215,7 @@ class ConnectorAppUpdate(BaseModel):
             "oauth_client_auth_method",
             "oauth_scopes",
             "tool_allowlist",
+            "http_tools",
         }
         null_fields = {
             field
@@ -148,6 +248,7 @@ class ConnectorAppAdminResponse(BaseModel):
     provider_header_names: list[str]
     provider_headers_configured: bool
     tool_allowlist: list[str]
+    http_tools: list[ConnectorHttpToolDefinition]
     connection_count: int = 0
     created_at: datetime
     updated_at: datetime

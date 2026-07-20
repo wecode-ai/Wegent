@@ -31,6 +31,7 @@ from app.schemas.connector import (
     ConnectorAppUpdate,
     ConnectorAppWrite,
     ConnectorConnectionResponse,
+    ConnectorHttpToolDefinition,
 )
 from shared.telemetry.decorators import trace_async
 from shared.utils.crypto import (
@@ -160,6 +161,9 @@ class ConnectorAppService:
                 "oauth_client_auth_method", app.oauth_client_auth_method
             ),
             oauth_client_secret_configured=secret_configured,
+            transport=values.get("transport", app.transport),
+            http_tools=values.get("http_tools", app.http_tools),
+            tool_allowlist=values.get("tool_allowlist", app.tool_allowlist),
         )
         for key, value in values.items():
             setattr(app, key, value)
@@ -198,6 +202,9 @@ class ConnectorAppService:
         oauth_client_id: str | None,
         oauth_client_auth_method: str,
         oauth_client_secret_configured: bool,
+        transport: str,
+        http_tools: list[dict] | list[ConnectorHttpToolDefinition] | None,
+        tool_allowlist: list[str] | None,
     ) -> None:
         if visibility == "roles" and not allowed_roles:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Roles required")
@@ -216,6 +223,35 @@ class ConnectorAppService:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "OAuth client secret is required for confidential clients",
+            )
+        definitions = [
+            (
+                item
+                if isinstance(item, ConnectorHttpToolDefinition)
+                else ConnectorHttpToolDefinition.model_validate(item)
+            )
+            for item in (http_tools or [])
+        ]
+        if transport == "http" and not definitions:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "HTTP tool definitions are required",
+            )
+        if transport != "http" and definitions:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "HTTP tool definitions require the HTTP transport",
+            )
+        names = [definition.name for definition in definitions]
+        if len(names) != len(set(names)):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "HTTP tool names must be unique",
+            )
+        if transport == "http" and set(tool_allowlist or []) - set(names):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "HTTP tool allowlist references an unknown tool",
             )
 
     @staticmethod
@@ -255,6 +291,7 @@ class ConnectorAppService:
             provider_header_names=sorted(provider_headers),
             provider_headers_configured=bool(provider_headers),
             tool_allowlist=list(app.tool_allowlist or []),
+            http_tools=list(app.http_tools or []),
             connection_count=count,
             created_at=app.created_at,
             updated_at=app.updated_at,

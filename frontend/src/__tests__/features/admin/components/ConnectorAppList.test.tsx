@@ -137,4 +137,53 @@ describe('ConnectorAppList', () => {
       )
     })
   })
+
+  test('creates an HTTP API connector with tool definitions', async () => {
+    render(<ConnectorAppList />)
+
+    await screen.findByText('connector_apps.empty')
+    fireEvent.click(screen.getByTestId('create-connector-app-button'))
+    fireEvent.change(screen.getByTestId('connector-app-name'), {
+      target: { value: 'Ticket API' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-slug'), {
+      target: { value: 'ticket-api' },
+    })
+    fireEvent.change(screen.getByTestId('connector-app-mcp-url'), {
+      target: { value: 'https://tickets.example.test/api' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'http' },
+    })
+    const definition = [
+      {
+        name: 'get_ticket',
+        description: 'Get a ticket',
+        method: 'GET',
+        path: '/tickets/{id}',
+        input_schema: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+          required: ['id'],
+        },
+        argument_locations: { id: 'path' },
+        timeout_seconds: 30,
+      },
+    ]
+    fireEvent.change(screen.getByTestId('connector-app-http-tools'), {
+      target: { value: JSON.stringify(definition) },
+    })
+    fireEvent.click(screen.getByTestId('save-connector-app-button'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.createConnectorApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slug: 'ticket-api',
+          transport: 'http',
+          mcp_url: 'https://tickets.example.test/api',
+          http_tools: definition,
+        })
+      )
+    })
+  })
 })

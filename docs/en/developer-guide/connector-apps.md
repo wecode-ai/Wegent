@@ -4,19 +4,31 @@ sidebar_position: 19
 
 # Connector Apps Architecture and Deployment
 
-Connector Apps let Wework connect to internal systems without changing Codex source code or requiring a ChatGPT login. Responsibilities are separated: Wegent Admin manages definitions and authentication policy, Wegent Backend stores encrypted credentials and proxies upstream MCP servers, and Executor exposes a local MCP endpoint to Codex. Wework has no Connector settings page; it only synchronizes available capabilities after connecting to Wegent Cloud.
+Connector Apps let Wework connect to internal systems without changing Codex source code or requiring a ChatGPT login. The upstream may be either an MCP server or an ordinary HTTP API. Responsibilities are separated: Wegent Admin manages definitions and authentication policy, Wegent Backend stores encrypted credentials and adapts upstream protocols, and Executor exposes one local MCP endpoint to Codex. Wework has no Connector settings page; it only synchronizes available capabilities after connecting to Wegent Cloud.
 
 ## Runtime flow
 
-1. An administrator configures the remote MCP URL, authentication, role visibility, and tool allowlist under **System Administration → App Connections**.
+1. Under **System Administration → App Connections**, an administrator configures either a remote MCP endpoint or an HTTP API base URL with tool definitions, plus authentication, role visibility, and a tool allowlist.
 2. For an administrator-managed internal system, selecting `none` authentication and configuring encrypted fixed headers makes the app available automatically to allowed roles. Bearer or OAuth apps that require user identity must be authorized through Wegent Web/API first; Wework does not host configuration or authorization UI.
 3. After a user connects Wework to Wegent Cloud, Wework automatically synchronizes Connector Apps and Skills available to that user.
 4. Wework exchanges its cloud session for a 15-minute connector JWT. This token only has the `connectors:invoke` scope and cannot replace a user login token.
 5. Executor registers itself as the ordinary stdio MCP server `wegent_apps`. Codex connects only to this local process and never receives OAuth tokens, bearer tokens, or fixed provider headers.
-6. The `wegent_apps` child process reads the automatically rotated short token from Executor's private directory and calls Wegent Connector Runtime. Backend decrypts credentials and connects to the upstream Streamable HTTP or SSE MCP server on the user's behalf.
+6. The `wegent_apps` child process reads the automatically rotated short token from Executor's private directory and calls Wegent Connector Runtime. Backend decrypts credentials and either connects to the upstream Streamable HTTP/SSE MCP server or translates the tool invocation into an ordinary HTTP request.
 7. Every available app gets a Wegent-managed local Skill. The Skill only identifies the app tool namespace, such as `crm__`; it contains neither administrator-provided prose nor credentials.
 
 Tools are exposed as `<app_slug>__<upstream_tool_name>`. The same allowlist is enforced during both tool discovery and invocation, so a caller cannot bypass policy by constructing a tool name directly.
+
+## HTTP API adapter
+
+When the connection protocol is `HTTP API`, the endpoint is an API base URL. Each `http_tools` entry defines:
+
+- `name` and `description`: the tool identity and model-facing purpose.
+- `method` and `path`: `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` are supported. The path must be an absolute-path reference on the configured host; it cannot contain another origin, a query string, or a fragment.
+- `input_schema`: a standard object JSON Schema. Runtime validates every invocation before sending the request.
+- `argument_locations`: maps arguments to `path`, `query`, or JSON `body`. Unmapped GET/DELETE arguments become query parameters; arguments for other methods become JSON body fields. Path values are URL encoded.
+- `timeout_seconds`: a per-request timeout between 1 and 120 seconds.
+
+Backend does not follow redirects, preventing credentials from crossing to another host, and limits responses to 1 MB. JSON responses become both MCP text and structured content; non-2xx responses become MCP tool errors. Fixed provider headers, per-user Bearer/OAuth credentials, role visibility, and tool allowlists use the same policy as MCP upstreams.
 
 ## Authentication boundary
 
@@ -72,4 +84,4 @@ Register this exact URL with the OAuth provider. Production deployments should u
 - `/api/connector-runtime/token`: exchanges a normal cloud session for a least-privilege short token.
 - `/api/connector-runtime/tools` and `/call`: accept only connector JWTs and are used by the Executor MCP proxy.
 
-This design does not use Codex's native `codex_apps` server. Its ChatGPT authentication and remote app catalog belong to Codex itself. Wegent enters the Codex flow through standard MCP configuration, so Codex neither needs to be modified nor logged in.
+This design does not use Codex's native `codex_apps` server. Its ChatGPT authentication and remote app catalog belong to Codex itself. Wegent normalizes both MCP and HTTP upstreams into standard MCP at the Executor boundary, so Codex neither needs to be modified nor logged in.

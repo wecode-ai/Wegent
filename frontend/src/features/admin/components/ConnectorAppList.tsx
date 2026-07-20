@@ -11,6 +11,7 @@ import type {
   AdminConnectorApp,
   AdminConnectorAppCreate,
   ConnectorAuthType,
+  ConnectorHttpToolDefinition,
   ConnectorOAuthClientAuthMethod,
   ConnectorTransport,
   ConnectorVisibility,
@@ -61,6 +62,7 @@ interface ConnectorForm {
   providerHeaders: string
   clearProviderHeaders: boolean
   toolAllowlist: string
+  httpTools: string
 }
 
 const EMPTY_FORM: ConnectorForm = {
@@ -84,6 +86,7 @@ const EMPTY_FORM: ConnectorForm = {
   providerHeaders: '',
   clearProviderHeaders: false,
   toolAllowlist: '',
+  httpTools: '',
 }
 
 function lines(value: string): string[] {
@@ -115,6 +118,7 @@ function formFromApp(app: AdminConnectorApp): ConnectorForm {
     providerHeaders: '',
     clearProviderHeaders: false,
     toolAllowlist: app.tool_allowlist.join('\n'),
+    httpTools: app.http_tools.length ? JSON.stringify(app.http_tools, null, 2) : '',
   }
 }
 
@@ -128,6 +132,15 @@ function parseHeaders(value: string): Record<string, string> | undefined {
     throw new Error('provider_headers_invalid')
   }
   return parsed as Record<string, string>
+}
+
+function parseHttpTools(value: string): ConnectorHttpToolDefinition[] {
+  if (!value.trim()) return []
+  const parsed: unknown = JSON.parse(value)
+  if (!Array.isArray(parsed) || parsed.some(item => !item || typeof item !== 'object')) {
+    throw new Error('http_tools_invalid')
+  }
+  return parsed as ConnectorHttpToolDefinition[]
 }
 
 function payloadFromForm(form: ConnectorForm): AdminConnectorAppCreate {
@@ -150,6 +163,7 @@ function payloadFromForm(form: ConnectorForm): AdminConnectorAppCreate {
     oauth_scopes: lines(form.oauthScopes),
     provider_headers: parseHeaders(form.providerHeaders) ?? {},
     tool_allowlist: lines(form.toolAllowlist),
+    http_tools: parseHttpTools(form.httpTools),
   }
 }
 
@@ -205,13 +219,21 @@ export default function ConnectorAppList() {
       form.oauthClientAuthMethod !== 'none' &&
       !form.oauthClientSecret &&
       (!editing?.oauth_client_secret_configured || form.clearOauthClientSecret)
+    let httpToolsMissing = false
+    try {
+      httpToolsMissing = form.transport === 'http' && parseHttpTools(form.httpTools).length === 0
+    } catch {
+      toast({ variant: 'destructive', title: t('connector_apps.errors.http_tools_invalid') })
+      return
+    }
     if (
       !form.slug.trim() ||
       !form.name.trim() ||
       !form.mcpUrl.trim() ||
       (form.visibility === 'roles' && lines(form.allowedRoles).length === 0) ||
       oauthConfigurationMissing ||
-      confidentialSecretMissing
+      confidentialSecretMissing ||
+      httpToolsMissing
     ) {
       toast({ variant: 'destructive', title: t('connector_apps.errors.required') })
       return
@@ -242,14 +264,17 @@ export default function ConnectorAppList() {
       await loadApps()
     } catch (error) {
       const invalidHeaders = (error as Error).message === 'provider_headers_invalid'
+      const invalidHttpTools = (error as Error).message === 'http_tools_invalid'
       toast({
         variant: 'destructive',
         title: t(
           invalidHeaders
             ? 'connector_apps.errors.provider_headers_invalid'
-            : 'connector_apps.errors.save_failed'
+            : invalidHttpTools
+              ? 'connector_apps.errors.http_tools_invalid'
+              : 'connector_apps.errors.save_failed'
         ),
-        description: invalidHeaders ? undefined : (error as Error).message,
+        description: invalidHeaders || invalidHttpTools ? undefined : (error as Error).message,
       })
     } finally {
       setSaving(false)
@@ -416,7 +441,13 @@ function ConnectorAppDialog({
               />
             </FormField>
           </div>
-          <FormField label={t('connector_apps.fields.mcp_url')}>
+          <FormField
+            label={t(
+              form.transport === 'http'
+                ? 'connector_apps.fields.http_base_url'
+                : 'connector_apps.fields.mcp_url'
+            )}
+          >
             <Input
               value={form.mcpUrl}
               onChange={event => update('mcpUrl', event.target.value)}
@@ -434,6 +465,7 @@ function ConnectorAppDialog({
               <SelectContent>
                 <SelectItem value="streamable-http">Streamable HTTP</SelectItem>
                 <SelectItem value="sse">SSE</SelectItem>
+                <SelectItem value="http">HTTP API</SelectItem>
               </SelectContent>
             </Select>
           </FormField>
@@ -567,6 +599,22 @@ function ConnectorAppDialog({
               </div>
             </>
           ) : null}
+          <div className="md:col-span-2">
+            {form.transport === 'http' ? (
+              <FormField
+                label={t('connector_apps.fields.http_tools')}
+                hint={t('connector_apps.hints.http_tools')}
+              >
+                <Textarea
+                  className="min-h-64 font-mono"
+                  value={form.httpTools}
+                  onChange={event => update('httpTools', event.target.value)}
+                  placeholder={t('connector_apps.hints.http_tools_example')}
+                  data-testid="connector-app-http-tools"
+                />
+              </FormField>
+            ) : null}
+          </div>
           <div className="md:col-span-2">
             <FormField
               label={t('connector_apps.fields.provider_headers')}

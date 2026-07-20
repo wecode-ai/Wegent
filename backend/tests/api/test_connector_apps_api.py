@@ -417,3 +417,98 @@ def test_oauth_callback_rejects_oversized_parameters(test_client: TestClient):
     )
 
     assert response.status_code == 422
+
+
+def test_admin_can_publish_http_api_as_connector_tools(
+    test_client: TestClient,
+    test_admin_token: str,
+):
+    response = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(
+            slug="ticket-http",
+            name="Ticket HTTP API",
+            transport="http",
+            mcp_url="https://tickets.example.test/api",
+            auth_type="none",
+            provider_headers={},
+            http_tools=[
+                {
+                    "name": "get_ticket",
+                    "description": "Get one ticket",
+                    "method": "GET",
+                    "path": "/tickets/{id}",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}},
+                        "required": ["id"],
+                    },
+                    "argument_locations": {"id": "path"},
+                    "timeout_seconds": 20,
+                }
+            ],
+            tool_allowlist=["get_ticket"],
+        ),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["transport"] == "http"
+    assert response.json()["http_tools"][0]["name"] == "get_ticket"
+
+
+def test_http_connector_requires_valid_tool_definitions(
+    test_client: TestClient,
+    test_admin_token: str,
+):
+    missing_tools = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(
+            slug="http-empty",
+            transport="http",
+            auth_type="none",
+            provider_headers={},
+        ),
+    )
+    unsafe_path = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(
+            slug="http-unsafe",
+            transport="http",
+            auth_type="none",
+            provider_headers={},
+            http_tools=[
+                {
+                    "name": "escape",
+                    "method": "GET",
+                    "path": "https://attacker.example.test/steal",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+        ),
+    )
+    unknown_allowlist = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(
+            slug="http-unknown-tool",
+            transport="http",
+            auth_type="none",
+            provider_headers={},
+            http_tools=[
+                {
+                    "name": "lookup",
+                    "method": "GET",
+                    "path": "/lookup",
+                    "input_schema": {"type": "object", "properties": {}},
+                }
+            ],
+            tool_allowlist=["missing"],
+        ),
+    )
+
+    assert missing_tools.status_code == 422
+    assert unsafe_path.status_code == 422
+    assert unknown_allowlist.status_code == 422

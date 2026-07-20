@@ -1060,7 +1060,7 @@
   },
   "connector_apps": {
     "title": "App Connections",
-    "description": "Publish remote MCP apps and control their authentication, visibility, and tool access.",
+    "description": "Publish MCP or HTTP apps and control their authentication, visibility, and tool access.",
     "create": "Add App",
     "edit": "Edit app",
     "disable": "Disable app",
@@ -1081,14 +1081,16 @@
     "dialog": {
       "create_title": "Add app",
       "edit_title": "Edit app",
-      "description": "The upstream service must expose a Streamable HTTP or SSE MCP endpoint. Secrets are encrypted and never returned by the API."
+      "description": "Connect a Streamable HTTP/SSE MCP server or adapt an ordinary HTTP API into tools. Secrets are encrypted and never returned by the API."
     },
     "fields": {
       "name": "Display name",
       "slug": "Unique slug",
       "description": "Description",
       "mcp_url": "MCP endpoint URL",
-      "transport": "MCP transport",
+      "http_base_url": "HTTP API base URL",
+      "transport": "Connection protocol",
+      "http_tools": "HTTP tool definitions",
       "icon_url": "Icon URL",
       "auth_type": "User authentication",
       "visibility": "Visibility",
@@ -1108,6 +1110,8 @@
     "hints": {
       "lines": "Enter one value per line.",
       "allowlist": "One upstream tool name per line. Leave empty to expose all tools.",
+      "http_tools": "JSON array of tools. Each tool defines name, description, method, relative path, input_schema, optional argument_locations, and timeout_seconds.",
+      "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"Get a ticket\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
       "headers_json": "Optional JSON object. Values are stored encrypted.",
       "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them.",
       "secret_configured": "A secret is configured. Leave empty to retain it."
@@ -1120,8 +1124,9 @@
       "load_failed": "Failed to load apps",
       "save_failed": "Failed to save app",
       "disable_failed": "Failed to disable app",
-      "required": "Name, slug, and MCP URL are required",
-      "provider_headers_invalid": "Provider headers must be a JSON object with string values"
+      "required": "Name, slug, endpoint URL, and required transport configuration are required",
+      "provider_headers_invalid": "Provider headers must be a JSON object with string values",
+      "http_tools_invalid": "HTTP tool definitions must be a JSON array"
     }
   },
   "templates": {

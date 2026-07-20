@@ -205,11 +205,13 @@ function createBridge(): WeworkAutomationBridge {
 function seedDesktopE2ECloudConnection() {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
+  const authToken =
+    import.meta.env.VITE_WEWORK_E2E_CLOUD_AUTH_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
 
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
     ...config,
-    token: 'wework-desktop-e2e-cloud-token',
+    token: authToken,
     tokenExpiresAt: null,
     user: {
       id: 9001,
