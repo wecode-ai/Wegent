@@ -34,6 +34,7 @@ type DesktopControlAction =
   | 'fill'
   | 'getText'
   | 'hover'
+  | 'navigate'
   | 'pointerMove'
   | 'snapshot'
   | 'waitFor'
@@ -535,6 +536,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'hover':
       return hoverDesktopControlElement(command.selector)
+    case 'navigate': {
+      const appPath = normalizeAppPath(command.value ?? '/')
+      window.history.pushState(null, '', joinAppPath(getRuntimeConfig().appBasePath, appPath))
+      dispatchNavigationEvents()
+      return stripAppBasePath(window.location.pathname)
+    }
     case 'pointerMove':
       return moveDesktopControlPointer(command)
     case 'press': {
@@ -603,6 +610,6 @@ async function runDesktopControlClient(url: string): Promise<void> {
 
 function installDesktopControlClient() {
   const url = desktopControlUrl()
-  if (!url) return
+  if (!url || window.location.pathname.startsWith('/system-drag')) return
   void runDesktopControlClient(url)
 }

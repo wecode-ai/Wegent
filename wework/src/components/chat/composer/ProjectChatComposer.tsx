@@ -23,6 +23,7 @@ import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/tauri/appPreferences'
+import { readDroppedFiles } from '@/tauri/droppedFiles'
 
 interface ProjectChatComposerProps {
   value: string
@@ -222,6 +223,9 @@ export function ProjectChatComposer({
     if (phrase.mode === 'plan') onSetPlanMode?.()
     if (phrase.mode === 'goal') onSetGoal?.()
     onChange(value ? `${value}\n${phrase.content}` : phrase.content)
+    if (phrase.attachmentPaths?.length) {
+      void readDroppedFiles(phrase.attachmentPaths).then(onFileSelect)
+    }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
 

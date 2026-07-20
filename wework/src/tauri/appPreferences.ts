@@ -4,6 +4,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
+  systemDragEnabled: boolean
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
@@ -27,6 +28,7 @@ export interface QuickPhrase {
   title: string
   content: string
   mode: QuickPhraseMode
+  attachmentPaths?: string[]
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
@@ -35,6 +37,7 @@ export type BrowserLinkTarget = 'system' | 'wework'
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
+  systemDragEnabled?: boolean
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
@@ -75,6 +78,7 @@ export const defaultQuickPhrases: QuickPhrase[] = [
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
+  systemDragEnabled: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
@@ -125,6 +129,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.showMainWindowOnLaunch === 'boolean'
         ? record.showMainWindowOnLaunch
         : defaultAppPreferences.showMainWindowOnLaunch,
+    systemDragEnabled:
+      typeof record.systemDragEnabled === 'boolean'
+        ? record.systemDragEnabled
+        : defaultAppPreferences.systemDragEnabled,
     closeToTrayHintSeen:
       typeof record.closeToTrayHintSeen === 'boolean'
         ? record.closeToTrayHintSeen
@@ -192,9 +200,29 @@ function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
   const id = typeof record.id === 'string' ? record.id : ''
   const title = typeof record.title === 'string' ? record.title.trim() : ''
   const content = typeof record.content === 'string' ? record.content.trim() : ''
+  const attachmentPaths = Array.isArray(record.attachmentPaths)
+    ? record.attachmentPaths.flatMap(path =>
+        typeof path === 'string' && path.trim() ? [path.trim()] : []
+      )
+    : []
   const mode = record.mode
-  if (!id || !title || !content || !['normal', 'plan', 'goal'].includes(mode ?? '')) return []
-  return [{ id, title, content, mode: mode as QuickPhraseMode }]
+  if (
+    !id ||
+    !title ||
+    (!content && attachmentPaths.length === 0) ||
+    !['normal', 'plan', 'goal'].includes(mode ?? '')
+  ) {
+    return []
+  }
+  return [
+    {
+      id,
+      title,
+      content,
+      mode: mode as QuickPhraseMode,
+      ...(attachmentPaths.length > 0 && { attachmentPaths }),
+    },
+  ]
 }
 
 function emitAppPreferencesChanged(preferences: AppPreferences) {
