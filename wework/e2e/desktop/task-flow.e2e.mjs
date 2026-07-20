@@ -943,7 +943,47 @@ class RealCloudEnvironment {
     throw new Error('The real cloud backend still returned the removed project')
   }
 
+  async cancelRunningTasks() {
+    if (!this.backendUrl || !this.authToken) return
+    const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const workspaces = [
+      ...(work.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
+      ...(work.chats ?? []),
+    ]
+    const runningTasks = workspaces.flatMap(workspace =>
+      (workspace.tasks ?? [])
+        .filter(task => task.running)
+        .map(task => ({
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          workspacePath: task.workspacePath,
+        }))
+    )
+    await Promise.all(
+      runningTasks.map(address =>
+        fetchJson(`${this.backendUrl}/api/runtime-work/cancel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.authToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(address),
+        })
+      )
+    )
+  }
+
   async stop() {
+    try {
+      await this.cancelRunningTasks()
+    } catch (error) {
+      await appendFile(
+        this.remoteExecutorLogPath,
+        `Cloud E2E cleanup could not cancel running tasks: ${String(error)}\n`
+      )
+    }
     await stopProcess(this.remoteExecutor)
     await stopProcess(this.backend)
     await stopProcess(this.redis)
@@ -1408,7 +1448,7 @@ class DesktopE2EServer {
       this.cloudModelStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
         customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -1765,10 +1805,18 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
   const projectId = deviceStatusTestId.slice('project-device-status-'.length)
   await control.command('click', `[data-testid="project-row-${projectId}"]`)
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    timeoutMs: UI_TIMEOUT_MS,
+  })
   await control.command(
     'clickWhenEnabled',
     `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
   )
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    timeoutMs: UI_TIMEOUT_MS,
+  })
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
 
   control.setScenario('cloud_initial')
@@ -2506,6 +2554,7 @@ async function main() {
           phase,
           scenario: control.scenario,
           modelStage: control.modelStage,
+          cloudModelStage: control.cloudModelStage,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
@@ -2517,6 +2566,11 @@ async function main() {
         null,
         2
       )}\n`,
+      'utf8'
+    )
+    await writeFile(
+      join(resultDir, 'model-requests.json'),
+      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
       'utf8'
     )
     try {
@@ -2532,8 +2586,8 @@ async function main() {
     )
     throw error
   } finally {
-    await stopProcess(app)
     await cloudEnvironment?.stop()
+    await stopProcess(app)
     await control.close()
     if (appBundlePath) {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
