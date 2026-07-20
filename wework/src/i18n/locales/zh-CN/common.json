@@ -871,6 +871,7 @@
     "settings_nav_plugins": "插件",
     "settings_nav_browser": "浏览器",
     "settings_nav_worktrees": "工作树",
+    "settings_nav_hooks": "Hooks",
     "settings_nav_about": "关于",
     "settings_nav_archived_conversations": "已归档任务",
     "settings_nav_archived_chats": "已归档会话",

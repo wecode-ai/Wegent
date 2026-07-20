@@ -871,6 +871,7 @@
     "settings_nav_plugins": "Plugins",
     "settings_nav_browser": "Browser",
     "settings_nav_worktrees": "Worktrees",
+    "settings_nav_hooks": "Hooks",
     "settings_nav_about": "About",
     "settings_nav_archived_conversations": "Archived tasks",
     "settings_nav_archived_chats": "Archived chats",

@@ -33,6 +33,8 @@ const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
 const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
+const BUNDLED_HOOKS_DIR_ENV: &str = "WEGENT_BUNDLED_HOOKS_DIR";
+const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
 const SESSION_GATEWAY_HOST_ENV: &str = "DEVICE_SESSION_GATEWAY_HOST";
 const SESSION_GATEWAY_PORT_ENV: &str = "DEVICE_SESSION_GATEWAY_PORT";
@@ -1154,6 +1156,18 @@ fn local_executor_sidecar_env(
     app: &tauri::AppHandle,
 ) -> Vec<(String, String)> {
     let mut envs = local_executor_backend_env(inner);
+    if let Some(path) = non_empty_env(MANAGED_HOOKS_DIR_ENV) {
+        envs.push((MANAGED_HOOKS_DIR_ENV.to_string(), path));
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled_hooks = resource_dir.join("bundled-hooks");
+        if bundled_hooks.is_dir() {
+            envs.push((
+                BUNDLED_HOOKS_DIR_ENV.to_string(),
+                bundled_hooks.display().to_string(),
+            ));
+        }
+    }
     if std::env::var_os(CODEX_BINARY_PATH_ENV).is_none()
         && std::env::var_os(CODEX_BIN_ENV).is_none()
     {
