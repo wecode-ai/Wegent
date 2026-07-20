@@ -343,10 +343,18 @@ def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills
 def test_authorized_parent_team_defaults_are_resolved_dynamically(
     test_db: Session,
 ):
-    _owner, child_member, _child, team, kb = _arrange_parent_team_authorized_to_child(
+    owner, child_member, _child, team, kb = _arrange_parent_team_authorized_to_child(
         test_db,
         with_knowledge_base=True,
     )
+    kb_owner = _create_user(test_db, "parent-kb-owner")
+    assert kb is not None
+    kb.user_id = kb_owner.id
+    test_db.commit()
+    parent_namespace = (
+        test_db.query(Namespace).filter(Namespace.name == team.namespace).one()
+    )
+    _add_namespace_member(test_db, parent_namespace, owner, role="Maintainer")
 
     initial_refs = build_initial_task_knowledge_base_refs(
         db=test_db,
@@ -369,6 +377,27 @@ def test_authorized_parent_team_defaults_are_resolved_dynamically(
         user_id=child_member.id,
     )
 
-    assert kb is not None
     assert initial_refs == []
     assert resolved_ids == [kb.id]
+
+    owner_membership = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == parent_namespace.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(owner.id),
+        )
+        .one()
+    )
+    test_db.delete(owner_membership)
+    test_db.commit()
+
+    assert (
+        resolve_task_default_knowledge_base_ids(
+            test_db,
+            task_id=result["id"],
+            user_id=child_member.id,
+        )
+        == []
+    )

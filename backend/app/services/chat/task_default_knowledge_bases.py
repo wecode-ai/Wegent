@@ -84,69 +84,66 @@ def _iter_team_member_default_knowledge_base_ids(
     return knowledge_base_ids
 
 
+def _resolve_task_default_knowledge_bases(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> tuple[Kind | None, list[int]]:
+    """Resolve the current Team and defaults its owner may still access."""
+    task = task_store.get_active_task(db, task_id=task_id)
+    if task is None or not isinstance(task.json, dict):
+        return None, []
+
+    try:
+        task_crd = Task.model_validate(task.json)
+    except ValueError:
+        return None, []
+
+    team = resolve_task_ref_team(db, task_crd, user_id)
+    if team is None or team_share_service.get_resource(db, team.id, user_id) is None:
+        return None, []
+
+    candidate_ids = list(
+        dict.fromkeys(_iter_team_member_default_knowledge_base_ids(db, team))
+    )
+    accessible_ids = [
+        knowledge_base_id
+        for knowledge_base_id in candidate_ids
+        if _get_accessible_knowledge_base(db, team.user_id, knowledge_base_id)
+        is not None
+    ]
+    return team, accessible_ids
+
+
 def resolve_task_default_knowledge_base_ids(
     db: Session,
     task_id: int,
     user_id: int,
 ) -> list[int]:
     """Resolve current agent defaults for an authorized task user."""
-    task = task_store.get_active_task(db, task_id=task_id)
-    if task is None or not isinstance(task.json, dict):
-        return []
-
-    try:
-        task_crd = Task.model_validate(task.json)
-    except ValueError:
-        return []
-
-    team = resolve_task_ref_team(db, task_crd, user_id)
-    if team is None or team_share_service.get_resource(db, team.id, user_id) is None:
-        return []
-
-    candidate_ids = list(
-        dict.fromkeys(_iter_team_member_default_knowledge_base_ids(db, team))
+    _, knowledge_base_ids = _resolve_task_default_knowledge_bases(
+        db,
+        task_id,
+        user_id,
     )
-    if not candidate_ids:
-        return []
-
-    active_ids = {
-        row[0]
-        for row in db.query(Kind.id)
-        .filter(
-            Kind.id.in_(candidate_ids),
-            Kind.kind == "KnowledgeBase",
-            Kind.is_active.is_(True),
-        )
-        .all()
-    }
-    return [
-        knowledge_base_id
-        for knowledge_base_id in candidate_ids
-        if knowledge_base_id in active_ids
-    ]
+    return knowledge_base_ids
 
 
-def resolve_task_default_knowledge_base_owner_id(
+def resolve_task_default_knowledge_base_access_user_id(
     db: Session,
     task_id: int,
     user_id: int,
     knowledge_base_id: int,
 ) -> int | None:
-    """Return the KB owner for read-only task-scoped default access."""
-    if knowledge_base_id not in resolve_task_default_knowledge_base_ids(
-        db, task_id, user_id
-    ):
-        return None
-    knowledge_base = (
-        db.query(Kind)
-        .filter(
-            Kind.id == knowledge_base_id,
-            Kind.kind == "KnowledgeBase",
-            Kind.is_active.is_(True),
-        )
-        .first()
+    """Return the current Team owner for authorized task-scoped default access."""
+    team, knowledge_base_ids = _resolve_task_default_knowledge_bases(
+        db,
+        task_id,
+        user_id,
     )
-    return knowledge_base.user_id if knowledge_base is not None else None
+    if team is None or knowledge_base_id not in knowledge_base_ids:
+        return None
+    return team.user_id
 
 
 def build_initial_task_knowledge_base_refs(
