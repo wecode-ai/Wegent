@@ -31,6 +31,7 @@ type DesktopControlAction =
   | 'closeMainWindowToTray'
   | 'dispatchLocalModelSettingsChanged'
   | 'drag'
+  | 'dropFile'
   | 'fill'
   | 'getText'
   | 'hover'
@@ -54,6 +55,8 @@ interface DesktopControlCommand {
   visible?: boolean
   stableMs?: number
   key?: string
+  filename?: string
+  mimeType?: string
 }
 
 interface DesktopControlResult {
@@ -483,6 +486,26 @@ function selectDesktopControlText(selector: string, value: string): string {
   return value
 }
 
+function dropDesktopControlFile(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const filename = command.filename?.trim()
+  if (!filename) throw new Error('dropFile requires a filename')
+  const binary = window.atob(command.value ?? '')
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  const event = new DragEvent('drop', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'dataTransfer', { value: transfer })
+  element.dispatchEvent(event)
+  return filename
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -494,6 +517,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dropFile':
+      return dropDesktopControlFile(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':

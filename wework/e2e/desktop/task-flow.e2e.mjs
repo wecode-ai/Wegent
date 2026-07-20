@@ -40,6 +40,8 @@ const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
+const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
@@ -47,6 +49,7 @@ const MACOS_LAUNCH_SERVICES_REGISTER =
 const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
 const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
+const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -402,6 +405,97 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-task-completed-after-reopen.png')
   )
+}
+
+async function attachAndSendOnlyFile(control, composerSelector) {
+  await control.command('dropFile', composerSelector, {
+    filename: ATTACHMENT_ONLY_FILENAME,
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await control.command('waitFor', '[data-testid="attachment-badge"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+}
+
+async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control }) {
+  control.setScenario('attachment_only')
+
+  await attachAndSendOnlyFile(control, composerSelector)
+  await captureVerificationScreenshot(control, '01-attachment-only-first-submitted.png')
+  await control.awaitScenarioRequestCount('attachment_only', 1)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_1`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const firstSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-')).length >= 1,
+    'The first attachment-only task did not appear in the sidebar'
+  )
+  const firstRows = firstSnapshot.testIds.filter(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  await captureVerificationScreenshot(control, '02-attachment-only-first-completed.png')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await attachAndSendOnlyFile(control, composerSelector)
+  await captureVerificationScreenshot(control, '03-attachment-only-second-submitted.png')
+  await control.awaitScenarioRequestCount('attachment_only', 2)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const twoTaskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => {
+      const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+      return firstRows.every(testId => rows.includes(testId)) && rows.length >= firstRows.length + 1
+    },
+    'A same-title attachment-only task disappeared after the authoritative sidebar refresh'
+  )
+  const expectedRows = twoTaskSnapshot.testIds.filter(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')
+
+  if (process.platform === 'darwin') {
+    const readyCountBeforeClose = control.readyCount
+    await control.command('closeMainWindowToTray', 'body')
+    await reactivateMacApplication(appIdentifier)
+    await withTimeout(
+      control.awaitReadyAfter(readyCountBeforeClose),
+      WORKBENCH_READY_TIMEOUT_MS,
+      'The reopened Wework WebView did not reconnect during attachment-only verification'
+    )
+  } else {
+    await control.command('navigate', '/')
+  }
+
+  for (const testId of expectedRows) {
+    await control.command('waitFor', `[data-testid="${testId}"]`, {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  await captureVerificationScreenshot(control, '05-attachment-only-two-tasks-after-reopen.png')
+
+  const requests = control.scenarioRequests.get('attachment_only') ?? []
+  assert.equal(requests.length, 2, 'Attachment-only flow did not send exactly two model requests')
+  for (const request of requests) {
+    const serialized = JSON.stringify(request.body)
+    assert.ok(
+      serialized.includes(ATTACHMENT_ONLY_FILENAME),
+      'The attachment filename was not forwarded to the real Codex request'
+    )
+  }
 }
 
 async function verifyReconnectRecovery({ composerSelector, control }) {
@@ -796,6 +890,7 @@ class DesktopE2EServer {
         'retry',
         'reconnect',
         'fresh_chat',
+        'attachment_only',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -1121,6 +1216,22 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'attachment_only') {
+      this.recordScenarioRequest('attachment_only', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(ATTACHMENT_ONLY_FILENAME),
+        'The attachment-only request did not contain the selected file'
+      )
+      const requestNumber = this.scenarioRequests.get('attachment_only').length
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
         responseCompleted(responseId),
       ])
       return
@@ -1526,6 +1637,13 @@ async function main() {
     await control.command('waitFor', '[data-testid^="project-menu-"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    if (ATTACHMENT_ONLY_SIDEBAR) {
+      phase = 'attachment-only-sidebar'
+      await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
+      console.log(`Wework attachment-only sidebar E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     if (LIFECYCLE_ONLY) {
       await verifyBackgroundTaskWindowLifecycle({
