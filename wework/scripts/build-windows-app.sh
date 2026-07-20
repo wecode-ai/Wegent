@@ -171,6 +171,11 @@ RUSTFLAGS="-C target-feature=+crt-static" cargo xwin build --"$BUILD_PROFILE" --
 mkdir -p "$SIDE_CAR_DIR"
 cp "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$BUILD_PROFILE/$EXECUTOR_BINARY_NAME" "$SIDE_CAR_DIR/$SIDE_CAR_NAME"
 
+# Tauri's build.rs looks for the sidecar in executor/dist/ before falling back
+# to wework/src-tauri/binaries/, so keep the two locations in sync.
+mkdir -p "$EXECUTOR_DIR/dist"
+cp "$CARGO_TARGET_DIR/$WINDOWS_BUILD_TARGET/$BUILD_PROFILE/$EXECUTOR_BINARY_NAME" "$EXECUTOR_DIR/dist/$EXECUTOR_BINARY_NAME"
+
 cd "$WEWORK_DIR"
 CONFIG_OVERRIDE=""
 cleanup() {

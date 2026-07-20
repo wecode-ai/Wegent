@@ -1,6 +1,8 @@
 import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -23,7 +25,6 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { buildVncPageUrl } from '@/lib/vnc'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
@@ -67,6 +68,21 @@ interface WorkspaceToolErrorState {
   projectKey: string
   message: string | null
 }
+
+type WorkspaceToolLoadingState =
+  | {
+      tool: 'terminal' | 'ide'
+      projectKey: string
+    }
+  | {
+      tool: 'desktop'
+      projectKey: string
+      connectedAt: string | null
+      deviceId: string
+      requestGeneration: number
+      serviceKey: string
+      token: string | null
+    }
 
 interface LocalTerminalCheckState {
   key: string
@@ -180,16 +196,19 @@ export function WorkspacePanelCards({
   workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const testId = useCallback(
     (value: string) => (testIdsEnabled ? value : undefined),
     [testIdsEnabled]
   )
   const [terminalSessions, setTerminalSessions] = useState<WorkspaceTerminalSession[]>([])
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
-  const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
+  const [loadingToolState, setLoadingToolState] = useState<WorkspaceToolLoadingState | null>(null)
   const defaultOpenedProjectKeyRef = useRef<string | null>(null)
   const terminalSessionsRef = useRef<WorkspaceTerminalSession[]>([])
   const terminalProjectKeyRef = useRef<string | null>(null)
+  const mountedRef = useRef(true)
+  const desktopRequestGenerationRef = useRef(0)
   const [toolAvailability, setToolAvailability] = useState<WorkspaceToolAvailabilityState>(() => ({
     projectKey: '',
     tools: createAvailableTools(),
@@ -294,7 +313,25 @@ export function WorkspacePanelCards({
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
+  const loadingTool =
+    loadingToolState?.projectKey === projectKey &&
+    (loadingToolState.tool !== 'desktop' ||
+      (cloudConnection.isConnected &&
+        loadingToolState.connectedAt === cloudConnection.connectedAt &&
+        loadingToolState.deviceId === activeWorkspaceDeviceId &&
+        loadingToolState.serviceKey === cloudConnection.serviceKey &&
+        loadingToolState.token === cloudConnection.token))
+      ? loadingToolState.tool
+      : null
   const toolsDisabled = !hasWorkspaceContext || Boolean(loadingTool)
+  const latestDesktopRequestContextRef = useRef({
+    connectedAt: cloudConnection.connectedAt,
+    deviceId: activeWorkspaceDeviceId,
+    isConnected: cloudConnection.isConnected,
+    projectKey,
+    serviceKey: cloudConnection.serviceKey,
+    token: cloudConnection.token,
+  })
   const activeTerminalSession =
     terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
     terminalSessions[0] ??
@@ -311,6 +348,13 @@ export function WorkspacePanelCards({
     }
   }, [activeTerminalTitle, onTerminalTitleChange])
 
+  useLayoutEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       terminalSessionsRef.current.forEach(session => {
@@ -320,6 +364,34 @@ export function WorkspacePanelCards({
       })
     }
   }, [])
+
+  useLayoutEffect(() => {
+    latestDesktopRequestContextRef.current = {
+      connectedAt: cloudConnection.connectedAt,
+      deviceId: activeWorkspaceDeviceId,
+      isConnected: cloudConnection.isConnected,
+      projectKey,
+      serviceKey: cloudConnection.serviceKey,
+      token: cloudConnection.token,
+    }
+    const contextGeneration = desktopRequestGenerationRef.current + 1
+    desktopRequestGenerationRef.current = contextGeneration
+    queueMicrotask(() => {
+      if (!mountedRef.current) return
+      setLoadingToolState(current =>
+        current?.tool === 'desktop' && current.requestGeneration < contextGeneration
+          ? null
+          : current
+      )
+    })
+  }, [
+    activeWorkspaceDeviceId,
+    cloudConnection.connectedAt,
+    cloudConnection.isConnected,
+    cloudConnection.serviceKey,
+    cloudConnection.token,
+    projectKey,
+  ])
 
   useEffect(() => {
     if (terminalProjectKeyRef.current === null) {
@@ -426,7 +498,7 @@ export function WorkspacePanelCards({
 
   const startTerminalSession = useCallback(async () => {
     if (!hasWorkspaceContext || loadingTool || !availableTools.terminal) return
-    setLoadingTool('terminal')
+    setLoadingToolState({ tool: 'terminal', projectKey })
     setProjectError(null)
     try {
       let shouldUseLocalTerminal = localTerminalAvailable
@@ -525,7 +597,9 @@ export function WorkspacePanelCards({
       markToolUnavailable('terminal')
       setProjectError(getSessionStartErrorMessage())
     } finally {
-      setLoadingTool(null)
+      setLoadingToolState(current =>
+        current?.tool === 'terminal' && current.projectKey === projectKey ? null : current
+      )
     }
   }, [
     activeWorkspaceDeviceId,
@@ -541,6 +615,7 @@ export function WorkspacePanelCards({
     localTerminalSupported,
     localTerminalAvailable,
     markToolUnavailable,
+    projectKey,
     readLocalTerminalCheck,
     setLocalTerminalCheck,
     setProjectError,
@@ -634,7 +709,7 @@ export function WorkspacePanelCards({
     opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   ) => {
     if (loadingTool || !availableTools.ide) return
-    setLoadingTool('ide')
+    setLoadingToolState({ tool: 'ide', projectKey })
     setProjectError(null)
     let shouldClosePanel = false
     try {
@@ -680,7 +755,9 @@ export function WorkspacePanelCards({
       markToolUnavailable('ide')
       setProjectError(getSessionStartErrorMessage())
     } finally {
-      setLoadingTool(null)
+      setLoadingToolState(current =>
+        current?.tool === 'ide' && current.projectKey === projectKey ? null : current
+      )
       if (shouldClosePanel) {
         onRequestClose?.()
       }
@@ -688,28 +765,63 @@ export function WorkspacePanelCards({
   }
 
   const handleDesktopClick = async () => {
-    if (!activeWorkspaceDeviceId || loadingTool || !availableTools.desktop) return
-    setLoadingTool('desktop')
+    if (
+      !activeWorkspaceDeviceId ||
+      loadingTool ||
+      !availableTools.desktop ||
+      !cloudDesktopExtension.available ||
+      !cloudConnection.isConnected ||
+      projectDevice?.status !== 'online'
+    ) {
+      return
+    }
+    const requestGeneration = desktopRequestGenerationRef.current + 1
+    desktopRequestGenerationRef.current = requestGeneration
+    const requestContext = {
+      connectedAt: cloudConnection.connectedAt,
+      deviceId: activeWorkspaceDeviceId,
+      projectKey,
+      serviceKey: cloudConnection.serviceKey,
+      token: cloudConnection.token,
+    }
+    setLoadingToolState({
+      tool: 'desktop',
+      ...requestContext,
+      requestGeneration,
+    })
     setProjectError(null)
-    let shouldClosePanel = false
+    const isCurrentRequest = () => {
+      const latest = latestDesktopRequestContextRef.current
+      return (
+        mountedRef.current &&
+        desktopRequestGenerationRef.current === requestGeneration &&
+        latest.isConnected &&
+        latest.connectedAt === requestContext.connectedAt &&
+        latest.deviceId === requestContext.deviceId &&
+        latest.projectKey === requestContext.projectKey &&
+        latest.serviceKey === requestContext.serviceKey &&
+        latest.token === requestContext.token
+      )
+    }
     try {
-      if (!workspaceSessionApi) {
-        throw new Error('Remote workspace session service is unavailable')
-      }
-      const config = await workspaceSessionApi.getDeviceVncConfig(activeWorkspaceDeviceId)
-      if (!config.sandbox_id) {
-        throw new Error('Desktop sandbox ID is missing')
-      }
-      await openExternalUrl(buildVncPageUrl(activeWorkspaceDeviceId, config.sandbox_id))
-      shouldClosePanel = true
+      const opened = await cloudDesktopExtension.open({
+        connection: cloudConnection,
+        deviceId: activeWorkspaceDeviceId,
+        isCurrent: isCurrentRequest,
+      })
+      if (!opened) return
+      onRequestClose?.()
     } catch (e) {
+      if (!isCurrentRequest()) return
       console.error('Failed to open project desktop:', e)
-      markToolUnavailable('desktop')
       setProjectError(t('workbench.project_tool_start_failed', '启动失败'))
     } finally {
-      setLoadingTool(null)
-      if (shouldClosePanel) {
-        onRequestClose?.()
+      if (mountedRef.current && desktopRequestGenerationRef.current === requestGeneration) {
+        setLoadingToolState(current =>
+          current?.tool === 'desktop' && current.requestGeneration === requestGeneration
+            ? null
+            : current
+        )
       }
     }
   }
@@ -990,13 +1102,17 @@ export function WorkspacePanelCards({
                         </span>
                       </button>
                     )}
-                    {cloudToolsAvailable && (
+                    {cloudToolsAvailable && cloudDesktopExtension.available && (
                       <button
                         type="button"
                         data-testid={testId('workspace-desktop-card')}
                         onClick={handleDesktopClick}
                         disabled={
-                          toolsDisabled || !activeWorkspaceDeviceId || !availableTools.desktop
+                          toolsDisabled ||
+                          !activeWorkspaceDeviceId ||
+                          !availableTools.desktop ||
+                          !cloudConnection.isConnected ||
+                          projectDevice?.status !== 'online'
                         }
                         className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                       >

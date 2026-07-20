@@ -157,7 +157,7 @@ docker run -d \
 
 默认镜像由 Backend 环境变量 `REMOTE_DEVICE_DOCKER_IMAGE` 控制，未配置时使用 `ghcr.io/wecode-ai/wegent-device:latest`。如果目标部署需要使用内部镜像仓库，请部署方在 Backend 启动环境中设置 `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>`，用户侧不需要手动填写镜像地址。
 
-设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过 `DEVICE_PUBLIC_BASE_URL` 对应的 session gateway 访问，因此该地址必须能从用户浏览器访问。桌面 VNC/VPN 入口仍然只对云设备开放。
+设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过 `DEVICE_PUBLIC_BASE_URL` 对应的 session gateway 访问，因此该地址必须能从用户浏览器访问。公开版 Wework 不提供云桌面；部分产品发行版可以通过可选扩展增加该能力。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
@@ -287,7 +287,7 @@ wegent-executor
 | -------------------- | ------------ |
 | **终端**             | 不支持       |
 | **IDE/code-server**  | 不支持       |
-| **桌面 VNC/VPN**     | 不支持       |
+| **云桌面**           | 不支持       |
 | **CPU/MEM/磁盘监控** | 不支持       |
 
 如果项目绑定本地设备，工作区工具栏会隐藏终端、IDE 和桌面入口，并显示本地设备能力限制提示。需要这些连接和监控能力时，请选择云设备创建项目。
@@ -316,7 +316,7 @@ wegent-executor
 
 云设备会显示在线状态、executor 版本、CPU、内存和磁盘使用率。当没有云设备时，点击 **添加** 可以创建一台新的云设备。创建请求返回后，页面会保留“云设备创建中”的提示；初始化通常需要 2-3 分钟，设备上线后会自动出现在列表中。Wework 前端可通过 `VITE_CLOUD_DEVICE_SCALING_WIKI_URL` 配置资源说明卡中的扩容 Wiki 链接，用于引导用户在 CPU、MEM 或磁盘持续超过 80% 时申请扩容或清理工作区缓存。
 
-本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、桌面 VNC/VPN、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
+本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、云桌面、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
 在线云设备和远程 Docker 设备支持直接打开交互式会话：
 

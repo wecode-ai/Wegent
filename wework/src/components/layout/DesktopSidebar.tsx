@@ -481,7 +481,7 @@ function SidebarButton({
       aria-current={selected ? 'page' : undefined}
       onClick={onClick}
       className={[
-        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-sm font-normal leading-5',
+        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -1654,7 +1654,7 @@ function RuntimeTaskRow({
           }}
           onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
           className={cn(
-            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-sm leading-5',
+            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-base leading-5',
             indentClassName,
             disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
             selected
@@ -2144,7 +2144,7 @@ function ProjectItem({
             event.stopPropagation()
             setProjectMenuPosition({ left: event.clientX, top: event.clientY })
           }}
-          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-sm leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
           <button
             type="button"
