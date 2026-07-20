@@ -1060,6 +1060,37 @@ describe('ToolBlocksDisplay', () => {
     expect(remountedRow?.isConnected).toBe(true)
   })
 
+  test('keeps view_image as an expandable tool instead of flattening it to a file row', () => {
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          {
+            id: 'view-image-1',
+            subtaskId: 1,
+            type: 'tool',
+            toolName: 'view_image',
+            toolInput: { path: '/tmp/screenshot.png' },
+            toolOutput: { image_url: imageUrl },
+            status: 'done',
+            createdAt: 1770000000000,
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('processing-summary-toggle'))
+
+    expect(screen.getByText('查看 screenshot.png')).toBeInTheDocument()
+    expect(screen.queryByTestId('file-read-activity-row')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开工具详情' }))
+
+    expect(screen.getByTestId('image-view-preview')).toHaveAttribute('src', imageUrl)
+  })
+
   test('leaves generic thinking placeholders to the message list', () => {
     render(<ToolBlocksDisplay blocks={[completedCommandBlock]} isStreaming={true} />)
 
