@@ -5,8 +5,8 @@ import {
 
 const MAX_NATIVE_BROWSER_HISTORIES = 20
 const MAX_DOWNLOADS_PER_NATIVE_BROWSER = 20
-const SOURCE_LISTENER_RETRY_DELAY_MS = 250
-const MAX_SOURCE_LISTENER_RETRIES = 3
+const SOURCE_LISTENER_RETRY_INITIAL_DELAY_MS = 250
+const SOURCE_LISTENER_RETRY_MAX_DELAY_MS = 2000
 
 type DownloadEventHandler = (event: EmbeddedBrowserDownloadEvent) => void
 
@@ -61,19 +61,19 @@ function dispatchDownloadEvent(event: EmbeddedBrowserDownloadEvent): void {
 }
 
 function scheduleSourceListenerRetry(): void {
-  if (
-    downloadEventHandlers.size === 0 ||
-    sourceRetryTimer !== null ||
-    sourceRetryAttempts >= MAX_SOURCE_LISTENER_RETRIES
-  ) {
+  if (downloadEventHandlers.size === 0 || sourceRetryTimer !== null) {
     return
   }
 
-  sourceRetryAttempts += 1
+  const retryDelay = Math.min(
+    SOURCE_LISTENER_RETRY_INITIAL_DELAY_MS * 2 ** Math.min(sourceRetryAttempts, 3),
+    SOURCE_LISTENER_RETRY_MAX_DELAY_MS
+  )
+  sourceRetryAttempts = Math.min(sourceRetryAttempts + 1, 3)
   sourceRetryTimer = setTimeout(() => {
     sourceRetryTimer = null
     startSourceListener()
-  }, SOURCE_LISTENER_RETRY_DELAY_MS)
+  }, retryDelay)
 }
 
 function startSourceListener(): void {

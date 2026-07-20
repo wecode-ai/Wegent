@@ -273,6 +273,52 @@ describe('WorkspaceBrowserPanel', () => {
     )
   })
 
+  test('reconciles a stored event emitted after native relabel but before the label prop changes', async () => {
+    mockBrowserHostRect()
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return null
+    })
+
+    const view = render(<WorkspaceBrowserPanel active label="workspace-browser" />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalledWith(
+        'workspace-browser'
+      )
+    )
+
+    act(() => {
+      handleDownload({
+        id: 'download-during-relabel',
+        label: 'workspace-browser-owner',
+        nativeLabel: 'workspace-browser-native-1',
+        url: 'https://example.com/relabel.dmg',
+        path: '/Users/test/Downloads/relabel.dmg',
+        status: 'finished',
+        receivedBytes: 1024,
+        totalBytes: 1024,
+      })
+    })
+    expect(screen.queryByTestId('workspace-browser-download-item')).not.toBeInTheDocument()
+
+    embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValueOnce(true)
+    view.rerender(<WorkspaceBrowserPanel active label="workspace-browser-owner" />)
+
+    expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
+      'relabel.dmg'
+    )
+  })
+
   test('restores download state when ownership moves to a separately mounted panel', async () => {
     let handleDownload!: (download: {
       id: string

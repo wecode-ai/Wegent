@@ -34,9 +34,9 @@ const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
 const EMBEDDED_BROWSER_DOWNLOAD_EVENT: &str = "wework:embedded-browser-download";
+const EMBEDDED_BROWSER_NOT_READY_ERROR: &str = "Embedded browser is not ready";
 const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
-const EMBEDDED_BROWSER_INITIAL_URL: &str = "about:blank";
 const EMBEDDED_BROWSER_DATA_STORE_ID: [u8; 16] = *b"wework-browser01";
 const EMBEDDED_BROWSER_DATA_DIRECTORY: &str = "embedded-browser-data";
 static EMBEDDED_BROWSER_DOWNLOAD_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -52,10 +52,45 @@ pub struct EmbeddedBrowserState {
 
 #[derive(Clone)]
 struct EmbeddedBrowserEntry {
-    webview: Webview<Wry>,
     native_label: String,
     title: Option<String>,
     url: Option<String>,
+    phase: EmbeddedBrowserPhase,
+}
+
+#[derive(Clone)]
+enum EmbeddedBrowserPhase {
+    Opening,
+    Ready(Webview<Wry>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddedBrowserReadiness {
+    Opening,
+    Ready,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddedBrowserOpenAction {
+    Ready,
+    WaitForReady,
+    RequestOpen,
+}
+
+impl EmbeddedBrowserEntry {
+    fn readiness(&self) -> EmbeddedBrowserReadiness {
+        match &self.phase {
+            EmbeddedBrowserPhase::Opening => EmbeddedBrowserReadiness::Opening,
+            EmbeddedBrowserPhase::Ready(_) => EmbeddedBrowserReadiness::Ready,
+        }
+    }
+
+    fn ready_webview(&self) -> Result<Webview<Wry>, String> {
+        match &self.phase {
+            EmbeddedBrowserPhase::Ready(webview) => Ok(webview.clone()),
+            EmbeddedBrowserPhase::Opening => Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -271,11 +306,11 @@ fn browser_url(url: &str) -> Result<tauri::Url, String> {
     tauri::Url::parse(url).map_err(|error| format!("Invalid browser URL: {error}"))
 }
 
-fn browser_initial_webview_url() -> WebviewUrl {
-    WebviewUrl::External(
-        tauri::Url::parse(EMBEDDED_BROWSER_INITIAL_URL)
-            .expect("embedded browser initial URL must be valid"),
-    )
+fn browser_webview_url(url: tauri::Url) -> WebviewUrl {
+    match url.scheme() {
+        "http" | "https" => WebviewUrl::External(url),
+        _ => WebviewUrl::CustomProtocol(url),
+    }
 }
 
 fn browser_label(label: Option<String>) -> String {
@@ -332,6 +367,40 @@ fn update_logical_entry_if_native_matches<T>(
     };
     update(entry);
     true
+}
+
+fn ready_logical_entry<'a, T>(
+    entries: &'a HashMap<String, T>,
+    logical_label: &str,
+    readiness: impl Fn(&T) -> EmbeddedBrowserReadiness,
+) -> Result<&'a T, String> {
+    match entries.get(logical_label) {
+        Some(entry) if readiness(entry) == EmbeddedBrowserReadiness::Ready => Ok(entry),
+        Some(_) => Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string()),
+        None => Err("Embedded browser is not open".to_string()),
+    }
+}
+
+fn browser_open_action(readiness: Option<EmbeddedBrowserReadiness>) -> EmbeddedBrowserOpenAction {
+    match readiness {
+        Some(EmbeddedBrowserReadiness::Ready) => EmbeddedBrowserOpenAction::Ready,
+        Some(EmbeddedBrowserReadiness::Opening) => EmbeddedBrowserOpenAction::WaitForReady,
+        None => EmbeddedBrowserOpenAction::RequestOpen,
+    }
+}
+
+fn wait_for_browser_ready(
+    mut readiness: impl FnMut() -> Result<Option<EmbeddedBrowserReadiness>, String>,
+    attempts: u64,
+    interval: Duration,
+) -> Result<(), String> {
+    for _ in 0..attempts {
+        if readiness()? == Some(EmbeddedBrowserReadiness::Ready) {
+            return Ok(());
+        }
+        thread::sleep(interval);
+    }
+    Err("Timed out waiting for Wework to open the embedded browser tab".to_string())
 }
 
 fn relabel_logical_entry<T>(
@@ -429,13 +498,11 @@ fn start_managed_browser_download(
 }
 
 fn get_entry(state: &EmbeddedBrowserState, label: &str) -> Result<EmbeddedBrowserEntry, String> {
-    state
+    let webviews = state
         .webviews
         .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .get(label)
-        .cloned()
-        .ok_or_else(|| "Embedded browser is not open".to_string())
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+    ready_logical_entry(&webviews, label, EmbeddedBrowserEntry::readiness).cloned()
 }
 
 fn set_entry_url(
@@ -457,18 +524,17 @@ fn update_entry_for_native_label(
     state: &EmbeddedBrowserState,
     native_label: &str,
     update: impl FnOnce(&mut EmbeddedBrowserEntry),
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let mut webviews = state
         .webviews
         .lock()
         .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-    update_logical_entry_if_native_matches(
+    Ok(update_logical_entry_if_native_matches(
         &mut webviews,
         native_label,
         |entry| entry.native_label.as_str(),
         update,
-    );
-    Ok(())
+    ))
 }
 
 fn set_entry_url_for_native_label(
@@ -479,6 +545,32 @@ fn set_entry_url_for_native_label(
     update_entry_for_native_label(state, native_label, |entry| {
         entry.url = Some(url);
     })
+    .map(|_| ())
+}
+
+fn mark_entry_ready_for_native_label(
+    state: &EmbeddedBrowserState,
+    native_label: &str,
+    webview: Webview<Wry>,
+) -> Result<(), String> {
+    let updated = update_entry_for_native_label(state, native_label, |entry| {
+        entry.phase = EmbeddedBrowserPhase::Ready(webview);
+    })?;
+    updated
+        .then_some(())
+        .ok_or_else(|| "Embedded browser route disappeared while opening".to_string())
+}
+
+fn entry_readiness(
+    state: &EmbeddedBrowserState,
+    label: &str,
+) -> Result<Option<EmbeddedBrowserReadiness>, String> {
+    Ok(state
+        .webviews
+        .lock()
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
+        .get(label)
+        .map(EmbeddedBrowserEntry::readiness))
 }
 
 fn current_logical_owner(
@@ -529,18 +621,14 @@ fn navigate_label(state: &EmbeddedBrowserState, label: &str, url: String) -> Res
     let parsed_url = browser_url(&url)?;
     let entry = get_entry(state, label)?;
     entry
-        .webview
+        .ready_webview()?
         .navigate(parsed_url)
         .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
     set_entry_url_for_native_label(state, &entry.native_label, url)
 }
 
 fn is_browser_open(state: &EmbeddedBrowserState, label: &str) -> Result<bool, String> {
-    Ok(state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .contains_key(label))
+    Ok(entry_readiness(state, label)? == Some(EmbeddedBrowserReadiness::Ready))
 }
 
 fn request_browser_open(
@@ -549,24 +637,26 @@ fn request_browser_open(
     label: &str,
     url: &str,
 ) -> Result<(), String> {
-    app.emit(
-        EMBEDDED_BROWSER_OPEN_REQUEST_EVENT,
-        EmbeddedBrowserOpenRequest {
-            url: url.to_string(),
-            label: label.to_string(),
-        },
-    )
-    .map_err(|error| format!("Failed to request embedded browser open: {error}"))?;
-
-    let attempts = BRIDGE_OPEN_WAIT_TIMEOUT_MS / BRIDGE_OPEN_WAIT_INTERVAL_MS;
-    for _ in 0..attempts {
-        if is_browser_open(state, label)? {
-            return Ok(());
+    match browser_open_action(entry_readiness(state, label)?) {
+        EmbeddedBrowserOpenAction::Ready => return Ok(()),
+        EmbeddedBrowserOpenAction::WaitForReady => {}
+        EmbeddedBrowserOpenAction::RequestOpen => {
+            app.emit(
+                EMBEDDED_BROWSER_OPEN_REQUEST_EVENT,
+                EmbeddedBrowserOpenRequest {
+                    url: url.to_string(),
+                    label: label.to_string(),
+                },
+            )
+            .map_err(|error| format!("Failed to request embedded browser open: {error}"))?;
         }
-        std::thread::sleep(Duration::from_millis(BRIDGE_OPEN_WAIT_INTERVAL_MS));
     }
 
-    Err("Timed out waiting for Wework to open the embedded browser tab".to_string())
+    wait_for_browser_ready(
+        || entry_readiness(state, label),
+        BRIDGE_OPEN_WAIT_TIMEOUT_MS / BRIDGE_OPEN_WAIT_INTERVAL_MS,
+        Duration::from_millis(BRIDGE_OPEN_WAIT_INTERVAL_MS),
+    )
 }
 
 fn eval_json(
@@ -578,7 +668,7 @@ fn eval_json(
     let entry = get_entry(state, label)?;
     let (sender, receiver) = std::sync::mpsc::channel();
     entry
-        .webview
+        .ready_webview()?
         .eval_with_callback(script, move |result| {
             let _ = sender.send(result);
         })
@@ -599,7 +689,7 @@ async fn eval_json_nonblocking(
     let entry = get_entry(state, label)?;
     let (sender, receiver) = std::sync::mpsc::channel();
     entry
-        .webview
+        .ready_webview()?
         .eval_with_callback(script, move |result| {
             let _ = sender.send(result);
         })
@@ -739,21 +829,18 @@ fn script_wait_for(request: &EmbeddedBrowserBridgeRequest) -> String {
 #[cfg(target_os = "macos")]
 fn screenshot_embedded_browser(state: &EmbeddedBrowserState, label: &str) -> Result<Value, String> {
     let entry = get_entry(state, label)?;
-    let window_position = entry
-        .webview
+    let webview = entry.ready_webview()?;
+    let window_position = webview
         .window()
         .inner_position()
         .map_err(|error| format!("Failed to read Wework window position: {error}"))?;
-    let webview_position = entry
-        .webview
+    let webview_position = webview
         .position()
         .map_err(|error| format!("Failed to read embedded browser position: {error}"))?;
-    let webview_size = entry
-        .webview
+    let webview_size = webview
         .size()
         .map_err(|error| format!("Failed to read embedded browser size: {error}"))?;
-    let scale_factor = entry
-        .webview
+    let scale_factor = webview
         .window()
         .scale_factor()
         .map_err(|error| format!("Failed to read Wework window scale factor: {error}"))?
@@ -830,7 +917,7 @@ fn handle_bridge_request(
     let label = browser_label(request.label.clone());
     match request.action.as_str() {
         "status" => Ok(json!({
-            "open": state.webviews.lock().map_err(|_| "Embedded browser state lock poisoned".to_string())?.contains_key(&label),
+            "open": is_browser_open(state, &label)?,
             "label": label,
         })),
         "pageState" => serde_json::to_value(page_state_for_label(state, &label)?)
@@ -848,7 +935,7 @@ fn handle_bridge_request(
         }
         "reload" => {
             get_entry(state, &label)?
-                .webview
+                .ready_webview()?
                 .reload()
                 .map_err(|error| format!("Failed to reload embedded browser: {error}"))?;
             Ok(json!({ "ok": true }))
@@ -1121,17 +1208,22 @@ pub async fn embedded_browser_open(
             .webviews
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        webviews.get(&label).cloned()
+        match webviews.get(&label) {
+            Some(entry) if entry.readiness() == EmbeddedBrowserReadiness::Ready => {
+                Some(entry.clone())
+            }
+            Some(_) => return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string()),
+            None => None,
+        }
     };
 
     if let Some(entry) = existing {
-        apply_webview_bounds(&entry.webview, normalized_bounds)?;
-        entry
-            .webview
+        let webview = entry.ready_webview()?;
+        apply_webview_bounds(&webview, normalized_bounds)?;
+        webview
             .navigate(parsed_url)
             .map_err(|error| format!("Failed to navigate embedded browser: {error}"))?;
-        entry
-            .webview
+        webview
             .show()
             .map_err(|error| format!("Failed to show embedded browser: {error}"))?;
         set_entry_url(&state, &label, Some(url.clone()))?;
@@ -1153,28 +1245,43 @@ pub async fn embedded_browser_open(
     );
     let native_label_for_load = native_label.clone();
     let native_label_for_title = native_label.clone();
+    let data_directory = browser_data_directory(&app)?;
 
-    let builder = tauri::webview::WebviewBuilder::new(&native_label, browser_initial_webview_url())
-        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
-        .data_directory(browser_data_directory(&app)?)
-        .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
-        .accept_first_mouse(true)
-        .on_page_load(move |_webview, payload| {
-            if matches!(payload.event(), PageLoadEvent::Finished) {
-                let _ = set_entry_url_for_native_label(
-                    &load_state_handle,
-                    &native_label_for_load,
-                    payload.url().to_string(),
+    let entry = EmbeddedBrowserEntry {
+        native_label: native_label.clone(),
+        title: None,
+        url: Some(url.clone()),
+        phase: EmbeddedBrowserPhase::Opening,
+    };
+    state
+        .webviews
+        .lock()
+        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
+        .insert(label.clone(), entry);
+
+    let builder =
+        tauri::webview::WebviewBuilder::new(&native_label, browser_webview_url(parsed_url))
+            .user_agent(EMBEDDED_BROWSER_USER_AGENT)
+            .data_directory(data_directory)
+            .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+            .accept_first_mouse(true)
+            .on_page_load(move |_webview, payload| {
+                if matches!(payload.event(), PageLoadEvent::Finished) {
+                    let loaded_url = payload.url().to_string();
+                    let _ = update_entry_for_native_label(
+                        &load_state_handle,
+                        &native_label_for_load,
+                        |entry| entry.url = Some(loaded_url),
+                    );
+                }
+            })
+            .on_document_title_changed(move |_webview, title| {
+                let _ = update_entry_for_native_label(
+                    &title_state_handle,
+                    &native_label_for_title,
+                    |entry| entry.title = Some(title),
                 );
-            }
-        })
-        .on_document_title_changed(move |_webview, title| {
-            let _ = update_entry_for_native_label(
-                &title_state_handle,
-                &native_label_for_title,
-                |entry| entry.title = Some(title),
-            );
-        });
+            });
 
     #[cfg(desktop)]
     let builder = {
@@ -1236,35 +1343,38 @@ pub async fn embedded_browser_open(
         })
     };
 
-    let webview = window
-        .add_child(builder, normalized_bounds.position, normalized_bounds.size)
-        .map_err(|error| format!("Failed to create embedded browser: {error}"))?;
+    let webview =
+        match window.add_child(builder, normalized_bounds.position, normalized_bounds.size) {
+            Ok(webview) => webview,
+            Err(error) => {
+                if let Ok(mut webviews) = state.webviews.lock() {
+                    remove_logical_entry_if_native_matches(
+                        &mut webviews,
+                        &label,
+                        &native_label,
+                        |current| current.native_label.as_str(),
+                    );
+                }
+                return Err(format!("Failed to create embedded browser: {error}"));
+            }
+        };
 
-    let entry = EmbeddedBrowserEntry {
-        webview: webview.clone(),
-        native_label: native_label.clone(),
-        title: None,
-        url: Some(url.clone()),
-    };
-    match state.webviews.lock() {
-        Ok(mut webviews) => {
-            webviews.insert(label.clone(), entry);
+    if let Err(error) = webview
+        .show()
+        .map_err(|error| format!("Failed to show embedded browser: {error}"))
+    {
+        if let Ok(mut webviews) = state.webviews.lock() {
+            remove_logical_entry_if_native_matches(
+                &mut webviews,
+                &label,
+                &native_label,
+                |current| current.native_label.as_str(),
+            );
         }
-        Err(_) => {
-            let _ = webview.close();
-            return Err("Embedded browser state lock poisoned".to_string());
-        }
+        let _ = webview.close();
+        return Err(error);
     }
-
-    let finish_open = webview
-        .navigate(parsed_url)
-        .map_err(|error| format!("Failed to navigate embedded browser: {error}"))
-        .and_then(|_| {
-            webview
-                .show()
-                .map_err(|error| format!("Failed to show embedded browser: {error}"))
-        });
-    if let Err(error) = finish_open {
+    if let Err(error) = mark_entry_ready_for_native_label(&state, &native_label, webview.clone()) {
         if let Ok(mut webviews) = state.webviews.lock() {
             remove_logical_entry_if_native_matches(
                 &mut webviews,
@@ -1286,24 +1396,108 @@ pub async fn embedded_browser_open(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Barrier, Mutex},
+        thread,
+        time::Duration,
+    };
 
     use super::{
-        browser_initial_webview_url, download_event_owner, logical_owner_for_native_label,
-        native_webview_label, relabel_logical_entry, remove_logical_entry_if_native_matches,
-        update_logical_entry_if_native_matches, EmbeddedBrowserDownloadPayload,
-        EmbeddedBrowserPageState,
+        browser_open_action, browser_webview_url, download_event_owner,
+        logical_owner_for_native_label, native_webview_label, ready_logical_entry,
+        relabel_logical_entry, remove_logical_entry_if_native_matches,
+        update_logical_entry_if_native_matches, wait_for_browser_ready,
+        EmbeddedBrowserDownloadPayload, EmbeddedBrowserOpenAction, EmbeddedBrowserPageState,
+        EmbeddedBrowserReadiness, EMBEDDED_BROWSER_NOT_READY_ERROR,
     };
     use tauri::WebviewUrl;
 
     #[test]
-    fn new_browser_starts_blank_before_requested_navigation() {
-        let initial_url = browser_initial_webview_url();
+    fn new_browser_uses_the_requested_url_as_its_initial_navigation() {
+        let external_url = tauri::Url::parse("https://example.com/").unwrap();
+        let app_url = tauri::Url::parse("tauri://localhost/vnc.html?sessionId=test").unwrap();
 
-        let WebviewUrl::External(url) = initial_url else {
-            panic!("Embedded browser must start from an external about:blank URL");
-        };
-        assert_eq!(url.as_str(), "about:blank");
+        assert!(matches!(
+            browser_webview_url(external_url),
+            WebviewUrl::External(_)
+        ));
+        assert!(matches!(
+            browser_webview_url(app_url),
+            WebviewUrl::CustomProtocol(_)
+        ));
+    }
+
+    #[test]
+    fn opening_route_is_hidden_from_public_access_but_available_to_native_callbacks() {
+        let native_label = native_webview_label("workspace-browser", 41);
+        let mut entries = HashMap::from([(
+            "workspace-browser".to_string(),
+            (
+                native_label.clone(),
+                EmbeddedBrowserReadiness::Opening,
+                None,
+            ),
+        )]);
+
+        let public_entry = ready_logical_entry(&entries, "workspace-browser", |entry| entry.1);
+        assert_eq!(public_entry.unwrap_err(), EMBEDDED_BROWSER_NOT_READY_ERROR);
+
+        let callback_updated = update_logical_entry_if_native_matches(
+            &mut entries,
+            &native_label,
+            |entry| entry.0.as_str(),
+            |entry| entry.2 = Some("loaded"),
+        );
+        assert!(callback_updated);
+        assert_eq!(entries["workspace-browser"].2, Some("loaded"));
+
+        entries.get_mut("workspace-browser").unwrap().1 = EmbeddedBrowserReadiness::Ready;
+        assert!(ready_logical_entry(&entries, "workspace-browser", |entry| entry.1).is_ok());
+    }
+
+    #[test]
+    fn bridge_open_waits_for_an_opening_route_without_requesting_again() {
+        assert_eq!(
+            browser_open_action(Some(EmbeddedBrowserReadiness::Opening)),
+            EmbeddedBrowserOpenAction::WaitForReady
+        );
+        assert_eq!(
+            browser_open_action(None),
+            EmbeddedBrowserOpenAction::RequestOpen
+        );
+        assert_eq!(
+            browser_open_action(Some(EmbeddedBrowserReadiness::Ready)),
+            EmbeddedBrowserOpenAction::Ready
+        );
+    }
+
+    #[test]
+    fn bridge_waits_for_ready_instead_of_accepting_an_opening_registration() {
+        let readiness = Arc::new(Mutex::new(EmbeddedBrowserReadiness::Opening));
+        let waiter_readiness = Arc::clone(&readiness);
+        let started = Arc::new(Barrier::new(2));
+        let waiter_started = Arc::clone(&started);
+
+        let waiter = thread::spawn(move || {
+            let mut first_check = true;
+            wait_for_browser_ready(
+                || {
+                    if first_check {
+                        first_check = false;
+                        waiter_started.wait();
+                    }
+                    Ok(Some(*waiter_readiness.lock().unwrap()))
+                },
+                100,
+                Duration::from_millis(1),
+            )
+        });
+
+        started.wait();
+        assert!(!waiter.is_finished());
+        *readiness.lock().unwrap() = EmbeddedBrowserReadiness::Ready;
+        assert_eq!(waiter.join().unwrap(), Ok(()));
     }
 
     #[test]
@@ -1481,7 +1675,13 @@ pub fn embedded_browser_set_bounds(
             .webviews
             .lock()
             .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
-        webviews.get(&label).map(|entry| entry.webview.clone())
+        match webviews.get(&label) {
+            Some(entry) if entry.readiness() == EmbeddedBrowserReadiness::Ready => {
+                Some(entry.ready_webview()?)
+            }
+            Some(_) => return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string()),
+            None => None,
+        }
     };
 
     let Some(webview) = webview else {
@@ -1588,13 +1788,7 @@ pub fn embedded_browser_reload(
     label: Option<String>,
 ) -> Result<(), String> {
     let label = browser_label(label);
-    let webview = state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .get(&label)
-        .map(|entry| entry.webview.clone())
-        .ok_or_else(|| "Embedded browser is not open".to_string())?;
+    let webview = get_entry(&state, &label)?.ready_webview()?;
     webview
         .reload()
         .map_err(|error| format!("Failed to reload embedded browser: {error}"))
@@ -1623,13 +1817,7 @@ pub fn embedded_browser_eval(
     label: Option<String>,
 ) -> Result<(), String> {
     let label = browser_label(label);
-    let webview = state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .get(&label)
-        .map(|entry| entry.webview.clone())
-        .ok_or_else(|| "Embedded browser is not open".to_string())?;
+    let webview = get_entry(&state, &label)?.ready_webview()?;
     webview
         .eval(script)
         .map_err(|error| format!("Failed to evaluate embedded browser script: {error}"))
@@ -1690,7 +1878,7 @@ pub async fn embedded_browser_close(
     };
     if let Some(entry) = entry {
         entry
-            .webview
+            .ready_webview()?
             .close()
             .map_err(|error| format!("Failed to close embedded browser: {error}"))?;
         let mut webviews = state
@@ -1708,17 +1896,27 @@ pub async fn embedded_browser_close(
 }
 
 #[tauri::command]
-pub fn embedded_browser_clear_data(
+pub async fn embedded_browser_clear_data(
     app: tauri::AppHandle,
     state: tauri::State<'_, EmbeddedBrowserState>,
 ) -> Result<usize, String> {
-    let webviews = state
-        .webviews
-        .lock()
-        .map_err(|_| "Embedded browser state lock poisoned".to_string())?
-        .values()
-        .map(|entry| entry.webview.clone())
-        .collect::<Vec<_>>();
+    let _lifecycle = state.lifecycle.lock().await;
+    let webviews = {
+        let webviews = state
+            .webviews
+            .lock()
+            .map_err(|_| "Embedded browser state lock poisoned".to_string())?;
+        if webviews
+            .values()
+            .any(|entry| entry.readiness() == EmbeddedBrowserReadiness::Opening)
+        {
+            return Err(EMBEDDED_BROWSER_NOT_READY_ERROR.to_string());
+        }
+        webviews
+            .values()
+            .map(EmbeddedBrowserEntry::ready_webview)
+            .collect::<Result<Vec<_>, _>>()?
+    };
 
     if !webviews.is_empty() {
         for webview in &webviews {

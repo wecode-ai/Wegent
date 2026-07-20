@@ -573,6 +573,7 @@ export function WorkspaceBrowserPanel({
   const annotationRequestGenerationRef = useRef(0)
   const currentLabelRef = useRef(label)
   const nativeLabelRef = useRef<string | null>(null)
+  const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const previousCodeCommentCountRef = useRef(codeCommentCount)
@@ -605,10 +606,16 @@ export function WorkspaceBrowserPanel({
     setDownloadsOpen(true)
   }, [])
 
-  const adoptNativeLabel = useCallback((nativeLabel: string) => {
-    if (nativeLabelRef.current === nativeLabel) return
+  const adoptNativeLabel = useCallback((nativeLabel: string, logicalLabel: string) => {
+    if (
+      nativeLabelRef.current === nativeLabel &&
+      adoptedDownloadOwnerLabelRef.current === logicalLabel
+    ) {
+      return
+    }
 
     nativeLabelRef.current = nativeLabel
+    adoptedDownloadOwnerLabelRef.current = logicalLabel
     const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
     setDownloads(snapshot)
     setDownloadsOpen(snapshot.length > 0)
@@ -888,7 +895,7 @@ export function WorkspaceBrowserPanel({
       if (!mountedRef.current || pageStateRequestGenerationRef.current !== requestGeneration) {
         return false
       }
-      adoptNativeLabel(pageState.nativeLabel)
+      adoptNativeLabel(pageState.nativeLabel, label)
       const nextUrl = pageState.url || currentUrlRef.current
       if (nextUrl && isInternalVncPageUrl(nextUrl) && annotationModeRef.current) {
         logBrowserAnnotation('exit annotation mode for internal VNC page', { label })
@@ -949,7 +956,7 @@ export function WorkspaceBrowserPanel({
           await closeEmbeddedBrowser(label).catch(() => undefined)
           return
         }
-        adoptNativeLabel(pageState.nativeLabel)
+        adoptNativeLabel(pageState.nativeLabel, label)
         nativeBrowserOpenRef.current = true
         updatePageUrl(pageState.url || currentUrl)
         schedulePostOpenBoundsSync(active)
@@ -991,7 +998,7 @@ export function WorkspaceBrowserPanel({
       try {
         const pageState = await readEmbeddedBrowserPageState(label)
         if (disposed) return
-        adoptNativeLabel(pageState.nativeLabel)
+        adoptNativeLabel(pageState.nativeLabel, label)
         if (!pageState.url) return
         nativeBrowserOpenRef.current = true
         setCurrentUrl(pageState.url)
@@ -1182,6 +1189,7 @@ export function WorkspaceBrowserPanel({
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
       nativeLabelRef.current = null
+      adoptedDownloadOwnerLabelRef.current = null
       void closeEmbeddedBrowser(label).catch(() => undefined)
     }
   }, [label])

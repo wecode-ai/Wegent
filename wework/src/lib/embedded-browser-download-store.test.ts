@@ -30,12 +30,14 @@ function downloadEvent(
 
 describe('embedded browser download store', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
     resetEmbeddedBrowserDownloadStoreForTests()
+    vi.clearAllMocks()
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReset()
   })
 
   afterEach(() => {
     resetEmbeddedBrowserDownloadStoreForTests()
+    vi.restoreAllMocks()
     vi.useRealTimers()
   })
 
@@ -76,6 +78,55 @@ describe('embedded browser download store', () => {
 
     expect(embeddedBrowserMocks.listenEmbeddedBrowserDownloads).toHaveBeenCalledTimes(2)
     unsubscribe()
+    consoleError.mockRestore()
+  })
+
+  test('continues retrying after four failures while the same subscriber remains', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let handleNativeEvent!: (event: EmbeddedBrowserDownloadEvent) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads
+      .mockRejectedValueOnce(new Error('registration failure 1'))
+      .mockRejectedValueOnce(new Error('registration failure 2'))
+      .mockRejectedValueOnce(new Error('registration failure 3'))
+      .mockRejectedValueOnce(new Error('registration failure 4'))
+      .mockImplementationOnce(handler => {
+        handleNativeEvent = handler
+        return Promise.resolve(vi.fn())
+      })
+
+    const subscriber = vi.fn()
+    const unsubscribe = subscribeEmbeddedBrowserDownloadEvents(subscriber)
+    await Promise.resolve()
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await vi.advanceTimersToNextTimerAsync()
+    }
+
+    expect(embeddedBrowserMocks.listenEmbeddedBrowserDownloads).toHaveBeenCalledTimes(5)
+    handleNativeEvent(downloadEvent({ status: 'finished', receivedBytes: 1024 }))
+    expect(subscriber).toHaveBeenCalledWith(
+      downloadEvent({ status: 'finished', receivedBytes: 1024 })
+    )
+    unsubscribe()
+    consoleError.mockRestore()
+  })
+
+  test('cancels a pending retry when the final subscriber leaves', async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockRejectedValueOnce(
+      new Error('registration failure')
+    )
+
+    const unsubscribe = subscribeEmbeddedBrowserDownloadEvents(vi.fn())
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(vi.getTimerCount()).toBe(1)
+
+    unsubscribe()
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.runAllTimersAsync()
+    expect(embeddedBrowserMocks.listenEmbeddedBrowserDownloads).toHaveBeenCalledTimes(1)
     consoleError.mockRestore()
   })
 
