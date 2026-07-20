@@ -673,9 +673,6 @@ class KnowledgeService:
         direct_editable = direct_member_query.filter(
             ResourceMember.role.in_(editable_roles)
         ).exists()
-        direct_restricted = direct_member_query.filter(
-            ResourceMember.role == BaseRole.RestrictedAnalyst.value
-        ).exists()
 
         edit_conditions = [Kind.user_id == user_id, direct_editable]
         if context.accessible_namespace_ids:
@@ -712,9 +709,42 @@ class KnowledgeService:
                 requirement == "",
                 requirement == "read",
                 and_(requirement == "edit", or_(*edit_conditions)),
-            ),
-            ~direct_restricted,
+            )
         )
+        return KnowledgeService._apply_acl_deny_filter(
+            db,
+            query,
+            user_id,
+            context,
+        )
+
+    @staticmethod
+    def _apply_acl_deny_filter(
+        db: Session,
+        query,
+        user_id: int,
+        context: _DirectAccessPermissionContext,
+    ):
+        """Apply explicit ACL denials shared by direct and agent access."""
+        if context.user.id != user_id:
+            raise ValueError("Permission context user does not match request user")
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        direct_restricted = (
+            db.query(ResourceMember.id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_id == Kind.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.role == BaseRole.RestrictedAnalyst.value,
+            )
+            .exists()
+        )
+        query = query.filter(~direct_restricted)
+
         restricted_group_names = [
             group_name
             for group_name, role in context.group_roles.items()
@@ -793,6 +823,12 @@ class KnowledgeService:
                 permission_context=permission_context,
             ).filter(Kind.id.in_(candidate_ids))
             query = query.with_entities(Kind.id)
+            query = KnowledgeService._apply_acl_deny_filter(
+                db,
+                query,
+                user_id,
+                permission_context,
+            )
 
         return {row[0] for row in query.all()}
 

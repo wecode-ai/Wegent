@@ -307,6 +307,65 @@ def test_acl_access_ignores_direct_visibility_requirement(
 
 
 @pytest.mark.unit
+def test_acl_access_denies_restricted_group_member(test_db: Session) -> None:
+    owner = _create_user(test_db, "restricted-group-owner")
+    restricted = _create_user(test_db, "restricted-group-member")
+    namespace = _create_namespace(test_db, owner, "restricted-agent-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(
+        test_db,
+        namespace,
+        restricted,
+        GroupRole.RestrictedAnalyst,
+        owner.id,
+    )
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="restricted-group-kb", namespace=namespace.name),
+    )
+
+    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=restricted.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == set()
+
+
+@pytest.mark.unit
+def test_acl_access_denies_direct_restriction_over_other_grants(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "restricted-direct-owner")
+    reporter = _create_user(test_db, "restricted-direct-member")
+    namespace = _create_namespace(test_db, owner, "restricted-direct-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="restricted-direct-kb", namespace=namespace.name),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        reporter,
+        ResourceRole.RestrictedAnalyst,
+        owner.id,
+    )
+
+    acl_ids = KnowledgeService.get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=reporter.id,
+        candidate_ids=[knowledge_base_id],
+    )
+
+    assert acl_ids == set()
+
+
+@pytest.mark.unit
 def test_updating_direct_access_requirement_immediately_hides_kb_from_reporter(
     test_db: Session,
 ) -> None:
