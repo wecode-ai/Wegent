@@ -394,6 +394,9 @@ const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
+const startDeviceTerminalSessionMock = vi.fn()
+const getDeviceVncConfigMock = vi.fn()
+const createRemoteTerminalClientMock = vi.fn()
 
 function createDefaultImNotificationSettings() {
   return {
@@ -455,7 +458,7 @@ describe('DesktopWorkbenchLayout', () => {
           disk_usage: 57,
         },
       ]),
-      startTerminal: vi.fn(),
+      startTerminal: startDeviceTerminalSessionMock,
       startCodeServer: vi.fn(),
       createCloudDevice: vi.fn(),
       renameDevice: vi.fn(),
@@ -471,7 +474,7 @@ describe('DesktopWorkbenchLayout', () => {
         memory: [],
         disk: [],
       }),
-      getVncConfig: vi.fn(),
+      getVncConfig: getDeviceVncConfigMock,
       ...overrides,
     }
   }
@@ -774,13 +777,15 @@ describe('DesktopWorkbenchLayout', () => {
     paneSessionMockRef.current = paneSession
 
     return (
-      <AuthContext.Provider value={authValue}>
-        <WorkbenchContext.Provider value={workbenchValue}>
-          <WorkbenchPaneContext.Provider value={paneValue}>
-            <ActualDesktopWorkbenchLayout />
-          </WorkbenchPaneContext.Provider>
-        </WorkbenchContext.Provider>
-      </AuthContext.Provider>
+      <AppearanceProvider>
+        <AuthContext.Provider value={authValue}>
+          <WorkbenchContext.Provider value={workbenchValue}>
+            <WorkbenchPaneContext.Provider value={paneValue}>
+              <ActualDesktopWorkbenchLayout />
+            </WorkbenchPaneContext.Provider>
+          </WorkbenchContext.Provider>
+        </AuthContext.Provider>
+      </AppearanceProvider>
     )
   }
 
@@ -891,6 +896,16 @@ describe('DesktopWorkbenchLayout', () => {
       ...props.projectChat,
     }
     const workbenchValue = {
+      services: {
+        workspaceSessionApi: {
+          startProjectTerminal: startTerminalSessionMock,
+          startProjectCodeServer: startCodeServerSessionMock,
+          startDeviceTerminal: startDeviceTerminalSessionMock,
+          startDeviceCodeServer: vi.fn(),
+          getDeviceVncConfig: getDeviceVncConfigMock,
+          createRemoteTerminalClient: createRemoteTerminalClientMock,
+        },
+      },
       state,
       isStartupReady: true,
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
@@ -2267,11 +2282,8 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('chrome-tab-wework')
     )
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-apps')
-    )
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
-    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('h-8', 'w-8', 'text-text-secondary')
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
@@ -2345,7 +2357,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
     expect(collapsedHeaderControls.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
+    expect(collapsedHeaderControls.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
       'h-full',
@@ -2361,6 +2373,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
+  })
+
+  test('lets the workbench background show through the Tauri right workspace titlebar', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    localStorage.setItem(
+      'wework.appearance',
+      JSON.stringify({
+        backgroundImagePath: '/app-data/background.png',
+        backgroundInTopBar: true,
+      })
+    )
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('workbench-main-header')).toHaveClass('bg-background/20')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('bg-transparent')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('bg-background/95')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -4977,7 +5009,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /编辑文件 README\.md/ }))
+    await user.click(screen.getByRole('button', { name: /正在编辑 README\.md/ }))
 
     expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
@@ -5004,6 +5036,67 @@ describe('DesktopWorkbenchLayout', () => {
       'workspace-cloud-device',
       '/workspace/project/README.md'
     )
+  })
+
+  test('opens a local image link on the local device while the project workspace is remote', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const localDevice = createLocalSkillDevice()
+    const imagePath = '/Users/me/.wegent-executor/workspace/attachments/draft/42/result.png'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/.wegent-executor/workspace/attachments/draft/42',
+      entries: [],
+    })
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: imagePath,
+      name: 'result.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      size: 5,
+      eof: true,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile: vi.fn(),
+          readWorkspaceFileChunk,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          devices: [...workspacePanelState.devices, localDevice],
+        }}
+        messages={[
+          {
+            id: 'assistant-local-image-link',
+            role: 'assistant',
+            content: `[result.png](${imagePath})`,
+            status: 'done',
+            createdAt: '2026-07-18T00:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: [...workspacePanelState.devices, localDevice],
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-binary-file-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '/Users/me/.wegent-executor/workspace/attachments/draft/42'
+    )
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(localDevice.device_id, imagePath, 0)
   })
 
   test('opens a skill from the empty composer on the real local device', async () => {

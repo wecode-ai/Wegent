@@ -940,6 +940,16 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, t
         "createdAt": item_timestamp(item).unwrap_or(created_at),
         "subtaskId": turn_id,
     });
+    if let Some(client_message_id) =
+        string_field(item, "clientId").or_else(|| string_field(item, "client_id"))
+    {
+        if let Some(object) = message.as_object_mut() {
+            object.insert(
+                "clientMessageId".to_owned(),
+                Value::String(client_message_id),
+            );
+        }
+    }
     if !attachments.is_empty() {
         if let Some(object) = message.as_object_mut() {
             object.insert("attachments".to_owned(), Value::Array(attachments));
@@ -1859,7 +1869,8 @@ fn tool_status(item: &Value) -> String {
         return status;
     }
     let status = string_field(item, "status").unwrap_or_else(|| {
-        if is_codex_tool_output_item_type(&item_type)
+        if matches!(item_type.as_str(), "imageview" | "sleep" | "websearch")
+            || is_codex_tool_output_item_type(&item_type)
             || is_likely_codex_tool_output_item_type(&item_type)
             || item.get("output").is_some()
             || item.get("result").is_some()
@@ -2503,6 +2514,56 @@ mod tests {
     }
 
     #[test]
+    fn completed_statusless_tools_are_done() {
+        for (item_type, id) in [
+            ("imageView", "image-view-1"),
+            ("sleep", "sleep-1"),
+            ("webSearch", "web-search-1"),
+        ] {
+            let params = json!({
+                "item": {
+                    "id": id,
+                    "type": item_type
+                }
+            });
+
+            let (block_id, updates) = tool_update_from_notification(&params)
+                .expect("completed statusless tool should produce a tool update");
+
+            assert_eq!(block_id, id);
+            assert_eq!(updates["status"], "done");
+        }
+    }
+
+    #[test]
+    fn transcript_marks_image_view_without_status_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [{
+                "id": "turn-1",
+                "startedAt": 1_780_000_000,
+                "completedAt": 1_780_000_005,
+                "status": "completed",
+                "items": [{
+                    "type": "response_item",
+                    "payload": {
+                        "id": "image-view-1",
+                        "type": "imageView",
+                        "path": "/tmp/image.png"
+                    }
+                }]
+            }]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "view_image");
+        assert_eq!(block["status"], "done");
+    }
+
+    #[test]
     fn image_generation_blocks_preserve_renderable_image_data() {
         let item = json!({
             "id": "ig-1",
@@ -2937,6 +2998,7 @@ mod tests {
                             "payload": {
                                 "id": "user-event",
                                 "type": "user_message",
+                                "clientId": "runtime-local-pane-1",
                                 "message": "start app\n"
                             }
                         },
@@ -2963,6 +3025,7 @@ mod tests {
 
         assert_eq!(user_messages.len(), 1);
         assert_eq!(user_messages[0]["content"], "start app");
+        assert_eq!(user_messages[0]["clientMessageId"], "runtime-local-pane-1");
         assert!(!messages.iter().any(|message| {
             message["content"]
                 .as_str()

@@ -167,6 +167,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "taskId": "local-task-1"
                 },
                 "content": "continue from content",
+                "clientMessageId": "runtime-local-pane-1",
                 "collaborationMode": "default",
                 "executionRequest": execution_request_with_model_config(
                     "continue from content",
@@ -226,6 +227,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(last_turn_start["params"]["model"], "gpt-4.1");
     assert_eq!(last_turn_start["params"]["effort"], "xhigh");
     assert_eq!(last_turn_start["params"]["summary"], "concise");
+    assert_eq!(
+        last_turn_start["params"]["clientUserMessageId"],
+        "runtime-local-pane-1"
+    );
     assert_eq!(
         last_turn_start["params"]["collaborationMode"]["mode"],
         "default"
@@ -1147,6 +1152,13 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
         block_event["payload"]["data"]["block"]["render_payload"]["questions"][0]["id"],
         "goal"
     );
+    recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["id"] == "flood-sentinel"
+        })
+        .is_some()
+    })
+    .await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -1173,9 +1185,92 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
     assert_eq!(sent["accepted"], true);
     wait_until_task_idle(&handler, "local-task-input").await;
 
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99 && call["result"]["answers"]["goal"]["answers"][0] == "Work goal"
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn runtime_tasks_interrupt_and_send_unblocks_pending_request_user_input() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-interrupt-input-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-interrupt-input-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-interrupt-input-log", "jsonl");
+    let fake_codex = write_fake_codex_request_user_input(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-interrupt-input",
+                "workspacePath": "/tmp/project",
+                "message": "ask me",
+                "executionRequest": {
+                    "task_id": 3002,
+                    "subtask_id": 4002,
+                    "prompt": "ask me",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    recv_events_until(&mut events, |runtime_events| {
+        find_runtime_event(runtime_events, "response.block.created", |event| {
+            event["payload"]["data"]["block"]["tool_name"] == "request_user_input"
+        })
+        .is_some()
+    })
+    .await;
+
+    let interrupted = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.interrupt_and_send",
+            "payload": {
+                "taskId": "local-task-interrupt-input",
+                "workspacePath": "/tmp/project",
+                "message": "use the new direction",
+                "executionRequest": codex_execution_request(
+                    "use the new direction",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("interrupt-and-send should unblock the pending request");
+
+    assert_eq!(interrupted["accepted"], true);
+    wait_for_method_count(&log_path, "turn/start", 2).await;
     let calls = read_json_lines(&log_path);
     assert!(calls.iter().any(|call| {
-        call["id"] == 99 && call["result"]["answers"]["goal"]["answers"][0] == "Work goal"
+        call["id"] == 99
+            && call["result"]["answers"]
+                .as_object()
+                .is_some_and(serde_json::Map::is_empty)
     }));
 }
 
@@ -1502,6 +1597,77 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
             .count(),
         0
     );
+}
+
+#[tokio::test]
+async fn runtime_tasks_interrupt_and_send_starts_a_new_turn_after_interrupting() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-interrupt-send-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-interrupt-send-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-interrupt-send-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-interrupt-send",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-interrupt-send").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.interrupt_and_send",
+            "payload": {
+                "taskId": "local-task-interrupt-send",
+                "workspacePath": "/tmp/project",
+                "message": "replace the current direction",
+                "executionRequest": codex_execution_request(
+                    "replace the current direction",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("interrupt-and-send should be accepted");
+
+    assert_eq!(response["accepted"], true);
+    wait_for_method_count(&log_path, "turn/start", 2).await;
+    let methods = read_json_lines(&log_path)
+        .into_iter()
+        .filter_map(|call| call["method"].as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    let interrupt_index = methods
+        .iter()
+        .position(|method| method == "turn/interrupt")
+        .expect("active turn should be interrupted");
+    let second_start_index = methods
+        .iter()
+        .enumerate()
+        .filter(|(_, method)| method.as_str() == "turn/start")
+        .nth(1)
+        .map(|(index, _)| index)
+        .expect("a second turn should start");
+    assert!(interrupt_index < second_start_index);
 }
 
 #[tokio::test]
@@ -1858,6 +2024,9 @@ while IFS= read -r line; do
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
     *'"method":"thread/fork"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
@@ -2158,6 +2327,8 @@ while IFS= read -r line; do
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-input","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-input.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/start"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"thread/resume"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-input"}}}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/goal/get"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
   elif printf '%s\n' "$line" | grep -q '"method":"thread/name/set"'; then
@@ -2165,6 +2336,18 @@ while IFS= read -r line; do
   elif printf '%s\n' "$line" | grep -q '"method":"turn/start"'; then
     printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-input","status":"inProgress"}}}}}}'
     printf '%s\n' '{{"id":99,"method":"item/tool/requestUserInput","params":{{"threadId":"thread-input","turnId":"turn-input","itemId":"item-input","questions":[{{"id":"goal","header":"工作目标","question":"你希望我接下来问你哪些问题？","options":[{{"label":"Work goal","description":"Focus on one concrete task."}}]}}],"autoResolutionMs":null}}}}'
+    sleep 0.1
+    notification_index=0
+    while [ "$notification_index" -lt 2200 ]; do
+      printf '%s\n' '{{"method":"thread/name/updated","params":{{"threadId":"thread-noise","name":"waiting"}}}}'
+      notification_index=$((notification_index + 1))
+      if [ $((notification_index % 50)) -eq 0 ]; then
+        sleep 0.002
+      fi
+    done
+    printf '%s\n' '{{"method":"item/started","params":{{"threadId":"thread-input","turnId":"turn-input","item":{{"id":"flood-sentinel","type":"commandExecution","status":"inProgress","command":"sentinel"}}}}}}'
+  elif printf '%s\n' "$line" | grep -q '"method":"turn/interrupt"'; then
+    printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
   elif printf '%s\n' "$line" | grep -q '"id":99' && printf '%s\n' "$line" | grep -q '"result"'; then
     printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"answered","phase":"finalAnswer"}}}}'
     printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-input","status":"completed"}}}}}}'
@@ -2251,6 +2434,12 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
       ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
@@ -2462,7 +2651,7 @@ fn call_index(calls: &[Value], method: &str) -> usize {
 }
 
 async fn wait_for_codex_call(path: &Path, method: &str) {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         if read_json_lines(path)
             .iter()
@@ -2610,7 +2799,8 @@ async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &s
 }
 
 async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
-    for _ in 0..50 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
         let count = read_json_lines(log_path)
             .iter()
             .filter(|call| call["method"] == "turn/start")
@@ -2618,9 +2808,25 @@ async fn wait_for_turn_count(log_path: &Path, expected_turns: usize) {
         if count >= expected_turns {
             return;
         }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "expected at least {expected_turns} turn/start calls"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    panic!("expected at least {expected_turns} turn/start calls");
+}
+
+async fn wait_for_json_call<F>(log_path: &Path, matches: F)
+where
+    F: Fn(&Value) -> bool,
+{
+    for _ in 0..50 {
+        if read_json_lines(log_path).iter().any(&matches) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("expected JSON-RPC call was not recorded");
 }
 
 fn drain_events(events: &mut broadcast::Receiver<Value>) {

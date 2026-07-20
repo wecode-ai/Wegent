@@ -19,6 +19,8 @@ const runtimeConfigMock = vi.hoisted(() => ({
   value: {
     appBasePath: '',
     apiBaseUrl: '/api',
+    socketBaseUrl: 'http://10.201.3.200:8000',
+    socketPath: '/socket.io',
     cloudDeviceScalingWikiUrl: '',
   },
 }))
@@ -186,6 +188,8 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/settings/connections')
@@ -529,6 +533,104 @@ describe('ConnectionsSettingsPage', () => {
           }),
         })
       )
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('switches the endpoint and test payload for Chat Completions models', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-api-format-select'),
+        'openai-chat-completions'
+      )
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/chat/completions')
+      await userEvent.type(
+        screen.getByTestId('local-model-url-input'),
+        'https://api.kimi.com/coding/v1'
+      )
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.kimi.com/coding/v1/chat/completions',
+        expect.any(Object)
+      )
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        stream: false,
+      })
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('switches the endpoint, headers, and test payload for Anthropic Messages models', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-api-format-select'),
+        'anthropic-messages'
+      )
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/v1/messages')
+      await userEvent.type(
+        screen.getByTestId('local-model-url-input'),
+        'https://api.kimi.com/coding/'
+      )
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.kimi.com/coding/v1/messages',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-api-key': 'local-secret',
+            'anthropic-version': '2023-06-01',
+          }),
+        })
+      )
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        stream: false,
+      })
     } finally {
       Object.defineProperty(globalThis, 'fetch', {
         configurable: true,
@@ -1032,6 +1134,8 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
     }
     api.getAllDevices.mockResolvedValue([cloudDevice(), localDevice()])

@@ -155,6 +155,10 @@ export function CloudConnectionSidebarButton({
           data-testid="sidebar-cloud-connection-button"
           onClick={() => {
             if (connected) {
+              if (cloudWorkAvailable) {
+                onOpenSettings()
+                return
+              }
               if (errorDetail) {
                 setDetailsOpen(true)
                 return

@@ -1305,6 +1305,10 @@ fn normalize_tool_done_updates(updates: &mut Value, had_streamed_output: bool) {
         return;
     };
 
+    if object.get("status").and_then(Value::as_str) != Some("error") {
+        object.insert("status".to_owned(), Value::String("done".to_owned()));
+    }
+
     if had_streamed_output {
         object.remove("tool_output");
         return;
@@ -3339,6 +3343,40 @@ mod tests {
             false
         );
         assert_eq!(second["payload"]["data"]["updates"]["status"], "streaming");
+    }
+
+    #[test]
+    fn completed_event_finishes_statusless_tool() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "image-view-1",
+                        "type": "imageView",
+                        "path": "/tmp/image.png"
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("completed image view should update the tool block");
+        assert_eq!(event["event"], "response.block.updated");
+        assert_eq!(event["payload"]["data"]["block_id"], "image-view-1");
+        assert_eq!(event["payload"]["data"]["updates"]["status"], "done");
     }
 
     #[test]

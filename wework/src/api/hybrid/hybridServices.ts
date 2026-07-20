@@ -2,7 +2,7 @@ import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
-import { createLocalChatStream } from '@/api/local/localChatStream'
+import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import {
   notifyWorkbenchCloudArchivesChanged,
@@ -447,6 +447,13 @@ export function createHybridWorkbenchServices(
   }
   const listKnownDevices = async () =>
     mergeDeviceLists(await listLocalDevices(), rememberedCloudDevices)
+  const resolveExecutorDevice = async (deviceId: string): Promise<DeviceInfo | null> => {
+    const knownDevice = (await listKnownDevices()).find(device => device.device_id === deviceId)
+    if (knownDevice) return knownDevice
+
+    const cloudDevices = await listCloudDevices()
+    return cloudDevices.find(device => device.device_id === deviceId) ?? null
+  }
   const listLocalRuntimeWork = async () => {
     const work = await localServices.runtimeWorkApi!.listRuntimeWork()
     rememberLocalRuntimeWorkDevices(work)
@@ -662,6 +669,9 @@ export function createHybridWorkbenchServices(
     sendRuntimeMessage(data: RuntimeSendRequest) {
       return routeByAddress(data.address).sendRuntimeMessage(data)
     },
+    interruptAndSendRuntimeMessage(data) {
+      return routeByAddress(data.address).interruptAndSendRuntimeMessage(data)
+    },
     rollbackRuntimeTask(data: RuntimeRollbackRequest) {
       return routeByAddress(data.address).rollbackRuntimeTask(data)
     },
@@ -863,16 +873,17 @@ export function createHybridWorkbenchServices(
     },
   }
 
+  const cloudRuntimeChatStream = createRuntimeChatStream({
+    request: (method, params) => {
+      const deviceId = cloudDeviceIdFromData(params)
+      return cloudRuntimeIpc.request(method, params, deviceId)
+    },
+    subscribe: cloudRuntimeIpc.subscribe,
+  })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
       const cleanupLocal = localServices.chatStream.subscribe(handlers)
-      const cleanupCloudRuntime = createLocalChatStream({
-        request: (method, params) => {
-          const deviceId = cloudDeviceIdFromData(params)
-          return cloudRuntimeIpc.request(method, params, deviceId)
-        },
-        subscribe: cloudRuntimeIpc.subscribe,
-      }).subscribe(handlers)
+      const cleanupCloudRuntime = cloudRuntimeChatStream.subscribe(handlers)
       const cleanupCloudDeviceEvents = cloudServices.chatStream.subscribe({
         onDeviceOnline: handlers.onDeviceOnline,
         onDeviceOffline: handlers.onDeviceOffline,
@@ -922,6 +933,7 @@ export function createHybridWorkbenchServices(
       reviewApi: {
         loadTurnFileChangesDiff: cloudServices.taskApi.getTurnFileChangesDiff,
       },
+      resolveDevice: resolveExecutorDevice,
     }),
     chatStream: hybridChatStream,
   }

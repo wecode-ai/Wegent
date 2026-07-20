@@ -328,6 +328,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
+            "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.compact" => self.compact_task(payload).await,
@@ -517,9 +518,18 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "worktree_id"))
             .ok_or_else(|| AppIpcError::new("bad_request", "worktreeId is required"))?;
         let git_ref = string_field(&payload, "ref");
+        let permanent = payload
+            .get("permanent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let record = self
             .worktrees
-            .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
+            .prepare(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                permanent,
+            )
             .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
         self.schedule_worktree_prune();
         Ok(json!({
@@ -1930,6 +1940,23 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    async fn interrupt_and_send(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
+        if !self.abort_active_turn(&local_task_id).await {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": local_task_id,
+                "runtime": "codex",
+                "error": "runtime turn did not stop within timeout",
+                "code": "interrupt_timeout",
+            }));
+        }
+        self.send_message(payload).await
+    }
+
     async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -2196,7 +2223,7 @@ impl RuntimeWorkRpcHandler {
                 link.completed_at = Some(link.updated_at);
             })
             .or_else(|| self.local_task_link(&local_task_id));
-        self.resolve_pending_request_user_input_for_cancel(&local_task_id);
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -2219,7 +2246,7 @@ impl RuntimeWorkRpcHandler {
         })
     }
 
-    fn resolve_pending_request_user_input_for_cancel(&self, local_task_id: &str) {
+    fn resolve_pending_request_user_input_for_stop(&self, local_task_id: &str) {
         let sender = self
             .active_request_user_inputs
             .lock()
@@ -4572,6 +4599,18 @@ fn cached_user_message(
     message.insert("content".to_owned(), Value::String(content.to_owned()));
     message.insert("status".to_owned(), Value::String("done".to_owned()));
     message.insert("createdAt".to_owned(), Value::Number(now_ms().into()));
+    if let Some(client_message_id) = payload
+        .get("clientMessageId")
+        .or_else(|| payload.get("client_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        message.insert(
+            "clientMessageId".to_owned(),
+            Value::String(client_message_id.to_owned()),
+        );
+    }
     if let Some(source) = payload
         .get("source")
         .filter(|value| value.is_object())
@@ -5642,11 +5681,15 @@ mod tests {
         let message = cached_user_message(
             "local-task",
             &request,
-            &json!({"message": "visible user text"}),
+            &json!({
+                "message": "visible user text",
+                "clientMessageId": "runtime-local-pane-1"
+            }),
         )
         .expect("payload message should create a cached user message");
 
         assert_eq!(message["content"], "visible user text");
+        assert_eq!(message["clientMessageId"], "runtime-local-pane-1");
 
         let content_message = cached_user_message(
             "local-task",

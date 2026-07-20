@@ -1103,6 +1103,11 @@ export function WorkbenchProvider({
           handlers.onContextUsageUpdated?.(contextUsage)
         },
         onAssistantSettled: () => {
+          console.info('[Wework] Runtime task settlement dispatched', {
+            deviceId: address.deviceId,
+            taskId: address.taskId,
+            workspacePath: address.workspacePath ?? null,
+          })
           dispatch({ type: 'runtime_task_settled', address })
           handlers.onAssistantSettled?.()
         },
@@ -1162,6 +1167,9 @@ export function WorkbenchProvider({
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
+  const stableInterruptAndSendRuntimePaneMessage = useStableEvent(
+    runtimeMessaging.interruptAndSendRuntimePaneMessage
+  )
   const stableSendRuntimePaneGuidance = useStableEvent(runtimeMessaging.sendRuntimePaneGuidance)
   const stableCompactRuntimePaneTask = useStableEvent(runtimeMessaging.compactRuntimePaneTask)
   const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
@@ -1445,6 +1453,7 @@ export function WorkbenchProvider({
     checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
+    interruptAndSendRuntimePaneMessage: runtimeMessaging.interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance: runtimeMessaging.sendRuntimePaneGuidance,
     compactRuntimePaneTask: runtimeMessaging.compactRuntimePaneTask,
     editLastUserMessage: runtimeMessaging.editLastUserMessage,
@@ -1531,6 +1540,7 @@ export function WorkbenchProvider({
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
+      interruptAndSendRuntimePaneMessage: stableInterruptAndSendRuntimePaneMessage,
       sendRuntimePaneGuidance: stableSendRuntimePaneGuidance,
       compactRuntimePaneTask: stableCompactRuntimePaneTask,
       editLastUserMessage: stableEditLastUserMessage,
@@ -1608,6 +1618,7 @@ export function WorkbenchProvider({
       stableSendCurrentInput,
       stableSendRuntimePaneGuidance,
       stableSendRuntimePaneMessage,
+      stableInterruptAndSendRuntimePaneMessage,
       stableSetRuntimeGoal,
       stableSetRuntimeProjectAppearance,
       stableSetRuntimeProjectPinned,

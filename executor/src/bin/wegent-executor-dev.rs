@@ -159,15 +159,21 @@ fn rebuild_and_spawn(
 }
 
 fn build_executor(manifest_path: &Path) -> Result<bool, String> {
-    let status = Command::new("cargo")
+    let output = Command::new("cargo")
         .arg("build")
         .arg("--manifest-path")
         .arg(manifest_path)
         .arg("--bin")
         .arg("wegent-executor")
-        .status()
+        .output()
         .map_err(|error| format!("failed to run cargo build: {error}"))?;
-    Ok(status.success())
+    if !output.stdout.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(output.status.success())
 }
 
 fn debug_binary_path(manifest_dir: &Path) -> PathBuf {

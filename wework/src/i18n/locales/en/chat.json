@@ -16,8 +16,12 @@
     "running": "Working"
   },
   "tool_activity": {
-    "summary": "Called {{count}} tools",
-    "edit_summary": "Edited {{count}} files",
+    "summary_one": "Called {{count}} tool",
+    "summary_other": "Called {{count}} tools",
+    "mixed_summary_one": "{{toolSummary}}, edited {{count}} file",
+    "mixed_summary_other": "{{toolSummary}}, edited {{count}} files",
+    "edit_summary_one": "Edited {{count}} file",
+    "edit_summary_other": "Edited {{count}} files",
     "command": "Commands",
     "file": "Reads",
     "search": "Searches",
@@ -40,7 +44,11 @@
     "wait_error": "Failed waiting for tool result",
     "call_running": "Call {{name}}",
     "call_done": "Called {{name}}",
-    "call_error": "Failed to call {{name}}"
+    "call_error": "Failed to call {{name}}",
+    "edited_file": "Edited {{filename}}",
+    "created_file": "Created {{filename}}",
+    "deleted_file": "Deleted {{filename}}",
+    "renamed_file": "Renamed {{filename}}"
   },
   "assistant_status": {
     "stopped": "Stopped",

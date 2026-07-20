@@ -2,22 +2,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createProjectApi } from '@/api/projects'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { openExternalUrl } from '@/lib/external-links'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import { WorkspacePanelActions } from './WorkspacePanelActions'
-
-vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
-}))
-
-vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
-}))
-
-vi.mock('@/api/projects', () => ({
-  createProjectApi: vi.fn(),
-}))
 
 vi.mock('@/lib/local-terminal', () => ({
   isLocalTerminalAvailable: vi.fn(),
@@ -28,11 +16,19 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
-const createProjectApiMock = vi.mocked(createProjectApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
-const startCodeServerSessionMock = vi.fn()
+const startProjectCodeServerMock = vi.fn()
+const startDeviceCodeServerMock = vi.fn()
+const workspaceSessionApi: WorkspaceSessionApi = {
+  startProjectTerminal: vi.fn(),
+  startProjectCodeServer: startProjectCodeServerMock,
+  startDeviceTerminal: vi.fn(),
+  startDeviceCodeServer: startDeviceCodeServerMock,
+  getDeviceVncConfig: vi.fn(),
+  createRemoteTerminalClient: vi.fn(),
+}
 const originalInnerWidth = window.innerWidth
 
 function setWindowWidth(width: number) {
@@ -64,6 +60,7 @@ const baseProps = {
   bottomPanelOpen: false,
   onToggleRightPanel: vi.fn(),
   onToggleBottomPanel: vi.fn(),
+  workspaceSessionApi,
 }
 
 describe('WorkspacePanelActions', () => {
@@ -72,13 +69,21 @@ describe('WorkspacePanelActions', () => {
     setWindowWidth(originalInnerWidth)
     isLocalTerminalAvailableMock.mockReturnValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
-    startCodeServerSessionMock.mockResolvedValue({
+    startProjectCodeServerMock.mockResolvedValue({
+      session_id: 'ide-1',
+      project_id: 7,
+      device_id: 'device-1',
+      type: 'code_server',
       url: 'http://localhost/ide',
       path: '/workspace/project',
     })
-    createProjectApiMock.mockReturnValue({
-      startCodeServerSession: startCodeServerSessionMock,
-    } as unknown as ReturnType<typeof createProjectApi>)
+    startDeviceCodeServerMock.mockResolvedValue({
+      session_id: 'ide-device-1',
+      device_id: 'device-1',
+      type: 'code_server',
+      url: 'http://localhost/device-ide',
+      path: '/workspace/project',
+    })
     openExternalUrlMock.mockResolvedValue(true)
   })
 
@@ -320,7 +325,8 @@ describe('WorkspacePanelActions', () => {
       opener: 'vscode',
       path: '/Users/me/project38',
     })
-    expect(startCodeServerSessionMock).not.toHaveBeenCalled()
+    expect(startProjectCodeServerMock).not.toHaveBeenCalled()
+    expect(startDeviceCodeServerMock).not.toHaveBeenCalled()
   })
 
   test('opens local workspaces from the titlebar IDE picker menu', async () => {
@@ -408,7 +414,58 @@ describe('WorkspacePanelActions', () => {
 
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 
-    await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(7))
+    await waitFor(() => expect(startProjectCodeServerMock).toHaveBeenCalledWith(7))
     expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
+  })
+
+  test('opens remote runtime workspaces through the device IDE session and exact path', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    render(
+      <WorkspacePanelActions
+        {...baseProps}
+        currentProject={{
+          id: 7,
+          name: 'project38',
+          config: {
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-1',
+            },
+          },
+          tasks: [],
+        }}
+        workspaceTarget={{
+          deviceId: 'device-2',
+          path: '/workspace/worktrees/9/project38',
+          source: 'runtime',
+          workspaceSource: 'remote',
+        }}
+        devices={[
+          {
+            id: 2,
+            device_id: 'device-2',
+            name: 'Remote Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('local-workspace-titlebar-control')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
+
+    await waitFor(() =>
+      expect(startDeviceCodeServerMock).toHaveBeenCalledWith(
+        'device-2',
+        '/workspace/worktrees/9/project38'
+      )
+    )
+    expect(startProjectCodeServerMock).not.toHaveBeenCalled()
+    expect(openLocalWorkspaceMock).not.toHaveBeenCalled()
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/device-ide')
   })
 })

@@ -33,7 +33,7 @@ sidebar_position: 45
 
 为支持 Windows，主要做了以下调整：
 
-1. **本地 IPC 从 Unix Domain Socket 改为 TCP 回环地址**：Executor sidecar 绑定到 `127.0.0.1:0`，OS 自动分配端口，并将实际地址写入 `~/.wegent-executor/app-ipc.addr`。Tauri 前端通过读取该文件发现端口。
+1. **本地 IPC 使用标准输入输出**：Tauri 通过子进程 stdin/stdout 与 Executor sidecar 交换 JSONL 消息，不依赖 Unix Domain Socket、TCP 端口或地址文件，因此各平台使用同一条父子进程通道。
 2. **统一使用 `dirs::home_dir()` 解析用户目录**：在 Windows 上回退到 `USERPROFILE`，不再依赖 `HOME` 环境变量。
 3. **文件权限操作仅保留在 Unix 平台**：Windows 忽略 `chmod` / `set_mode`。
 4. **本地终端默认使用 PowerShell**：在 Windows 上优先尝试 `pwsh.exe`，其次 `powershell.exe`。
@@ -127,17 +127,16 @@ pnpm run build:windows
 
 ## 运行时行为
 
-- Executor sidecar 启动后会在 `~/.wegent-executor/app-ipc.addr` 写入监听的 TCP 地址（如 `127.0.0.1:54321`）。
-- Tauri 前端读取该文件并建立 TCP 连接。
-- 如果端口冲突，Executor 会绑定到 OS 分配的可用端口；Tauri 通过地址文件动态发现。
+- Tauri 启动 Executor sidecar，并通过 stdin 发送 JSONL 请求。
+- Executor 只在 stdout 输出 JSONL 响应和事件，普通诊断日志写入 stderr。
+- stdin 关闭或子进程退出时，本地 IPC 生命周期随即结束；不需要端口发现或重连。
 
 ---
 
 ## 已知限制
 
 - **本地终端默认使用 PowerShell**：不再调用 `/bin/zsh`。
-- **IPC 不再使用 Unix Domain Socket**：同一台机器上的其他本地进程理论上可以连接到 `127.0.0.1` 端口；生产环境建议仅在可信本地环境使用。
-- **进程孤儿清理**：Windows 暂不支持像 Unix 那样通过 `/proc` 枚举并清理遗留 Executor 进程；依赖 Tauri 应用生命周期关闭 sidecar。
+- **Executor 生命周期绑定桌面主进程**：完整退出 Wework 会关闭 stdin 并终止其管理的 Executor；不支持在新的 Wework 主进程中重新附着旧 Executor。
 - **部分后端/沙箱路径仍为 Unix 语义**：例如 Docker socket 路径、`/home/user`、`/workspace` 等仅在远端 Linux/macOS Executor Manager 中使用，不进入 Windows 桌面安装包路径。
 
 ---
@@ -147,6 +146,6 @@ pnpm run build:windows
 - **`cargo xwin` 找不到 C 编译器**：确保 LLVM 已安装且 `clang` 在 `PATH` 中。
 - **Tauri 找不到 sidecar**：确认 `wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe` 存在。
 - **NSIS 构建失败**：确认已安装 NSIS（Windows 或 macOS 均可）。
-- **运行时无法连接 Executor**：检查 `~/.wegent-executor/app-ipc.addr` 是否存在且可被读取，以及是否有防火墙拦截 `127.0.0.1` 回环地址。
+- **运行时无法连接 Executor**：检查 sidecar 是否成功启动，并确认 Executor 没有向 stdout 输出非协议文本；诊断日志应写入 stderr 或 Executor 日志文件。
 - **发送消息时提示 "program not found"**：本地 Executor sidecar 可能缺失或已过期。请使用 `pnpm run build:windows:sidecar`（在 macOS 上交叉编译）重新构建，或在 Windows 本机执行 `cargo build --release --target x86_64-pc-windows-msvc` 后将 `wegent-executor.exe` 复制到 `wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe`。
 - **本地已安装 Codex 提示 "program not found"**：在 Windows 上解析 `codex` 时会自动尝试 `codex.exe`、`codex.cmd`、`codex.bat` 等可执行扩展名；同时会兜底搜索 `%APPDATA%\npm` 和 `~/.cargo/bin` 等常见用户目录（因为 GUI 启动的进程可能无法继承 shell 的 `PATH`）。如果 Codex 安装在其他位置，可设置完整路径的环境变量：`$env:CODEX_BINARY_PATH = "C:\Path\To\codex.exe"`。

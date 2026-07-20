@@ -6,7 +6,10 @@ use std::{
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
 use chrono::Local;
@@ -18,6 +21,7 @@ const BYTES_PER_MIB: u64 = 1024 * 1024;
 const WEWORK_DEBUG_LOG_PATH: &str = "/tmp/wework-debug-1";
 
 static ROLLING_LOGGER: OnceLock<Mutex<Option<RollingLogFile>>> = OnceLock::new();
+static STDOUT_RESERVED_FOR_PROTOCOL: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RollingLogConfig {
@@ -94,9 +98,18 @@ pub fn log_executor_event(event: &str, fields: &[(&str, String)]) {
 }
 
 pub fn write_executor_log_line(line: &str) {
-    println!("{line}");
-    let _ = std::io::stdout().flush();
+    if STDOUT_RESERVED_FOR_PROTOCOL.load(Ordering::Relaxed) {
+        eprintln!("{line}");
+        let _ = std::io::stderr().flush();
+    } else {
+        println!("{line}");
+        let _ = std::io::stdout().flush();
+    }
     write_rolling_log_line(line);
+}
+
+pub fn reserve_executor_stdout_for_protocol() {
+    STDOUT_RESERVED_FOR_PROTOCOL.store(true, Ordering::Relaxed);
 }
 
 pub fn write_executor_error_line(line: &str) {
