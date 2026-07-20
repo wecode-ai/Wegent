@@ -224,6 +224,9 @@ class Settings(BaseSettings):
     WEWORK_AUTHORIZE_BASE_URL: str = ""
     # Optional upstream for the Sites service. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
+    # Optional public Backend root used for third-party connector OAuth callbacks.
+    # Configure this when Backend is behind a reverse proxy with a different origin.
+    CONNECTOR_OAUTH_CALLBACK_BASE_URL: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"

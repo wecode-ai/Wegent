@@ -114,6 +114,79 @@ export interface SystemStats {
   total_public_models: number
 }
 
+// Connector App Types
+export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
+export type ConnectorVisibility = 'all' | 'roles'
+export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
+export type ConnectorOAuthClientAuthMethod = 'client_secret_post' | 'client_secret_basic' | 'none'
+
+export interface ConnectorHttpToolDefinition {
+  name: string
+  description: string
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  input_schema: Record<string, unknown>
+  argument_locations: Record<string, 'path' | 'query' | 'body'>
+  timeout_seconds: number
+}
+
+export interface AdminConnectorApp {
+  id: number
+  slug: string
+  name: string
+  description: string
+  icon_url: string | null
+  enabled: boolean
+  visibility: ConnectorVisibility
+  allowed_roles: string[]
+  auth_type: ConnectorAuthType
+  transport: ConnectorTransport
+  mcp_url: string
+  oauth_authorization_url: string | null
+  oauth_token_url: string | null
+  oauth_client_id: string | null
+  oauth_client_auth_method: ConnectorOAuthClientAuthMethod
+  oauth_client_secret_configured: boolean
+  oauth_scopes: string[]
+  provider_header_names: string[]
+  provider_headers_configured: boolean
+  tool_allowlist: string[]
+  http_tools: ConnectorHttpToolDefinition[]
+  connection_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminConnectorAppCreate {
+  slug: string
+  name: string
+  description: string
+  icon_url: string | null
+  enabled: boolean
+  visibility: ConnectorVisibility
+  allowed_roles: string[]
+  auth_type: ConnectorAuthType
+  transport: ConnectorTransport
+  mcp_url: string
+  oauth_authorization_url: string | null
+  oauth_token_url: string | null
+  oauth_client_id: string | null
+  oauth_client_auth_method: ConnectorOAuthClientAuthMethod
+  oauth_client_secret: string | null
+  oauth_scopes: string[]
+  provider_headers: Record<string, string>
+  tool_allowlist: string[]
+  http_tools: ConnectorHttpToolDefinition[]
+}
+
+export type AdminConnectorAppUpdate = Partial<
+  Omit<AdminConnectorAppCreate, 'slug' | 'provider_headers'>
+> & {
+  clear_oauth_client_secret?: boolean
+  provider_headers?: Record<string, string>
+  clear_provider_headers?: boolean
+}
+
 // Chat Slogan & Tips Types
 export type SloganTipMode = 'chat' | 'code' | 'both'
 
@@ -1206,6 +1279,27 @@ export const adminApis = {
       user_id: userId,
       target_host: targetHost,
     })
+  },
+
+  // ==================== Connector App Management ====================
+
+  async getConnectorApps(): Promise<AdminConnectorApp[]> {
+    return apiClient.get('/admin/connector-apps')
+  },
+
+  async createConnectorApp(data: AdminConnectorAppCreate): Promise<AdminConnectorApp> {
+    return apiClient.post('/admin/connector-apps', data)
+  },
+
+  async updateConnectorApp(
+    appId: number,
+    data: AdminConnectorAppUpdate
+  ): Promise<AdminConnectorApp> {
+    return apiClient.patch(`/admin/connector-apps/${appId}`, data)
+  },
+
+  async disableConnectorApp(appId: number): Promise<void> {
+    return apiClient.delete(`/admin/connector-apps/${appId}`)
   },
 
   // ==================== Template Management ====================

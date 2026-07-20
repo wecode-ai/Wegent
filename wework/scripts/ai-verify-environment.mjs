@@ -1,11 +1,24 @@
 import { join } from 'node:path'
 
+const INHERITED_EXECUTOR_ENV_KEYS = [
+  'WEGENT_EXECUTOR_APP_IPC_ADDR',
+  'WEGENT_EXECUTOR_APP_IPC_ADDR_FILE',
+  'WEGENT_EXECUTOR_APP_IPC_SOCKET',
+  'WEGENT_EXECUTOR_BINARY',
+  'WEGENT_EXECUTOR_SOURCE_DIR',
+  'WEWORK_EXECUTOR_SIDECAR',
+  'WEWORK_SHARED_EXECUTOR_HOME',
+]
+
 export function buildAiVerifyEnvironment(
   processEnvironment,
   { controlUrl, token, codexHome, deviceId, appIdentifier, executorHome, sessionDirectory }
 ) {
+  const isolatedEnvironment = { ...processEnvironment }
+  for (const key of INHERITED_EXECUTOR_ENV_KEYS) delete isolatedEnvironment[key]
+
   return {
-    ...processEnvironment,
+    ...isolatedEnvironment,
     VITE_WEWORK_E2E: 'true',
     VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
     VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
