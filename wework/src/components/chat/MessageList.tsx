@@ -1648,6 +1648,7 @@ function AssistantMessage({
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
     isAssistantRunning,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
+    hasVisibleContent,
   })
   const webSearchSources = isStreaming
     ? []
@@ -1681,6 +1682,7 @@ function AssistantMessage({
           }
           showInterToolThinking={
             isStreaming &&
+            !hasVisibleContent &&
             segment.kind === 'tool' &&
             !processingSegments.slice(index + 1).some(candidate => candidate.kind === 'tool')
           }
@@ -1765,7 +1767,6 @@ function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -1951,11 +1952,13 @@ function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
 function shouldShowAssistantThinkingIndicator({
   isAssistantRunning,
   hasProcessingDisplayBlock,
+  hasVisibleContent,
 }: {
   isAssistantRunning: boolean
   hasProcessingDisplayBlock: boolean
+  hasVisibleContent: boolean
 }): boolean {
-  return isAssistantRunning && !hasProcessingDisplayBlock
+  return isAssistantRunning && !hasProcessingDisplayBlock && !hasVisibleContent
 }
 
 function AssistantErrorCard({
