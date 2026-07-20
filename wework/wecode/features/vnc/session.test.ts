@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { buildVncPageUrl, isInternalVncPageUrl, prepareVncSession } from './vnc'
+import { buildVncPageUrl, isInternalVncPageUrl, prepareVncSession } from './session'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 const vncHtml = readFileSync(resolve(process.cwd(), 'wecode/features/vnc/assets/vnc.html'), 'utf8')

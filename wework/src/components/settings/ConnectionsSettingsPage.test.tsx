@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -10,9 +10,7 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
-import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
-import { prepareVncSession } from '@/lib/vnc'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -29,6 +27,16 @@ const runtimeConfigMock = vi.hoisted(() => ({
 const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
+}))
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
 }))
 
 vi.mock('@/config/runtime', async importOriginal => ({
@@ -83,16 +91,6 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
-vi.mock('@/lib/embedded-browser', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/embedded-browser')>()),
-  requestEmbeddedBrowserOpen: vi.fn(),
-}))
-
-vi.mock('@/lib/vnc', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/vnc')>()),
-  prepareVncSession: vi.fn(),
-}))
-
 vi.mock('@/tauri/localExecutor', () => ({
   requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
@@ -110,18 +108,6 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
-const requestEmbeddedBrowserOpenMock = vi.mocked(requestEmbeddedBrowserOpen)
-const prepareVncSessionMock = vi.mocked(prepareVncSession)
-
-function createDeferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
-}
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -188,7 +174,6 @@ describe('ConnectionsSettingsPage', () => {
     deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
-    getVncConfig: vi.fn(),
   }
   const userApi = {
     updateCurrentUser: vi.fn(),
@@ -219,8 +204,19 @@ describe('ConnectionsSettingsPage', () => {
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
-    requestEmbeddedBrowserOpenMock.mockReturnValue(true)
-    prepareVncSessionMock.mockResolvedValue('vnc-session-1')
+    cloudDesktopExtensionMock.available = true
+    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+      ({ deviceId, disabled, onOpened }) => (
+        <button
+          type="button"
+          data-testid={`connection-vnc-button-${deviceId}`}
+          disabled={disabled}
+          onClick={onOpened}
+        >
+          桌面
+        </button>
+      )
+    )
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -230,11 +226,6 @@ describe('ConnectionsSettingsPage', () => {
       cpu: [],
       memory: [],
       disk: [],
-    })
-    api.getVncConfig.mockResolvedValue({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
     })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
       codexHome: '/Users/crystal/.wegent-executor/codex',
@@ -829,182 +820,42 @@ describe('ConnectionsSettingsPage', () => {
     )
   })
 
-  test('opens cloud desktop in the built-in browser before leaving settings', async () => {
+  test('renders the cloud desktop extension action and forwards its opened callback', async () => {
     const onBack = vi.fn()
     api.getAllDevices.mockResolvedValue([cloudDevice()])
 
     render(<ConnectionsSettingsPage onBack={onBack} />)
 
-    await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
+    const button = await screen.findByTestId('connection-vnc-button-device-1')
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: false }),
+      undefined
+    )
+    await userEvent.click(button)
 
-    await waitFor(() => expect(api.getVncConfig).toHaveBeenCalledWith('device-1'))
-    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
-    const openedUrl = new URL(requestEmbeddedBrowserOpenMock.mock.calls[0][0])
-    expect(openedUrl.pathname).toBe('/vnc.html')
-    expect(openedUrl.searchParams.get('sessionId')).toBe('vnc-session-1')
-    expect(openedUrl.searchParams.has('wsUrl')).toBe(false)
-    expect(openedUrl.toString()).not.toContain('fallback-token')
-    expect(prepareVncSessionMock).toHaveBeenCalledWith({
-      deviceId: 'device-1',
-      socketBaseUrl: 'http://localhost:3000',
-      token: 'fallback-token',
-    })
-    expect(onBack).toHaveBeenCalledTimes(1)
-    expect(openExternalUrlMock).not.toHaveBeenCalled()
+    expect(onBack).toHaveBeenCalledOnce()
   })
 
-  test('stays in settings when the built-in browser cannot accept the VNC page', async () => {
-    const onBack = vi.fn()
+  test('does not render a cloud desktop action when the extension is unavailable', async () => {
+    cloudDesktopExtensionMock.available = false
     api.getAllDevices.mockResolvedValue([cloudDevice()])
-    requestEmbeddedBrowserOpenMock.mockReturnValue(false)
-
-    render(<ConnectionsSettingsPage onBack={onBack} />)
-
-    await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('无法在 Wework 中打开云桌面，请重试')
-    expect(onBack).not.toHaveBeenCalled()
-    expect(openExternalUrlMock).not.toHaveBeenCalled()
-  })
-
-  test('shows a recoverable error when VNC configuration fails', async () => {
-    const onBack = vi.fn()
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
-    api.getVncConfig.mockRejectedValueOnce(new Error('VNC unavailable'))
-
-    try {
-      render(<ConnectionsSettingsPage onBack={onBack} />)
-
-      await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
-
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        '无法在 Wework 中打开云桌面，请重试'
-      )
-      expect(consoleError).toHaveBeenCalledWith('Failed to open device desktop:', expect.any(Error))
-      expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
-      expect(onBack).not.toHaveBeenCalled()
-    } finally {
-      consoleError.mockRestore()
-    }
-  })
-
-  test('disables the VNC action while loading and prevents duplicate requests', async () => {
-    const deferred = createDeferred<{
-      wss_url: string
-      signature: string
-      sandbox_id: string
-    }>()
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
-    api.getVncConfig.mockReturnValueOnce(deferred.promise)
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
-    const button = await screen.findByTestId('connection-vnc-button-device-1')
-    await userEvent.click(button)
-    expect(button).toBeDisabled()
-    await userEvent.click(button)
-    expect(api.getVncConfig).toHaveBeenCalledTimes(1)
-
-    deferred.resolve({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
-    })
-    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
+    await screen.findByTestId('connection-device-device-1')
+    expect(screen.queryByTestId('connection-vnc-button-device-1')).not.toBeInTheDocument()
   })
 
-  test('discards a pending VNC response after the cloud connection changes', async () => {
-    const deferred = createDeferred<{
-      wss_url: string
-      signature: string
-      sandbox_id: string
-    }>()
-    const onBack = vi.fn()
-    const connectedConnection: CloudConnectionContextValue = {
-      status: 'connected',
-      backendUrl: 'https://cloud.example.com',
-      apiBaseUrl: 'https://cloud.example.com/api',
-      socketBaseUrl: 'https://cloud.example.com',
-      socketPath: '/socket.io',
-      token: 'connected-token',
-      tokenExpiresAt: null,
-      user: { id: 1, user_name: 'cloud-user', email: 'cloud@example.com' },
-      connectedAt: '2026-07-17T00:00:00.000Z',
-      error: null,
-      isConnected: true,
-      serviceKey: 'connected:1',
-      connectWithAuthorization: vi.fn(),
-      refreshUser: vi.fn(),
-      disconnect: vi.fn(),
-    }
-    const nextConnectedConnection: CloudConnectionContextValue = {
-      ...connectedConnection,
-      token: 'next-connected-token',
-      serviceKey: 'connected:2',
-    }
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
-    api.getVncConfig.mockReturnValueOnce(deferred.promise)
-
-    const view = render(
-      <CloudConnectionContext.Provider value={connectedConnection}>
-        <ConnectionsSettingsPage onBack={onBack} />
-      </CloudConnectionContext.Provider>
-    )
-
-    await userEvent.click(await screen.findByTestId('connection-vnc-button-device-1'))
-    expect(api.getVncConfig).toHaveBeenCalledTimes(1)
-
-    view.rerender(
-      <CloudConnectionContext.Provider value={nextConnectedConnection}>
-        <ConnectionsSettingsPage onBack={onBack} />
-      </CloudConnectionContext.Provider>
-    )
-    const reconnectedButton = await screen.findByTestId('connection-vnc-button-device-1')
-    await waitFor(() => expect(reconnectedButton).not.toBeDisabled())
-    await userEvent.click(reconnectedButton)
-    await waitFor(() => expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1))
-
-    await act(async () => {
-      deferred.resolve({
-        wss_url: 'wss://example.com/vnc',
-        signature: 'signature',
-        sandbox_id: 'sandbox-1',
-      })
-      await deferred.promise
-      await Promise.resolve()
-    })
-
-    expect(api.getVncConfig).toHaveBeenCalledTimes(2)
-    expect(prepareVncSessionMock).toHaveBeenCalledTimes(1)
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledTimes(1)
-    expect(onBack).toHaveBeenCalledTimes(1)
-  })
-
-  test('disables the VNC action for an offline cloud device', async () => {
+  test('passes an offline device as disabled to the cloud desktop action', async () => {
     api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByTestId('connection-vnc-button-device-1')).toBeDisabled()
-  })
-
-  test('clears the VNC error when a retry reaches the built-in browser', async () => {
-    const onBack = vi.fn()
-    api.getAllDevices.mockResolvedValue([cloudDevice()])
-    requestEmbeddedBrowserOpenMock.mockReturnValueOnce(false).mockReturnValueOnce(true)
-
-    render(<ConnectionsSettingsPage onBack={onBack} />)
-
-    const button = await screen.findByTestId('connection-vnc-button-device-1')
-    await userEvent.click(button)
-    expect(await screen.findByRole('alert')).toBeInTheDocument()
-
-    await userEvent.click(button)
-
-    await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(api.getVncConfig).toHaveBeenCalledTimes(2)
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: true }),
+      undefined
+    )
   })
 
   test('falls back to legacy ubuntu password field in cloud device connection info', async () => {

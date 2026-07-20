@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import {
   canUseEmbeddedBrowser,
   closeEmbeddedBrowser,
@@ -46,7 +47,6 @@ import {
 import { openExternalUrl } from '@/lib/external-links'
 import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
-import { isInternalVncPageUrl } from '@/lib/vnc'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
@@ -594,7 +594,9 @@ export function WorkspaceBrowserPanel({
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
-  const internalVncPage = Boolean(activePageUrl && isInternalVncPageUrl(activePageUrl))
+  const internalDesktopPage = Boolean(
+    activePageUrl && cloudDesktopExtension.isInternalPageUrl(activePageUrl)
+  )
   const embeddedBrowserOccluded = occludingOverlayIds.size > 0
 
   const applyDownloadEvent = useCallback((download: EmbeddedBrowserDownloadEvent) => {
@@ -742,7 +744,7 @@ export function WorkspaceBrowserPanel({
       nativeBrowserOpen: nativeBrowserOpenRef.current,
     })
     if (
-      internalVncPage ||
+      internalDesktopPage ||
       !embeddedBrowserAvailable ||
       !nativeBrowserOpenRef.current ||
       !currentUrl
@@ -780,7 +782,10 @@ export function WorkspaceBrowserPanel({
         await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
         return
       }
-      if (activePageUrlRef.current && isInternalVncPageUrl(activePageUrlRef.current)) {
+      if (
+        activePageUrlRef.current &&
+        cloudDesktopExtension.isInternalPageUrl(activePageUrlRef.current)
+      ) {
         exitAnnotationMode()
         return
       }
@@ -814,7 +819,7 @@ export function WorkspaceBrowserPanel({
     cleanupInvalidatedAnnotationRequest,
     embeddedBrowserAvailable,
     exitAnnotationMode,
-    internalVncPage,
+    internalDesktopPage,
     label,
     t,
   ])
@@ -897,8 +902,12 @@ export function WorkspaceBrowserPanel({
       }
       adoptNativeLabel(pageState.nativeLabel, label)
       const nextUrl = pageState.url || currentUrlRef.current
-      if (nextUrl && isInternalVncPageUrl(nextUrl) && annotationModeRef.current) {
-        logBrowserAnnotation('exit annotation mode for internal VNC page', { label })
+      if (
+        nextUrl &&
+        cloudDesktopExtension.isInternalPageUrl(nextUrl) &&
+        annotationModeRef.current
+      ) {
+        logBrowserAnnotation('exit annotation mode for internal desktop page', { label })
         exitAnnotationMode()
       }
       updatePageUrl(nextUrl)
@@ -1085,7 +1094,7 @@ export function WorkspaceBrowserPanel({
     if (
       !active ||
       !annotationMode ||
-      internalVncPage ||
+      internalDesktopPage ||
       !embeddedBrowserAvailable ||
       !nativeBrowserOpenRef.current
     ) {
@@ -1179,7 +1188,7 @@ export function WorkspaceBrowserPanel({
     activePageUrl,
     annotationMode,
     embeddedBrowserAvailable,
-    internalVncPage,
+    internalDesktopPage,
     label,
     onAddCodeComment,
   ])
@@ -1285,7 +1294,7 @@ export function WorkspaceBrowserPanel({
       setError(null)
       pageStateRequestGenerationRef.current += 1
 
-      if (annotationMode && isInternalVncPageUrl(nextUrl)) {
+      if (annotationMode && cloudDesktopExtension.isInternalPageUrl(nextUrl)) {
         exitAnnotationMode()
       }
 
@@ -1341,7 +1350,7 @@ export function WorkspaceBrowserPanel({
   }
 
   const handleOpenExternal = () => {
-    if (!activePageUrl || internalVncPage) return
+    if (!activePageUrl || internalDesktopPage) return
     void openExternalUrl(activePageUrl, { target: 'system' })
   }
 
@@ -1353,7 +1362,7 @@ export function WorkspaceBrowserPanel({
         !active && 'hidden'
       )}
     >
-      {annotationMode && !internalVncPage ? (
+      {annotationMode && !internalDesktopPage ? (
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-sm text-text-primary">
           <BrowserToolbarButton
             testId="workspace-browser-annotation-close-button"
@@ -1452,7 +1461,7 @@ export function WorkspaceBrowserPanel({
           <BrowserToolbarButton
             testId="workspace-browser-annotate-button"
             label={t('workbench.browser_annotation_start')}
-            disabled={!activePageUrl || !embeddedBrowserAvailable || internalVncPage}
+            disabled={!activePageUrl || !embeddedBrowserAvailable || internalDesktopPage}
             onClick={() => void enterAnnotationMode()}
           >
             <MessageSquarePlus className="h-4 w-4" />
@@ -1460,14 +1469,14 @@ export function WorkspaceBrowserPanel({
           <BrowserToolbarButton
             testId="workspace-browser-open-external-button"
             label={t('workbench.browser_open_external')}
-            disabled={!activePageUrl || internalVncPage}
+            disabled={!activePageUrl || internalDesktopPage}
             onClick={handleOpenExternal}
           >
             <ExternalLink className="h-4 w-4" />
           </BrowserToolbarButton>
         </div>
       )}
-      {(!annotationMode || internalVncPage) && downloadsOpen ? (
+      {(!annotationMode || internalDesktopPage) && downloadsOpen ? (
         <div
           data-testid="workspace-browser-downloads-panel"
           className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"

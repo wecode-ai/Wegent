@@ -1,10 +1,10 @@
 import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
-import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -17,7 +17,6 @@ import {
   supportsRemoteTerminalSessions,
 } from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
-import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -27,7 +26,6 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { buildVncPageUrl, prepareVncSession } from '@/lib/vnc'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
@@ -174,19 +172,6 @@ function createProjectSessionApi() {
 function createRuntimeDeviceSessionApi() {
   const { apiBaseUrl } = getRuntimeConfig()
   return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function createCloudDeviceSessionApi(connection: CloudConnectionContextValue) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createDeviceApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
-  )
 }
 
 export function WorkspacePanelCards({
@@ -735,6 +720,7 @@ export function WorkspacePanelCards({
       !activeWorkspaceDeviceId ||
       loadingTool ||
       !availableTools.desktop ||
+      !cloudDesktopExtension.available ||
       !cloudConnection.isConnected ||
       projectDevice?.status !== 'online'
     ) {
@@ -769,28 +755,12 @@ export function WorkspacePanelCards({
       )
     }
     try {
-      if (!cloudConnection.socketBaseUrl || !cloudConnection.token) {
-        throw new Error('Cloud connection is required')
-      }
-      const config =
-        await createCloudDeviceSessionApi(cloudConnection).getVncConfig(activeWorkspaceDeviceId)
-      if (!isCurrentRequest()) return
-      if (!config.sandbox_id) {
-        throw new Error('Desktop sandbox ID is missing')
-      }
-      const sessionId = await prepareVncSession({
+      const opened = await cloudDesktopExtension.open({
+        connection: cloudConnection,
         deviceId: activeWorkspaceDeviceId,
-        socketBaseUrl: cloudConnection.socketBaseUrl,
-        token: cloudConnection.token,
+        isCurrent: isCurrentRequest,
       })
-      if (!isCurrentRequest()) return
-      const pageUrl = buildVncPageUrl({
-        sandboxId: config.sandbox_id,
-        sessionId,
-      })
-      if (!requestEmbeddedBrowserOpen(pageUrl)) {
-        throw new Error('Built-in browser is unavailable')
-      }
+      if (!opened) return
     } catch (e) {
       if (!isCurrentRequest()) return
       console.error('Failed to open project desktop:', e)
@@ -1076,7 +1046,7 @@ export function WorkspacePanelCards({
                         </span>
                       </button>
                     )}
-                    {cloudToolsAvailable && (
+                    {cloudToolsAvailable && cloudDesktopExtension.available && (
                       <button
                         type="button"
                         data-testid={testId('workspace-desktop-card')}

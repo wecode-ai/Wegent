@@ -4,6 +4,23 @@ import '@/i18n'
 import { resetEmbeddedBrowserDownloadStoreForTests } from '@/lib/embedded-browser-download-store'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  isInternalPageUrl: vi.fn((value: string) => {
+    try {
+      return new URL(value, 'http://localhost').pathname.endsWith('/vnc.html')
+    } catch {
+      return false
+    }
+  }),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
+
 const embeddedBrowserMocks = vi.hoisted(() => ({
   canUseEmbeddedBrowser: vi.fn(),
   closeEmbeddedBrowser: vi.fn(),

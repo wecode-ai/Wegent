@@ -14,7 +14,6 @@ import {
   MessageSquareText,
   Loader2,
   LogOut,
-  Monitor,
   MoreHorizontal,
   Network,
   Package,
@@ -30,13 +29,13 @@ import {
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
-import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -46,7 +45,7 @@ import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import { buildVncPageUrl, prepareVncSession } from '@/lib/vnc'
+import { DeviceActionButton } from './DeviceActionButton'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
@@ -78,6 +77,8 @@ import {
   createSettingsModelApi,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
+
+const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -257,33 +258,6 @@ function StatusPill({ status }: { status: DeviceInfo['status'] }) {
   )
 }
 
-function DeviceActionButton({
-  testId,
-  icon: Icon,
-  label,
-  onClick,
-  disabled,
-}: {
-  testId: string
-  icon: ComponentType<{ className?: string }>
-  label: string
-  onClick?: () => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <Icon className="h-3.5 w-3.5" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
 function DeviceIconActionButton({
   testId,
   icon: Icon,
@@ -341,180 +315,6 @@ function deviceDisplayName(device: DeviceInfo): string {
 
   if (name && !defaultNames.includes(name)) return name
   return device.client_ip?.trim() || name || device.device_id
-}
-
-function VncDesktopButton({
-  deviceId,
-  disabled,
-  onOpened,
-}: {
-  deviceId: string
-  disabled: boolean
-  onOpened: () => void
-}) {
-  const { t } = useTranslation('common')
-  const cloudConnection = useOptionalCloudConnection()
-  const [requestState, setRequestState] = useState<{
-    connectedAt: string | null
-    deviceId: string
-    isConnected: boolean
-    serviceKey: string
-    token: string | null
-    requestGeneration: number
-    loading: boolean
-    error: string | null
-  } | null>(null)
-  const requestStateIsCurrent = Boolean(
-    requestState &&
-    requestState.connectedAt === cloudConnection.connectedAt &&
-    requestState.deviceId === deviceId &&
-    requestState.isConnected === cloudConnection.isConnected &&
-    requestState.serviceKey === cloudConnection.serviceKey &&
-    requestState.token === cloudConnection.token
-  )
-  const loading = requestStateIsCurrent ? Boolean(requestState?.loading) : false
-  const error = requestStateIsCurrent ? (requestState?.error ?? null) : null
-  const mountedRef = useRef(true)
-  const requestGenerationRef = useRef(0)
-  const latestRequestContextRef = useRef({
-    connectedAt: cloudConnection.connectedAt,
-    deviceId,
-    isConnected: cloudConnection.isConnected,
-    serviceKey: cloudConnection.serviceKey,
-    token: cloudConnection.token,
-  })
-  const openFailedMessage = t(
-    'workbench.connection_device_desktop_open_failed',
-    '无法在 Wework 中打开云桌面，请重试'
-  )
-
-  useLayoutEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
-
-  useLayoutEffect(() => {
-    latestRequestContextRef.current = {
-      connectedAt: cloudConnection.connectedAt,
-      deviceId,
-      isConnected: cloudConnection.isConnected,
-      serviceKey: cloudConnection.serviceKey,
-      token: cloudConnection.token,
-    }
-    const contextGeneration = requestGenerationRef.current + 1
-    requestGenerationRef.current = contextGeneration
-    queueMicrotask(() => {
-      if (!mountedRef.current) return
-      setRequestState(current =>
-        current && current.requestGeneration < contextGeneration ? null : current
-      )
-    })
-  }, [
-    cloudConnection.connectedAt,
-    cloudConnection.isConnected,
-    cloudConnection.serviceKey,
-    cloudConnection.token,
-    deviceId,
-  ])
-
-  const handleClick = useCallback(async () => {
-    if (disabled || loading || !cloudConnection.isConnected) return
-    const requestGeneration = requestGenerationRef.current + 1
-    requestGenerationRef.current = requestGeneration
-    const requestStateContext = {
-      connectedAt: cloudConnection.connectedAt,
-      deviceId,
-      isConnected: cloudConnection.isConnected,
-      requestGeneration,
-      serviceKey: cloudConnection.serviceKey,
-      token: cloudConnection.token,
-    }
-    setRequestState({ ...requestStateContext, loading: true, error: null })
-
-    if (!cloudConnection.socketBaseUrl || !cloudConnection.token) {
-      setRequestState({ ...requestStateContext, loading: false, error: openFailedMessage })
-      return
-    }
-
-    const requestContext = {
-      connectedAt: cloudConnection.connectedAt,
-      deviceId,
-      serviceKey: cloudConnection.serviceKey,
-      token: cloudConnection.token,
-    }
-    const isCurrentRequest = () => {
-      const latest = latestRequestContextRef.current
-      return (
-        mountedRef.current &&
-        requestGenerationRef.current === requestGeneration &&
-        latest.isConnected &&
-        latest.connectedAt === requestContext.connectedAt &&
-        latest.deviceId === requestContext.deviceId &&
-        latest.serviceKey === requestContext.serviceKey &&
-        latest.token === requestContext.token
-      )
-    }
-
-    try {
-      const config = await createSettingsDeviceApi(cloudConnection).getVncConfig(deviceId)
-      if (!isCurrentRequest()) return
-      const sessionId = await prepareVncSession({
-        deviceId,
-        socketBaseUrl: cloudConnection.socketBaseUrl,
-        token: cloudConnection.token,
-      })
-      if (!isCurrentRequest()) return
-      const pageUrl = buildVncPageUrl({
-        sandboxId: config.sandbox_id,
-        sessionId,
-      })
-      if (!requestEmbeddedBrowserOpen(pageUrl)) {
-        setRequestState({ ...requestStateContext, loading: true, error: openFailedMessage })
-        return
-      }
-      onOpened()
-    } catch (e) {
-      if (!isCurrentRequest()) return
-      console.error('Failed to open device desktop:', e)
-      setRequestState({ ...requestStateContext, loading: true, error: openFailedMessage })
-    } finally {
-      if (mountedRef.current && requestGenerationRef.current === requestGeneration) {
-        setRequestState(current =>
-          current &&
-          current.connectedAt === requestStateContext.connectedAt &&
-          current.deviceId === requestStateContext.deviceId &&
-          current.requestGeneration === requestGeneration &&
-          current.serviceKey === requestStateContext.serviceKey &&
-          current.token === requestStateContext.token
-            ? { ...current, loading: false }
-            : current
-        )
-      }
-    }
-  }, [cloudConnection, deviceId, disabled, loading, onOpened, openFailedMessage])
-
-  return (
-    <div className="flex flex-col items-end gap-1">
-      <DeviceActionButton
-        testId={`connection-vnc-button-${deviceId}`}
-        icon={Monitor}
-        label={t('workbench.connection_device_desktop', '桌面')}
-        onClick={handleClick}
-        disabled={disabled || loading || !cloudConnection.isConnected}
-      />
-      {error && (
-        <p
-          role="alert"
-          data-testid={`connection-vnc-error-${deviceId}`}
-          className="max-w-48 text-right text-xs text-red-500"
-        >
-          {error}
-        </p>
-      )}
-    </div>
-  )
 }
 
 type ConfirmDeviceAction = 'restart' | 'delete'
@@ -968,8 +768,8 @@ function DeviceCard({
                   onClick={() => handleStartCloudSession('code-server')}
                   disabled={!isOnline || sessionLoading === 'code-server'}
                 />
-                {canUseCloudSessions && (
-                  <VncDesktopButton
+                {canUseCloudSessions && cloudDesktopExtension.available && (
+                  <CloudDesktopDeviceAction
                     deviceId={device.device_id}
                     disabled={!isOnline}
                     onOpened={onVncDesktopOpened}

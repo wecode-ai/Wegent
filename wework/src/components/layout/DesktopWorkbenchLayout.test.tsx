@@ -4,6 +4,7 @@ import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
+import { createHttpClient } from '@/api/http'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
 import { AuthContext } from '@/features/auth/useAuth'
@@ -394,6 +395,7 @@ vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createHttpClientMock = vi.mocked(createHttpClient)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
@@ -481,13 +483,13 @@ describe('DesktopWorkbenchLayout', () => {
         memory: [],
         disk: [],
       }),
-      getVncConfig: vi.fn(),
       ...overrides,
     }
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    createHttpClientMock.mockReturnValue({} as never)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024,
@@ -4071,12 +4073,17 @@ describe('DesktopWorkbenchLayout', () => {
         }
         return createRect({ left: 0, top: 0, width: 0, height: 0 })
       })
-    const getVncConfig = vi.fn().mockResolvedValue({
-      wss_url: 'wss://unused.example.test/vnc',
-      signature: 'unused-signature',
-      sandbox_id: 'sandbox-1',
+    const getCloudDesktopConfig = vi.fn((path: string) => {
+      if (path.startsWith('/models/unified?')) {
+        return Promise.resolve({ data: [] })
+      }
+      return Promise.resolve({
+        wss_url: 'wss://unused.example.test/vnc',
+        signature: 'unused-signature',
+        sandbox_id: 'sandbox-1',
+      })
     })
-    createDeviceApiMock.mockReturnValue(createMockDeviceApi({ getVncConfig }) as never)
+    createHttpClientMock.mockReturnValue({ get: getCloudDesktopConfig } as never)
     try {
       render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -4087,7 +4094,18 @@ describe('DesktopWorkbenchLayout', () => {
       await waitFor(() =>
         expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
       )
-      expect(getVncConfig).toHaveBeenCalledWith('24a59054-4638-4744-983d-372706c30fcd')
+      expect(getCloudDesktopConfig).toHaveBeenCalledWith(
+        '/cloud-devices/24a59054-4638-4744-983d-372706c30fcd/vnc-config'
+      )
+      expect(createHttpClientMock).toHaveBeenCalledWith({
+        baseUrl: '/api',
+        getToken: expect.any(Function),
+        redirectOnUnauthorized: false,
+      })
+      const cloudDesktopClientOptions = createHttpClientMock.mock.calls
+        .map(([options]) => options)
+        .find(options => options.redirectOnUnauthorized === false)
+      expect(cloudDesktopClientOptions?.getToken?.()).toBe('fallback-token')
       expect(screen.getByTestId('right-workspace-browser-tab')).toHaveAttribute(
         'aria-selected',
         'true'
