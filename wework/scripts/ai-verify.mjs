@@ -26,7 +26,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
@@ -314,6 +314,7 @@ async function main() {
     drag: 'drag',
     fill: 'fill',
     hover: 'hover',
+    navigate: 'navigate',
     'pointer-move': 'pointerMove',
     press: 'press',
     'select-text': 'selectText',
@@ -329,6 +330,7 @@ async function main() {
     options.selector ??
     (command === 'capture' ||
     command === 'snapshot' ||
+    command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
     command === 'close-to-tray'

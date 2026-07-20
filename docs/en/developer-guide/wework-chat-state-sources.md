@@ -50,6 +50,10 @@ A Codex web search may not include its query action in `item/started`; the final
 
 The Wework presentation layer accepts both Responses API snake_case action names (`open_page`, `find_in_page`) and Codex app-server camelCase names (`openPage`, `findInPage`). Normalize this naming difference at the tool-detail parsing boundary; do not mask missing completion events with UI placeholder content or status fallbacks.
 
+### Tool Activity Preview Scrolling
+
+The collapsed tool activity preview shows at most three rows and follows the latest activity while no tool detail is expanded. Auto-scroll must react both to changes in the tool row count and to the bottom “Thinking” row appearing or disappearing. When a tool completes without changing the row count, the thinking row must remain inside the inner scroll area's visible range. Expanding a detail removes the preview height limit, so forced scrolling must not override the user's reading position in that state.
+
 ## Goal and Task Execution State
 
 The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.

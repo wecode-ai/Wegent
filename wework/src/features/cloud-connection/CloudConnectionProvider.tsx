@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { getRuntimeConfig } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -38,6 +39,15 @@ interface WeworkAuthSessionPollResponse {
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
 
+function resolveCloudRuntimeConfig(backendUrl: string): CloudConnectionRuntimeConfig {
+  const runtimeConfig = getRuntimeConfig()
+  return normalizeCloudBackendUrl(backendUrl, {
+    backendUrls: [runtimeConfig.wegentBackendUrl, runtimeConfig.apiBaseUrl],
+    socketBaseUrl: runtimeConfig.socketBaseUrl,
+    socketPath: runtimeConfig.socketPath,
+  })
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => {
     window.setTimeout(resolve, ms)
@@ -54,32 +64,50 @@ function authWindowClosedPromise(handle: CloudAuthorizationHandle | void): Promi
 function snapshotFromStored(): CloudConnectionSnapshot {
   const stored = readStoredCloudConnection()
   if (!stored) return DISCONNECTED_STATE
+  let normalizedConfig: CloudConnectionRuntimeConfig
+  try {
+    normalizedConfig = resolveCloudRuntimeConfig(stored.backendUrl)
+  } catch {
+    clearStoredCloudConnection()
+    return DISCONNECTED_STATE
+  }
+  const migrated = {
+    ...stored,
+    ...normalizedConfig,
+  }
+  if (
+    migrated.apiBaseUrl !== stored.apiBaseUrl ||
+    migrated.socketBaseUrl !== stored.socketBaseUrl ||
+    migrated.socketPath !== stored.socketPath
+  ) {
+    saveStoredCloudConnection(migrated)
+  }
 
-  if (isCloudTokenExpired(stored.tokenExpiresAt)) {
+  if (isCloudTokenExpired(migrated.tokenExpiresAt)) {
     return {
       status: 'expired',
-      backendUrl: stored.backendUrl,
-      apiBaseUrl: stored.apiBaseUrl,
-      socketBaseUrl: stored.socketBaseUrl,
-      socketPath: stored.socketPath,
+      backendUrl: migrated.backendUrl,
+      apiBaseUrl: migrated.apiBaseUrl,
+      socketBaseUrl: migrated.socketBaseUrl,
+      socketPath: migrated.socketPath,
       token: null,
-      tokenExpiresAt: stored.tokenExpiresAt,
-      user: stored.user,
-      connectedAt: stored.connectedAt,
+      tokenExpiresAt: migrated.tokenExpiresAt,
+      user: migrated.user,
+      connectedAt: migrated.connectedAt,
       error: 'Cloud login has expired',
     }
   }
 
   return {
     status: 'connected',
-    backendUrl: stored.backendUrl,
-    apiBaseUrl: stored.apiBaseUrl,
-    socketBaseUrl: stored.socketBaseUrl,
-    socketPath: stored.socketPath,
-    token: stored.token,
-    tokenExpiresAt: stored.tokenExpiresAt,
-    user: stored.user,
-    connectedAt: stored.connectedAt,
+    backendUrl: migrated.backendUrl,
+    apiBaseUrl: migrated.apiBaseUrl,
+    socketBaseUrl: migrated.socketBaseUrl,
+    socketPath: migrated.socketPath,
+    token: migrated.token,
+    tokenExpiresAt: migrated.tokenExpiresAt,
+    user: migrated.user,
+    connectedAt: migrated.connectedAt,
     error: null,
   }
 }
@@ -240,7 +268,7 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
   const connectWithAuthorization = useCallback(
     async (backendUrl: string, openAuthorizationUrl?: OpenCloudAuthorizationUrl): Promise<User> => {
-      const config = normalizeCloudBackendUrl(backendUrl)
+      const config = resolveCloudRuntimeConfig(backendUrl)
       setSnapshot(current => ({
         ...current,
         ...config,

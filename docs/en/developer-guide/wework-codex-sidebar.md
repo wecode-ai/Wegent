@@ -18,6 +18,8 @@ The Wework desktop app follows the Codex App sidebar state model. Project and li
 
 A project UI identity combines the state-owning device with the project key. Identical paths on different devices therefore remain isolated.
 
+A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
+
 ## Project model
 
 Executor merges three Codex project representations:

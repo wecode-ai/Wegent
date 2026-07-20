@@ -210,6 +210,12 @@ export function GeneralSettingsPage() {
             description: t('workbench.general_settings_show_main_window_on_launch_description'),
           })}
           {renderSwitchRow({
+            preferenceKey: 'systemDragEnabled',
+            testId: 'general-system-drag-toggle',
+            label: t('workbench.general_settings_system_drag'),
+            description: t('workbench.general_settings_system_drag_description'),
+          })}
+          {renderSwitchRow({
             preferenceKey: 'experimentalFeaturesEnabled',
             testId: 'general-experimental-features-toggle',
             label: t('workbench.general_settings_experimental_features'),

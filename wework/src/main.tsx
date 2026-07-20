@@ -12,15 +12,19 @@ import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
 import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 
-installDebugPanelLogCapture()
-installAppLogging()
-installWeworkAutomationBridge()
-installDesktopExtensions()
-installExternalLinkHandler()
-installPageZoomGuard()
-installDeveloperCommandMenu()
-const performanceDiagnostics = installPerformanceDiagnostics()
+const isSystemDragPanel = isTauriRuntime() && window.location.pathname === '/system-drag'
+if (!isSystemDragPanel) {
+  installDebugPanelLogCapture()
+  installAppLogging()
+  installWeworkAutomationBridge()
+  installDesktopExtensions()
+  installExternalLinkHandler()
+  installPageZoomGuard()
+  installDeveloperCommandMenu()
+}
+const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

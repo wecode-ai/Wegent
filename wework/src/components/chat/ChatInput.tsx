@@ -91,6 +91,7 @@ export interface ChatInputProps {
   onChange: (value: string) => void
   onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
   disabled: boolean
+  submitDisabled?: boolean
   error?: string | null
   disabledReason?: string
   placeholder?: string
@@ -197,6 +198,7 @@ export function ChatInput({
   onChange,
   onSubmit,
   disabled,
+  submitDisabled = false,
   error,
   disabledReason,
   placeholder,
@@ -319,6 +321,7 @@ export function ChatInput({
     onChange,
     onSubmit: handleSubmit,
     disabled,
+    submitDisabled,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     onOpenSkillFile,

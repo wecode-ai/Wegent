@@ -29,7 +29,7 @@ use crate::{
         CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
-    logging::{log_executor_event, wework_debug_log},
+    logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };
@@ -562,15 +562,7 @@ impl RuntimeWorkRpcHandler {
 
                 let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
                 match result {
-                    Ok(Err(error)) => {
-                        wework_debug_log(&format!("background worktree cleanup failed: {error}"));
-                    }
-                    Err(error) => {
-                        wework_debug_log(&format!(
-                            "background worktree cleanup task failed: {error}"
-                        ));
-                    }
-                    Ok(Ok(_)) => {}
+                    Ok(Err(_)) | Err(_) | Ok(Ok(_)) => {}
                 }
                 return;
             }
@@ -1736,7 +1728,6 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
-        Self::log_execution_request_summary("runtime.tasks.create", &request);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
@@ -1787,39 +1778,6 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
-    fn log_execution_request_summary(method: &str, request: &ExecutionRequest) {
-        let model_config = &request.model_config;
-        let base_url = model_config
-            .get("base_url")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let api_key_present = model_config
-            .get("api_key")
-            .and_then(Value::as_str)
-            .map(|value| !value.is_empty())
-            .unwrap_or(false);
-        let use_user_config = model_config
-            .get("runtime_config")
-            .and_then(Value::as_object)
-            .and_then(|config| config.get("codex"))
-            .and_then(Value::as_object)
-            .and_then(|codex| codex.get("use_user_config"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let model_id = model_config
-            .get("model_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let keys: Vec<String> = model_config
-            .as_object()
-            .map(|object| object.keys().cloned().collect())
-            .unwrap_or_default();
-        wework_debug_log(&format!(
-            "{method} task_id={} model_id={} base_url={} api_key_present={} use_user_config={} model_config_keys={:?}",
-            request.task_id, model_id, base_url, api_key_present, use_user_config, keys
-        ));
-    }
-
     async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1862,7 +1820,6 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
-        Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -3161,7 +3118,6 @@ impl RuntimeWorkRpcHandler {
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
-        let mut discovered_codex_task_signatures = HashSet::new();
 
         let threads = self.codex_threads(archived).await;
         let stage_started_at = Instant::now();
@@ -3205,9 +3161,6 @@ impl RuntimeWorkRpcHandler {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
                 discovered_local_task_ids.insert(link.local_task_id.clone());
-                if let Some(signature) = codex_task_signature(&link) {
-                    discovered_codex_task_signatures.insert(signature);
-                }
                 links.push(link);
             } else {
                 log_slow_runtime_collect_thread_missing(
@@ -3252,9 +3205,6 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
             {
-                continue;
-            }
-            if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
             if !self.is_active_local_task(&link.local_task_id)
@@ -3930,16 +3880,6 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn is_unmapped_pending_codex_shadow(
-    link: &RuntimeTaskLink,
-    discovered_codex_task_signatures: &HashSet<String>,
-) -> bool {
-    is_unmapped_pending_codex_task(link)
-        && codex_task_signature(link)
-            .as_ref()
-            .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
-}
-
 fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
     if !is_inactive_running_codex_task(link) {
         return false;
@@ -3959,28 +3899,6 @@ fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
         status.as_str(),
         "running" | "inprogress" | "busy" | "pending"
     )
-}
-
-fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
-    if !is_inactive_running_codex_task(link) {
-        return false;
-    }
-    link.thread_id.is_none()
-}
-
-fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
-    if !is_codex_runtime(&link.runtime) {
-        return None;
-    }
-    let title = link.title.trim().to_ascii_lowercase();
-    if title.is_empty() || link.workspace_path.trim().is_empty() {
-        return None;
-    }
-    Some(format!(
-        "{}\0{}",
-        workspace_group_path(&link.workspace_path),
-        title
-    ))
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
