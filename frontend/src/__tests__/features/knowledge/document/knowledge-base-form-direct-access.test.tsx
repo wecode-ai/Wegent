@@ -16,7 +16,7 @@ jest.mock('@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled', (
 }))
 
 describe('KnowledgeBaseForm direct access section', () => {
-  it('places direct access after basic settings and exposes positive choices', () => {
+  it('places direct access immediately before advanced settings', () => {
     const onDirectAccessRequirementChange = jest.fn()
 
     render(
@@ -48,12 +48,16 @@ describe('KnowledgeBaseForm direct access section', () => {
     const basicSection = screen.getByTestId('knowledge-basic-section-trigger')
     const accessSection = screen.getByTestId('knowledge-access-section-trigger')
     const summarySection = screen.getByTestId('knowledge-summary-section-trigger')
+    const advancedSection = screen.getByTestId('knowledge-advanced-section-trigger')
 
     expect(
-      basicSection.compareDocumentPosition(accessSection) & Node.DOCUMENT_POSITION_FOLLOWING
+      basicSection.compareDocumentPosition(summarySection) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      accessSection.compareDocumentPosition(summarySection) & Node.DOCUMENT_POSITION_FOLLOWING
+      summarySection.compareDocumentPosition(accessSection) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      accessSection.compareDocumentPosition(advancedSection) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
 
     expect(screen.getByTestId('knowledge-base-direct-access-edit')).toBeChecked()
