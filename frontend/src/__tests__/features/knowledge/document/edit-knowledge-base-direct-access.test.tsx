@@ -113,4 +113,36 @@ describe('EditKnowledgeBaseDialog direct access requirement', () => {
       )
     })
   })
+
+  it('blocks saving partial data and retries the full detail load', async () => {
+    const onSubmit = jest.fn(async (_data: KnowledgeBaseUpdate) => {})
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
+    jest.mocked(getKnowledgeBase).mockRejectedValue(new Error('network error'))
+
+    render(
+      <EditKnowledgeBaseDialog
+        open
+        onOpenChange={jest.fn()}
+        knowledgeBase={{ ...knowledgeBase, direct_access_requirement: undefined }}
+        onSubmit={onSubmit}
+      />
+    )
+
+    expect(await screen.findByTestId('edit-knowledge-base-load-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-base-form')).not.toBeInTheDocument()
+
+    const saveButton = screen.getByRole('button', { name: 'common:actions.save' })
+    expect(saveButton).toBeDisabled()
+    fireEvent.click(saveButton)
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    jest.mocked(getKnowledgeBase).mockResolvedValueOnce(knowledgeBase)
+    fireEvent.click(screen.getByTestId('edit-knowledge-base-retry'))
+
+    expect(await screen.findByTestId('knowledge-base-form')).toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-base-direct-access-edit')).toBeChecked()
+    expect(saveButton).toBeEnabled()
+
+    consoleError.mockRestore()
+  })
 })
