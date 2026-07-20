@@ -8,11 +8,11 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { loadDesktopScenario } from './scenario-loader.mjs'
+import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
 
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
-const PROCESS_STOP_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
@@ -172,26 +172,6 @@ async function resolveExecutable(configuredPath, fallbackCommand, description) {
   const resolved = commandOutput('which', [fallbackCommand])
   assert.equal(await isExecutable(resolved), true, `${description} is not executable: ${resolved}`)
   return resolved
-}
-
-function waitForProcessExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-  return withTimeout(
-    new Promise(resolvePromise => child.once('exit', resolvePromise)),
-    timeoutMs,
-    `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
-  )
-}
-
-async function stopProcess(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
-  try {
-    await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  } catch {
-    child.kill('SIGKILL')
-    await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  }
 }
 
 async function appendProcessOutput(stream, destination) {
@@ -898,12 +878,15 @@ class RealCloudEnvironment {
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+      DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
     this.remoteExecutor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
       env: remoteEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     })
     await Promise.all([
       appendProcessOutput(this.remoteExecutor.stdout, this.remoteExecutorLogPath),
@@ -987,7 +970,7 @@ class RealCloudEnvironment {
         `Cloud E2E cleanup could not cancel running tasks: ${String(error)}\n`
       )
     }
-    await stopProcess(this.remoteExecutor)
+    await stopProcessGroup(this.remoteExecutor)
     await stopProcess(this.backend)
     await stopProcess(this.redis)
   }
@@ -1970,6 +1953,7 @@ async function main() {
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     })
     await Promise.all([
       appendProcessOutput(app.stdout, appLogPath),
@@ -2611,7 +2595,7 @@ async function main() {
     throw error
   } finally {
     await cloudEnvironment?.stop()
-    await stopProcess(app)
+    await stopProcessGroup(app)
     await control.close()
     if (appBundlePath) {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
@@ -2619,7 +2603,10 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? (error.stack ?? error.message) : error)
-  process.exitCode = 1
-})
+main().then(
+  () => process.stdout.write('', () => process.exit(0)),
+  error => {
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error)
+    process.stderr.write(`${message}\n`, () => process.exit(1))
+  }
+)
