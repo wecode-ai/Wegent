@@ -14,7 +14,7 @@ mod chat;
 mod history;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::{DefaultHasher, Hash, Hasher},
     pin::Pin,
     sync::{Mutex, OnceLock},
@@ -31,7 +31,7 @@ use serde_json::{json, Map, Value};
 
 use crate::logging::log_executor_event;
 
-use super::HttpError;
+use super::{codex_responses_proxy_transform, HttpError};
 
 pub(crate) const ROUTE: &str = "/v1/codex-responses-proxy/responses";
 
@@ -170,7 +170,7 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         .request_url
         .clone()
         .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
-    let (request_body, conversion) =
+    let (request_body, conversion, expanded_browser_tools) =
         prepare_request_with_history(&upstream.api_format, &body, history.as_ref()).await?;
     log_executor_event(
         "local model proxy request started",
@@ -178,6 +178,10 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
             ("api_format", upstream.api_format.clone()),
             ("upstream", safe_url(&request_url)),
             ("body_bytes", request_body.len().to_string()),
+            (
+                "expanded_browser_tools",
+                expanded_browser_tools.len().to_string(),
+            ),
         ],
     );
 
@@ -319,6 +323,7 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         }
         None => Response::new(Body::from_stream(normalize_responses_stream(
             response_stream,
+            expanded_browser_tools,
         ))),
     };
     *response.status_mut() = status;
@@ -380,9 +385,9 @@ async fn prepare_request_with_history(
     api_format: &str,
     body: &[u8],
     history: &history::CodexToolHistory,
-) -> Result<(Vec<u8>, Option<Conversion>), HttpError> {
+) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     if api_format == "openai-responses" {
-        return Ok((body.to_vec(), None));
+        return prepare_request(api_format, body);
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -405,12 +410,26 @@ async fn prepare_request_with_history(
     prepare_request(api_format, &enriched)
 }
 
+#[allow(clippy::type_complexity)]
 fn prepare_request(
     api_format: &str,
     body: &[u8],
-) -> Result<(Vec<u8>, Option<Conversion>), HttpError> {
+) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     if api_format == "openai-responses" {
-        return Ok((body.to_vec(), None));
+        let mut request_value =
+            serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+                status: StatusCode::BAD_REQUEST,
+                detail: format!("Invalid Codex Responses request: {error}"),
+            })?;
+        let expanded_browser_tools =
+            codex_responses_proxy_transform::expand_wework_browser_namespace_tools(
+                &mut request_value,
+            );
+        let body = serde_json::to_vec(&request_value).map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("Failed to serialize local model request: {error}"),
+        })?;
+        return Ok((body, None, expanded_browser_tools));
     }
     let responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -421,7 +440,7 @@ fn prepare_request(
             .map(|(body, context)| (body, Conversion::Chat(context))),
         "anthropic-messages" => anthropic::responses_to_anthropic(&responses_body)
             .map(|(body, context)| (body, Conversion::Anthropic(context))),
-        _ => return Ok((body.to_vec(), None)),
+        _ => return Ok((body.to_vec(), None, HashSet::new())),
     }
     .map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
@@ -431,7 +450,7 @@ fn prepare_request(
         status: StatusCode::INTERNAL_SERVER_ERROR,
         detail: format!("Failed to serialize local model request: {error}"),
     })?;
-    Ok((body, Some(context)))
+    Ok((body, Some(context), HashSet::new()))
 }
 
 #[derive(Debug)]
@@ -489,9 +508,13 @@ struct ResponsesStreamState<S> {
     output: VecDeque<Result<Bytes, std::io::Error>>,
     source_done: bool,
     terminal_seen: bool,
+    expanded_browser_tools: HashSet<String>,
 }
 
-fn normalize_responses_stream<S, E>(stream: S) -> impl Stream<Item = Result<Bytes, std::io::Error>>
+fn normalize_responses_stream<S, E>(
+    stream: S,
+    expanded_browser_tools: HashSet<String>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + 'static,
     E: ToString,
@@ -502,6 +525,7 @@ where
         output: VecDeque::new(),
         source_done: false,
         terminal_seen: false,
+        expanded_browser_tools,
     };
     futures_util::stream::unfold(state, |mut state| async move {
         loop {
@@ -525,10 +549,16 @@ where
                     state.pending.push_str(&String::from_utf8_lossy(&bytes));
                     while let Some(event) = take_sse_block(&mut state.pending) {
                         state.terminal_seen |= is_responses_terminal_event(&event);
-                        state.output.push_back(Ok(Bytes::from(format!(
-                            "{}\n\n",
+                        let normalized = if state.expanded_browser_tools.is_empty() {
                             normalize_responses_event(&event)
-                        ))));
+                        } else {
+                            let rewritten =
+                                rewrite_responses_event(&event, &state.expanded_browser_tools);
+                            normalize_responses_event(&rewritten)
+                        };
+                        state
+                            .output
+                            .push_back(Ok(Bytes::from(format!("{}\n\n", normalized))));
                     }
                 }
                 Some(Err(error)) => {
@@ -633,6 +663,45 @@ fn normalize_responses_event(event: &str) -> String {
         .join("\n")
 }
 
+fn rewrite_responses_event(event: &str, expanded: &HashSet<String>) -> String {
+    if expanded.is_empty() {
+        return event.to_owned();
+    }
+    let mut changed = false;
+    let lines = event
+        .lines()
+        .map(|line| {
+            let Some(data) = line.strip_prefix("data:") else {
+                return line.to_owned();
+            };
+            let data = data.trim_start();
+            if data == "[DONE]" {
+                return line.to_owned();
+            }
+            let Ok(mut value) = serde_json::from_str::<Value>(data) else {
+                return line.to_owned();
+            };
+            let original = value.clone();
+            codex_responses_proxy_transform::rewrite_wework_browser_function_calls(
+                &mut value, expanded,
+            );
+            if value == original {
+                return line.to_owned();
+            }
+            changed = true;
+            format!(
+                "data: {}",
+                serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
+            )
+        })
+        .collect::<Vec<_>>();
+    if changed {
+        lines.join("\n")
+    } else {
+        event.to_owned()
+    }
+}
+
 fn normalize_completed_usage(value: &mut Value) {
     if value.get("type").and_then(Value::as_str) != Some("response.completed") {
         return;
@@ -707,7 +776,7 @@ mod tests {
         S: Stream<Item = Result<Bytes, E>> + Send + 'static,
         E: ToString,
     {
-        normalize_responses_stream(stream)
+        normalize_responses_stream(stream, HashSet::new())
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -1086,5 +1155,67 @@ mod tests {
             "WEWORK_MODEL_TOOL_OK"
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains("complete"));
+    }
+
+    #[test]
+    fn rewrite_responses_event_adds_namespace_to_browser_calls() {
+        let event = concat!(
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call-1\",\"name\":\"browser_navigate\",\"arguments\":\"{\\\"url\\\":\\\"https://example.com\\\"}\"}}"
+        );
+        let expanded = HashSet::from(["browser_navigate".to_owned()]);
+
+        let rewritten = rewrite_responses_event(event, &expanded);
+        let data = rewritten
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("rewritten event should contain data");
+        let value = serde_json::from_str::<Value>(data).unwrap();
+
+        assert_eq!(value["item"]["namespace"], "wework_browser");
+        assert_eq!(value["item"]["name"], "browser_navigate");
+    }
+
+    #[test]
+    fn rewrite_responses_event_leaves_non_browser_calls_unchanged() {
+        let event =
+            "data: {\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{}\"}";
+        let expanded = HashSet::from(["browser_navigate".to_owned()]);
+
+        assert_eq!(rewrite_responses_event(event, &expanded), event);
+    }
+
+    #[test]
+    fn rewrite_responses_event_combines_with_completed_usage_normalization() {
+        let event = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"output\":[{\"type\":\"function_call\",\"name\":\"browser_snapshot\",\"arguments\":\"{}\"}],\"usage\":{\"input_tokens\":1,\"input_tokens_details\":{},\"output_tokens\":2,\"output_tokens_details\":{},\"total_tokens\":3}}}"
+        );
+        let expanded = HashSet::from(["browser_snapshot".to_owned()]);
+
+        let normalized = if expanded.is_empty() {
+            normalize_responses_event(event)
+        } else {
+            let rewritten = rewrite_responses_event(event, &expanded);
+            normalize_responses_event(&rewritten)
+        };
+        let data = normalized
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("normalized event should contain data");
+        let value = serde_json::from_str::<Value>(data).unwrap();
+
+        assert_eq!(
+            value["response"]["output"][0]["namespace"],
+            "wework_browser"
+        );
+        assert_eq!(
+            value["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            json!(0)
+        );
+        assert_eq!(
+            value["response"]["usage"]["output_tokens_details"]["reasoning_tokens"],
+            json!(0)
+        );
     }
 }

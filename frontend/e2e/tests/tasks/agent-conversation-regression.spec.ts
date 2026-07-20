@@ -763,18 +763,25 @@ test.describe('Agent conversation regression', () => {
     await expect
       .poll(
         async () => {
-          const response = await request.get(`${API_BASE_URL}/api/tasks/${taskId}/runtime-check`, {
-            headers: authHeaders(),
-          })
-          if (response.status() !== 200) {
-            return `HTTP_${response.status()}`
-          }
+          try {
+            const response = await request.get(
+              `${API_BASE_URL}/api/tasks/${taskId}/runtime-check`,
+              {
+                headers: authHeaders(),
+              }
+            )
+            if (response.status() !== 200) {
+              return `HTTP_${response.status()}`
+            }
 
-          const runtime = (await response.json()) as RuntimeCheckResponse
-          const status = String(runtime.task_status || '').toUpperCase()
-          return ['COMPLETED', 'COMPLETED_SILENT', 'FAILED', 'CANCELLED'].includes(status)
-            ? status
-            : 'RUNNING'
+            const runtime = (await response.json()) as RuntimeCheckResponse
+            const status = String(runtime.task_status || '').toUpperCase()
+            return ['COMPLETED', 'COMPLETED_SILENT', 'FAILED', 'CANCELLED'].includes(status)
+              ? status
+              : 'RUNNING'
+          } catch (error) {
+            return `NETWORK_ERROR_${error instanceof Error ? error.message : String(error)}`
+          }
         },
         {
           message: `Task ${taskId} should reach a terminal status`,

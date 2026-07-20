@@ -50,6 +50,10 @@ Codex 的网页搜索在 `item/started` 时可能还没有查询动作，在 `it
 
 Wework 展示层兼容 Responses API 的 snake_case 动作名（如 `open_page`、`find_in_page`）和 Codex app-server 的 camelCase 动作名（如 `openPage`、`findInPage`）。动作名差异只能在工具详情解析边界处理，不能通过 UI 占位内容或状态兜底掩盖缺失的完成事件。
 
+### 工具活动预览滚动
+
+折叠的工具活动预览最多显示三行，并在用户没有展开工具详情时跟随最新活动。自动滚动必须同时响应工具行数量变化和底部“正在思考”行的出现或消失；工具完成后即使行数不变，“正在思考”也必须保持在内层滚动区域的可见范围内。展开详情时预览解除高度限制，不能用强制滚动覆盖用户阅读位置。
+
 ## Goal 与任务执行状态
 
 Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App Server 明确返回当前任务 `running: false` 时，仍为 `active` 的 goal 在 UI 中必须派生为 `paused`，并停止累计显示的耗时。这避免在重新打开已中断任务时，goal 继续显示“进行中”并计时。
