@@ -8363,6 +8363,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         Promise.resolve(runtimeRunning ? runningRuntimeWork : idleRuntimeWork)
       )
     const cancelRuntimeTask = vi.fn().mockImplementation(() => {
+      expect(setRuntimeGoal).toHaveBeenCalledWith({
+        address: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        status: 'paused',
+      })
       runtimeRunning = false
       return Promise.resolve({
         accepted: true,

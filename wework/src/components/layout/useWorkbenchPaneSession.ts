@@ -2222,16 +2222,17 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return
 
+    if (goal?.status === 'active') {
+      const paused = await updateCurrentGoalStatus('paused')
+      if (!paused) return
+    }
+
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) return
 
     setQueuedMessagesPaused(queuedMessages.some(message => message.status === 'queued'))
     setSendPhase('idle')
     void refreshWorkLists()
-
-    if (goal?.status === 'active') {
-      await updateCurrentGoalStatus('paused')
-    }
 
     if (!activeAssistantMessage) return
 
