@@ -614,6 +614,8 @@ semantics for all three.
 - Keep useful content visible during refresh, reconnect, and long-running work.
 - Prevent duplicate submissions while pending.
 - Preserve unsent input and valid form values after recoverable failure.
+- Scope buffered composer drafts to their conversation. Reusing a composer for
+  another task or a new chat must never carry over hidden draft state.
 - Never convert a failed cloud or local-runtime action into apparent success.
 - Use optimistic updates only when failure is clearly reversible.
 - Put status next to the affected object whenever possible; use a toast for a
