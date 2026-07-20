@@ -16,59 +16,14 @@ import {
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
-import {
-  closeEmbeddedBrowser,
-  evalEmbeddedBrowserJson,
-  openEmbeddedBrowser,
-  relabelEmbeddedBrowser,
-  setEmbeddedBrowserBounds,
-} from '@/lib/embedded-browser'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
+import { desktopControlExtension } from '@extensions/desktop-control'
+import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
-
-type DesktopControlAction =
-  | 'capture'
-  | 'click'
-  | 'deferredClick'
-  | 'clickWhenEnabled'
-  | 'closeEmbeddedBrowser'
-  | 'closeMainWindowToTray'
-  | 'dispatchLocalModelSettingsChanged'
-  | 'drag'
-  | 'dropFile'
-  | 'evalEmbeddedBrowserJson'
-  | 'fill'
-  | 'getText'
-  | 'getValue'
-  | 'hover'
-  | 'navigate'
-  | 'pointerMove'
-  | 'prepareEmbeddedBrowserRelabelRegression'
-  | 'snapshot'
-  | 'waitFor'
-  | 'press'
-  | 'selectText'
-  | 'scrollIntoView'
-
-interface DesktopControlCommand {
-  id: string
-  action: DesktopControlAction
-  selector: string
-  value?: string
-  target?: string
-  text?: string
-  timeoutMs?: number
-  enabled?: boolean
-  visible?: boolean
-  stableMs?: number
-  key?: string
-  filename?: string
-  mimeType?: string
-}
 
 interface DesktopControlResult {
   id: string
@@ -523,30 +478,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
-    case 'closeEmbeddedBrowser':
-      await closeEmbeddedBrowser(command.selector || undefined)
-      return ''
     case 'closeMainWindowToTray':
       return ''
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
-    case 'evalEmbeddedBrowserJson': {
-      const expression = command.value?.trim()
-      if (!expression) {
-        throw new Error('evalEmbeddedBrowserJson requires an expression')
-      }
-      const value = await evalEmbeddedBrowserJson(expression, command.selector || undefined)
-      return JSON.stringify(value)
-    }
-    case 'prepareEmbeddedBrowserRelabelRegression': {
-      const bounds = { x: 0, y: 0, width: 1, height: 1 }
-      const ownerLabel = 'workspace-browser-regression-owner'
-      await openEmbeddedBrowser('https://example.com/', bounds, 'workspace-browser')
-      await relabelEmbeddedBrowser('workspace-browser', ownerLabel)
-      await setEmbeddedBrowserBounds(bounds, false, ownerLabel)
-      return ''
-    }
     case 'drag':
       return dragDesktopControlElement(command)
     case 'dropFile':
@@ -629,6 +565,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
   }
+
+  const extensionResult = await desktopControlExtension.execute(command)
+  if (extensionResult.handled) return extensionResult.value
+  throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
