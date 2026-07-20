@@ -30,6 +30,7 @@ import { TaskPlanProgress } from './composer/TaskPlanProgress'
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 export interface ProjectChatControls {
+  scopeKey?: string
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null

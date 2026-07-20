@@ -18,32 +18,37 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   insertion,
   ...props
 }: BufferedChatInputProps) {
+  const scopeKey = props.projectChat?.scopeKey
   const [draftState, setDraftState] = useState(() => ({
+    scopeKey,
     sourceValue: value,
     draft: value,
   }))
-  const draft = draftState.sourceValue === value ? draftState.draft : value
+  const draft =
+    draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftState.draft : value
   const appliedInsertionIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!insertion || appliedInsertionIdRef.current === insertion.id) return
     appliedInsertionIdRef.current = insertion.id
     setDraftState(current => {
-      const currentDraft = current.sourceValue === value ? current.draft : value
+      const currentDraft =
+        current.scopeKey === scopeKey && current.sourceValue === value ? current.draft : value
       return {
+        scopeKey,
         sourceValue: value,
         draft: currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text,
       }
     })
-  }, [insertion, value])
+  }, [insertion, scopeKey, value])
   const setDraft = useCallback(
     (nextDraft: string) => {
-      setDraftState({ sourceValue: value, draft: nextDraft })
+      setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
       if (parseComposerMentions(nextDraft).length > 0) {
         onChange(nextDraft)
       }
     },
-    [onChange, value]
+    [onChange, scopeKey, value]
   )
 
   const handleSubmit = useCallback(
@@ -55,10 +60,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         void onSubmit(submittedDraft, options)
       }
       if (submittedDraft.trim()) {
-        setDraftState({ sourceValue: value, draft: '' })
+        setDraftState({ scopeKey, sourceValue: value, draft: '' })
       }
     },
-    [draft, onSubmit, value]
+    [draft, onSubmit, scopeKey, value]
   )
 
   return <ChatInput {...props} value={draft} onChange={setDraft} onSubmit={handleSubmit} />
