@@ -26,6 +26,12 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+Run only the cloud-project desktop E2E:
+
+```bash
+pnpm --filter wework e2e:desktop:cloud
+```
+
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
 
 ```bash
@@ -68,6 +74,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+
+The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
 ## Responses API Mock
 
@@ -139,6 +147,7 @@ Desktop task-flow E2E requires a Linux runner with a graphical session, for exam
 ```bash
 pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop
+xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
