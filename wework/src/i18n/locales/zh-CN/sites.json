@@ -5,7 +5,7 @@
   "create": "创建",
   "refresh": "刷新站点",
   "site_column": "站点",
-  "external_column": "外网发布",
+  "external_column": "网络访问",
   "publish": "发布到外网",
   "publishing": "发布中",
   "published": "已发布",

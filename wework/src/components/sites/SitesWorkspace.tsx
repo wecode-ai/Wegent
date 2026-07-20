@@ -595,7 +595,7 @@ export function SitesWorkspace({
         <div className="mt-8">
           <div className="hidden grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)] gap-8 border-b border-border px-0 pb-3 text-xs text-text-muted md:grid">
             <span>{t('site_column', '站点')}</span>
-            <span>{t('external_column', '外网发布')}</span>
+            <span>{t('external_column', '网络访问')}</span>
           </div>
 
           {loading && sites.length === 0 ? (

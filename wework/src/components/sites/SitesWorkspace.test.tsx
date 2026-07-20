@@ -68,7 +68,7 @@ describe('SitesWorkspace', () => {
     expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sites-retry-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('外网发布')).not.toBeInTheDocument()
+    expect(screen.queryByText('网络访问')).not.toBeInTheDocument()
   })
 
   test('loads a project snapshot and opens its accessible internal URL', async () => {
@@ -98,6 +98,13 @@ describe('SitesWorkspace', () => {
     )
     await userEvent.click(urlButton)
     expect(openExternalUrl).toHaveBeenCalledWith('http://sites.internal/product')
+  })
+
+  test('labels the project network column as network access', async () => {
+    render(<SitesWorkspace api={createApi()} onCreate={vi.fn()} />)
+
+    await screen.findByTestId('site-row-prj-site-1')
+    expect(screen.getByText('网络访问')).toBeInTheDocument()
   })
 
   test('retries a failed thumbnail when the same project receives a new snapshot', async () => {
@@ -362,6 +369,31 @@ describe('SitesWorkspace', () => {
 
     await userEvent.clear(input)
     expect(screen.getByTestId('site-rename-confirm-button')).toBeDisabled()
+  })
+
+  test('keeps the row menu trigger connected and restores focus after cancelling rename', async () => {
+    const api = createApi()
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    const menuTrigger = screen.getByTestId('site-more-prj-site-1')
+    menuTrigger.focus()
+    expect(menuTrigger).toHaveFocus()
+    await userEvent.click(menuTrigger)
+    await userEvent.click(screen.getByTestId('site-rename-menu-item-prj-site-1'))
+
+    expect(menuTrigger.isConnected).toBe(true)
+    expect(screen.getByTestId('site-more-prj-site-1')).toBe(menuTrigger)
+    expect(menuTrigger).toBeDisabled()
+    fireEvent.click(menuTrigger)
+    expect(screen.queryByTestId('site-more-prj-site-1-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('site-rename-input-cancel-button'))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(menuTrigger.isConnected).toBe(true)
+    expect(screen.getByTestId('site-more-prj-site-1')).toBe(menuTrigger)
+    expect(menuTrigger).toHaveFocus()
   })
 
   test('trims a rename and replaces the row with the complete project returned by the service', async () => {
