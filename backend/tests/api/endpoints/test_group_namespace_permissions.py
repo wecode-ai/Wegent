@@ -13,8 +13,8 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.group_member_helper import create_group_entity_member
-from app.services.share.external_entity_resolver import register_entity_resolver
 from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 

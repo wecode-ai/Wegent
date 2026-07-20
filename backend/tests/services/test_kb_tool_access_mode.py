@@ -11,12 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import get_restricted_analyst_groups
-from app.services.share.knowledge_share_service import (
+from app.services.knowledge.knowledge_access_policy import (
     get_knowledge_base_tool_access_mode_by_ids,
 )
 
 knowledge_share_module = importlib.import_module(
-    "app.services.share.knowledge_share_service"
+    "app.services.knowledge.knowledge_access_policy"
 )
 
 
