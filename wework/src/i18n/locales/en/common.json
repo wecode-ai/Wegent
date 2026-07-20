@@ -1166,6 +1166,8 @@
     "connection_device_version": "Version",
     "connection_device_status": "Status",
     "connection_device_actions": "Actions",
+    "connection_device_desktop": "Desktop",
+    "connection_device_desktop_open_failed": "Unable to open the cloud desktop in Wework. Try again.",
     "connection_resource_cpu": "CPU",
     "connection_resource_memory": "MEM",
     "connection_resource_disk": "Disk",

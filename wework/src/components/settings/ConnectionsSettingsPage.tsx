@@ -14,7 +14,6 @@ import {
   MessageSquareText,
   Loader2,
   LogOut,
-  Monitor,
   MoreHorizontal,
   Network,
   Package,
@@ -32,6 +31,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -46,7 +46,6 @@ import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import { buildVncPageUrl } from '@/lib/vnc'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
@@ -78,12 +77,15 @@ import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
 import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
+import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
   createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
+
+const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -270,33 +272,6 @@ function StatusPill({ status }: { status: DeviceInfo['status'] }) {
   )
 }
 
-function DeviceActionButton({
-  testId,
-  icon: Icon,
-  label,
-  onClick,
-  disabled,
-}: {
-  testId: string
-  icon: ComponentType<{ className?: string }>
-  label: string
-  onClick?: () => void
-  disabled?: boolean
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      <Icon className="h-3.5 w-3.5" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
 function DeviceIconActionButton({
   testId,
   icon: Icon,
@@ -354,34 +329,6 @@ function deviceDisplayName(device: DeviceInfo): string {
 
   if (name && !defaultNames.includes(name)) return name
   return device.client_ip?.trim() || name || device.device_id
-}
-
-function VncDesktopButton({ deviceId }: { deviceId: string }) {
-  const cloudConnection = useOptionalCloudConnection()
-  const [loading, setLoading] = useState(false)
-
-  const handleClick = useCallback(async () => {
-    if (loading) return
-    setLoading(true)
-    try {
-      const config = await createSettingsDeviceApi(cloudConnection).getVncConfig(deviceId)
-      await openExternalUrl(buildVncPageUrl(deviceId, config.sandbox_id))
-    } catch (e) {
-      console.error('Failed to open device desktop:', e)
-    } finally {
-      setLoading(false)
-    }
-  }, [cloudConnection, deviceId, loading])
-
-  return (
-    <DeviceActionButton
-      testId={`connection-vnc-button-${deviceId}`}
-      icon={Monitor}
-      label="桌面"
-      onClick={handleClick}
-      disabled={loading}
-    />
-  )
 }
 
 type ConfirmDeviceAction = 'restart' | 'delete'
@@ -599,7 +546,15 @@ function CloudDeviceConnectionInfoDialog({
   )
 }
 
-function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
+function DeviceCard({
+  device,
+  onChanged,
+  onCloudDesktopOpened,
+}: {
+  device: DeviceInfo
+  onChanged: () => void
+  onCloudDesktopOpened: () => void
+}) {
   const cloudConnection = useOptionalCloudConnection()
   const remoteTerminalClientFactory = useMemo(
     () =>
@@ -840,7 +795,13 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   onClick={() => handleStartCloudSession('code-server')}
                   disabled={!isOnline || sessionLoading === 'code-server'}
                 />
-                {canUseCloudSessions && <VncDesktopButton deviceId={device.device_id} />}
+                {canUseCloudSessions && cloudDesktopExtension.available && (
+                  <CloudDesktopDeviceAction
+                    deviceId={device.device_id}
+                    disabled={!isOnline}
+                    onOpened={onCloudDesktopOpened}
+                  />
+                )}
               </>
             )}
             {canUseCloudLifecycleActions && (
@@ -957,11 +918,13 @@ function DeviceSection({
   title,
   devices,
   onChanged,
+  onCloudDesktopOpened,
   icon: Icon,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
+  onCloudDesktopOpened: () => void
   icon: ComponentType<{ className?: string }>
 }) {
   return (
@@ -975,7 +938,12 @@ function DeviceSection({
       </div>
       <div className="space-y-3">
         {devices.map(device => (
-          <DeviceCard key={device.device_id} device={device} onChanged={onChanged} />
+          <DeviceCard
+            key={device.device_id}
+            device={device}
+            onChanged={onChanged}
+            onCloudDesktopOpened={onCloudDesktopOpened}
+          />
         ))}
       </div>
     </section>
@@ -1094,8 +1062,10 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
 
 function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
+  onCloudDesktopOpened,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
+  onCloudDesktopOpened: () => void
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1292,6 +1262,7 @@ function ConnectionsDeviceSettingsPage({
                       devices={cloudDevices}
                       icon={Cloud}
                       onChanged={fetchDevices}
+                      onCloudDesktopOpened={onCloudDesktopOpened}
                     />
                   )}
                   {remoteDevices.length > 0 && (
@@ -1300,6 +1271,7 @@ function ConnectionsDeviceSettingsPage({
                       devices={remoteDevices}
                       icon={Server}
                       onChanged={fetchDevices}
+                      onCloudDesktopOpened={onCloudDesktopOpened}
                     />
                   )}
                 </>
@@ -1496,6 +1468,7 @@ export function ConnectionsSettingsPage({
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+            onCloudDesktopOpened={onBack}
           />
         )}
       </main>

@@ -117,9 +117,3 @@ export interface MetricsHistoryResponse {
   memory: [number, number][]
   disk: [number, number][]
 }
-
-export interface VncConfigResponse {
-  wss_url: string
-  signature: string
-  sandbox_id: string
-}

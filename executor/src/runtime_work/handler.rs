@@ -3290,7 +3290,6 @@ impl RuntimeWorkRpcHandler {
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
-        let mut discovered_codex_task_signatures = HashSet::new();
 
         let threads = self.codex_threads(archived).await;
         let stage_started_at = Instant::now();
@@ -3334,9 +3333,6 @@ impl RuntimeWorkRpcHandler {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
                 discovered_local_task_ids.insert(link.local_task_id.clone());
-                if let Some(signature) = codex_task_signature(&link) {
-                    discovered_codex_task_signatures.insert(signature);
-                }
                 links.push(link);
             } else {
                 log_slow_runtime_collect_thread_missing(
@@ -3381,9 +3377,6 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
             {
-                continue;
-            }
-            if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
             if !self.is_active_local_task(&link.local_task_id)
@@ -4059,16 +4052,6 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn is_unmapped_pending_codex_shadow(
-    link: &RuntimeTaskLink,
-    discovered_codex_task_signatures: &HashSet<String>,
-) -> bool {
-    is_unmapped_pending_codex_task(link)
-        && codex_task_signature(link)
-            .as_ref()
-            .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
-}
-
 fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
     if !is_inactive_running_codex_task(link) {
         return false;
@@ -4088,28 +4071,6 @@ fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
         status.as_str(),
         "running" | "inprogress" | "busy" | "pending"
     )
-}
-
-fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
-    if !is_inactive_running_codex_task(link) {
-        return false;
-    }
-    link.thread_id.is_none()
-}
-
-fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
-    if !is_codex_runtime(&link.runtime) {
-        return None;
-    }
-    let title = link.title.trim().to_ascii_lowercase();
-    if title.is_empty() || link.workspace_path.trim().is_empty() {
-        return None;
-    }
-    Some(format!(
-        "{}\0{}",
-        workspace_group_path(&link.workspace_path),
-        title
-    ))
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {

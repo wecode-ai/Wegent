@@ -155,7 +155,7 @@ The generation API uses the current Backend environment to generate `WEGENT_BACK
 
 The default image is controlled by the Backend environment variable `REMOTE_DEVICE_DOCKER_IMAGE`; if unset, Wegent uses `ghcr.io/wecode-ai/wegent-device:latest`. If a deployment must use an internal registry, the deployer should set `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>` in the Backend runtime environment. Users do not need to enter an image address manually.
 
-By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at `DEVICE_PUBLIC_BASE_URL`, so that address must be reachable from the user's browser. Desktop VNC/VPN remains cloud-device-only.
+By default, the device image only starts `wegent-executor` and the code-server session gateway. Wework project terminals are relayed through the existing Socket.IO connection between Backend and Executor, so devices do not need a public address. IDE/code-server sessions for cloud and remote Docker devices use the session gateway at `DEVICE_PUBLIC_BASE_URL`, so that address must be reachable from the user's browser. Public Wework does not provide cloud desktop support; some product distributions may add it through the optional extension.
 
 - `POST /api/projects/{project_id}/terminal`: starts a writable PTY in the project path and returns a `transport=socketio` terminal session ID. The browser connects through Backend's `/terminal` Socket.IO namespace.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
@@ -285,7 +285,7 @@ Local devices do not support cloud connection capabilities in the project toolba
 | --------------------------- | -------------------- |
 | **Terminal**                | Not supported        |
 | **IDE/code-server**         | Not supported        |
-| **Desktop VNC/VPN**         | Not supported        |
+| **Cloud desktop**           | Not supported        |
 | **CPU/MEM/Disk monitoring** | Not supported        |
 
 When a project is bound to a local device, the workspace toolbar hides Terminal, IDE, and Desktop entries and shows a local-device capability notice. Choose a cloud device when you need those connection and monitoring capabilities.
@@ -314,7 +314,7 @@ The **Settings** → **Connections** page lists ClaudeCode devices that the curr
 
 Cloud devices display online status, executor version, CPU, memory, and disk usage. When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online. The Wework frontend can configure the scaling Wiki link in the resource note card with `VITE_CLOUD_DEVICE_SCALING_WIKI_URL`, guiding users to request a larger cloud device or clean workspace cache when CPU, MEM, or disk stays above 80%.
 
-Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, Desktop VNC/VPN, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
+Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, cloud desktop, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
 
 Online cloud and remote Docker devices can open interactive sessions directly:
 
