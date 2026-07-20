@@ -129,6 +129,28 @@ def get_user_knowledge_base_permission(
     return resolve_knowledge_base_permission(db, knowledge_base, user_id)
 
 
+def get_task_bound_knowledge_base_ids(
+    db: Session,
+    user_id: int,
+    *,
+    candidate_ids: list[int] | None = None,
+) -> frozenset[int]:
+    """Return KB IDs bound to active tasks accessible by the user."""
+    candidate_id_set = set(candidate_ids) if candidate_ids is not None else None
+    bound_ids: set[int] = set()
+    tasks = task_store.list_accessible_active_tasks_for_user(db, user_id=user_id)
+    for task in tasks:
+        task_json = task.json if isinstance(task.json, dict) else {}
+        refs = task_json.get("spec", {}).get("knowledgeBaseRefs", []) or []
+        for ref in refs:
+            knowledge_base_id = ref.get("id") if isinstance(ref, dict) else None
+            if not isinstance(knowledge_base_id, int):
+                continue
+            if candidate_id_set is None or knowledge_base_id in candidate_id_set:
+                bound_ids.add(knowledge_base_id)
+    return frozenset(bound_ids)
+
+
 def meets_direct_access_requirement(
     *,
     kb: Kind,
@@ -438,13 +460,11 @@ def _is_kb_bound_to_user_group_chat(
     kb_id: int,
     user_id: int,
 ) -> bool:
-    tasks = task_store.list_accessible_active_tasks_for_user(db, user_id=user_id)
-    for task in tasks:
-        task_json = task.json if isinstance(task.json, dict) else {}
-        refs = task_json.get("spec", {}).get("knowledgeBaseRefs", []) or []
-        if any(ref.get("id") == kb_id for ref in refs):
-            return True
-    return False
+    return kb_id in get_task_bound_knowledge_base_ids(
+        db,
+        user_id,
+        candidate_ids=[kb_id],
+    )
 
 
 def _resolve_source_type(member: ResourceMember) -> str:

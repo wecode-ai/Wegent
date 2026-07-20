@@ -30,6 +30,9 @@ from app.services.group_permission import (
     get_effective_roles_in_groups,
     get_user_groups,
 )
+from app.services.knowledge.knowledge_access_policy import (
+    get_task_bound_knowledge_base_ids,
+)
 
 if TYPE_CHECKING:
     from app.models.resource_member import ResourceMember as ResourceMemberModel
@@ -60,6 +63,7 @@ class DirectAccessPermissionContext:
     group_roles: dict[str, GroupRole]
     accessible_namespace_ids: frozenset[str]
     external_member_role_map: dict[int, tuple[str, ...]]
+    task_bound_kb_ids: frozenset[int]
     direct_members: tuple["ResourceMemberModel", ...] = ()
     entity_result: EntityAuthorizedKbsResult | None = None
 
@@ -86,6 +90,11 @@ def build_direct_access_query_context(
         group_roles=group_roles,
         accessible_namespace_ids=_get_accessible_namespace_ids(db, groups),
         external_member_role_map=collect_external_entity_member_roles(
+            db,
+            user_id,
+            candidate_ids=candidate_ids,
+        ),
+        task_bound_kb_ids=get_task_bound_knowledge_base_ids(
             db,
             user_id,
             candidate_ids=candidate_ids,
@@ -138,6 +147,11 @@ def build_direct_access_permission_context(
             kb_id: tuple(roles)
             for kb_id, roles in entity_result.member_role_map.items()
         },
+        task_bound_kb_ids=get_task_bound_knowledge_base_ids(
+            db,
+            user_id,
+            candidate_ids=candidate_ids,
+        ),
         direct_members=tuple(direct_member_query.all()),
         entity_result=entity_result,
     )
@@ -592,6 +606,9 @@ def _build_personal_query(
     shared_access = _shared_access_condition(db, context)
     if shared_access is not None:
         conditions.append(shared_access)
+    task_bound_access = _task_bound_access_condition(context)
+    if task_bound_access is not None:
+        conditions.append(task_bound_access)
     return base_query.filter(or_(*conditions))
 
 
@@ -609,7 +626,19 @@ def _build_all_query(
     shared_access = _shared_access_condition(db, context)
     if shared_access is not None:
         conditions.append(shared_access)
+    task_bound_access = _task_bound_access_condition(context)
+    if task_bound_access is not None:
+        conditions.append(task_bound_access)
     return base_query.filter(or_(*conditions))
+
+
+def _task_bound_access_condition(context: DirectAccessPermissionContext):
+    if not context.task_bound_kb_ids:
+        return None
+    return and_(
+        Kind.namespace == "default",
+        Kind.id.in_(context.task_bound_kb_ids),
+    )
 
 
 def _shared_access_condition(

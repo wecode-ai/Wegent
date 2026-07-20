@@ -62,6 +62,7 @@ from app.services.knowledge.knowledge_access_policy import (
     can_directly_access_knowledge_base as evaluate_direct_knowledge_base_access,
 )
 from app.services.knowledge.knowledge_access_policy import (
+    get_task_bound_knowledge_base_ids,
     get_user_knowledge_base_permission,
     meets_direct_access_requirement,
 )
@@ -442,7 +443,7 @@ class KnowledgeService:
             shared_kb_ids = list(set(shared_kb_ids) | entity_kb_ids)
 
             # Get knowledge bases bound to group chats where user is a member
-            bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+            bound_kb_ids = get_task_bound_knowledge_base_ids(db, user_id)
 
             # Single query to get personal, shared, and bound knowledge bases
             # Personal: user_id matches and namespace is "default"
@@ -455,7 +456,11 @@ class KnowledgeService:
                     Kind.is_active == True,
                     ((Kind.user_id == user_id) & (Kind.namespace == "default"))
                     | (Kind.id.in_(shared_kb_ids) if shared_kb_ids else False)
-                    | (Kind.id.in_(bound_kb_ids) if bound_kb_ids else False),
+                    | (
+                        (Kind.namespace == "default") & Kind.id.in_(bound_kb_ids)
+                        if bound_kb_ids
+                        else False
+                    ),
                 )
                 .all()
             )
@@ -556,7 +561,7 @@ class KnowledgeService:
             org_namespace_names = [n[0] for n in org_namespaces]
 
             # Get knowledge bases bound to group chats where user is a member
-            bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+            bound_kb_ids = get_task_bound_knowledge_base_ids(db, user_id)
 
             # Single query to get personal, team, organization, shared, and bound knowledge bases
             # Personal: user_id matches and namespace is "default"
@@ -581,7 +586,9 @@ class KnowledgeService:
                 conditions.append(Kind.id.in_(shared_kb_ids))
 
             if bound_kb_ids:
-                conditions.append(Kind.id.in_(bound_kb_ids))
+                conditions.append(
+                    (Kind.namespace == "default") & Kind.id.in_(bound_kb_ids)
+                )
 
             if conditions:
                 from sqlalchemy import or_
@@ -1961,7 +1968,7 @@ class KnowledgeService:
 
         # Get personal knowledge bases that are bound to group chats where user is a member
         # These are shared via group chat binding, not by explicit sharing
-        bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+        bound_kb_ids = get_task_bound_knowledge_base_ids(db, user_id)
         if bound_kb_ids:
             bound_kbs = (
                 db.query(Kind)
@@ -2698,7 +2705,36 @@ class KnowledgeService:
                 .all()
             }
 
-        personal_shared = [kb for kb in shared_kbs if kb.namespace == "default"]
+        task_bound_kbs: list[Kind] = []
+        if permission_context.task_bound_kb_ids:
+            task_bound_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Kind.namespace == "default",
+                    Kind.user_id != user_id,
+                    Kind.id.in_(permission_context.task_bound_kb_ids),
+                )
+                .order_by(Kind.updated_at.desc())
+                .all()
+            )
+            task_bound_kbs = filter_directly_accessible_knowledge_bases(
+                db,
+                task_bound_kbs,
+                user_id,
+                permission_context,
+            )
+            for kb in task_bound_kbs:
+                shared_kb_roles.setdefault(kb.id, BaseRole.Reporter.value)
+
+        personal_shared_by_id = {
+            kb.id: kb for kb in shared_kbs if kb.namespace == "default"
+        }
+        personal_shared_by_id.update(
+            (kb.id, kb) for kb in task_bound_kbs if kb.id not in personal_shared_by_id
+        )
+        personal_shared = list(personal_shared_by_id.values())
         shared_group_kbs = [
             kb
             for kb in shared_kbs
@@ -3041,22 +3077,6 @@ class KnowledgeService:
             user_id=user_id,
             document_owner_id=document_owner_id,
         )
-
-    @staticmethod
-    def _get_bound_kb_ids_for_user(db: Session, user_id: int) -> list[int]:
-        """Get IDs of knowledge bases bound to group chats where user is a member.
-
-        This method finds all personal knowledge bases that have been bound to
-        group chats where the specified user is a member.
-
-        Args:
-            db: Database session
-            user_id: User ID
-
-        Returns:
-            List of knowledge base IDs that are bound to user's group chats
-        """
-        return []
 
     # ============== Batch Document Operations ==============
 

@@ -14,6 +14,7 @@ from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
@@ -322,6 +323,84 @@ def test_single_and_paginated_direct_access_policies_match(
 
     assert single_access is expected_access
     assert (knowledge_base_id in {kb.id for kb in page}) is expected_access
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("requirement", "expected_direct_access"),
+    [("read", True), ("edit", False)],
+)
+def test_task_binding_access_matches_single_and_batch_policies(
+    test_db: Session,
+    requirement: str,
+    expected_direct_access: bool,
+) -> None:
+    owner = _create_user(test_db, f"task-binding-owner-{requirement}")
+    member = _create_user(test_db, f"task-binding-member-{requirement}")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name=f"task-binding-kb-{requirement}",
+            direct_access_requirement=requirement,
+        ),
+    )
+    test_db.add(
+        TaskResource(
+            user_id=member.id,
+            kind="Task",
+            name=f"task-binding-chat-{requirement}",
+            namespace="default",
+            json={
+                "kind": "Task",
+                "spec": {
+                    "is_group_chat": True,
+                    "knowledgeBaseRefs": [{"id": knowledge_base_id}],
+                },
+            },
+            is_active=TaskResource.STATE_ACTIVE,
+            is_group_chat=True,
+        )
+    )
+    test_db.commit()
+
+    _, single_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        member.id,
+    )
+    direct_ids = get_directly_accessible_knowledge_base_ids(
+        test_db,
+        user_id=member.id,
+        candidate_ids=[knowledge_base_id],
+    )
+    acl_ids = get_acl_accessible_knowledge_base_ids(
+        test_db,
+        user_id=member.id,
+        candidate_ids=[knowledge_base_id],
+    )
+    page, _ = KnowledgeService.list_knowledge_bases_paginated(
+        test_db,
+        member.id,
+        ResourceScope.ALL,
+    )
+    legacy_list = KnowledgeService.list_knowledge_bases(
+        test_db,
+        member.id,
+        ResourceScope.PERSONAL,
+    )
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, member.id)
+
+    assert single_access is expected_direct_access
+    assert (knowledge_base_id in direct_ids) is expected_direct_access
+    assert acl_ids == {knowledge_base_id}
+    assert (knowledge_base_id in {kb.id for kb in page}) is expected_direct_access
+    assert (
+        knowledge_base_id in {kb.id for kb in legacy_list}
+    ) is expected_direct_access
+    assert (
+        knowledge_base_id in {kb.id for kb in grouped.personal.shared_with_me}
+    ) is expected_direct_access
 
 
 @pytest.mark.unit
