@@ -19,6 +19,7 @@ from app.services.adapters.task_kinds.task_skills_resolver import resolve_task_s
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
+    resolve_task_default_knowledge_base_ids,
 )
 from app.services.share.external_entity_resolver import register_entity_resolver
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
@@ -339,7 +340,7 @@ def test_child_member_can_create_task_with_authorized_parent_team_and_use_skills
     assert "parent-skill" in resolved["skills"]
 
 
-def test_authorized_parent_team_defaults_can_bind_parent_knowledge_base(
+def test_authorized_parent_team_defaults_are_resolved_dynamically(
     test_db: Session,
 ):
     _owner, child_member, _child, team, kb = _arrange_parent_team_authorized_to_child(
@@ -347,18 +348,27 @@ def test_authorized_parent_team_defaults_can_bind_parent_knowledge_base(
         with_knowledge_base=True,
     )
 
-    refs = build_initial_task_knowledge_base_refs(
+    initial_refs = build_initial_task_knowledge_base_refs(
         db=test_db,
         user=child_member,
         team=team,
     )
+    result = task_kinds_service.create_task_or_append(
+        test_db,
+        obj_in=TaskCreate(
+            team_id=team.id,
+            title="Use parent knowledge base",
+            prompt="hello",
+            task_type="task",
+        ),
+        user=child_member,
+    )
+    resolved_ids = resolve_task_default_knowledge_base_ids(
+        test_db,
+        task_id=result["id"],
+        user_id=child_member.id,
+    )
 
     assert kb is not None
-    assert refs == [
-        {
-            "id": kb.id,
-            "name": "Parent KB",
-            "boundBy": child_member.user_name,
-            "boundAt": refs[0]["boundAt"],
-        }
-    ]
+    assert initial_refs == []
+    assert resolved_ids == [kb.id]
