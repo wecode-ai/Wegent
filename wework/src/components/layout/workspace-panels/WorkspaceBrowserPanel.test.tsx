@@ -93,6 +93,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.goForwardEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.navigateEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.reloadEmbeddedBrowser.mockResolvedValue(undefined)
+    embeddedBrowserMocks.resumeEmbeddedBrowserDownload.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
   })
 

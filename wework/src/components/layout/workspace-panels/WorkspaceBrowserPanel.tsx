@@ -1256,7 +1256,7 @@ export function WorkspaceBrowserPanel({
       )
       window.removeEventListener(EMBEDDED_BROWSER_OCCLUSION_EVENT, handleBrowserOcclusion)
     }
-  }, [])
+  }, [label])
 
   useEffect(() => {
     void syncEmbeddedBrowserBounds(active).catch(error => {
