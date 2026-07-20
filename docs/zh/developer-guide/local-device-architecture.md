@@ -411,6 +411,8 @@ flowchart LR
 
 本地执行器启动时按“环境变量、`~/.wegent-executor/device-config.json`、默认值”的顺序解析配置。未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server。Wework 启动子进程时会设置 `WEGENT_APP_IPC_DEVICE_ID`，由此明确启用当前进程 stdin/stdout 上的本机 App JSONL IPC；如果同时设置 `connection.backend_url` 或 `WEGENT_BACKEND_URL`，同一进程还会连接 Backend，`connection.auth_token` 或 `WEGENT_AUTH_TOKEN` 用于设备认证。独立启动且只提供 Backend 连接信息的 Local Executor 不启用 stdio 控制面，继续沿用原有 Socket.IO 远端设备链路。Wework App 只管理并连接自己直接启动的 executor 子进程，不会发现或附着 App 外手动启动的 executor；完整退出 App 时也只终止自己持有的子进程。
 
+开发模式通过 `wegent-executor-dev` 监控源码并重启实际 executor。该守护进程必须同时监控启动它的 Wework 父进程：Unix 上一旦父 PID 变化，就停止当前 executor 并退出，不能在 Wework 已退出后被系统接管并继续重启 executor。
+
 `EXECUTOR_MODE` 覆盖 `mode`。`docker` 表示只启动 HTTP server；其他值启动 loopback HTTP server，并根据上述显式身份选择 Wework stdio 控制面或独立 Local Executor 的远端 Backend 控制面，不再创建本机 IPC socket。`WEGENT_BACKEND_URL` 覆盖 `connection.backend_url`，`WEGENT_AUTH_TOKEN` 覆盖 `connection.auth_token`。因此常规独立启动脚本不需要传入 `WEGENT_APP_IPC_DEVICE_ID`，远端功能和连接方式保持不变。
 
 ### 云设备启动身份变量
