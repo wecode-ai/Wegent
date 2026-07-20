@@ -408,11 +408,7 @@ fn command_health(directory: &Path, config: &CommandHookConfig) -> Option<HookHe
     } else {
         &config.command
     };
-    let program = command
-        .trim()
-        .split_whitespace()
-        .next()?
-        .trim_matches(['\'', '"']);
+    let program = command.split_whitespace().next()?.trim_matches(['\'', '"']);
     let path = Path::new(program);
     if path.is_absolute() {
         return if path.exists() {
