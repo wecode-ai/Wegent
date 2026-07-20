@@ -1,5 +1,6 @@
 import { AlertCircle, Cloud, Loader2, Settings } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { canUseForProjectCreation, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@/types/api'
@@ -36,6 +37,9 @@ export function CloudConnectionSidebarButton({
   const cloud = useOptionalCloudConnection()
   const [open, setOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const errorButtonRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const cloudWorkDevices = useMemo(
     () => devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [devices]
@@ -119,6 +123,55 @@ export function CloudConnectionSidebarButton({
     if (!errorDetail) setDetailsOpen(false)
   }
 
+  useEffect(() => {
+    if (!detailsOpen) return
+    const updatePosition = () => {
+      if (!errorButtonRef.current) return
+      const rect = errorButtonRef.current.getBoundingClientRect()
+      setPopoverPosition({
+        left: rect.left,
+        top: rect.bottom + 8,
+      })
+    }
+    window.addEventListener('resize', updatePosition)
+    return () => window.removeEventListener('resize', updatePosition)
+  }, [detailsOpen])
+
+  useEffect(() => {
+    if (!detailsOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (errorButtonRef.current?.contains(target) || popoverRef.current?.contains(target)) {
+        return
+      }
+      setDetailsOpen(false)
+      setPopoverPosition(null)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [detailsOpen])
+
+  const openErrorDetails = () => {
+    if (errorButtonRef.current) {
+      const rect = errorButtonRef.current.getBoundingClientRect()
+      setPopoverPosition({ left: rect.left, top: rect.bottom + 8 })
+    }
+    setDetailsOpen(true)
+  }
+
+  const closeErrorDetails = () => {
+    setDetailsOpen(false)
+    setPopoverPosition(null)
+  }
+
+  const toggleErrorDetails = () => {
+    if (detailsOpen) {
+      closeErrorDetails()
+    } else {
+      openErrorDetails()
+    }
+  }
+
   return (
     <>
       <div className="group/cloud relative flex h-[30px] items-center rounded-[10px] hover:bg-[rgb(var(--color-sidebar-hover))]">
@@ -127,11 +180,12 @@ export function CloudConnectionSidebarButton({
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
           ) : hasErrorDetail ? (
             <button
+              ref={errorButtonRef}
               type="button"
               data-testid="sidebar-cloud-error-button"
               onClick={event => {
                 event.stopPropagation()
-                setDetailsOpen(open => !open)
+                toggleErrorDetails()
               }}
               title={t('workbench.cloud_work_error_details', '查看错误详情')}
               aria-label={t('workbench.cloud_work_error_details', '查看错误详情')}
@@ -160,7 +214,7 @@ export function CloudConnectionSidebarButton({
                 return
               }
               if (errorDetail) {
-                setDetailsOpen(true)
+                openErrorDetails()
                 return
               }
               if (preferredCloudDevice) {
@@ -213,41 +267,47 @@ export function CloudConnectionSidebarButton({
             <Settings className="h-3.5 w-3.5" />
           </button>
         )}
-        {detailsOpen && errorDetail && (
-          <div
-            data-testid="sidebar-cloud-error-popover"
-            className="absolute left-0 top-9 z-30 w-72 rounded-lg border border-red-500/20 bg-popover p-3 text-xs text-text-primary shadow-[0_12px_36px_rgba(0,0,0,0.2)]"
-          >
-            <div className="flex items-start gap-2">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold text-text-primary">
-                  {t('workbench.cloud_work_error_title', '云端工作不可用')}
-                </div>
-                <div className="mt-1 leading-5 text-text-secondary">{errorDetail}</div>
-              </div>
-            </div>
-            {cloudWorkStatus && (
-              <div className="mt-3 grid gap-1.5 border-t border-border pt-2">
-                {(Object.keys(checkLabels) as Array<keyof CloudWorkStatus['checks']>).map(key => (
-                  <div key={key} className="flex items-center justify-between gap-3">
-                    <span className="text-text-secondary">{checkLabels[key]}</span>
-                    <span
-                      className={cn(
-                        'font-medium',
-                        cloudWorkStatus.checks[key] === 'unavailable'
-                          ? 'text-red-500'
-                          : 'text-text-primary'
-                      )}
-                    >
-                      {checkStatusLabels[cloudWorkStatus.checks[key]]}
-                    </span>
+        {detailsOpen &&
+          errorDetail &&
+          popoverPosition &&
+          createPortal(
+            <div
+              ref={popoverRef}
+              data-testid="sidebar-cloud-error-popover"
+              style={{ left: popoverPosition.left, top: popoverPosition.top }}
+              className="fixed z-system-popover w-72 rounded-lg border border-red-500/20 bg-popover p-3 text-xs text-text-primary shadow-[0_12px_36px_rgba(0,0,0,0.2)]"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-text-primary">
+                    {t('workbench.cloud_work_error_title', '云端工作不可用')}
                   </div>
-                ))}
+                  <div className="mt-1 leading-5 text-text-secondary">{errorDetail}</div>
+                </div>
               </div>
-            )}
-          </div>
-        )}
+              {cloudWorkStatus && (
+                <div className="mt-3 grid gap-1.5 border-t border-border pt-2">
+                  {(Object.keys(checkLabels) as Array<keyof CloudWorkStatus['checks']>).map(key => (
+                    <div key={key} className="flex items-center justify-between gap-3">
+                      <span className="text-text-secondary">{checkLabels[key]}</span>
+                      <span
+                        className={cn(
+                          'font-medium',
+                          cloudWorkStatus.checks[key] === 'unavailable'
+                            ? 'text-red-500'
+                            : 'text-text-primary'
+                        )}
+                      >
+                        {checkStatusLabels[cloudWorkStatus.checks[key]]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>,
+            document.body
+          )}
       </div>
       {open && (
         <CloudConnectionDialog

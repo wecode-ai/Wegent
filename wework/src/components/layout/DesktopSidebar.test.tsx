@@ -816,6 +816,40 @@ describe('DesktopSidebar', () => {
     expect(detail).toHaveTextContent('可用')
   })
 
+  test('closes cloud work error details when clicking outside', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('does not close cloud work error details when clicking inside', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable', runtimeWork: 'available' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    const detail = screen.getByTestId('sidebar-cloud-error-popover')
+
+    await userEvent.click(detail)
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+  })
+
   test('does not open add-device guidance while cloud work checks are failing', async () => {
     const onGetRemoteDeviceStartupCommand = vi.fn()
     renderSidebar({
