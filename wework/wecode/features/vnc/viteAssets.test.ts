@@ -7,9 +7,14 @@ import {
   createVncAssetsMiddleware,
   createVncAssetsPlugin,
   matchVncAsset,
-} from './viteAssets'
+} from './viteAssets.mjs'
 
 const assetsDirectory = resolve(import.meta.dirname, 'assets')
+const pluginModulePath = resolve(import.meta.dirname, 'viteAssets.mjs')
+const viteConfigSource = readFileSync(
+  resolve(import.meta.dirname, '../../../vite.config.ts'),
+  'utf8'
+)
 
 type VncAssetsMiddleware = ReturnType<typeof createVncAssetsMiddleware>
 
@@ -34,12 +39,72 @@ function emitBuildAssets(plugin: ReturnType<typeof createVncAssetsPlugin>) {
   }
 
   const emitFile = vi.fn<(asset: unknown) => string>().mockReturnValue('asset-reference')
+  const addWatchFile = vi.fn<(path: string) => void>()
   const generateBundle = plugin.generateBundle as unknown as (this: {
+    addWatchFile: typeof addWatchFile
     emitFile: typeof emitFile
   }) => void
-  generateBundle.call({ emitFile })
-  return emitFile
+  generateBundle.call({ addWatchFile, emitFile })
+  return { addWatchFile, emitFile }
 }
+
+function configureDevServer(plugin: ReturnType<typeof createVncAssetsPlugin>, server: unknown) {
+  if (typeof plugin.configureServer !== 'function') {
+    throw new Error('Expected the VNC assets plugin to define configureServer')
+  }
+
+  const configureServer = plugin.configureServer as unknown as (server: unknown) => void
+  configureServer(server)
+}
+
+function closePlugin(plugin: ReturnType<typeof createVncAssetsPlugin>) {
+  if (typeof plugin.closeBundle !== 'function') {
+    throw new Error('Expected the VNC assets plugin to define closeBundle')
+  }
+
+  const closeBundle = plugin.closeBundle as unknown as () => void
+  closeBundle()
+}
+
+function devServer(restart: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue(undefined)) {
+  type ChangeListener = (path: string) => void | Promise<void>
+
+  const changeListeners = new Set<ChangeListener>()
+  const watcher = {
+    add: vi.fn(),
+    off: vi.fn((event: string, listener: ChangeListener) => {
+      if (event === 'change') changeListeners.delete(listener)
+    }),
+    on: vi.fn((event: string, listener: ChangeListener) => {
+      if (event === 'change') changeListeners.add(listener)
+    }),
+  }
+  const server = {
+    config: { logger: { error: vi.fn() } },
+    middlewares: { use: vi.fn() },
+    restart,
+    watcher,
+  }
+
+  return {
+    emitChange: (path: string) =>
+      Promise.all(Array.from(changeListeners, listener => listener(path))),
+    logger: server.config.logger,
+    restart,
+    server,
+    watcher,
+  }
+}
+
+describe('Vite config integration', () => {
+  test('loads the optional plugin as a native versioned module', () => {
+    expect(viteConfigSource).toContain('./wecode/features/vnc/viteAssets.mjs')
+    expect(viteConfigSource).not.toContain('./wecode/features/vnc/viteAssets.ts')
+    expect(viteConfigSource).toContain('fs.statSync(internalVncAssetsPluginPath).mtimeMs')
+    expect(viteConfigSource).toMatch(/searchParams\.set\(\s*'version'/)
+    expect(viteConfigSource).toContain('await import(internalVncAssetsPluginUrl.href)')
+  })
+})
 
 describe('matchVncAsset', () => {
   test.each([
@@ -78,11 +143,15 @@ describe('VNC asset definitions', () => {
   })
 
   test('emits both sources at their exact stable build paths', () => {
-    const emitFile = emitBuildAssets(createVncAssetsPlugin(assetsDirectory))
+    const { addWatchFile, emitFile } = emitBuildAssets(createVncAssetsPlugin(assetsDirectory))
     const emittedAssets = emitFile.mock.calls.map(
       ([asset]) => asset as { fileName: string; source: Uint8Array; type: string }
     )
 
+    expect(addWatchFile.mock.calls.map(([path]) => path)).toEqual([
+      resolve(assetsDirectory, 'vnc.html'),
+      resolve(assetsDirectory, 'novnc/rfb.min.js'),
+    ])
     expect(emittedAssets.map(({ fileName, type }) => ({ fileName, type }))).toEqual([
       { fileName: 'vnc.html', type: 'asset' },
       { fileName: 'novnc/rfb.min.js', type: 'asset' },
@@ -145,5 +214,61 @@ describe('createVncAssetsMiddleware', () => {
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(res.setHeader).not.toHaveBeenCalled()
     expect(res.end).not.toHaveBeenCalled()
+  })
+})
+
+describe('VNC plugin module watching', () => {
+  test('restarts once when the native plugin module changes', async () => {
+    let finishRestart: (() => void) | undefined
+    const restart = vi.fn(
+      () =>
+        new Promise<void>(resolveRestart => {
+          finishRestart = resolveRestart
+        })
+    )
+    const dev = devServer(restart)
+    const plugin = createVncAssetsPlugin(assetsDirectory, pluginModulePath)
+    configureDevServer(plugin, dev.server)
+
+    expect(dev.watcher.add).toHaveBeenCalledWith(pluginModulePath)
+    await dev.emitChange(resolve(import.meta.dirname, 'unrelated.mjs'))
+    expect(restart).not.toHaveBeenCalled()
+
+    const firstRestart = dev.emitChange(pluginModulePath)
+    const duplicateChange = dev.emitChange(pluginModulePath)
+    expect(restart).toHaveBeenCalledOnce()
+    finishRestart?.()
+    await Promise.all([firstRestart, duplicateChange])
+  })
+
+  test('removes its change listener through the closeBundle lifecycle', async () => {
+    const dev = devServer()
+    const plugin = createVncAssetsPlugin(assetsDirectory, pluginModulePath)
+    configureDevServer(plugin, dev.server)
+
+    closePlugin(plugin)
+    await dev.emitChange(pluginModulePath)
+
+    expect(dev.watcher.off).toHaveBeenCalledWith('change', expect.any(Function))
+    expect(dev.restart).not.toHaveBeenCalled()
+  })
+
+  test('rearms the watcher after a restart rejects', async () => {
+    const restart = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('restart failed'))
+      .mockResolvedValueOnce(undefined)
+    const dev = devServer(restart)
+    const plugin = createVncAssetsPlugin(assetsDirectory, pluginModulePath)
+    configureDevServer(plugin, dev.server)
+
+    await dev.emitChange(pluginModulePath)
+    await dev.emitChange(pluginModulePath)
+
+    expect(restart).toHaveBeenCalledTimes(2)
+    expect(dev.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('restart failed'),
+      expect.objectContaining({ error: expect.any(Error) })
+    )
   })
 })

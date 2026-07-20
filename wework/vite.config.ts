@@ -21,10 +21,19 @@ const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
   ? internalExtensionsDir
   : path.resolve(__dirname, './src/extensions')
-const internalVncAssetsPluginPath = path.resolve(__dirname, './wecode/features/vnc/viteAssets.ts')
-const internalVncAssetsPlugin = fs.existsSync(internalVncAssetsPluginPath)
+const internalVncAssetsPluginPath = path.resolve(__dirname, './wecode/features/vnc/viteAssets.mjs')
+const internalVncAssetsPluginUrl = fs.existsSync(internalVncAssetsPluginPath)
+  ? pathToFileURL(internalVncAssetsPluginPath)
+  : null
+if (internalVncAssetsPluginUrl) {
+  internalVncAssetsPluginUrl.searchParams.set(
+    'version',
+    String(fs.statSync(internalVncAssetsPluginPath).mtimeMs)
+  )
+}
+const internalVncAssetsPlugin = internalVncAssetsPluginUrl
   ? (
-      (await import(pathToFileURL(internalVncAssetsPluginPath).href)) as {
+      (await import(internalVncAssetsPluginUrl.href)) as {
         createVncAssetsPlugin: () => Plugin
       }
     ).createVncAssetsPlugin()
