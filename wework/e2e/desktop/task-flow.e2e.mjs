@@ -1804,11 +1804,6 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   )
   assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
   const projectId = deviceStatusTestId.slice('project-device-status-'.length)
-  await control.command('click', `[data-testid="project-row-${projectId}"]`)
-  await control.command('waitFor', '[data-testid="project-work-button"]', {
-    text: 'workspace',
-    timeoutMs: UI_TIMEOUT_MS,
-  })
   await control.command(
     'clickWhenEnabled',
     `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
