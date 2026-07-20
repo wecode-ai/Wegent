@@ -26,7 +26,6 @@ const workspaceSessionApi: WorkspaceSessionApi = {
   startProjectCodeServer: startProjectCodeServerMock,
   startDeviceTerminal: vi.fn(),
   startDeviceCodeServer: startDeviceCodeServerMock,
-  getDeviceVncConfig: vi.fn(),
   createRemoteTerminalClient: vi.fn(),
 }
 const originalInnerWidth = window.innerWidth
