@@ -1363,7 +1363,6 @@
     "system_drag_stash_detail": "保存到快捷短语暂存区",
     "system_drag_added": "已添加",
     "system_drag_failed": "添加失败",
-    "system_drag_hint": "拖放到操作区",
     "general_settings_system_drag": "系统拖拽面板",
     "general_settings_system_drag_description": "拖拽文件或文字时，在当前屏幕顶部显示快捷操作面板。",
     "quick_phrases_search": "搜索快捷短语…",

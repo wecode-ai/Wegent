@@ -195,20 +195,16 @@ export function SystemDragPanel() {
   return (
     <main data-testid="system-drag-panel" className="mx-auto h-[72px] w-[440px] bg-transparent p-1">
       <section className="relative h-full overflow-hidden rounded-xl border border-border bg-background/95 shadow-lg backdrop-blur-md">
-        <header className="flex h-[18px] items-center justify-between border-b border-border/70 px-2.5">
-          <div className="flex items-center" data-testid="system-drag-brand">
-            <span className="text-xs font-semibold leading-none tracking-[0.02em] text-text-secondary">
-              Wework
-            </span>
-          </div>
-          <span className="text-xs leading-none text-text-muted">
-            {t('workbench.system_drag_hint', '拖放到操作区')}
-          </span>
-        </header>
+        <div
+          data-testid="system-drag-brand"
+          className="pointer-events-none absolute left-1/2 top-1 z-10 -translate-x-1/2 rounded-full border border-border bg-background px-2 py-0.5 text-xs font-semibold leading-none tracking-[0.02em] text-text-secondary shadow-sm"
+        >
+          Wework
+        </div>
         {dropStatus && completedZone ? (
           <div
             data-testid={`system-drag-${dropStatus.kind}-feedback`}
-            className="flex h-[44px] items-center justify-center gap-2 px-4 text-center"
+            className="flex h-full items-center justify-center gap-2 px-4 pt-2 text-center"
             role="status"
           >
             <span
@@ -230,7 +226,7 @@ export function SystemDragPanel() {
             </div>
           </div>
         ) : (
-          <div className="flex h-[44px] items-stretch p-0.5">
+          <div className="flex h-full items-stretch p-1 pt-2.5">
             {zones
               .filter(zone => zone.action !== 'follow-up' || conversationTitle)
               .map(({ action, icon: Icon, title, detail }) => (
