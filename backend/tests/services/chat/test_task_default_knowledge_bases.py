@@ -79,7 +79,7 @@ def _make_kb(kb_id: int, name: str):
     return kb
 
 
-def test_build_initial_task_knowledge_base_refs_collects_defaults_and_merges_explicit():
+def test_build_initial_task_knowledge_base_refs_persists_only_explicit_selection():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_knowledge_base_refs,
     )
@@ -119,10 +119,10 @@ def test_build_initial_task_knowledge_base_refs_collects_defaults_and_merges_exp
                 knowledge_base_id=33,
             )
 
-    assert [ref["id"] for ref in refs] == [11, 22, 33]
+    assert [ref["id"] for ref in refs] == [33]
 
 
-def test_build_initial_task_knowledge_base_refs_deduplicates_by_id():
+def test_build_initial_task_knowledge_base_refs_does_not_snapshot_agent_defaults():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_knowledge_base_refs,
     )
@@ -166,7 +166,7 @@ def test_build_initial_task_knowledge_base_refs_deduplicates_by_id():
                 team=team,
             )
 
-    assert [ref["id"] for ref in refs] == [11, 22]
+    assert refs == []
 
 
 def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
@@ -206,7 +206,83 @@ def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
                 knowledge_base_id=22,
             )
 
-    assert [ref["id"] for ref in refs] == [11]
+    assert refs == []
+
+
+def test_resolve_task_defaults_uses_current_agent_configuration():
+    from app.services.chat.task_default_knowledge_bases import (
+        resolve_task_default_knowledge_base_ids,
+    )
+
+    db = Mock()
+    task = SimpleNamespace(json={"kind": "Task"})
+    task_crd = SimpleNamespace()
+    team = SimpleNamespace(id=42)
+    query = db.query.return_value
+    query.filter.return_value = query
+    query.all.return_value = [(11,), (22,)]
+
+    with (
+        patch(
+            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
+            return_value=team,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            return_value=team,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids",
+            return_value=[11, 22, 11],
+        ),
+    ):
+        result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)
+
+    assert result == [11, 22]
+
+
+def test_resolve_task_defaults_requires_agent_access():
+    from app.services.chat.task_default_knowledge_bases import (
+        resolve_task_default_knowledge_base_ids,
+    )
+
+    db = Mock()
+    task = SimpleNamespace(json={"kind": "Task"})
+    team = SimpleNamespace(id=42)
+
+    with (
+        patch(
+            "app.services.chat.task_default_knowledge_bases.task_store.get_active_task",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.Task.model_validate",
+            return_value=SimpleNamespace(),
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.resolve_task_ref_team",
+            return_value=team,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases.team_share_service.get_resource",
+            return_value=None,
+        ),
+        patch(
+            "app.services.chat.task_default_knowledge_bases._iter_team_member_default_knowledge_base_ids"
+        ) as iter_defaults,
+    ):
+        result = resolve_task_default_knowledge_base_ids(db, task_id=100, user_id=7)
+
+    assert result == []
+    iter_defaults.assert_not_called()
 
 
 def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(

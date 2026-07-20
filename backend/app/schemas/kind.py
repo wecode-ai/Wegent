@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -951,6 +951,10 @@ class KnowledgeBaseSpec(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
+    directAccessRequirement: Literal["read", "edit"] = Field(
+        default="read",
+        description="Minimum capability required for direct knowledge base access",
+    )
     kbType: Optional[str] = Field(
         "notebook",
         description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",

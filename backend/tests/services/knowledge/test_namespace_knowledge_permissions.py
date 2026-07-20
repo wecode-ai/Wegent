@@ -193,6 +193,106 @@ def test_all_scope_does_not_duplicate_organization_knowledge_base(
 
 
 @pytest.mark.unit
+def test_edit_direct_access_requirement_hides_kb_from_reporter(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "hidden-owner")
+    reporter = _create_user(test_db, "hidden-reporter")
+    namespace = _create_namespace(test_db, owner, "hidden-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, reporter, GroupRole.Reporter, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="hidden-kb",
+            namespace=namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        reporter.id,
+    )
+    listed_ids = {
+        kb.id
+        for kb in KnowledgeService.list_knowledge_bases(
+            test_db,
+            reporter.id,
+            ResourceScope.ALL,
+        )
+    }
+
+    assert knowledge_base is not None
+    assert has_access is False
+    assert knowledge_base_id not in listed_ids
+
+
+@pytest.mark.unit
+def test_edit_direct_access_requirement_allows_developer(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "editable-owner")
+    developer = _create_user(test_db, "editable-developer")
+    namespace = _create_namespace(test_db, owner, "editable-space")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, namespace, developer, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(
+            name="editable-kb",
+            namespace=namespace.name,
+            direct_access_requirement="edit",
+        ),
+    )
+
+    _, has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        developer.id,
+    )
+    listed_ids = {
+        kb.id
+        for kb in KnowledgeService.list_knowledge_bases(
+            test_db,
+            developer.id,
+            ResourceScope.ALL,
+        )
+    }
+
+    assert has_access is True
+    assert knowledge_base_id in listed_ids
+
+
+@pytest.mark.unit
+def test_unknown_direct_access_requirement_fails_closed(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "invalid-policy-owner")
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="invalid-policy-kb"),
+    )
+    knowledge_base = _get_kind(test_db, knowledge_base_id)
+    knowledge_base.json["spec"]["directAccessRequirement"] = "unknown"
+    test_db.commit()
+
+    _, has_access = KnowledgeService.get_knowledge_base(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+    )
+
+    assert has_access is False
+
+
+@pytest.mark.unit
 def test_grouped_organization_returns_namespace_without_knowledge_bases(
     test_db: Session,
 ) -> None:

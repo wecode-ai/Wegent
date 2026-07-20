@@ -153,6 +153,21 @@ class KnowledgeShareService(UnifiedShareService):
             )
             return None
 
+        from app.services.knowledge.knowledge_service import KnowledgeService
+
+        if not KnowledgeService.can_directly_access_knowledge_base(
+            db,
+            resource_id,
+            user_id,
+            kb=kb,
+        ):
+            logger.warning(
+                "[_get_resource] Direct access requirement denied KB %s for user %s",
+                resource_id,
+                user_id,
+            )
+            return None
+
         logger.info(
             f"[_get_resource] KnowledgeBase found: id={kb.id}, "
             f"kb.user_id={kb.user_id}, namespace={kb.namespace}"

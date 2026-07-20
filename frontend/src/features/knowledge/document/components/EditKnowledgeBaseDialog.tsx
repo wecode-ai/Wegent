@@ -14,6 +14,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
@@ -56,6 +58,7 @@ export function EditKnowledgeBaseDialog({
   const { t: tKnowledge } = useTranslation('knowledge')
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [hideFromNonEditors, setHideFromNonEditors] = useState(false)
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
@@ -113,6 +116,7 @@ export function EditKnowledgeBaseDialog({
     if (kb) {
       setName(kb.name)
       setDescription(kb.description || '')
+      setHideFromNonEditors(kb.direct_access_requirement === 'edit')
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setSummaryModelError('')
@@ -181,6 +185,7 @@ export function EditKnowledgeBaseDialog({
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
+        direct_access_requirement: hideFromNonEditors ? 'edit' : 'read',
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         ...buildMultimodalSubmitFields(),
@@ -294,6 +299,28 @@ export function EditKnowledgeBaseDialog({
               guidedQuestions={guidedQuestions}
               onGuidedQuestionsChange={setGuidedQuestions}
             />
+
+            <div className="border-t border-border pt-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="knowledge-base-direct-access-requirement"
+                    className="text-sm font-medium"
+                  >
+                    {tKnowledge('document.knowledgeBase.hideFromNonEditors')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {tKnowledge('document.knowledgeBase.hideFromNonEditorsDescription')}
+                  </p>
+                </div>
+                <Switch
+                  id="knowledge-base-direct-access-requirement"
+                  checked={hideFromNonEditors}
+                  onCheckedChange={setHideFromNonEditors}
+                  data-testid="knowledge-base-direct-access-requirement-switch"
+                />
+              </div>
+            </div>
 
             {/* Default opening view section */}
             <div className="border-t border-border pt-4 mt-4">

@@ -260,6 +260,7 @@ class KnowledgeService:
         spec_kwargs = {
             "name": data.name,
             "description": data.description or "",
+            "directAccessRequirement": data.direct_access_requirement,
             "kbType": data.kb_type
             or "notebook",  # Default to 'notebook' if not provided
             "retrievalConfig": _to_json_dict(data.retrieval_config),
@@ -350,11 +351,84 @@ class KnowledgeService:
         if not kb:
             return None, False
 
-        has_access, _, _ = KnowledgeService._get_user_kb_permission(
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id, kb=kb
         )
 
+        has_access = KnowledgeService._meets_direct_access_requirement(
+            kb=kb,
+            has_access=has_access,
+            role=role,
+            is_creator=is_creator,
+        )
+
         return kb, has_access
+
+    @staticmethod
+    def _meets_direct_access_requirement(
+        *,
+        kb: Kind,
+        has_access: bool,
+        role: BaseRole | None,
+        is_creator: bool,
+    ) -> bool:
+        """Return whether merged permissions satisfy the KB direct-access policy."""
+        spec = kb.json.get("spec", {}) if isinstance(kb.json, dict) else {}
+        requirement = spec.get("directAccessRequirement", "read")
+        if requirement == "read":
+            return has_access
+        if requirement == "edit":
+            return can_manage_accessible_knowledge_base_documents(
+                has_access=has_access,
+                role=role,
+                is_creator=is_creator,
+            )
+        return False
+
+    @staticmethod
+    def can_directly_access_knowledge_base(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        *,
+        kb: Kind | None = None,
+    ) -> bool:
+        """Return whether the user may discover or directly use the KB."""
+        knowledge_base = kb or KnowledgeService._get_knowledge_base_record(
+            db, knowledge_base_id
+        )
+        if knowledge_base is None:
+            return False
+        has_access, role, is_creator = KnowledgeService._get_user_kb_permission(
+            db,
+            knowledge_base_id,
+            user_id,
+            kb=knowledge_base,
+        )
+        return KnowledgeService._meets_direct_access_requirement(
+            kb=knowledge_base,
+            has_access=has_access,
+            role=role,
+            is_creator=is_creator,
+        )
+
+    @staticmethod
+    def _filter_directly_accessible_knowledge_bases(
+        db: Session,
+        knowledge_bases: list[Kind],
+        user_id: int,
+    ) -> list[Kind]:
+        """Filter KBs before response pagination or aggregation."""
+        return [
+            kb
+            for kb in knowledge_bases
+            if KnowledgeService.can_directly_access_knowledge_base(
+                db,
+                kb.id,
+                user_id,
+                kb=kb,
+            )
+        ]
 
     @staticmethod
     def list_knowledge_bases(
@@ -430,7 +504,9 @@ class KnowledgeService:
             # Combine and sort by updated_at
             all_kbs = personal + other
             all_kbs.sort(key=lambda kb: kb.updated_at, reverse=True)
-            return all_kbs
+            return KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, all_kbs, user_id
+            )
 
         elif scope == ResourceScope.GROUP:
             if not group_name:
@@ -443,7 +519,7 @@ class KnowledgeService:
 
             # KBs belonging to this group (native group KBs only)
             # Entity-authorized KBs are shown in personal shared_with_me instead
-            return (
+            group_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
@@ -453,11 +529,14 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+            return KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, group_kbs, user_id
+            )
 
         elif scope == ResourceScope.ORGANIZATION:
             # Organization knowledge bases are visible to all users
             # Query knowledge bases in namespaces with level='organization'
-            return (
+            organization_kbs = (
                 db.query(Kind)
                 .join(Namespace, Kind.namespace == Namespace.name)
                 .filter(
@@ -468,6 +547,9 @@ class KnowledgeService:
                 )
                 .order_by(Kind.updated_at.desc())
                 .all()
+            )
+            return KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, organization_kbs, user_id
             )
 
         else:  # ALL
@@ -564,7 +646,11 @@ class KnowledgeService:
                 if kb not in personal and kb not in team and kb not in organization
             ]
 
-            return personal + team + organization + other
+            return KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db,
+                personal + team + organization + other,
+                user_id,
+            )
 
     @staticmethod
     def list_knowledge_bases_paginated(
@@ -617,6 +703,20 @@ class KnowledgeService:
                     func.lower(description_text).like(keyword_pattern, escape="\\"),
                 )
             )
+
+        directly_accessible_ids = [
+            kb.id
+            for kb in query.all()
+            if KnowledgeService.can_directly_access_knowledge_base(
+                db,
+                kb.id,
+                user_id,
+                kb=kb,
+            )
+        ]
+        if not directly_accessible_ids:
+            return [], 0
+        query = query.filter(Kind.id.in_(directly_accessible_ids))
 
         total = query.order_by(None).count()
         knowledge_bases = (
@@ -693,6 +793,9 @@ class KnowledgeService:
 
         if data.description is not None:
             spec["description"] = data.description
+
+        if data.direct_access_requirement is not None:
+            spec["directAccessRequirement"] = data.direct_access_requirement
 
         # Update retrieval config if provided (only allowed fields)
         if data.retrieval_config is not None:
@@ -1834,6 +1937,9 @@ class KnowledgeService:
             .order_by(Kind.updated_at.desc())
             .all()
         )
+        personal_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+            db, personal_kbs, user_id
+        )
 
         personal = [
             AccessibleKnowledgeBase(
@@ -1864,6 +1970,9 @@ class KnowledgeService:
                 )
                 .order_by(Kind.updated_at.desc())
                 .all()
+            )
+            bound_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, bound_kbs, user_id
             )
 
             for kb in bound_kbs:
@@ -1919,6 +2028,9 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+            shared_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, shared_kbs, user_id
+            )
             for kb in shared_kbs:
                 if kb.id in included_personal_ids:
                     continue
@@ -1960,6 +2072,9 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+            group_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, group_kbs, user_id
+            )
 
             if group_kbs:
                 team_groups.append(
@@ -1996,6 +2111,13 @@ class KnowledgeService:
             .order_by(Kind.updated_at.desc())
             .all()
         )
+        org_kbs = [
+            (kb, namespace)
+            for kb, namespace in org_kbs
+            if KnowledgeService.can_directly_access_knowledge_base(
+                db, kb.id, user_id, kb=kb
+            )
+        ]
 
         if org_kbs:
             # Group KBs by namespace
@@ -2064,6 +2186,9 @@ class KnowledgeService:
             .order_by(Kind.updated_at.desc())
             .all()
         )
+        created_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+            db, created_kbs, user_id
+        )
 
         # Get KB IDs that are shared with the user via ResourceMember
         shared_kb_ids = (
@@ -2103,6 +2228,9 @@ class KnowledgeService:
                 )
                 .order_by(Kind.updated_at.desc())
                 .all()
+            )
+            shared_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, shared_kbs, user_id
             )
 
         # Batch fetch document counts for all KBs to avoid N+1 queries
@@ -2709,6 +2837,9 @@ class KnowledgeService:
             .order_by(Kind.updated_at.desc())
             .all()
         )
+        personal_created = KnowledgeService._filter_directly_accessible_knowledge_bases(
+            db, personal_created, user_id
+        )
 
         # 2. Get shared knowledge bases with their roles and inviters (single query)
         shared_members = (
@@ -2743,6 +2874,9 @@ class KnowledgeService:
                 )
                 .order_by(Kind.updated_at.desc())
                 .all()
+            )
+            shared_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, shared_kbs, user_id
             )
 
         shared_namespace_names = {
@@ -2816,6 +2950,9 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+            group_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, group_kbs, user_id
+            )
         group_kb_map = {kb.id: kb for kb in group_kbs}
 
         remaining_shared_group_kbs: list[Kind] = []
@@ -2830,8 +2967,16 @@ class KnowledgeService:
             db, user_id, accessible_groups
         )
         entity_personal_kb_ids = entity_result.entity_personal_kb_ids
-        entity_shared_to_me_kbs = entity_result.entity_shared_to_me_kbs
-        shared_into_group_kbs = entity_result.shared_into_group_kbs
+        entity_shared_to_me_kbs = (
+            KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, entity_result.entity_shared_to_me_kbs, user_id
+            )
+        )
+        shared_into_group_kbs = (
+            KnowledgeService._filter_directly_accessible_knowledge_bases(
+                db, entity_result.shared_into_group_kbs, user_id
+            )
+        )
         entity_member_group_map = entity_result.member_group_map
         entity_member_role_map = entity_result.member_role_map
         entity_member_inviter_map = entity_result.member_inviter_map
@@ -2853,6 +2998,9 @@ class KnowledgeService:
             )
             .order_by(Kind.updated_at.desc())
             .all()
+        )
+        org_kbs = KnowledgeService._filter_directly_accessible_knowledge_bases(
+            db, org_kbs, user_id
         )
 
         organization_namespaces = (

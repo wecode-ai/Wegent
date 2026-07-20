@@ -226,6 +226,8 @@
       "nameTooLong": "Name must be 100 characters or less",
       "description": "Description",
       "descriptionPlaceholder": "Enter description (optional)",
+      "hideFromNonEditors": "Hide knowledge base from non-editors",
+      "hideFromNonEditorsDescription": "When enabled, only editors can find and open this knowledge base directly. Other members can still use it through an agent that has it configured.",
       "documentCount": "Documents",
       "empty": "No knowledge bases yet",
       "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",

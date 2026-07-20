@@ -53,6 +53,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _require_direct_knowledge_base_access(
+    db: Session,
+    knowledge_base_id: int,
+    user_id: int,
+) -> None:
+    from app.services.knowledge.knowledge_service import KnowledgeService
+
+    if not KnowledgeService.can_directly_access_knowledge_base(
+        db,
+        knowledge_base_id,
+        user_id,
+    ):
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+
 def _get_share_service(resource_type: str) -> UnifiedShareService:
     """Get the appropriate share service for a resource type."""
     resource_type_upper = resource_type.upper()
@@ -548,6 +563,7 @@ def get_my_kb_permission(
 
     - **resource_id**: Knowledge base ID
     """
+    _require_direct_knowledge_base_access(db, resource_id, current_user.id)
     return knowledge_share_service.get_my_permission(
         db=db,
         knowledge_base_id=resource_id,
@@ -573,6 +589,7 @@ def get_kb_share_info(
 
     - **resource_id**: Knowledge base ID
     """
+    _require_direct_knowledge_base_access(db, resource_id, current_user.id)
     try:
         return knowledge_share_service.get_kb_share_info(
             db=db,
@@ -605,6 +622,7 @@ def get_my_kb_permission_sources(
 
     - **resource_id**: Knowledge base ID
     """
+    _require_direct_knowledge_base_access(db, resource_id, current_user.id)
     return knowledge_share_service.get_my_permission_sources(
         db=db,
         resource_id=resource_id,

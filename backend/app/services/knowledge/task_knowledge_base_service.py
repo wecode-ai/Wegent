@@ -118,6 +118,11 @@ class TaskKnowledgeBaseService:
         if resolved_kb is not None:
             return True
 
+        if not KnowledgeService.can_directly_access_knowledge_base(
+            db, kb.id, user_id, kb=kb
+        ):
+            return False
+
         if kb_namespace != "default":
             return False
 
@@ -565,6 +570,11 @@ class TaskKnowledgeBaseService:
         refs_to_migrate = []
 
         for idx, kb, needs_migration in found_kbs:
+            if not KnowledgeService.can_directly_access_knowledge_base(
+                db, kb.id, user_id, kb=kb
+            ):
+                continue
+
             ref = kb_refs[idx]
             kb_name = ref.get("name")
             # Get namespace from the actual KB object, not from ref (ref may not have namespace for new data)
@@ -597,10 +607,17 @@ class TaskKnowledgeBaseService:
 
         return result
 
-    def get_bound_knowledge_base_ids(self, db: Session, task_id: int) -> List[int]:
+    def get_bound_knowledge_base_ids(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: Optional[int] = None,
+    ) -> List[int]:
         """
         Get IDs of knowledge bases bound to a task.
-        This method does not check permissions - used internally for AI integration.
+        When user_id is provided, knowledge bases that the user cannot directly
+        access are excluded. Internal callers may omit user_id only when they do
+        not expose or inject the result on behalf of an end user.
 
         This method uses batch queries to avoid N+1 query problem:
         - Single query for refs with ID field
@@ -634,6 +651,13 @@ class TaskKnowledgeBaseService:
         refs_to_migrate = []
 
         for idx, kb, needs_migration in found_kbs:
+            if (
+                user_id is not None
+                and not KnowledgeService.can_directly_access_knowledge_base(
+                    db, kb.id, user_id, kb=kb
+                )
+            ):
+                continue
             result.append(kb.id)
             if needs_migration:
                 refs_to_migrate.append((idx, kb.id))

@@ -28,7 +28,11 @@ from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
+from app.services.chat.task_default_knowledge_bases import (
+    resolve_task_default_knowledge_base_owner_id,
+)
 from app.services.knowledge import KnowledgeFolderService
+from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
@@ -42,6 +46,33 @@ logger = logging.getLogger(__name__)
 def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[User]:
     """Get user from token info."""
     return db.query(User).filter(User.id == token_info.user_id).first()
+
+
+def _get_read_user_for_knowledge_base(
+    db: Session,
+    token_info: TaskTokenInfo,
+    knowledge_base_id: int,
+) -> Optional[User]:
+    """Resolve direct user access or task-scoped agent default read access."""
+    user = _get_user_from_token(db, token_info)
+    if user is None:
+        return None
+    if KnowledgeService.can_directly_access_knowledge_base(
+        db,
+        knowledge_base_id,
+        user.id,
+    ):
+        return user
+
+    owner_id = resolve_task_default_knowledge_base_owner_id(
+        db,
+        token_info.task_id,
+        user.id,
+        knowledge_base_id,
+    )
+    if owner_id is None:
+        return user
+    return db.query(User).filter(User.id == owner_id, User.is_active.is_(True)).first()
 
 
 @mcp_tool(
@@ -94,7 +125,7 @@ async def search_knowledge_base(
 
     db = SessionLocal()
     try:
-        user = _get_user_from_token(db, token_info)
+        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
         if not user:
             return {
                 "error": "User not found",
@@ -307,7 +338,7 @@ def list_documents(
     """
     db = SessionLocal()
     try:
-        user = _get_user_from_token(db, token_info)
+        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
         if not user:
             return {"error": "User not found", "total": 0, "items": []}
         if limit < 1 or limit > MAX_KNOWLEDGE_LIST_LIMIT:
@@ -575,7 +606,18 @@ def read_document_content(
     """
     db = SessionLocal()
     try:
-        user = _get_user_from_token(db, token_info)
+        from app.models.knowledge import KnowledgeDocument
+
+        knowledge_base_id = (
+            db.query(KnowledgeDocument.kind_id)
+            .filter(KnowledgeDocument.id == document_id)
+            .scalar()
+        )
+        user = (
+            _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
+            if knowledge_base_id is not None
+            else _get_user_from_token(db, token_info)
+        )
         if not user:
             return {"error": "User not found"}
 

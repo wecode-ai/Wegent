@@ -226,6 +226,8 @@
       "nameTooLong": "名称不能超过100个字符",
       "description": "描述",
       "descriptionPlaceholder": "请输入描述（可选）",
+      "hideFromNonEditors": "对非编辑成员隐藏知识库",
+      "hideFromNonEditorsDescription": "开启后，只有编辑者能在知识库列表中看到并直接打开此知识库。其他成员仍可通过已绑定的智能体使用其中内容。",
       "documentCount": "文档数量",
       "empty": "暂无知识库",
       "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
