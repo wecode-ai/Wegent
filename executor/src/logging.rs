@@ -18,7 +18,6 @@ use crate::config::device::DeviceConfig;
 
 const DEFAULT_LOG_FILE_NAME: &str = "executor.log";
 const BYTES_PER_MIB: u64 = 1024 * 1024;
-const WEWORK_DEBUG_LOG_PATH: &str = "/tmp/wework-debug-1";
 
 static ROLLING_LOGGER: OnceLock<Mutex<Option<RollingLogFile>>> = OnceLock::new();
 static STDOUT_RESERVED_FOR_PROTOCOL: AtomicBool = AtomicBool::new(false);
@@ -116,16 +115,6 @@ pub fn write_executor_error_line(line: &str) {
     eprintln!("{line}");
     let _ = std::io::stderr().flush();
     write_rolling_log_line(line);
-}
-
-pub fn wework_debug_log(message: &str) {
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S.%3f");
-    let line = format!("{timestamp} [executor] {message}");
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(WEWORK_DEBUG_LOG_PATH)
-        .and_then(|mut file| writeln!(file, "{line}"));
 }
 
 pub fn init_executor_logging(config: &DeviceConfig) {
