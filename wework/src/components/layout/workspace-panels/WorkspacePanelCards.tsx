@@ -761,6 +761,7 @@ export function WorkspacePanelCards({
         isCurrent: isCurrentRequest,
       })
       if (!opened) return
+      onRequestClose?.()
     } catch (e) {
       if (!isCurrentRequest()) return
       console.error('Failed to open project desktop:', e)

@@ -423,7 +423,7 @@ describe('WorkspacePanelCards', () => {
     expect(options.deviceId).toBe('device-1')
     expect(options.isCurrent()).toBe(true)
     expect(window.open).not.toHaveBeenCalled()
-    expect(onRequestClose).not.toHaveBeenCalled()
+    expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
   test('keeps the project desktop retryable when the built-in browser rejects it', async () => {
@@ -451,7 +451,7 @@ describe('WorkspacePanelCards', () => {
 
     await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(onRequestClose).not.toHaveBeenCalled()
+    expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
   test('releases a pending desktop launch when the project changes', async () => {
