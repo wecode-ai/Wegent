@@ -14,6 +14,7 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 
 - The Backend root URL entered by the user.
 - Normalized `apiBaseUrl`, `socketBaseUrl`, and `socketPath`.
+- The Wegent Web `webUrl` returned by Backend.
 - Cloud login token, expiry, cloud user, and connection time.
 - Current status: disconnected, connecting, connected, expired, or error.
 
@@ -23,7 +24,7 @@ When the entered address matches the packaged `VITE_WEGENT_BACKEND_URL` or `VITE
 
 Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
 
-Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
+Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. That authorization URL is only for cloud login and is distinct from the Wegent Web URL loaded after the user switches to the Agent area. Backend exposes `FRONTEND_URL` explicitly through `GET /api/auth/wework/config` and the `web_url` field in new authorization-session responses. Wework persists that address and uses it to load the Agent area. On startup, the client reads the config endpoint again to correct an invalid address saved by an older version. Deployments that separate the API, authorization page, and Wegent Web must configure the Backend origin, `WEWORK_AUTHORIZE_BASE_URL`, and `FRONTEND_URL` independently; the client does not infer relationships between their domains or ports.
 
 ## Interaction Entry
 

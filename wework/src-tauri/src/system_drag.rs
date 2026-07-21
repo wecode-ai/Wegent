@@ -96,15 +96,26 @@ fn cursor_is_inside(window: &tauri::WebviewWindow) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn take_drag_in_progress(drag_in_progress: &std::sync::atomic::AtomicBool) -> bool {
+    drag_in_progress.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(target_os = "macos")]
 fn handle_drag_event(
     app: &AppHandle,
     last_change_count: &std::sync::atomic::AtomicIsize,
+    drag_in_progress: &std::sync::atomic::AtomicBool,
     event_type: objc2_app_kit::NSEventType,
 ) {
     use objc2_app_kit::{NSEventType, NSPasteboard, NSPasteboardNameDrag};
     use std::sync::atomic::Ordering;
 
     if event_type == NSEventType::LeftMouseUp {
+        // The drag pasteboard keeps its previous content after a drag finishes. A plain click
+        // must not consume that stale content as a new drop.
+        if !take_drag_in_progress(drag_in_progress) {
+            return;
+        }
         if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
             if cursor_is_inside(&panel) {
                 use objc2_app_kit::{NSPasteboardTypeFileURL, NSPasteboardTypeString};
@@ -154,11 +165,13 @@ fn handle_drag_event(
     let previous = last_change_count.swap(change_count, Ordering::SeqCst);
     if change_count != previous && pasteboard.types().is_some_and(|types| !types.is_empty()) {
         if !crate::read_app_preferences_impl(app).system_drag_enabled {
+            drag_in_progress.store(false, Ordering::SeqCst);
             if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
                 let _ = panel.hide();
             }
             return;
         }
+        drag_in_progress.store(true, Ordering::SeqCst);
         if let Ok(cursor) = app.cursor_position() {
             show_panel(app, cursor);
         }
@@ -169,20 +182,26 @@ fn handle_drag_event(
 pub fn setup(app: AppHandle) {
     use block2::RcBlock;
     use objc2_app_kit::{NSEvent, NSEventMask, NSPasteboard, NSPasteboardNameDrag};
-    use std::sync::{atomic::AtomicIsize, Arc};
+    use std::sync::{
+        atomic::{AtomicBool, AtomicIsize},
+        Arc,
+    };
 
     if let Err(error) = ensure_panel(&app) {
         log::warn!("Failed to prepare system drag panel: {error}");
     }
     let drag_pasteboard = NSPasteboard::pasteboardWithName(unsafe { NSPasteboardNameDrag });
     let last_change_count = Arc::new(AtomicIsize::new(drag_pasteboard.changeCount()));
+    let drag_in_progress = Arc::new(AtomicBool::new(false));
 
     let global_app = app.clone();
     let global_change_count = last_change_count.clone();
+    let global_drag_in_progress = drag_in_progress.clone();
     let global_handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
         handle_drag_event(
             &global_app,
             &global_change_count,
+            &global_drag_in_progress,
             unsafe { event.as_ref() }.r#type(),
         );
     });
@@ -195,10 +214,12 @@ pub fn setup(app: AppHandle) {
     }
 
     let local_change_count = last_change_count.clone();
+    let local_drag_in_progress = drag_in_progress.clone();
     let local_handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
         handle_drag_event(
             &app,
             &local_change_count,
+            &local_drag_in_progress,
             unsafe { event.as_ref() }.r#type(),
         );
         event.as_ptr()
@@ -300,5 +321,26 @@ pub fn take_pending_system_drag_drops(
 pub fn dismiss_system_drag_panel(app: AppHandle) {
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         let _ = panel.hide();
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::take_drag_in_progress;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn plain_mouse_up_does_not_consume_a_drop() {
+        let drag_in_progress = AtomicBool::new(false);
+
+        assert!(!take_drag_in_progress(&drag_in_progress));
+    }
+
+    #[test]
+    fn mouse_up_consumes_only_the_current_drag() {
+        let drag_in_progress = AtomicBool::new(true);
+
+        assert!(take_drag_in_progress(&drag_in_progress));
+        assert!(!take_drag_in_progress(&drag_in_progress));
     }
 }
