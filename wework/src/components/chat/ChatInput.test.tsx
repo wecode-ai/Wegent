@@ -1059,6 +1059,30 @@ describe('ChatInput', () => {
     expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
   })
 
+  test('highlights the desktop composer while files are dragged over it', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
+    )
+
+    const composer = screen.getByTestId('project-chat-composer-form')
+    const dataTransfer = { types: ['Files'], dropEffect: 'none' }
+
+    fireEvent.dragEnter(composer, { dataTransfer })
+
+    expect(composer).toHaveClass('border-focus', 'ring-2', 'ring-focus/20')
+    expect(dataTransfer.dropEffect).toBe('copy')
+
+    fireEvent.dragLeave(composer, { dataTransfer, relatedTarget: document.body })
+
+    expect(composer).toHaveClass('border-border/45')
+  })
+
   test('uploads pasted images from the fullscreen compact textbox', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const image = new File(['image'], 'fullscreen-clipboard.png', { type: 'image/png' })
