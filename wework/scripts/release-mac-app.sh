@@ -502,10 +502,8 @@ require_macos_build_target
 
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
-DEFAULT_SOCKET_BASE_URL="${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}"
 
-export VITE_API_BASE_URL="${VITE_API_BASE_URL:-$BACKEND_BASE_URL/api}"
-export VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL:-$DEFAULT_SOCKET_BASE_URL}"
+export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
 
 download_base_url="$LOCAL_DOWNLOAD_BASE_URL"
 dist_dir="$LOCAL_DIST_DIR"
@@ -590,9 +588,7 @@ if [ -n "$NOTARY_PROFILE" ]; then
 elif [ "$TARGET" = "local" ]; then
   echo "Notary profile: not set (local release will skip notarization)"
 fi
-echo "VITE_API_BASE_URL=$VITE_API_BASE_URL"
-echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
-echo "VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
+echo "VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"

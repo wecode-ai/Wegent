@@ -2297,9 +2297,7 @@ start_services() {
 
         cd "$SCRIPT_DIR/wework"
 
-        export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
-        export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
-        export VITE_SOCKET_BASE_URL=$WEGENT_SOCKET_URL
+        export VITE_WEGENT_BACKEND_URL=http://localhost:$BACKEND_PORT
 
         local wework_cmd="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT"
 

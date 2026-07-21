@@ -115,6 +115,6 @@ output="$(
 assert_contains "$output" "WEWORK_PORT=$expected_port" "dry-run output"
 assert_contains "$output" "\"devUrl\": \"http://localhost:$expected_port\"" "Tauri devUrl"
 assert_contains "$output" "pnpm exec vite --host 0.0.0.0 --port $expected_port --strictPort" "beforeDevCommand"
-assert_contains "$output" "VITE_SOCKET_BASE_URL=http://localhost:$expected_port" "socket base URL"
+assert_contains "$output" "VITE_WEGENT_BACKEND_URL=" "backend URL"
 
 echo "WeWork macOS dev port selection regression test passed"

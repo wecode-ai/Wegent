@@ -5,8 +5,18 @@ import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 
-const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000'
-const socketProxyTarget = process.env.VITE_SOCKET_PROXY_TARGET || apiProxyTarget
+function normalizeBackendUrl(value: string): string {
+  const url = new URL(value)
+  const segments = url.pathname.split('/').filter(Boolean)
+  const apiIndex = segments.indexOf('api')
+  const backendSegments = apiIndex >= 0 ? segments.slice(0, apiIndex) : segments
+  url.pathname = backendSegments.length > 0 ? `/${backendSegments.join('/')}` : '/'
+  return url.toString().replace(/\/$/, '')
+}
+
+const backendProxyTarget = normalizeBackendUrl(
+  process.env.VITE_WEGENT_BACKEND_URL || 'http://localhost:8000'
+)
 const configuredAppBasePath = process.env.VITE_APP_BASE_PATH || '/'
 const appBasePath = configuredAppBasePath.endsWith('/')
   ? configuredAppBasePath
@@ -55,23 +65,23 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/wework/api': {
-        target: apiProxyTarget,
+        target: backendProxyTarget,
         changeOrigin: true,
         rewrite: path => path.replace(/^\/wework\/api/, '/api'),
       },
       '/wework/socket.io': {
-        target: socketProxyTarget,
+        target: backendProxyTarget,
         changeOrigin: true,
         ws: true,
         rewrite: path => path.replace(/^\/wework\/socket\.io/, '/socket.io'),
       },
       '/api': {
-        target: apiProxyTarget,
+        target: backendProxyTarget,
         changeOrigin: true,
         ws: true,
       },
       '/socket.io': {
-        target: socketProxyTarget,
+        target: backendProxyTarget,
         changeOrigin: true,
         ws: true,
       },

@@ -113,6 +113,15 @@ export function stripAppBasePath(path: string): string {
   return path
 }
 
+function normalizeBackendUrl(value: string): string {
+  const url = new URL(value)
+  const segments = url.pathname.split('/').filter(Boolean)
+  const apiIndex = segments.indexOf('api')
+  const backendSegments = apiIndex >= 0 ? segments.slice(0, apiIndex) : segments
+  const backendPath = backendSegments.length > 0 ? `/${backendSegments.join('/')}` : ''
+  return trimTrailingSlash(`${url.origin}${backendPath}`)
+}
+
 export function getRuntimeConfig(): RuntimeConfig {
   const overrides = runtimeOverrides()
   const appBasePath = normalizeBasePath(
@@ -120,28 +129,25 @@ export function getRuntimeConfig(): RuntimeConfig {
       import.meta.env.VITE_APP_BASE_PATH ||
       import.meta.env.BASE_URL
   )
+  const configuredBackendUrl =
+    runtimeString(overrides, 'wegentBackendUrl') ||
+    import.meta.env.VITE_WEGENT_BACKEND_URL?.trim() ||
+    ''
+  const wegentBackendUrl = configuredBackendUrl ? normalizeBackendUrl(configuredBackendUrl) : ''
   const apiBaseUrl =
     runtimeString(overrides, 'apiBaseUrl') ||
-    import.meta.env.VITE_API_BASE_URL ||
-    joinAppPath(appBasePath, '/api')
+    (wegentBackendUrl ? `${wegentBackendUrl}/api` : joinAppPath(appBasePath, '/api'))
   const socketBaseUrl =
-    runtimeString(overrides, 'socketBaseUrl') ||
-    import.meta.env.VITE_SOCKET_BASE_URL ||
-    window.location.origin
+    runtimeString(overrides, 'socketBaseUrl') || wegentBackendUrl || window.location.origin
   const socketPath =
-    runtimeString(overrides, 'socketPath') ||
-    import.meta.env.VITE_SOCKET_PATH ||
-    joinAppPath(appBasePath, '/socket.io')
+    runtimeString(overrides, 'socketPath') || joinAppPath(appBasePath, '/socket.io')
 
   return {
     appBasePath,
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
-    wegentBackendUrl:
-      runtimeString(overrides, 'wegentBackendUrl') ||
-      import.meta.env.VITE_WEGENT_BACKEND_URL?.trim() ||
-      '',
+    wegentBackendUrl,
     runtimeMode: resolveRuntimeMode(overrides),
     loginMode: resolveLoginMode(overrides),
     oidcLoginText:

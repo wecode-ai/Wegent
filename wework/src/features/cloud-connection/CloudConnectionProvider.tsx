@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -40,12 +39,7 @@ const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
 
 function resolveCloudRuntimeConfig(backendUrl: string): CloudConnectionRuntimeConfig {
-  const runtimeConfig = getRuntimeConfig()
-  return normalizeCloudBackendUrl(backendUrl, {
-    backendUrls: [runtimeConfig.wegentBackendUrl, runtimeConfig.apiBaseUrl],
-    socketBaseUrl: runtimeConfig.socketBaseUrl,
-    socketPath: runtimeConfig.socketPath,
-  })
+  return normalizeCloudBackendUrl(backendUrl)
 }
 
 function delay(ms: number): Promise<void> {
