@@ -9,6 +9,7 @@ import { Building2, Clock3, Database, Loader2, Plus, User, Users, XIcon } from '
 import type { TFunction } from 'i18next'
 
 import { Badge } from '@/components/ui/badge'
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -184,67 +185,74 @@ function KnowledgeBaseOptionRow({ item, disabled, onSelect, t }: KnowledgeBaseOp
   const documentText = formatDocumentCount(item.documentCount || 0, t)
 
   return (
-    <div
-      className={cn(
-        'cursor-pointer border-b border-border px-4 py-3 transition-colors last:border-b-0',
-        disabled ? 'cursor-not-allowed opacity-70' : 'hover:bg-muted'
-      )}
-      onClick={() => {
-        if (!disabled) {
-          onSelect(item)
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      onKeyDown={event => {
-        if (disabled) {
-          return
-        }
+    <LongTextTooltip content={item.name}>
+      <div
+        className={cn(
+          'cursor-pointer border-b border-border px-4 py-3 transition-colors last:border-b-0',
+          disabled ? 'cursor-not-allowed opacity-70' : 'hover:bg-muted'
+        )}
+        onClick={() => {
+          if (!disabled) {
+            onSelect(item)
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={event => {
+          if (disabled) {
+            return
+          }
 
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          onSelect(item)
-        }
-      }}
-      data-testid={`default-knowledge-base-option-${item.id}`}
-    >
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <Database className="h-4 w-4 flex-shrink-0 text-primary" />
-          <span className="text-sm font-medium text-text-primary">{item.name}</span>
-          <Badge variant="info" size="sm" className="gap-1">
-            <SourceIcon className="h-3 w-3" />
-            {getSourceLabel(item.source, t)}
-          </Badge>
-          {item.source === 'group' && item.groupName ? (
-            <Badge variant="secondary" size="sm">
-              {item.groupName}
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onSelect(item)
+          }
+        }}
+        data-testid={`default-knowledge-base-option-${item.id}`}
+        aria-label={item.name}
+      >
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <Database className="h-4 w-4 flex-shrink-0 text-primary" />
+            <TruncatedText
+              text={item.name}
+              focusable={false}
+              className="text-sm font-medium text-text-primary"
+            />
+            <Badge variant="info" size="sm" className="shrink-0 gap-1">
+              <SourceIcon className="h-3 w-3" />
+              {getSourceLabel(item.source, t)}
             </Badge>
-          ) : null}
-          {item.isShared ? (
-            <Badge variant="secondary" size="sm">
-              {t('common:bot.default_knowledge_bases_source_shared', '共享')}
+            {item.source === 'group' && item.groupName ? (
+              <Badge variant="secondary" size="sm" className="shrink-0">
+                {item.groupName}
+              </Badge>
+            ) : null}
+            {item.isShared ? (
+              <Badge variant="secondary" size="sm" className="shrink-0">
+                {t('common:bot.default_knowledge_bases_source_shared', '共享')}
+              </Badge>
+            ) : null}
+            <Badge variant="secondary" size="sm" className="shrink-0">
+              {documentText}
             </Badge>
-          ) : null}
-          <Badge variant="secondary" size="sm">
-            {documentText}
-          </Badge>
-        </div>
-
-        {item.description ? (
-          <div className="pl-6 text-xs text-text-secondary line-clamp-2">{item.description}</div>
-        ) : null}
-
-        {updatedAt ? (
-          <div className="flex items-center gap-1 pl-6 text-xs text-text-muted">
-            <Clock3 className="h-3 w-3" />
-            <span>
-              {`${t('common:bot.default_knowledge_bases_updated_at', '最近更新')} ${updatedAt}`}
-            </span>
           </div>
-        ) : null}
+
+          {item.description ? (
+            <div className="pl-6 text-xs text-text-secondary line-clamp-2">{item.description}</div>
+          ) : null}
+
+          {updatedAt ? (
+            <div className="flex items-center gap-1 pl-6 text-xs text-text-muted">
+              <Clock3 className="h-3 w-3" />
+              <span>
+                {`${t('common:bot.default_knowledge_bases_updated_at', '最近更新')} ${updatedAt}`}
+              </span>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </LongTextTooltip>
   )
 }
 
@@ -256,24 +264,27 @@ interface SelectedKnowledgeBaseChipProps {
 
 function SelectedKnowledgeBaseChip({ item, disabled, onRemove }: SelectedKnowledgeBaseChipProps) {
   return (
-    <div
-      className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
-      data-testid={`default-knowledge-base-chip-${item.id}`}
-    >
-      <span>{item.name}</span>
-      <button
-        type="button"
-        onClick={() => onRemove(item.id)}
-        disabled={disabled}
-        className={cn(
-          'text-text-muted hover:text-text-primary',
-          disabled ? 'cursor-not-allowed opacity-50' : ''
-        )}
-        data-testid={`default-knowledge-base-remove-${item.id}`}
+    <LongTextTooltip content={item.name}>
+      <div
+        className="inline-flex max-w-[min(260px,100%)] items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm"
+        data-testid={`default-knowledge-base-chip-${item.id}`}
+        aria-label={item.name}
       >
-        <XIcon className="h-3 w-3" />
-      </button>
-    </div>
+        <TruncatedText text={item.name} focusable={false} className="max-w-[220px]" />
+        <button
+          type="button"
+          onClick={() => onRemove(item.id)}
+          disabled={disabled}
+          className={cn(
+            'shrink-0 text-text-muted hover:text-text-primary',
+            disabled ? 'cursor-not-allowed opacity-50' : ''
+          )}
+          data-testid={`default-knowledge-base-remove-${item.id}`}
+        >
+          <XIcon className="h-3 w-3" />
+        </button>
+      </div>
+    </LongTextTooltip>
   )
 }
 

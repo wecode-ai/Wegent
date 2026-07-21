@@ -18,11 +18,12 @@ import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
 import type { UnifiedSkill } from '@/apis/skills'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
-import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
+import { AgentDefaultKnowledgeScopeSelector } from '@/features/settings/components/knowledge/AgentDefaultKnowledgeScopeSelector'
 import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
 import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeBaseDefaultRef } from '@/types/api'
+import type { ExternalKnowledgeRef } from '@/types/context'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 
@@ -42,6 +43,8 @@ interface SimpleBotCoreConfigFormProps {
   onReloadSkills: () => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
+  defaultExternalKnowledgeRefs: ExternalKnowledgeRef[]
+  onDefaultExternalKnowledgeRefsChange: (value: ExternalKnowledgeRef[]) => void
   prompt: string
   onPromptChange: (value: string) => void
   scope?: 'personal' | 'group' | 'all' | 'public'
@@ -64,6 +67,8 @@ export default function SimpleBotCoreConfigForm({
   onReloadSkills,
   defaultKnowledgeBaseRefs,
   onDefaultKnowledgeBaseRefsChange,
+  defaultExternalKnowledgeRefs,
+  onDefaultExternalKnowledgeRefsChange,
   prompt,
   onPromptChange,
   scope,
@@ -222,23 +227,18 @@ export default function SimpleBotCoreConfigForm({
         </SimpleConfigRow>
 
         <SimpleConfigRow
-          label={t('common:bot.default_knowledge_bases')}
-          description={t('settings:team.simple.core.knowledge_description')}
+          label={t('settings:team.simple.core.default_knowledge_scope.label')}
+          description={t('settings:team.simple.core.default_knowledge_scope.description')}
         >
-          <KnowledgeBaseMultiSelector
-            value={defaultKnowledgeBaseRefs}
-            onChange={onDefaultKnowledgeBaseRefsChange}
-            helperText={null}
+          <AgentDefaultKnowledgeScopeSelector
+            defaultKnowledgeBaseRefs={defaultKnowledgeBaseRefs}
+            onDefaultKnowledgeBaseRefsChange={onDefaultKnowledgeBaseRefsChange}
+            defaultExternalKnowledgeRefs={defaultExternalKnowledgeRefs}
+            onDefaultExternalKnowledgeRefsChange={onDefaultExternalKnowledgeRefsChange}
             allowedSources={
-              scope === 'public'
-                ? ['organization']
-                : scope === 'group'
-                  ? groupName
-                    ? ['group', 'organization']
-                    : ['organization']
-                  : ['personal', 'group', 'organization']
+              scope === 'public' ? ['organization'] : ['personal', 'group', 'organization']
             }
-            allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
+            allowExternalKnowledge={scope !== 'public'}
           />
         </SimpleConfigRow>
       </SimpleConfigGroup>

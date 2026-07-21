@@ -28,6 +28,7 @@ import {
   type KnowledgeBaseDefaultRef,
   type PipelineContextPassing,
 } from '@/types/api'
+import type { ExternalKnowledgeRef } from '@/types/context'
 import {
   TeamMode,
   getAllowedAgentsForTeamMode,
@@ -208,6 +209,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >([])
+  const [simpleDefaultExternalKnowledgeRefs, setSimpleDefaultExternalKnowledgeRefs] = useState<
+    ExternalKnowledgeRef[]
+  >([])
   const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
 
   // Ref for BotEdit in solo mode
@@ -327,6 +331,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
       setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
+      setSimpleDefaultExternalKnowledgeRefs(fullLeaderBot?.default_external_knowledge_refs || [])
       setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
       setSimpleModelName(
         fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
@@ -379,6 +384,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
       setSimpleDefaultKnowledgeBaseRefs([])
+      setSimpleDefaultExternalKnowledgeRefs([])
       setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
@@ -649,6 +655,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
           availableSkills: simpleAllSkills,
           defaultKnowledgeBaseRefs: simpleDefaultKnowledgeBaseRefs,
+          defaultExternalKnowledgeRefs: simpleDefaultExternalKnowledgeRefs,
           mcpServers: parsedMcpServers,
         },
         name,
@@ -996,6 +1003,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 onReloadSkills={reloadSimpleSkills}
                 defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
                 onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                defaultExternalKnowledgeRefs={simpleDefaultExternalKnowledgeRefs}
+                onDefaultExternalKnowledgeRefsChange={setSimpleDefaultExternalKnowledgeRefs}
                 mcpConfig={simpleMcpConfig}
                 onMcpConfigChange={setSimpleMcpConfig}
                 mcpAgentType={simpleMcpAgentType}

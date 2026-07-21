@@ -32,9 +32,10 @@ import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
 import DifyBotConfig from './DifyBotConfig'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
-import { KnowledgeBaseMultiSelector } from './knowledge/KnowledgeBaseMultiSelector'
+import { AgentDefaultKnowledgeScopeSelector } from './knowledge/AgentDefaultKnowledgeScopeSelector'
 
 import { Bot } from '@/types/api'
+import type { ExternalKnowledgeRef } from '@/types/context'
 import {
   botApis,
   CreateBotRequest,
@@ -72,6 +73,7 @@ export interface BotFormData {
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
+  default_external_knowledge_refs: ExternalKnowledgeRef[]
   skills: string[]
   skill_refs: Record<string, SkillRefMeta>
   preload_skills: string[]
@@ -189,6 +191,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >(baseBot?.default_knowledge_base_refs || [])
+  const [defaultExternalKnowledgeRefs, setDefaultExternalKnowledgeRefs] = useState<
+    ExternalKnowledgeRef[]
+  >(baseBot?.default_external_knowledge_refs || [])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || [])
   const [preloadSkills, setPreloadSkills] = useState<string[]>(baseBot?.preload_skills || [])
   const [selectedSkillRefs, setSelectedSkillRefs] = useState<Record<string, SkillRefMeta>>(
@@ -526,6 +531,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     setSelectedSkills(baseBot?.skills || [])
     setDefaultKnowledgeBaseRefs(baseBot?.default_knowledge_base_refs || [])
+    setDefaultExternalKnowledgeRefs(baseBot?.default_external_knowledge_refs || [])
     setPreloadSkills(baseBot?.preload_skills || [])
     setSelectedSkillRefs(baseBot?.skill_refs || {})
     setAgentConfigError(false)
@@ -722,6 +728,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       default_knowledge_base_refs: defaultKnowledgeBaseRefs,
+      default_external_knowledge_refs: defaultExternalKnowledgeRefs,
       skills: selectedSkills.length > 0 ? selectedSkills : [],
       skill_refs: buildSkillRefsFromSelection(
         selectedSkills,
@@ -751,6 +758,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     agentName,
     botName,
     defaultKnowledgeBaseRefs,
+    defaultExternalKnowledgeRefs,
     prompt,
     selectedSkills,
     selectedSkillRefs,
@@ -815,6 +823,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
+          default_external_knowledge_refs: botData.default_external_knowledge_refs,
           skills: botData.skills,
           skill_refs: botData.skill_refs,
           preload_skills: botData.preload_skills,
@@ -981,6 +990,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
+          default_external_knowledge_refs: defaultExternalKnowledgeRefs,
           skills: selectedSkills.length > 0 ? selectedSkills : [],
           skill_refs: buildSkillRefsFromSelection(
             selectedSkills,
@@ -1495,35 +1505,33 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               )}
 
               {!isDifyAgent && (
-                <div className="flex flex-col">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center">
-                      <label className="block text-base font-medium text-text-primary">
-                        {t('common:bot.default_knowledge_bases')}
-                      </label>
-                      <span className="text-xs text-text-muted ml-2">
-                        {t('common:bot.default_knowledge_bases_optional')}
-                      </span>
+                <div className="space-y-4">
+                  <div className="flex flex-col">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center">
+                        <label className="block text-base font-medium text-text-primary">
+                          {t('settings:team.simple.core.default_knowledge_scope.label')}
+                        </label>
+                        <span className="text-xs text-text-muted ml-2">
+                          {t('settings:team.simple.core.default_knowledge_scope.optional')}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="bg-base rounded-md p-2 min-h-[80px]">
-                    <KnowledgeBaseMultiSelector
-                      value={defaultKnowledgeBaseRefs}
-                      onChange={setDefaultKnowledgeBaseRefs}
-                      disabled={readOnly}
-                      allowedSources={
-                        scope === 'public'
-                          ? ['organization']
-                          : scope === 'group'
-                            ? groupName
-                              ? ['group', 'organization']
-                              : ['organization']
+                    <div className="bg-base rounded-md p-2 min-h-[80px]">
+                      <AgentDefaultKnowledgeScopeSelector
+                        defaultKnowledgeBaseRefs={defaultKnowledgeBaseRefs}
+                        onDefaultKnowledgeBaseRefsChange={setDefaultKnowledgeBaseRefs}
+                        defaultExternalKnowledgeRefs={defaultExternalKnowledgeRefs}
+                        onDefaultExternalKnowledgeRefsChange={setDefaultExternalKnowledgeRefs}
+                        disabled={readOnly}
+                        allowedSources={
+                          scope === 'public'
+                            ? ['organization']
                             : ['personal', 'group', 'organization']
-                      }
-                      allowedGroupNamespaces={
-                        scope === 'group' && groupName ? [groupName] : undefined
-                      }
-                    />
+                        }
+                        allowExternalKnowledge={scope !== 'public'}
+                      />
+                    </div>
                   </div>
                 </div>
               )}

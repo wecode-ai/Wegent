@@ -23,24 +23,65 @@ import type {
   ExternalKnowledgeScope,
 } from '@/types/external-knowledge'
 
+export type ExternalKnowledgeDisplayIcon =
+  | 'personal'
+  | 'organization'
+  | 'cloud'
+  | 'file'
+  | 'database'
+  | 'message'
+  | 'folderOpen'
+
 export interface ExternalKnowledgeScopeDescriptor {
   key: ExternalKnowledgeScope
   label?: string
   labelKey?: string
-  icon?: 'personal' | 'organization' | 'cloud'
+  icon?: ExternalKnowledgeDisplayIcon
+  displayOrder?: number
+  configureHref?: string
+  syncHref?: string
+  supportsSyncStatus?: boolean
+}
+
+export interface ExternalKnowledgeBaseDisplayDescriptor {
+  label?: string
+  labelKey?: string
+  icon?: ExternalKnowledgeDisplayIcon
+  rowVariant?: 'default' | 'primary'
+  testId?: string
+}
+
+export interface ExternalKnowledgeScopeStatus {
+  key: ExternalKnowledgeScope
+  configured: boolean
+  synced?: boolean
+  syncing?: boolean
+  lastSyncedAt?: string | null
+  messageKey?: string
+  actionLabelKey?: string
+  testId?: string
 }
 
 export interface ExternalKnowledgeSource {
   providerId: string
   label?: string
+  labelKey?: string
   shortLabel?: string
+  icon?: ExternalKnowledgeDisplayIcon
+  displayOrder?: number
   capabilities?: {
+    enforcesPerUserAccess?: boolean
+    supportsAgentDefault?: boolean
     supportsKnowledgeBaseSelection?: boolean
     supportsDocumentSelection?: boolean
     supportsDocumentTree?: boolean
     supportsScopedRetrieval?: boolean
     supportsPreview?: boolean
+    supportsVirtualContainers?: boolean
+    supportsSyncStatus?: boolean
   }
+  configureHref?: string
+  syncHref?: string
   selectionLimits?: {
     maxKnowledgeBases?: number
   }
@@ -49,6 +90,11 @@ export interface ExternalKnowledgeSource {
     params?: ExternalKnowledgeBaseListParams
   ) => Promise<ExternalKnowledgeBaseListResponse>
   getKnowledgeBaseCount?: () => Promise<number>
+  getKnowledgeBaseDisplay?: (
+    knowledgeBase: ExternalKnowledgeBase
+  ) => ExternalKnowledgeBaseDisplayDescriptor | undefined
+  getScopeStatuses?: () => Promise<ExternalKnowledgeScopeStatus[]>
+  syncScope?: (scope: ExternalKnowledgeScope) => Promise<void>
   listNodes?: (
     knowledgeBaseId: string,
     params?: ExternalKbNodeListParams

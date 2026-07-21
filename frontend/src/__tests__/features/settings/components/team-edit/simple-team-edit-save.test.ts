@@ -67,6 +67,7 @@ describe('simple team edit save helpers', () => {
       system_prompt: 'Answer clearly.',
       mcp_servers: {},
       default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
+      default_external_knowledge_refs: [],
       skills: ['repo-reader'],
       skill_refs: {
         'repo-reader': {
