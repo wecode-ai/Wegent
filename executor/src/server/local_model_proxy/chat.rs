@@ -217,6 +217,7 @@ fn append_input(
     };
     let mut pending_calls = Vec::new();
     let mut pending_reasoning = String::new();
+    let mut call_names = BTreeMap::new();
 
     for item in items {
         match item.get("type").and_then(Value::as_str) {
@@ -242,6 +243,7 @@ fn append_input(
                 } else {
                     json_string(item.get("arguments"))
                 };
+                call_names.insert(call_id.to_owned(), name.to_owned());
                 pending_calls.push(json!({
                     "id": call_id,
                     "type": "function",
@@ -255,6 +257,11 @@ fn append_input(
                     .and_then(Value::as_str)
                     .unwrap_or_default();
                 let output = item.get("output").map(text_value).unwrap_or_default();
+                let output = if call_names.get(call_id).map(String::as_str) == Some("apply_patch") {
+                    friendly_apply_patch_output(&output)
+                } else {
+                    output
+                };
                 messages.push(json!({"role": "tool", "tool_call_id": call_id, "content": output}));
             }
             _ => {
@@ -282,6 +289,34 @@ fn append_input(
     }
     flush_calls(messages, &mut pending_calls, &mut pending_reasoning);
     Ok(())
+}
+
+pub(super) fn friendly_apply_patch_output(output: &str) -> String {
+    let lower = output.to_ascii_lowercase();
+    if !lower.contains("apply_patch")
+        || !(lower.contains("failed")
+            || lower.contains("error")
+            || lower.contains("invalid")
+            || lower.contains("could not"))
+    {
+        return output.to_owned();
+    }
+
+    let diagnosis = if lower.contains("invalid hunk") || lower.contains("hunk header") {
+        "The patch contains an invalid hunk. After `*** Update File`, start a hunk with `@@` (optionally followed by context text), then prefix unchanged lines with one space, removed lines with `-`, and added lines with `+`."
+    } else if lower.contains("add file") {
+        "For `*** Add File`, every file-content line must start with `+`, including blank lines (write a line containing only `+`)."
+    } else if lower.contains("begin patch") || lower.contains("end patch") {
+        "The input must start with `*** Begin Patch`, end with `*** End Patch`, and contain no Markdown fence or prose outside those markers."
+    } else if lower.contains("context") || lower.contains("does not match") {
+        "The update context did not match the current file. Read the relevant file section again and build a smaller hunk using the exact current lines."
+    } else {
+        "Use the exact apply_patch grammar and correct the specific error reported above."
+    };
+
+    format!(
+        "{output}\n\nThe patch was not applied. {diagnosis}\n\nCorrect update example:\n*** Begin Patch\n*** Update File: path/to/file.txt\n@@\n-old line\n+new line\n*** End Patch\n\nCorrect new-file example:\n*** Begin Patch\n*** Add File: path/to/new-file.txt\n+first line\n+\n+third line\n*** End Patch\n\nFix the reported error and call `apply_patch` again. Do not switch to shell redirection, `cat`, Python, or another file-writing workaround."
+    )
 }
 
 fn flush_calls(messages: &mut Vec<Value>, calls: &mut Vec<Value>, reasoning: &mut String) {
@@ -1140,6 +1175,34 @@ mod tests {
         assert_eq!(converted["messages"][2]["reasoning_content"], "Need patch");
         assert_eq!(converted["messages"][3]["role"], "tool");
         assert_eq!(converted["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn explains_apply_patch_hunk_failures_and_requests_a_retry() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {"type": "custom_tool_call", "call_id": "call_1", "name": "apply_patch", "input": "*** Begin Patch"},
+                {"type": "custom_tool_call_output", "call_id": "call_1", "output": "apply_patch verification failed: invalid hunk at line 3"}
+            ],
+            "tools": [{"type": "custom", "name": "apply_patch"}]
+        });
+
+        let (converted, _) = responses_to_chat(&input).expect("request should convert");
+        let output = converted["messages"][1]["content"]
+            .as_str()
+            .expect("tool output should be text");
+
+        assert!(output.starts_with("apply_patch verification failed: invalid hunk at line 3"));
+        assert!(output.contains("prefix unchanged lines with one space"));
+        assert!(output.contains("Correct update example:"));
+        assert!(output.contains("Fix the reported error and call `apply_patch` again"));
+        assert!(output.contains("Do not switch to shell redirection"));
+    }
+
+    #[test]
+    fn leaves_successful_apply_patch_output_unchanged() {
+        assert_eq!(friendly_apply_patch_output("Done!"), "Done!");
     }
 
     #[test]

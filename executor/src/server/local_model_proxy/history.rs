@@ -156,6 +156,47 @@ impl CodexToolHistory {
         changed
     }
 
+    pub(super) async fn enhance_native_apply_patch_errors(&self, body: &mut Value) -> usize {
+        let previous_response_id = body
+            .get("previous_response_id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let Some(items) = body.get_mut("input").and_then(Value::as_array_mut) else {
+            return 0;
+        };
+        let output_ids = items
+            .iter()
+            .filter(|item| is_call_output(item))
+            .filter_map(call_id)
+            .collect::<HashSet<_>>();
+        let cached = self
+            .lookup(previous_response_id.as_deref(), &output_ids)
+            .await;
+        let mut enhanced = 0;
+
+        for item in items {
+            let Some(id) = call_id(item) else {
+                continue;
+            };
+            let is_apply_patch = cached.call(&id).is_some_and(|call| {
+                call.get("name").and_then(Value::as_str) == Some("apply_patch")
+            });
+            if !is_apply_patch {
+                continue;
+            }
+            let Some(output) = item.get("output").and_then(Value::as_str) else {
+                continue;
+            };
+            let friendly = super::chat::friendly_apply_patch_output(output);
+            if friendly != output {
+                item["output"] = Value::String(friendly);
+                enhanced += 1;
+            }
+        }
+        enhanced
+    }
+
     async fn lookup(
         &self,
         previous_response_id: Option<&str>,
@@ -408,6 +449,43 @@ mod tests {
         assert_eq!(history.enrich_request(&mut request).await, 1);
         assert_eq!(request["input"][0]["type"], "custom_tool_call");
         assert_eq!(request["input"][1]["type"], "custom_tool_call_output");
+    }
+
+    #[tokio::test]
+    async fn enhances_native_apply_patch_error_without_restoring_the_call() {
+        let history = CodexToolHistory::default();
+        history
+            .record_response(&json!({
+                "id": "resp_native",
+                "output": [{
+                    "type": "custom_tool_call",
+                    "call_id": "call_patch",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch\n*** End Patch"
+                }]
+            }))
+            .await;
+        let mut request = json!({
+            "previous_response_id": "resp_native",
+            "input": [{
+                "type": "custom_tool_call_output",
+                "call_id": "call_patch",
+                "output": "apply_patch verification failed: invalid hunk at line 3"
+            }]
+        });
+
+        assert_eq!(
+            history
+                .enhance_native_apply_patch_errors(&mut request)
+                .await,
+            1
+        );
+        assert_eq!(request["input"].as_array().map(Vec::len), Some(1));
+        let output = request["input"][0]["output"]
+            .as_str()
+            .expect("output should remain text");
+        assert!(output.contains("Correct update example:"));
+        assert!(output.contains("call `apply_patch` again"));
     }
 
     #[tokio::test]

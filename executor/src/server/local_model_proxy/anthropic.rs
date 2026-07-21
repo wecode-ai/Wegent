@@ -429,6 +429,27 @@ mod tests {
         assert_eq!(converted["tools"][0]["name"], "apply_patch");
     }
 
+    #[test]
+    fn preserves_friendly_apply_patch_failure_guidance() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {"type": "custom_tool_call", "call_id": "call_1", "name": "apply_patch", "input": "*** Begin Patch"},
+                {"type": "custom_tool_call_output", "call_id": "call_1", "output": "apply_patch verification failed: Invalid Add File Line: raw text"}
+            ],
+            "tools": [{"type": "custom", "name": "apply_patch"}]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+        let output = converted["messages"][1]["content"][0]["content"]
+            .as_str()
+            .expect("tool result should contain text");
+
+        assert!(output.contains("every file-content line must start with `+`"));
+        assert!(output.contains("Correct new-file example:"));
+        assert!(output.contains("call `apply_patch` again"));
+    }
+
     #[tokio::test]
     async fn converts_anthropic_text_and_tool_stream() {
         let events = [

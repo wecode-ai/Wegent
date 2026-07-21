@@ -387,7 +387,28 @@ async fn prepare_request_with_history(
     history: &history::CodexToolHistory,
 ) -> Result<(Vec<u8>, Option<Conversion>, HashSet<String>), HttpError> {
     if api_format == "openai-responses" {
-        return prepare_request(api_format, body);
+        let mut responses_body =
+            serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
+                status: StatusCode::BAD_REQUEST,
+                detail: format!("Invalid Codex Responses request: {error}"),
+            })?;
+        let enhanced = history
+            .enhance_native_apply_patch_errors(&mut responses_body)
+            .await;
+        if enhanced > 0 {
+            log_executor_event(
+                "local model proxy enhanced apply_patch error",
+                &[
+                    ("api_format", api_format.to_owned()),
+                    ("outputs", enhanced.to_string()),
+                ],
+            );
+        }
+        let body = serde_json::to_vec(&responses_body).map_err(|error| HttpError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            detail: format!("Failed to serialize enriched Codex request: {error}"),
+        })?;
+        return prepare_request(api_format, &body);
     }
     let mut responses_body = serde_json::from_slice::<Value>(body).map_err(|error| HttpError {
         status: StatusCode::BAD_REQUEST,
