@@ -2280,7 +2280,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Task')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(

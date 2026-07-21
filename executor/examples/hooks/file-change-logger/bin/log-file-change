@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def diff_counts(diff: str) -> tuple[int, int, int, int]:
+    added_lines = 0
+    deleted_lines = 0
+    added_characters = 0
+    deleted_characters = 0
+    for line in diff.splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            added_lines += 1
+            added_characters += len(line[1:])
+        elif line.startswith("-") and not line.startswith("---"):
+            deleted_lines += 1
+            deleted_characters += len(line[1:])
+    return added_lines, deleted_lines, added_characters, deleted_characters
+
+
+def main() -> None:
+    payload = json.load(sys.stdin)
+    changes = payload.get("tool_input", {}).get("changes", [])
+    files = []
+    totals = {
+        "added_lines": 0,
+        "deleted_lines": 0,
+        "added_characters": 0,
+        "deleted_characters": 0,
+    }
+    for change in changes:
+        counts = diff_counts(change.get("diff", ""))
+        entry = {
+            "path": change.get("path", ""),
+            "added_lines": counts[0],
+            "deleted_lines": counts[1],
+            "added_characters": counts[2],
+            "deleted_characters": counts[3],
+        }
+        files.append(entry)
+        for key in totals:
+            totals[key] += entry[key]
+
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "session_id": payload.get("session_id"),
+        "turn_id": payload.get("turn_id"),
+        "tool_use_id": payload.get("tool_use_id"),
+        "cwd": payload.get("cwd"),
+        "files": files,
+        **totals,
+    }
+    log_path = Path(__file__).resolve().parent.parent / "file-change.log"
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    print(json.dumps({"logged": True, "log_path": str(log_path)}))
+
+
+if __name__ == "__main__":
+    main()

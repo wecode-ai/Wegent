@@ -2,7 +2,17 @@ import { join } from 'node:path'
 
 export function buildAiVerifyEnvironment(
   processEnvironment,
-  { controlUrl, token, codexHome, deviceId, appIdentifier, executorHome, sessionDirectory }
+  {
+    controlUrl,
+    token,
+    codexHome,
+    nativeCodexHome,
+    verifyCodexHomeInitialization,
+    deviceId,
+    appIdentifier,
+    executorHome,
+    sessionDirectory,
+  }
 ) {
   return {
     ...processEnvironment,
@@ -11,6 +21,8 @@ export function buildAiVerifyEnvironment(
     VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
+    ...(nativeCodexHome ? { WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome } : {}),
+    ...(verifyCodexHomeInitialization ? { VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION: 'true' } : {}),
     DEVICE_ID: deviceId,
     WEWORK_APP_IDENTIFIER: appIdentifier,
     DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',

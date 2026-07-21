@@ -165,7 +165,7 @@ docker run -d \
 
 Terminal 会话适用于本地设备、云设备和远程 Docker 设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，云设备和远程 Docker 设备通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
 
-如果项目配置了 `workspace.localPath`、`workspace.devicePath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。`localPath` 用于本机 local executor，`devicePath` 用于绑定到具体 cloud 或 remote 设备的沙箱目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
+如果项目配置了 `workspace.localPath`、`workspace.devicePath` 或 `workspace.checkoutPath`，Wework 会在确认项目时通过设备命令创建该目录，并在启动 terminal 或 code-server 前再次确保目录存在；目录创建失败时项目不会静默进入不可用状态。`localPath` 用于本机 local executor，`devicePath` 用于绑定到具体 cloud 或 remote 设备的沙箱目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 
 ### 非项目会话工作区
 
