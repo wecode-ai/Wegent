@@ -13,6 +13,16 @@ export interface CloudDesktopActionProps {
   onOpened: () => void
 }
 
+export interface CloudDesktopWorkspaceActionProps {
+  contextKey: string
+  deviceId: string
+  disabled: boolean
+  onBusyChange: (busy: boolean) => void
+  onErrorChange: (message: string | null) => void
+  onOpened: () => void
+  testIdsEnabled?: boolean
+}
+
 export interface OpenCloudDesktopOptions {
   connection: CloudDesktopConnection
   deviceId: string
@@ -22,6 +32,7 @@ export interface OpenCloudDesktopOptions {
 export interface CloudDesktopExtension {
   available: boolean
   DeviceAction: ComponentType<CloudDesktopActionProps>
+  WorkspaceAction: ComponentType<CloudDesktopWorkspaceActionProps>
   isInternalPageUrl: (value: string) => boolean
   open: (options: OpenCloudDesktopOptions) => Promise<boolean>
 }

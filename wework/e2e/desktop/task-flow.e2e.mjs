@@ -7,10 +7,12 @@ import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { loadDesktopScenario } from './scenario-loader.mjs'
+import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
+
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
-const PROCESS_STOP_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
@@ -38,11 +40,11 @@ const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
-const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -60,6 +62,7 @@ const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
+const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -169,26 +172,6 @@ async function resolveExecutable(configuredPath, fallbackCommand, description) {
   const resolved = commandOutput('which', [fallbackCommand])
   assert.equal(await isExecutable(resolved), true, `${description} is not executable: ${resolved}`)
   return resolved
-}
-
-function waitForProcessExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-  return withTimeout(
-    new Promise(resolvePromise => child.once('exit', resolvePromise)),
-    timeoutMs,
-    `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
-  )
-}
-
-async function stopProcess(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
-  try {
-    await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  } catch {
-    child.kill('SIGKILL')
-    await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  }
 }
 
 async function appendProcessOutput(stream, destination) {
@@ -895,12 +878,15 @@ class RealCloudEnvironment {
       BIND_SHELL: 'claudecode',
       LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
       WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+      DEVICE_SESSION_GATEWAY_PORT: '0',
     }
     delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
     this.remoteExecutor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
       env: remoteEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     })
     await Promise.all([
       appendProcessOutput(this.remoteExecutor.stdout, this.remoteExecutorLogPath),
@@ -984,19 +970,21 @@ class RealCloudEnvironment {
         `Cloud E2E cleanup could not cancel running tasks: ${String(error)}\n`
       )
     }
-    await stopProcess(this.remoteExecutor)
+    await stopProcessGroup(this.remoteExecutor)
     await stopProcess(this.backend)
     await stopProcess(this.redis)
   }
 }
 
 class DesktopE2EServer {
-  constructor(workspacePath, cloudWorkspacePath = workspacePath) {
+  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
+    this.desktopScenario = desktopScenario
     this.server = createServer((request, response) => {
       void this.handle(request, response)
     })
+    this.desktopScenario?.attachServer?.(this.server)
     this.controlServer = createServer((request, response) => {
       void this.handleControl(request, response)
     })
@@ -1071,6 +1059,7 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
+    this.desktopScenario?.close?.()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
     await Promise.all([
@@ -1249,6 +1238,7 @@ class DesktopE2EServer {
 
     const url = new URL(request.url ?? '/', this.url)
     if (await this.handleControlRoute(request, response, url)) return
+    if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -1899,7 +1889,14 @@ async function main() {
     cwd: workspacePath,
   })
 
-  const control = new DesktopE2EServer(workspacePath, workspacePath)
+  const desktopScenario = await loadDesktopScenario(
+    process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
+    { uiTimeoutMs: UI_TIMEOUT_MS }
+  )
+  if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
+    throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
+  }
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
   let app
   let appBundlePath
   let cloudEnvironment
@@ -1929,7 +1926,7 @@ async function main() {
     const desktopApp = await buildDesktopApp(
       control.controlUrl,
       cloudEnvironment?.backendUrl ?? control.url,
-      cloudEnvironment?.authToken ?? 'wework-desktop-e2e-cloud-token',
+      cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
       appIdentifier
     )
     const appBinary = desktopApp.binaryPath
@@ -1956,6 +1953,7 @@ async function main() {
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     })
     await Promise.all([
       appendProcessOutput(app.stdout, appLogPath),
@@ -1996,6 +1994,20 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+
+    if (desktopScenario) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+      if (DESKTOP_SCENARIO_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -2549,6 +2561,7 @@ async function main() {
           phase,
           scenario: control.scenario,
           modelStage: control.modelStage,
+          desktopScenario: desktopScenario?.diagnostics?.() ?? null,
           cloudModelStage: control.cloudModelStage,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
@@ -2582,7 +2595,7 @@ async function main() {
     throw error
   } finally {
     await cloudEnvironment?.stop()
-    await stopProcess(app)
+    await stopProcessGroup(app)
     await control.close()
     if (appBundlePath) {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
@@ -2590,7 +2603,10 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? (error.stack ?? error.message) : error)
-  process.exitCode = 1
-})
+main().then(
+  () => process.stdout.write('', () => process.exit(0)),
+  error => {
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error)
+    process.stderr.write(`${message}\n`, () => process.exit(1))
+  }
+)

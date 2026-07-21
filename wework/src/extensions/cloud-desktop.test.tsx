@@ -6,12 +6,24 @@ import { cloudDesktopExtension } from './cloud-desktop'
 describe('cloud desktop fallback extension', () => {
   test('keeps cloud desktop capabilities unavailable without an internal overlay', async () => {
     const DeviceAction = cloudDesktopExtension.DeviceAction
-    const view = render(
+    const deviceActionView = render(
       <DeviceAction deviceId="device-1" disabled={false} onOpened={() => undefined} />
+    )
+    const WorkspaceAction = cloudDesktopExtension.WorkspaceAction
+    const workspaceActionView = render(
+      <WorkspaceAction
+        contextKey="project-1"
+        deviceId="device-1"
+        disabled={false}
+        onBusyChange={() => undefined}
+        onErrorChange={() => undefined}
+        onOpened={() => undefined}
+      />
     )
 
     expect(cloudDesktopExtension.available).toBe(false)
-    expect(view.container).toBeEmptyDOMElement()
+    expect(deviceActionView.container).toBeEmptyDOMElement()
+    expect(workspaceActionView.container).toBeEmptyDOMElement()
     expect(cloudDesktopExtension.isInternalPageUrl('tauri://localhost/extension-page.html')).toBe(
       false
     )

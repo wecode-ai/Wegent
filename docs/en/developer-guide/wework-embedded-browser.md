@@ -41,7 +41,7 @@ This binding keeps the browser the user sees and the browser the agent controls 
 
 The public Wework codebase defines only the cloud desktop extension contract and an unavailable default implementation. It does not include a concrete remote desktop protocol, authentication endpoint, proxy, page, or third-party client assets. The workbench and device settings use this capability only through `src/extensions/cloud-desktop-contract.ts`; the default implementation sets `available` to `false`, so no desktop action is shown.
 
-Product distributions may provide an implementation for `@extensions/cloud-desktop` at build time. That implementation owns connection setup and opening its page in the embedded browser, and must use `isCurrent` to ignore asynchronous requests after the project, device, or connection context changes. Do not add concrete VNC APIs, `vnc.html`, or noVNC assets back to public components as a fallback.
+Product distributions may provide an implementation for `@extensions/cloud-desktop` at build time. The generic contract exposes `DeviceAction` and `WorkspaceAction` entry points for settings and project workspaces. A concrete implementation owns connection setup, asynchronous state, and opening its page in the embedded browser, and must use `isCurrent` to ignore asynchronous requests after the project, device, or connection context changes. Public Wework provides only an unavailable fallback and must not contain concrete remote-desktop protocols, pages, or assets.
 
 ## Annotation Flow
 

@@ -17,48 +17,13 @@ import {
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
+import { desktopControlExtension } from '@extensions/desktop-control'
+import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
-
-type DesktopControlAction =
-  | 'capture'
-  | 'click'
-  | 'deferredClick'
-  | 'clickWhenEnabled'
-  | 'closeMainWindowToTray'
-  | 'dispatchLocalModelSettingsChanged'
-  | 'drag'
-  | 'dropFile'
-  | 'fill'
-  | 'getText'
-  | 'getValue'
-  | 'hover'
-  | 'navigate'
-  | 'pointerMove'
-  | 'snapshot'
-  | 'waitFor'
-  | 'press'
-  | 'selectText'
-  | 'scrollIntoView'
-
-interface DesktopControlCommand {
-  id: string
-  action: DesktopControlAction
-  selector: string
-  value?: string
-  target?: string
-  text?: string
-  timeoutMs?: number
-  enabled?: boolean
-  visible?: boolean
-  stableMs?: number
-  key?: string
-  filename?: string
-  mimeType?: string
-}
 
 interface DesktopControlResult {
   id: string
@@ -600,6 +565,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
   }
+
+  const extensionResult = await desktopControlExtension.execute(command)
+  if (extensionResult.handled) return extensionResult.value
+  throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
