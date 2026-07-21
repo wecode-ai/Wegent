@@ -32,6 +32,26 @@ interface RemoteTerminalProps {
   showWorkbenchBackground?: boolean
 }
 
+interface RemoteTerminalResource {
+  sessionId: string
+  clientFactory: RemoteTerminalClientFactory
+  showWorkbenchBackground: boolean
+  dispose: () => void
+}
+
+function matchesRemoteTerminalResource(
+  resource: RemoteTerminalResource,
+  sessionId: string,
+  clientFactory: RemoteTerminalClientFactory,
+  showWorkbenchBackground: boolean
+): boolean {
+  return (
+    resource.sessionId === sessionId &&
+    resource.clientFactory === clientFactory &&
+    resource.showWorkbenchBackground === showWorkbenchBackground
+  )
+}
+
 export function RemoteTerminal({
   sessionId,
   clientFactory,
@@ -56,6 +76,8 @@ export function RemoteTerminal({
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
   const appearanceRef = useRef(appearance)
+  const resourceRef = useRef<RemoteTerminalResource | null>(null)
+  const cleanupTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     appearanceRef.current = appearance
@@ -94,6 +116,28 @@ export function RemoteTerminal({
     const container = containerRef.current
     if (!container) return
 
+    if (cleanupTimerRef.current !== null) {
+      window.clearTimeout(cleanupTimerRef.current)
+      cleanupTimerRef.current = null
+    }
+    // StrictMode replays effects in development. Keep the live socket and xterm
+    // through that replay so initial PTY output cannot land on a discarded client.
+    const currentResource = resourceRef.current
+    if (
+      currentResource &&
+      matchesRemoteTerminalResource(
+        currentResource,
+        sessionId,
+        clientFactory,
+        showWorkbenchBackground
+      )
+    ) {
+      return () => {
+        cleanupTimerRef.current = window.setTimeout(currentResource.dispose, 0)
+      }
+    }
+    currentResource?.dispose()
+
     const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
       allowTransparency: showWorkbenchBackground,
@@ -111,6 +155,22 @@ export function RemoteTerminal({
     let disposed = false
     let scheduleThemeSync: () => void = () => undefined
 
+    const writeTerminalOutput = (data: string) => {
+      if (disposed || !data) return
+      const context = contextRef.current
+      appendRuntimeTerminalContext({
+        sessionId,
+        taskId: context.taskId,
+        workspacePath: context.workspacePath,
+        cwd: context.cwd,
+        title: context.title,
+        kind: 'remote',
+        data,
+      })
+      terminal.write(data)
+      scheduleThemeSync()
+    }
+
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
@@ -125,18 +185,7 @@ export function RemoteTerminal({
     })
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
-        const context = contextRef.current
-        appendRuntimeTerminalContext({
-          sessionId,
-          taskId: context.taskId,
-          workspacePath: context.workspacePath,
-          cwd: context.cwd,
-          title: context.title,
-          kind: 'remote',
-          data: payload.data,
-        })
-        terminal.write(payload.data)
-        scheduleThemeSync()
+        writeTerminalOutput(payload.data)
       }
     })
     const titleDisposable = terminal.onTitleChange(title => {
@@ -212,26 +261,40 @@ export function RemoteTerminal({
         }
       })
 
+    const resource: RemoteTerminalResource = {
+      sessionId,
+      clientFactory,
+      showWorkbenchBackground,
+      dispose: () => {
+        if (disposed) return
+        disposed = true
+        unobserveTheme()
+        resizeObserver.disconnect()
+        dataDisposable.dispose()
+        titleDisposable.dispose()
+        selectionGuard.dispose()
+        inputFallback.dispose()
+        unsubscribeOutput()
+        unsubscribeExit()
+        void client
+          .close()
+          .catch(() => undefined)
+          .finally(() => {
+            client.dispose()
+          })
+        terminal.dispose()
+        if (resourceRef.current === resource) {
+          terminalRef.current = null
+          fitAddonRef.current = null
+          clientRef.current = null
+          resourceRef.current = null
+        }
+      },
+    }
+    resourceRef.current = resource
+
     return () => {
-      disposed = true
-      unobserveTheme()
-      resizeObserver.disconnect()
-      dataDisposable.dispose()
-      titleDisposable.dispose()
-      selectionGuard.dispose()
-      inputFallback.dispose()
-      unsubscribeOutput()
-      unsubscribeExit()
-      void client
-        .close()
-        .catch(() => undefined)
-        .finally(() => {
-          client.dispose()
-        })
-      terminal.dispose()
-      terminalRef.current = null
-      fitAddonRef.current = null
-      clientRef.current = null
+      cleanupTimerRef.current = window.setTimeout(resource.dispose, 0)
     }
   }, [clientFactory, sessionId, showWorkbenchBackground])
 

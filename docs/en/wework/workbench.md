@@ -1,0 +1,17 @@
+---
+sidebar_position: 5
+---
+
+# Coding workbench
+
+The right workspace displays project files, previews, and change reviews. Local file links in an AI response open the file and can jump to a referenced line.
+
+Press `Command+J` to open the terminal. A project terminal starts in the active project or the task's Git worktree and is preserved when switching tasks.
+
+## Review and undo changes
+
+Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the full diff, filter files, change wrapping, or copy a `git apply` command. The original execution device must be online.
+
+Select **Undo** to reverse only that turn. Wework checks the reverse patch first and will not overwrite conflicting later changes.
+
+Before pushing, review every changed file, run relevant tests, check for temporary or sensitive files, and confirm the commit and target branch. Preserve uncommitted changes before archiving a worktree task.

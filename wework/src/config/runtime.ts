@@ -134,6 +134,15 @@ export function stripAppBasePath(path: string): string {
   return path
 }
 
+function normalizeBackendUrl(value: string): string {
+  const url = new URL(value)
+  const segments = url.pathname.split('/').filter(Boolean)
+  const apiIndex = segments.indexOf('api')
+  const backendSegments = apiIndex >= 0 ? segments.slice(0, apiIndex) : segments
+  const backendPath = backendSegments.length > 0 ? `/${backendSegments.join('/')}` : ''
+  return trimTrailingSlash(`${url.origin}${backendPath}`)
+}
+
 export function getRuntimeConfig(): RuntimeConfig {
   const overrides = runtimeOverrides()
   const appBasePath = normalizeBasePath(
@@ -144,17 +153,27 @@ export function getRuntimeConfig(): RuntimeConfig {
       import.meta.env.BASE_URL || ''
     )
   )
+  const configuredBackendUrl = resolveRuntimeString(
+    overrides,
+    'wegentBackendUrl',
+    import.meta.env.VITE_WEGENT_BACKEND_URL?.trim(),
+    ''
+  )
+  const wegentBackendUrl = configuredBackendUrl ? normalizeBackendUrl(configuredBackendUrl) : ''
   const apiBaseUrl = resolveRuntimeString(
     overrides,
     'apiBaseUrl',
     import.meta.env.VITE_API_BASE_URL,
-    joinAppPath(appBasePath, '/api')
+    wegentBackendUrl ? `${wegentBackendUrl}/api` : joinAppPath(appBasePath, '/api')
   )
   const socketBaseUrl = resolveRuntimeString(
     overrides,
     'socketBaseUrl',
-    import.meta.env.VITE_SOCKET_BASE_URL,
-    window.location.origin
+    firstStringValue(
+      import.meta.env.VITE_SOCKET_BASE_URL,
+      import.meta.env.VITE_WEGENT_SOCKET_URL?.trim()
+    ),
+    wegentBackendUrl || window.location.origin
   )
   const socketPath = resolveRuntimeString(
     overrides,
@@ -168,10 +187,7 @@ export function getRuntimeConfig(): RuntimeConfig {
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
-    wegentBackendUrl:
-      runtimeString(overrides, 'wegentBackendUrl') ||
-      import.meta.env.VITE_WEGENT_BACKEND_URL?.trim() ||
-      '',
+    wegentBackendUrl,
     runtimeMode: resolveRuntimeMode(overrides),
     loginMode: resolveLoginMode(overrides),
     oidcLoginText: resolveRuntimeString(

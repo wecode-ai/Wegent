@@ -2137,6 +2137,77 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("device_type", "submitted_device_id", "dispatch_device_id"),
+    [
+        ("cloud", "cloud-crd", "runtime-cloud"),
+        ("remote", "remote-device", "remote-device"),
+    ],
+)
+async def test_execute_configured_device_command_allows_remote_directory_creation(
+    monkeypatch,
+    device_type,
+    submitted_device_id,
+    dispatch_device_id,
+):
+    """Cloud and remote projects should be able to create workspace directories."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    online_mock = AsyncMock(return_value={"socket_id": "socket-remote"})
+    device_spec = {"deviceType": device_type}
+    if device_type == "cloud":
+        device_spec["cloudConfig"] = {"deviceId": dispatch_device_id}
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name=submitted_device_id,
+            json={"spec": device_spec},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info_by_type",
+        online_mock,
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id=submitted_device_id,
+        command_key="mkdir_p",
+        args=["/workspace/project"],
+    )
+
+    assert result["success"] is True
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id=dispatch_device_id,
+        command="mkdir -p",
+        path=None,
+        args=["/workspace/project"],
+        env={},
+        timeout_seconds=60,
+        max_output_bytes=1024 * 1024,
+    )
+
+
+@pytest.mark.asyncio
 async def test_execute_configured_device_command_rejects_cloud_unsupported_command_key(
     monkeypatch,
 ):

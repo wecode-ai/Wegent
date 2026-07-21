@@ -1,18 +1,28 @@
-import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import App from './App'
 
+vi.mock('@/features/auth/AuthProvider', () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/auth/useAuth', () => ({
+  useAuth: () => ({
+    user: null,
+    isLoading: false,
+    adminPasswordSetupRequired: false,
+    adminUsername: 'admin',
+    login: vi.fn(),
+    logout: vi.fn(),
+    refresh: vi.fn(),
+    loginWithOidcToken: vi.fn(),
+    setupAdminPassword: vi.fn(),
+  }),
+}))
+
 describe('App auth routing', () => {
-  beforeEach(() => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ required: false }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      )
-    )
+  afterEach(() => {
+    cleanup()
   })
 
   test('renders login page on /login', async () => {
