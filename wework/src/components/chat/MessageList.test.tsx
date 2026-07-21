@@ -145,7 +145,7 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
   })
 
-  test('renders generated image artifacts from image generation blocks', () => {
+  test('renders generated image artifacts and opens an enlarged preview', async () => {
     render(
       <MessageList
         messages={[
@@ -163,7 +163,8 @@ describe('MessageList', () => {
                 toolName: 'image_generation',
                 renderPayload: {
                   kind: 'image_generation',
-                  imageBase64: 'aW1hZ2U=',
+                  imageBase64:
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
                   revisedPrompt: 'Minimal dashboard concept',
                 },
                 status: 'done',
@@ -175,9 +176,31 @@ describe('MessageList', () => {
       />
     )
 
-    const image = screen.getByTestId('generated-image')
-    expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    const image = await screen.findByTestId('generated-image')
+    expect(image).toHaveAttribute(
+      'src',
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+    )
     expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
+
+    await userEvent.click(screen.getByTestId('generated-image-preview-button'))
+
+    expect(await screen.findByTestId('attachment-image-lightbox')).toBeInTheDocument()
+    expect(await screen.findByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+    )
+    expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
+      'alt',
+      'Minimal dashboard concept'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
   test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {

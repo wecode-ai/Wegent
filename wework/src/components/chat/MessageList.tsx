@@ -1623,7 +1623,10 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
+  const displayBlocks = useMemo(
+    () => getDisplayProcessingBlocks(message.blocks, isCancelled),
+    [isCancelled, message.blocks]
+  )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
@@ -1654,7 +1657,7 @@ function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
-  const generatedImages = getGeneratedImages(displayBlocks)
+  const generatedImages = useMemo(() => getGeneratedImages(displayBlocks), [displayBlocks])
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
   const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
@@ -1823,6 +1826,19 @@ interface GeneratedImageArtifact {
   alt: string
 }
 
+function generatedImageAttachment(image: GeneratedImageArtifact, index: number): Attachment {
+  return {
+    id: index + 1,
+    filename: image.alt,
+    file_size: 0,
+    mime_type: 'image/png',
+    status: 'ready',
+    file_extension: '.png',
+    created_at: '',
+    local_preview_url: image.src,
+  }
+}
+
 function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
   return blocks.flatMap(block => {
     if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
@@ -1845,21 +1861,42 @@ function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[]
 }
 
 function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  const attachments = useMemo(() => images.map(generatedImageAttachment), [images])
+
   return (
     <div
       className="mb-3 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2"
       data-testid="generated-image-gallery"
     >
-      {images.map(image => (
-        <img
-          key={image.id}
-          src={image.src}
-          alt={image.alt}
-          className="h-auto w-full rounded-lg border border-border bg-surface object-contain"
-          data-testid="generated-image"
-        />
+      {images.map((image, index) => (
+        <GeneratedImagePreview key={image.id} index={index} galleryAttachments={attachments} />
       ))}
     </div>
+  )
+}
+
+function GeneratedImagePreview({
+  index,
+  galleryAttachments,
+}: {
+  index: number
+  galleryAttachments: Attachment[]
+}) {
+  const attachment = galleryAttachments[index]
+
+  return (
+    <AttachmentImagePreview
+      attachment={attachment}
+      galleryAttachments={galleryAttachments}
+      galleryIndex={index}
+      buttonTestId="generated-image-preview-button"
+      imageTestId="generated-image"
+      loadingTestId="generated-image-loading"
+      errorTestId="generated-image-error"
+      imageClassName="h-auto w-full rounded-lg border border-border bg-surface object-contain"
+      placeholderClassName="flex min-h-40 w-full items-center justify-center rounded-lg border border-border bg-surface text-text-muted"
+      buttonClassName="block w-full cursor-zoom-in p-0 text-left"
+    />
   )
 }
 
