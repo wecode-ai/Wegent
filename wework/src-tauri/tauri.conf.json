@@ -37,9 +37,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -55,12 +53,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor"
-    ],
-    "resources": [
-      "binaries/codex/**/*"
-    ],
+    "externalBin": ["binaries/wegent-executor"],
+    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
