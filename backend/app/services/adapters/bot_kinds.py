@@ -69,7 +69,25 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         namespace: str,
     ) -> None:
         """Restrict group bots to current-group and organization knowledge bases."""
-        if not refs or namespace == "default":
+        if not refs:
+            return
+
+        inaccessible_refs = [
+            ref.name
+            for ref in refs
+            if not KnowledgeService.can_directly_access_knowledge_base(
+                db,
+                ref.id,
+                user_id,
+            )
+        ]
+        if inaccessible_refs:
+            raise HTTPException(
+                status_code=400,
+                detail="Default knowledge bases are not directly accessible",
+            )
+
+        if namespace == "default":
             return
 
         grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(

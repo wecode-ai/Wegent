@@ -17,7 +17,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.share import MemberRole
-from app.services.share.external_entity_resolver import register_entity_resolver
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.share.namespace_entity_resolver import NamespaceEntityResolver
 from app.services.share.team_share_service import TeamShareService
 from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers

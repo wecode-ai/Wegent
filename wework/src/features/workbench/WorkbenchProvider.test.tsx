@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createContext, StrictMode, useContext, useEffect, useMemo, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
@@ -3804,6 +3805,58 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('active-pane-key')).toHaveTextContent('project:7')
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
     expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
+  })
+
+  test('sends through the selected project immediately after the project pane commits', async () => {
+    const initialRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(initialRuntimeWork),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        getHomeDirectory: vi.fn().mockRejectedValue(new Error('remote mkdir is unavailable')),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimePaneSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
+    flushSync(() => screen.getByText('start new project task').click())
+    flushSync(() => screen.getByText('set pane input').click())
+    screen.getByText('send pane input').click()
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 7,
+        deviceWorkspaceId: 22,
+        message: '修复 CI',
+      })
+    )
+    expect(services.deviceApi.getHomeDirectory).not.toHaveBeenCalled()
   })
 
   test('keeps streamed assistant content when the resolved address adds a workspace path', async () => {
@@ -8291,7 +8344,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
   })
 
-  test('refreshes runtime work after cancelling the active runtime task', async () => {
+  test('pauses an active task goal before cancelling while goal details are loading', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -8318,6 +8371,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                   title: 'Runtime A',
                   runtime: 'codex',
                   running: true,
+                  goalStatus: 'active',
                 },
               ],
             },
@@ -8363,6 +8417,14 @@ describe('WorkbenchProvider runtime tasks', () => {
         Promise.resolve(runtimeRunning ? runningRuntimeWork : idleRuntimeWork)
       )
     const cancelRuntimeTask = vi.fn().mockImplementation(() => {
+      expect(setRuntimeGoal).toHaveBeenCalledWith({
+        address: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        status: 'paused',
+      })
       runtimeRunning = false
       return Promise.resolve({
         accepted: true,
@@ -8390,10 +8452,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         ],
       }),
       cancelRuntimeTask,
-      getRuntimeGoal: vi.fn().mockResolvedValue({
-        accepted: true,
-        goal: createRuntimeGoal({ status: 'active' }),
-      }),
+      getRuntimeGoal: vi.fn().mockReturnValue(new Promise(() => undefined)),
       setRuntimeGoal,
     })
     const services = createWorkbenchServices({

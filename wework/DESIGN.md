@@ -453,6 +453,9 @@ The active-conversation capture is also normative:
   are quiet and subordinate.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- When opening, closing, or resizing a side panel reflows conversation content,
+  preserve the reader's visible message or content anchor. Continue following
+  the bottom only when the reader was already at the bottom before the reflow.
 - When the right work panel is open, render it as a floating `12px`-radius white
   panel near the top-right with a subtle ring and shadow. “输出” and “来源” are
   stacked sections separated by a quiet hairline, each with its own trailing add
