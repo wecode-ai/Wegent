@@ -93,6 +93,7 @@ export type WorkbenchAction =
       type: 'project_workspace_selected'
       project: ProjectWithTasks
       deviceWorkspaceId: number | null
+      startFreshChat?: boolean
     }
   | { type: 'project_updated'; project: ProjectWithTasks }
   | {
@@ -1048,7 +1049,10 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           : state.currentProject,
         selectedDeviceWorkspaceId: null,
         pendingProjectWorkspaceProjectId: null,
+        standaloneDeviceId: action.deviceId,
+        standaloneWorkspacePath: normalizeRuntimeWorkspacePath(action.workspacePath),
         currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
       }
     }
     case 'project_workspace_selected':
@@ -1060,6 +1064,9 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.deviceWorkspaceId === null ? action.project.id : null,
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
+        standaloneChatKey: action.startFreshChat
+          ? state.standaloneChatKey + 1
+          : state.standaloneChatKey,
       }
     case 'project_updated':
       return {
