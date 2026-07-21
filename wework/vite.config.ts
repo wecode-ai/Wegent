@@ -17,6 +17,7 @@ function normalizeBackendUrl(value: string): string {
 const backendProxyTarget = normalizeBackendUrl(
   process.env.VITE_WEGENT_BACKEND_URL || 'http://localhost:8000'
 )
+const socketProxyTarget = process.env.VITE_WEGENT_SOCKET_URL || backendProxyTarget
 const configuredAppBasePath = process.env.VITE_APP_BASE_PATH || '/'
 const appBasePath = configuredAppBasePath.endsWith('/')
   ? configuredAppBasePath
@@ -70,7 +71,7 @@ export default defineConfig({
         rewrite: path => path.replace(/^\/wework\/api/, '/api'),
       },
       '/wework/socket.io': {
-        target: backendProxyTarget,
+        target: socketProxyTarget,
         changeOrigin: true,
         ws: true,
         rewrite: path => path.replace(/^\/wework\/socket\.io/, '/socket.io'),
@@ -81,7 +82,7 @@ export default defineConfig({
         ws: true,
       },
       '/socket.io': {
-        target: backendProxyTarget,
+        target: socketProxyTarget,
         changeOrigin: true,
         ws: true,
       },

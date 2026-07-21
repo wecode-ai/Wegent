@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { getRuntimeConfig } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -38,8 +39,21 @@ interface WeworkAuthSessionPollResponse {
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
 const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
 
-function resolveCloudRuntimeConfig(backendUrl: string): CloudConnectionRuntimeConfig {
-  return normalizeCloudBackendUrl(backendUrl)
+function resolveCloudRuntimeConfig(
+  backendUrl: string,
+  socketBaseUrlOverride?: string
+): CloudConnectionRuntimeConfig {
+  const normalized = normalizeCloudBackendUrl(backendUrl)
+  if (socketBaseUrlOverride?.trim()) {
+    return normalizeCloudBackendUrl(backendUrl, socketBaseUrlOverride)
+  }
+  const runtimeConfig = getRuntimeConfig()
+  if (!runtimeConfig.wegentBackendUrl) return normalized
+
+  const configuredBackend = normalizeCloudBackendUrl(runtimeConfig.wegentBackendUrl)
+  return normalized.backendUrl === configuredBackend.backendUrl
+    ? normalizeCloudBackendUrl(backendUrl, runtimeConfig.socketBaseUrl)
+    : normalized
 }
 
 function delay(ms: number): Promise<void> {
@@ -60,7 +74,7 @@ function snapshotFromStored(): CloudConnectionSnapshot {
   if (!stored) return DISCONNECTED_STATE
   let normalizedConfig: CloudConnectionRuntimeConfig
   try {
-    normalizedConfig = resolveCloudRuntimeConfig(stored.backendUrl)
+    normalizedConfig = resolveCloudRuntimeConfig(stored.backendUrl, stored.socketBaseUrlOverride)
   } catch {
     clearStoredCloudConnection()
     return DISCONNECTED_STATE
@@ -84,6 +98,7 @@ function snapshotFromStored(): CloudConnectionSnapshot {
       apiBaseUrl: migrated.apiBaseUrl,
       socketBaseUrl: migrated.socketBaseUrl,
       socketPath: migrated.socketPath,
+      socketBaseUrlOverride: migrated.socketBaseUrlOverride,
       token: null,
       tokenExpiresAt: migrated.tokenExpiresAt,
       user: migrated.user,
@@ -98,6 +113,7 @@ function snapshotFromStored(): CloudConnectionSnapshot {
     apiBaseUrl: migrated.apiBaseUrl,
     socketBaseUrl: migrated.socketBaseUrl,
     socketPath: migrated.socketPath,
+    socketBaseUrlOverride: migrated.socketBaseUrlOverride,
     token: migrated.token,
     tokenExpiresAt: migrated.tokenExpiresAt,
     user: migrated.user,
@@ -207,10 +223,12 @@ async function pollWeworkAuthSession(
 function connectionSnapshot(
   config: CloudConnectionRuntimeConfig,
   token: string,
-  user: User
+  user: User,
+  socketBaseUrlOverride?: string
 ): CloudConnectionSnapshot {
   return {
     ...config,
+    socketBaseUrlOverride: socketBaseUrlOverride?.trim() || undefined,
     status: 'connected',
     token,
     tokenExpiresAt: getJwtExpiry(token),
@@ -239,6 +257,7 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
     apiBaseUrl: snapshot.apiBaseUrl,
     socketBaseUrl: snapshot.socketBaseUrl,
     socketPath: snapshot.socketPath,
+    socketBaseUrlOverride: snapshot.socketBaseUrlOverride,
     token: snapshot.token,
     tokenExpiresAt: snapshot.tokenExpiresAt,
     user: snapshot.user,
@@ -261,8 +280,12 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const connectWithAuthorization = useCallback(
-    async (backendUrl: string, openAuthorizationUrl?: OpenCloudAuthorizationUrl): Promise<User> => {
-      const config = resolveCloudRuntimeConfig(backendUrl)
+    async (
+      backendUrl: string,
+      openAuthorizationUrl?: OpenCloudAuthorizationUrl,
+      socketBaseUrlOverride?: string
+    ): Promise<User> => {
+      const config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
       setSnapshot(current => ({
         ...current,
         ...config,
@@ -305,7 +328,9 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
             console.warn('[CloudConnection] Failed to close authorization window', error)
           })
           const user = await fetchCloudUser(config, pollResult.access_token)
-          applyConnectedSnapshot(connectionSnapshot(config, pollResult.access_token, user))
+          applyConnectedSnapshot(
+            connectionSnapshot(config, pollResult.access_token, user, socketBaseUrlOverride)
+          )
           return user
         }
 

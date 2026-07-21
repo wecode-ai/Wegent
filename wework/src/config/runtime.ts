@@ -138,7 +138,10 @@ export function getRuntimeConfig(): RuntimeConfig {
     runtimeString(overrides, 'apiBaseUrl') ||
     (wegentBackendUrl ? `${wegentBackendUrl}/api` : joinAppPath(appBasePath, '/api'))
   const socketBaseUrl =
-    runtimeString(overrides, 'socketBaseUrl') || wegentBackendUrl || window.location.origin
+    runtimeString(overrides, 'socketBaseUrl') ||
+    import.meta.env.VITE_WEGENT_SOCKET_URL?.trim() ||
+    wegentBackendUrl ||
+    window.location.origin
   const socketPath =
     runtimeString(overrides, 'socketPath') || joinAppPath(appBasePath, '/socket.io')
 

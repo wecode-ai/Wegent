@@ -808,12 +808,34 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
 
     const detail = screen.getByTestId('sidebar-cloud-error-popover')
+    expect(detail.parentElement).toBe(document.body)
+    expect(detail).toHaveClass('fixed', 'z-system-popover', 'rounded-xl')
     expect(detail).toHaveTextContent('云端工作不可用')
     expect(detail).toHaveTextContent('云端设备: request timed out')
     expect(detail).toHaveTextContent('云端设备')
     expect(detail).toHaveTextContent('不可用')
     expect(detail).toHaveTextContent('云端任务列表')
     expect(detail).toHaveTextContent('可用')
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
+  })
+
+  test('closes cloud work error details with Escape', async () => {
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({
+        availability: 'unavailable',
+        checks: { devices: 'unavailable' },
+        error: '云端设备: request timed out',
+      }),
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-error-button'))
+    expect(screen.getByTestId('sidebar-cloud-error-popover')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('sidebar-cloud-error-popover')).not.toBeInTheDocument()
   })
 
   test('does not open add-device guidance while cloud work checks are failing', async () => {

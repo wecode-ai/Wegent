@@ -27,6 +27,14 @@ describe('getRuntimeConfig', () => {
     expect(getRuntimeConfig().socketBaseUrl).toBe('https://cloud.example.com')
   })
 
+  test('uses the optional Wegent Socket URL from build-time config', () => {
+    delete window.__WEWORK_RUNTIME_CONFIG__
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://cloud.example.com/api')
+    vi.stubEnv('VITE_WEGENT_SOCKET_URL', 'wss://wss-cloud.example.com/')
+
+    expect(getRuntimeConfig().socketBaseUrl).toBe('wss://wss-cloud.example.com')
+  })
+
   test('prefers the runtime default Wegent Backend URL over build-time config', () => {
     vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://build.example.com')
     window.__WEWORK_RUNTIME_CONFIG__ = {

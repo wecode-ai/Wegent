@@ -138,7 +138,11 @@ describe('CloudConnectionProvider', () => {
     expect(closeAuthorizationWindow).toHaveBeenCalled()
   })
 
-  it('migrates a stored socket endpoint to the cloud connection domain', async () => {
+  it('uses the configured Socket URL for the packaged Backend', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      wegentBackendUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://wss-cloud.example.com',
+    }
     saveStoredCloudConnection({
       backendUrl: 'https://cloud.example.com',
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -162,11 +166,11 @@ describe('CloudConnectionProvider', () => {
     )
 
     expect(screen.getByTestId('cloud-socket-base-url')).toHaveTextContent(
-      'https://cloud.example.com'
+      'wss://wss-cloud.example.com'
     )
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl).toBe(
-        'https://cloud.example.com'
+        'wss://wss-cloud.example.com'
       )
     })
   })
