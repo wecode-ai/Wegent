@@ -39,40 +39,21 @@ describe('cloudConnectionStorage', () => {
     expect(normalizeCloudBackendUrl('localhost:8000').apiBaseUrl).toBe('http://localhost:8000/api')
   })
 
-  it('uses the preferred socket endpoint for the configured backend', () => {
-    const preferredSocket = {
-      backendUrls: ['https://cloud.example.com/api'],
-      socketBaseUrl: 'https://wss-cloud.example.com',
-      socketPath: '/socket.io',
-    }
-
-    expect(normalizeCloudBackendUrl('https://cloud.example.com/api', preferredSocket)).toEqual({
+  it('uses an optional Socket URL override', () => {
+    expect(
+      normalizeCloudBackendUrl('https://cloud.example.com/api', 'wss://wss-cloud.example.com/')
+    ).toEqual({
       backendUrl: 'https://cloud.example.com',
       apiBaseUrl: 'https://cloud.example.com/api',
-      socketBaseUrl: 'https://wss-cloud.example.com',
-      socketPath: '/socket.io',
-    })
-    expect(normalizeCloudBackendUrl('https://custom.example.com', preferredSocket)).toEqual({
-      backendUrl: 'https://custom.example.com',
-      apiBaseUrl: 'https://custom.example.com/api',
-      socketBaseUrl: 'https://custom.example.com',
+      socketBaseUrl: 'wss://wss-cloud.example.com',
       socketPath: '/socket.io',
     })
   })
 
-  it('ignores an invalid preferred backend URL', () => {
-    expect(
-      normalizeCloudBackendUrl('https://custom.example.com', {
-        backendUrls: ['', '://invalid'],
-        socketBaseUrl: 'https://wss-cloud.example.com',
-        socketPath: '/socket.io',
-      })
-    ).toEqual({
-      backendUrl: 'https://custom.example.com',
-      apiBaseUrl: 'https://custom.example.com/api',
-      socketBaseUrl: 'https://custom.example.com',
-      socketPath: '/socket.io',
-    })
+  it('rejects an invalid Socket URL override', () => {
+    expect(() => normalizeCloudBackendUrl('https://cloud.example.com', 'not-a-url')).toThrow(
+      'Socket URL is invalid'
+    )
   })
 
   it('persists and clears the cloud connection independently from auth_token', () => {

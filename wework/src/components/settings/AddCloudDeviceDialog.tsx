@@ -182,14 +182,14 @@ export function AddCloudDeviceDialog({
               </div>
 
               {remoteCommand && (
-                <div className="mt-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
-                  <div className="flex h-8 items-center justify-between border-b border-zinc-800 px-3">
-                    <span className="text-xs font-semibold text-zinc-300">Docker 命令</span>
+                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-background">
+                  <div className="flex h-8 items-center justify-between border-b border-border px-3">
+                    <span className="text-xs font-semibold text-text-secondary">Docker 命令</span>
                     <button
                       type="button"
                       data-testid="copy-remote-docker-command"
                       onClick={handleCopyRemoteCommand}
-                      className="inline-flex h-6 items-center gap-1 rounded px-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                      className="inline-flex h-6 items-center gap-1 rounded px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
                     >
                       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                       {copied ? '已复制' : '复制'}
@@ -197,7 +197,7 @@ export function AddCloudDeviceDialog({
                   </div>
                   <pre
                     data-testid="remote-docker-command"
-                    className="max-h-[360px] overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-green-300"
+                    className="max-h-[360px] overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-text-primary"
                   >
                     {remoteCommand.command}
                   </pre>
