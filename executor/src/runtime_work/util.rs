@@ -52,6 +52,16 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("additionalContext".to_owned(), additional_context);
     }
+    if let Some(client_user_message_id) = payload
+        .get("clientMessageId")
+        .or_else(|| payload.get("client_message_id"))
+        .filter(|value| value.is_string())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("client_user_message_id".to_owned(), client_user_message_id);
+    }
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))

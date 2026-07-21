@@ -51,6 +51,45 @@ done
 
 export CALL_LOG
 
+# This historical range changes only backend Python files. It exercises the
+# Python module branch without pulling frontend or executor checks into the
+# regression test.
+REMOTE_SHA="32219870e7b781dfaa4b0046db9e4ac5aeb02aa4"
+LOCAL_SHA="6342ce3b9624f3ce05f831d52b2b3b56edf2c36c"
+
+if PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" >"$TMP_DIR/unverified-test.out" 2>&1 <<EOF; then
+refs/heads/topic $LOCAL_SHA refs/heads/topic $REMOTE_SHA
+EOF
+    echo "Expected a push without AI_VERIFIED=1 to be blocked."
+    exit 1
+fi
+
+if [ -s "$CALL_LOG" ]; then
+    echo "Expected a push without AI_VERIFIED=1 to skip every pre-push check."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -q 'AI_VERIFIED=1 git push' "$TMP_DIR/unverified-test.out"; then
+    echo "Expected an unverified push to print the verified push command."
+    cat "$TMP_DIR/unverified-test.out"
+    exit 1
+fi
+
+if ! grep -q 'Documentation reminders' "$TMP_DIR/unverified-test.out"; then
+    echo "Expected an unverified push to show documentation reminders."
+    cat "$TMP_DIR/unverified-test.out"
+    exit 1
+fi
+
+if grep -q 'Running Quality Checks' "$TMP_DIR/unverified-test.out"; then
+    echo "Expected an unverified push to stop before quality checks."
+    cat "$TMP_DIR/unverified-test.out"
+    exit 1
+fi
+
 ensure_wework_node_modules() {
     if [ ! -d "$PROJECT_ROOT/node_modules" ]; then
         mkdir "$PROJECT_ROOT/node_modules"
@@ -74,12 +113,6 @@ ensure_frontend_node_modules() {
         FRONTEND_NODE_MODULES_CREATED=1
     fi
 }
-
-# This historical range changes only backend Python files. It exercises the
-# Python module branch without pulling frontend or executor checks into the
-# regression test.
-REMOTE_SHA="32219870e7b781dfaa4b0046db9e4ac5aeb02aa4"
-LOCAL_SHA="6342ce3b9624f3ce05f831d52b2b3b56edf2c36c"
 
 AI_VERIFIED=1 \
 PATH="$TMP_DIR/bin:$PATH" \

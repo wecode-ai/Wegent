@@ -14,14 +14,17 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 
 - 用户输入的 Backend 根地址。
 - 归一化后的 `apiBaseUrl`、`socketBaseUrl` 和 `socketPath`。
+- Backend 返回的 Wegent Web `webUrl`。
 - 云端登录 token、过期时间、云端用户和连接时间。
 - 当前状态：未连接、连接中、已连接、过期或错误。
 
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
+当用户连接的地址与打包时的 `VITE_WEGENT_BACKEND_URL` 或 `VITE_API_BASE_URL` 一致时，Wework 使用打包配置中的 `VITE_SOCKET_BASE_URL` 和 `VITE_SOCKET_PATH`，支持 HTTP API 与 Socket.IO 分域部署。这也覆盖 `VITE_WEGENT_BACKEND_URL` 未配置、用户手动输入打包 API 对应 Backend 的场景。升级前已经保存为同源 Socket 地址的连接会在启动时自动迁移；用户手动输入的其他 Backend 仍按同源规则解析。
+
 本地 Wework 不渲染云端账号密码表单，也不调用 `/auth/login` 或 `/auth/admin-password/setup`。云端登录、OIDC 和管理员初始化都发生在云端 Wegent Web 授权页中。用户登录后必须明确点击“授权 Wework”，Backend 才会把一次性可领取的云端 JWT 写入授权会话；本地 Wework 领取成功后继续读取 `/users/me` 校验用户并保存云端连接状态。
 
-Backend 使用 `WEWORK_AUTHORIZE_BASE_URL` 生成授权页地址；未配置时复用 `FRONTEND_URL`。因此 API/Web 分离部署时必须显式配置 Web 根地址，Wework 客户端只打开 Backend 返回的完整 `authorize_url`，不自行推断网页版地址。
+Backend 使用 `WEWORK_AUTHORIZE_BASE_URL` 生成授权页地址；未配置时复用 `FRONTEND_URL`。授权页地址只用于云端登录，不等同于用户切换到 Agent 区域后加载的 Wegent Web 地址。Backend 通过 `GET /api/auth/wework/config` 和新建授权会话响应中的 `web_url` 明确返回 `FRONTEND_URL`；Wework 持久化该地址，并用它加载 Agent 区域。启动时客户端会重新读取配置接口，自动纠正旧版本保存的错误地址。API、授权页和 Wegent Web 分域部署时必须分别正确配置 Backend、`WEWORK_AUTHORIZE_BASE_URL` 和 `FRONTEND_URL`，客户端不根据域名或端口猜测它们之间的关系。
 
 ## 交互入口
 
@@ -55,11 +58,13 @@ Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前�
 
 云端 executor 仍连接 Backend 的 `/local-executor` namespace。executor 内部复用本地 `RuntimeWorkRpcHandler` 执行 `runtime.tasks.create`、`runtime.tasks.send`、`runtime.tasks.list`、`runtime.tasks.transcript` 等方法，并把 Responses API 风格的 app IPC event 通过 `runtime:event` 透传回 `/wework-runtime`。Wework 前端复用本地流式事件 mapper 消费这些事件，因此本地模式和云端模式在 runtime 执行流程上保持一致。
 
+多实例 Backend 通过 Socket.IO Redis manager 把 RPC 转发到持有 executor 连接的 worker。Redis 中带 `socket_id` 的设备在线记录是转发入口；不能用当前 worker 的进程内连接表预判 executor 已断线，否则会把连接在其他 worker 上的设备误标为离线。
+
 ## 本机 executor 生命周期
 
-打包 release 版 Wework 必须和本机 executor 保持一对一活跃配套。release app 启动时只允许一个活跃 Wework 实例；重复启动会聚焦已有窗口。首次启动本机 executor 前，app 会清理使用 release 固定 `WEGENT_EXECUTOR_APP_IPC_SOCKET` 的旧 `wegent-executor` 进程和 stale socket，再启动当前 app 管理的 executor，避免新 app 连接到旧实例遗留的 executor。
+打包 release 版 Wework 必须和本机 executor 保持一对一活跃配套。release app 启动时只允许一个活跃 Wework 实例；重复启动会聚焦已有窗口。app 直接启动并管理 executor 子进程，通过 stdin/stdout JSONL 通道通信，不使用共享 socket、TCP 地址文件或进程发现。
 
-debug 构建不启用这个单实例和清理策略。开发时可以同时启动多个 Wework debug 实例；每个实例使用 `app-runtime/wework-.../app-ipc.sock` 形式的独立 socket。release 清理旧 executor 时也必须检查进程环境中的 socket 值，只能终止使用 release 固定 socket 的 executor，不能误杀 debug 实例对应的 executor。
+debug 构建不启用单实例策略。开发时可以同时启动多个 Wework debug 实例；每个实例只持有自己子进程的 stdio，不存在端点覆盖或误连其他 executor 的情况。不同实例是否共享持久化任务目录仍由 Executor Home 隔离配置决定，与 IPC 通道无关。
 
 关闭到托盘只销毁当前 WebView，Wework 主进程、executor 和 Codex app-server 继续运行。窗口重建后，`runtime.tasks.transcript` 返回的 `running` 字段用于恢复任务运行态；该字段只以 executor 进程内的活动任务或 Codex app-server 的实时线程状态为依据，不能从历史 transcript 中残留的 `streaming` 消息推断。完整退出或异常退出后，新 executor 不保留旧进程的活动状态，因此旧消息不会把已经中断的任务重新标记为运行中。
 

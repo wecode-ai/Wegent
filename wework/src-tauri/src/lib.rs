@@ -4,6 +4,7 @@ mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
+mod system_drag;
 mod wecode;
 mod workbench_background;
 
@@ -148,7 +149,7 @@ use tauri::{
 use tauri::webview::PageLoadEvent;
 
 #[cfg(desktop)]
-const MAIN_WINDOW_LABEL: &str = "main";
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 #[cfg(desktop)]
 const TRAY_OPEN_SETTINGS_EVENT: &str = "wework-tray-open-settings";
 #[cfg(desktop)]
@@ -379,6 +380,8 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     #[serde(default = "default_true")]
     show_main_window_on_launch: bool,
+    #[serde(default = "default_true")]
+    system_drag_enabled: bool,
     #[serde(default)]
     close_to_tray_hint_seen: bool,
     #[serde(default = "default_language_preference")]
@@ -416,6 +419,8 @@ struct QuickPhrase {
     title: String,
     content: String,
     mode: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachment_paths: Vec<String>,
 }
 
 fn default_quick_phrases() -> Vec<QuickPhrase> {
@@ -425,18 +430,21 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             title: "总结当前进展".into(),
             content: "总结目前完成的工作和下一步建议".into(),
             mode: "normal".into(),
+            attachment_paths: Vec::new(),
         },
         QuickPhrase {
             id: "default-create-plan".into(),
             title: "制定实施计划".into(),
             content: "分析需求并制定详细的实施计划".into(),
             mode: "plan".into(),
+            attachment_paths: Vec::new(),
         },
         QuickPhrase {
             id: "default-pursue-goal".into(),
             title: "持续完成这个目标".into(),
             content: "持续推进这个目标，直到真正完成".into(),
             mode: "goal".into(),
+            attachment_paths: Vec::new(),
         },
     ]
 }
@@ -467,6 +475,7 @@ impl Default for AppPreferences {
         Self {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
+            system_drag_enabled: true,
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
@@ -491,6 +500,7 @@ impl Default for AppPreferences {
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    system_drag_enabled: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -619,6 +629,12 @@ fn take_pending_local_workspace_open_requests(
 fn app_preferences_path<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<std::path::PathBuf, String> {
+    if let Some(directory) = std::env::var("WEWORK_APP_CONFIG_DIR")
+        .ok()
+        .and_then(normalized_non_empty)
+    {
+        return Ok(std::path::PathBuf::from(directory).join(APP_PREFERENCES_FILE_NAME));
+    }
     Ok(app
         .path()
         .app_config_dir()
@@ -876,6 +892,9 @@ fn update_app_preferences(
     if let Some(value) = patch.show_main_window_on_launch {
         preferences.show_main_window_on_launch = value;
     }
+    if let Some(value) = patch.system_drag_enabled {
+        preferences.system_drag_enabled = value;
+    }
     if let Some(value) = patch.close_to_tray_hint_seen {
         preferences.close_to_tray_hint_seen = value;
     }
@@ -929,6 +948,7 @@ fn update_app_preferences(
 struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
+    system_drag_enabled: bool,
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
@@ -951,6 +971,7 @@ struct AppPreferences {
 struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
+    system_drag_enabled: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -973,6 +994,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
     Ok(AppPreferences {
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
+        system_drag_enabled: true,
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
@@ -999,6 +1021,7 @@ fn update_app_preferences(
     Ok(AppPreferences {
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
+        system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
         language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
         terminal_context_injection_enabled: patch
@@ -2174,7 +2197,7 @@ fn main_window_config<R: tauri::Runtime>(
 }
 
 #[cfg(desktop)]
-fn ensure_main_window<R: tauri::Runtime>(
+pub(crate) fn ensure_main_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     action: Option<MainWindowOpenAction>,
 ) -> Result<(), String> {
@@ -3693,11 +3716,13 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(wecode::vnc_session::VncSessionState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
+        .manage(system_drag::SystemDragState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             if hide_main_window_on_close(window, event) {
@@ -3736,6 +3761,8 @@ pub fn run() {
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
+            #[cfg(desktop)]
+            system_drag::setup(app.handle().clone());
             #[cfg(desktop)]
             appshots::setup(app.handle());
             #[cfg(desktop)]
@@ -3799,6 +3826,8 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
+            wecode::vnc_session::get_vnc_session_config,
+            wecode::vnc_session::prepare_vnc_session,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
@@ -3839,6 +3868,10 @@ pub fn run() {
             open_local_workspace,
             read_dropped_files,
             save_local_attachment_file,
+            system_drag::complete_system_drag_drop,
+            system_drag::dismiss_system_drag_panel,
+            system_drag::log_system_drag_debug,
+            system_drag::take_pending_system_drag_drops,
             local_terminal::resize_local_terminal,
             wecode::local_executor::run_executor_command,
             wecode::local_executor::save_local_executor_auth_token,

@@ -537,12 +537,21 @@ export function TodoWorkspace({
                 <DesktopAppSwitcher
                   activeApp="todo"
                   onNavigate={app =>
-                    navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+                    navigateTo(
+                      app === 'wework'
+                        ? '/'
+                        : app === 'todo'
+                          ? '/todo'
+                          : app === 'wegent'
+                            ? '/app/wegent'
+                            : '/apps'
+                    )
                   }
                   testIds={{
                     wework: 'todo-collapsed-app-wework',
                     todo: 'todo-collapsed-app-current',
                     apps: 'todo-collapsed-app-apps',
+                    wegent: 'todo-collapsed-app-wegent',
                   }}
                 />
               </div>

@@ -14,14 +14,17 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 
 - The Backend root URL entered by the user.
 - Normalized `apiBaseUrl`, `socketBaseUrl`, and `socketPath`.
+- The Wegent Web `webUrl` returned by Backend.
 - Cloud login token, expiry, cloud user, and connection time.
 - Current status: disconnected, connecting, connected, expired, or error.
 
 Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
 
+When the entered address matches the packaged `VITE_WEGENT_BACKEND_URL` or `VITE_API_BASE_URL`, Wework uses the packaged `VITE_SOCKET_BASE_URL` and `VITE_SOCKET_PATH`, allowing the HTTP API and Socket.IO service to use separate domains. This also covers manually entered Backends when `VITE_WEGENT_BACKEND_URL` is unset but the address corresponds to the packaged API. Connections saved with the old same-origin Socket URL are migrated on startup. Other user-entered Backends continue to use same-origin normalization.
+
 Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
 
-Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
+Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. That authorization URL is only for cloud login and is distinct from the Wegent Web URL loaded after the user switches to the Agent area. Backend exposes `FRONTEND_URL` explicitly through `GET /api/auth/wework/config` and the `web_url` field in new authorization-session responses. Wework persists that address and uses it to load the Agent area. On startup, the client reads the config endpoint again to correct an invalid address saved by an older version. Deployments that separate the API, authorization page, and Wegent Web must configure the Backend origin, `WEWORK_AUTHORIZE_BASE_URL`, and `FRONTEND_URL` independently; the client does not infer relationships between their domains or ports.
 
 ## Interaction Entry
 
@@ -55,11 +58,13 @@ Wework cloud runtime execution uses the same app IPC protocol as local mode. The
 
 Cloud executors still connect to Backend through the `/local-executor` namespace. Inside the executor, the same local `RuntimeWorkRpcHandler` handles `runtime.tasks.create`, `runtime.tasks.send`, `runtime.tasks.list`, `runtime.tasks.transcript`, and related methods. Responses API-style app IPC events are relayed back through `runtime:event` to `/wework-runtime`. The Wework frontend reuses the local streaming event mapper, so local and cloud runtime execution share the same runtime flow.
 
+In a multi-instance Backend deployment, the Socket.IO Redis manager forwards RPCs to the worker that owns the executor connection. The Redis device-online record containing the `socket_id` is the routing source. The current worker's in-process connection table must not be used to declare the executor disconnected, because the connection may belong to another worker.
+
 ## Local Executor Lifecycle
 
-Packaged release builds of Wework must keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. Before starting the local executor for the first time, the app cleans up stale `wegent-executor` processes that use the release fixed `WEGENT_EXECUTOR_APP_IPC_SOCKET` and removes the stale socket, then starts the executor owned by the current app. This prevents a new app from attaching to an executor left by an older app instance.
+Packaged release builds of Wework keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. The app directly starts and owns the executor child process and communicates through stdin/stdout JSONL, without a shared socket, TCP address file, or process discovery.
 
-Debug builds do not enable this single-instance or cleanup policy. Local development may run multiple Wework debug instances at the same time, each with its own `app-runtime/wework-.../app-ipc.sock` socket. Release cleanup must also inspect each candidate executor process environment and terminate only executors using the release fixed socket, so it does not kill executors owned by debug instances.
+Debug builds do not enable the single-instance policy. Local development may run multiple Wework debug instances at the same time; each instance owns only its child process stdio, so endpoints cannot overwrite each other and an app cannot attach to another executor. Whether instances share persisted tasks is still controlled by Executor Home isolation and is independent of the IPC transport.
 
 Closing to the tray destroys only the current WebView; the Wework process, executor, and Codex app-server keep running. After the window is recreated, the `running` field returned by `runtime.tasks.transcript` restores task execution state. That field is authoritative only when backed by an in-memory executor task or the Codex app-server's live thread status; it must not be inferred from stale `streaming` messages in transcript history. After a normal or abnormal full app exit, the new executor has no activity state from the previous process, so old messages cannot mark an interrupted task as running again.
 

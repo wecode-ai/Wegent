@@ -20,12 +20,14 @@ import type {
   RuntimeFileChangesRevertResponse,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeInterruptAndSendRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeGoalStatus,
   RuntimeTaskAddress,
   RuntimeTaskArchiveResponse,
   RuntimeTaskCancelResponse,
@@ -100,7 +102,7 @@ import {
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
-import { createLocalChatStream } from './localChatStream'
+import { createRuntimeChatStream } from '../runtime/runtimeChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
@@ -220,7 +222,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     modelId: config.modelId,
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
-      apiFormat: RESPONSES_API_FORMAT,
+      apiFormat: config.apiFormat,
+      upstreamApiFormat: config.apiFormat,
       ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
       ui: {
         family,
@@ -510,6 +513,7 @@ function normalizeRuntimeTaskSummary(
   const modelSelection =
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
+  const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
 
   const normalized = {
     ...taskRecord,
@@ -526,9 +530,21 @@ function normalizeRuntimeTaskSummary(
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(goalStatus ? { goalStatus } : {}),
   }
 
   return normalized as RuntimeTaskSummary
+}
+
+function runtimeGoalStatusValue(value: unknown): RuntimeGoalStatus | undefined {
+  return value === 'active' ||
+    value === 'paused' ||
+    value === 'blocked' ||
+    value === 'complete' ||
+    value === 'usageLimited' ||
+    value === 'budgetLimited'
+    ? value
+    : undefined
 }
 
 function normalizeRuntimeTaskSummaries(
@@ -639,11 +655,16 @@ function localRuntimeModelConfig(
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
-    const requestUrl = buildLocalModelRequestUrl(localModel.baseUrl, localModel.requestPath)
+    const requestUrl = buildLocalModelRequestUrl(
+      localModel.baseUrl,
+      localModel.requestPath,
+      localModel.apiFormat
+    )
     return {
       model: 'openai',
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: localModel.apiFormat,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
       responses_url: requestUrl,
@@ -1048,6 +1069,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
+  clientMessageId?: string
   ephemeral?: boolean
 }
 
@@ -1115,6 +1137,7 @@ function buildLocalRuntimeExecutionRequest(
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
+    ...(input.clientMessageId ? { client_user_message_id: input.clientMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
     collaboration_model: 'single',
@@ -1253,6 +1276,7 @@ async function createLocalRuntimeTaskPayload(
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
+      clientMessageId: normalizedData.clientMessageId,
       ephemeral: normalizedData.ephemeral,
     }),
   } as unknown as Record<string, unknown>
@@ -1312,6 +1336,7 @@ function createLocalRuntimeSendPayload(
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
+        clientMessageId: normalizedData.clientMessageId,
         ephemeral: data.ephemeral,
       }),
     } as unknown as Record<string, unknown>
@@ -1341,6 +1366,7 @@ function createLocalRuntimeSendPayload(
       workspacePath,
       workspaceSource: 'local_path',
       newSession: false,
+      clientMessageId: normalizedData.clientMessageId,
       ephemeral: data.ephemeral,
     }),
   } as unknown as Record<string, unknown>
@@ -1762,6 +1788,26 @@ export function createRuntimeWorkApiFromIpc(
         },
         localDeviceId
       )
+    },
+    async interruptAndSendRuntimeMessage(
+      data: RuntimeInterruptAndSendRequest
+    ): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
+      if (!payload.executionRequest) {
+        console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
+          taskId: payload.taskId,
+          address: runtimeAddressDebug(payload),
+          payloadKeys: Object.keys(payload).sort(),
+        })
+        throw new Error('Runtime interrupt payload missing executionRequest')
+      }
+      console.debug('[Wework] Local runtime interrupt payload', {
+        taskId: payload.taskId,
+        address: runtimeAddressDebug(payload),
+        payloadKeys: Object.keys(payload).sort(),
+      })
+      return request('runtime.tasks.interrupt_and_send', payload, localDeviceId)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
@@ -2207,6 +2253,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       uploadRuntimeAuthJson: () => cloudConnectionRequired('uploadRuntimeAuthJson'),
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
-    chatStream: createLocalChatStream({ subscribe, request }),
+    chatStream: createRuntimeChatStream({ subscribe, request }),
   } as unknown as WorkbenchServices
 }

@@ -11,10 +11,7 @@ use std::{
 
 use serde_json::{json, Value};
 use wegent_executor::local::{
-    app_ipc::{
-        app_ipc_listening_log_line, read_app_ipc_addr_file, AppIpcError, AppIpcServer,
-        RuntimeWorkHandler,
-    },
+    app_ipc::{app_ipc_stdio_ready_log_line, AppIpcError, AppIpcServer, RuntimeWorkHandler},
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
 };
 
@@ -854,43 +851,13 @@ async fn app_ipc_unknown_method_returns_protocol_error() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 }
 
-#[tokio::test]
-async fn app_ipc_addr_can_be_overridden() {
-    let _lock = env_lock().await;
-    let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:17490");
-    let addr_file = unique_dir("overridden-addr").join("app-ipc.addr");
-    let _addr_file = EnvGuard::set(
-        "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
-        &addr_file.display().to_string(),
-    );
-    let server = AppIpcServer::new();
-    let task = tokio::spawn(async move { server.serve_forever().await });
-
-    let mut addr = None;
-    for _ in 0..50 {
-        if let Some(found) = read_app_ipc_addr_file() {
-            addr = Some(found);
-            break;
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-    }
-
-    task.abort();
-    let _ = task.await;
-    let _ = std::fs::remove_file(&addr_file);
-    let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
-
-    assert_eq!(addr, Some("127.0.0.1:17490".parse().unwrap()));
-}
-
 #[test]
-fn app_ipc_listening_log_line_includes_device_and_addr() {
-    let line = app_ipc_listening_log_line("device-1", "127.0.0.1:17490");
+fn app_ipc_stdio_ready_log_line_includes_device_and_transport() {
+    let line = app_ipc_stdio_ready_log_line("device-1");
 
     assert_log_timestamp(&line);
-    assert!(line.contains(" app IPC listening device_id=device-1 addr=127.0.0.1:17490"));
+    assert!(line.contains(" app IPC stdio ready device_id=device-1 transport=stdio"));
     assert!(line.contains(" process_id="));
-    assert!(line.contains(" addr_file="));
 }
 
 fn assert_log_timestamp(line: &str) {
@@ -903,35 +870,17 @@ fn assert_log_timestamp(line: &str) {
 }
 
 #[tokio::test]
-async fn app_ipc_socket_serves_ready_event_and_responses() {
+async fn app_ipc_stdio_serves_ready_event_and_responses_until_input_closes() {
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::TcpStream,
-        time::{sleep, Duration},
+        time::{timeout, Duration},
     };
 
-    let _lock = env_lock().await;
-    let _addr = EnvGuard::set("WEGENT_EXECUTOR_APP_IPC_ADDR", "127.0.0.1:0");
-    let addr_file = unique_dir("socket-server").join("app-ipc.addr");
-    let _addr_file = EnvGuard::set(
-        "WEGENT_EXECUTOR_APP_IPC_ADDR_FILE",
-        &addr_file.display().to_string(),
-    );
     let server = AppIpcServer::new().with_device_id("device-1");
-    let task = tokio::spawn(async move { server.serve_forever().await });
-
-    let mut bound_addr = None;
-    for _ in 0..50 {
-        if let Some(addr) = read_app_ipc_addr_file() {
-            bound_addr = Some(addr);
-            break;
-        }
-        sleep(Duration::from_millis(10)).await;
-    }
-    let bound_addr = bound_addr.expect("server did not write app IPC address file");
-
-    let stream = TcpStream::connect(bound_addr).await.unwrap();
-    let (reader, mut writer) = stream.into_split();
+    let (client, executor) = tokio::io::duplex(4096);
+    let (executor_reader, executor_writer) = tokio::io::split(executor);
+    let task = tokio::spawn(async move { server.serve_io(executor_reader, executor_writer).await });
+    let (reader, mut writer) = tokio::io::split(client);
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
 
@@ -963,10 +912,13 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
     assert_eq!(response["ok"], false);
     assert_eq!(response["error"]["code"], "unsupported_method");
 
-    task.abort();
-    let _ = task.await;
-    let _ = std::fs::remove_file(&addr_file);
-    let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
+    writer.shutdown().await.unwrap();
+    drop(writer);
+    assert!(timeout(Duration::from_secs(1), task)
+        .await
+        .expect("stdio server should stop after stdin closes")
+        .expect("stdio server task should join")
+        .is_ok());
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {

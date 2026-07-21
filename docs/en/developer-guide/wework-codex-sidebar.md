@@ -18,6 +18,8 @@ The Wework desktop app follows the Codex App sidebar state model. Project and li
 
 A project UI identity combines the state-owning device with the project key. Identical paths on different devices therefore remain isolated.
 
+A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
+
 ## Project model
 
 Executor merges three Codex project representations:
@@ -42,8 +44,11 @@ After a cloud or remote task-list sync succeeds, Wework stores a per-user, allow
 
 At startup, the cached summary is merged as stale data with the local Codex remote-project descriptors. When the remote device is unavailable, the project, last known IP, and task summaries remain visible with a gray status dot. Task rows cannot be opened, pinned, renamed, subscribed, or archived. After the device reconnects, the live list becomes authoritative and updates or removes cached entries. A failed device discovery or task-list sync keeps the previous summary so a temporary network error does not empty the sidebar.
 
+An unavailable remote device and an explicitly disconnected cloud session are different states. As long as Wework remains connected to the cloud, projects for offline devices stay visible under the rules above. When the user explicitly disconnects the cloud session, Wework temporarily hides remote projects, remote tasks, and remote chats without deleting the local summary cache or `remote-projects` in Codex global state. Reconnecting first restores the saved remote projects from the cache, then refreshes them from the live device and task lists. Local projects are unaffected.
+
 ## Interaction boundary
 
+- When the Cloud Work entry reports `Available`, clicking the row opens the Connections settings, matching its trailing settings action.
 - Clicking a project only expands or collapses its tasks and does not change the center pane.
 - Clicking a task or creating a project task changes the main content.
 - Projects, pinned projects, pinned tasks, and tasks within one project support semantic drag ordering.

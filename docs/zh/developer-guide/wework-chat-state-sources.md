@@ -50,6 +50,10 @@ Codex 的网页搜索在 `item/started` 时可能还没有查询动作，在 `it
 
 Wework 展示层兼容 Responses API 的 snake_case 动作名（如 `open_page`、`find_in_page`）和 Codex app-server 的 camelCase 动作名（如 `openPage`、`findInPage`）。动作名差异只能在工具详情解析边界处理，不能通过 UI 占位内容或状态兜底掩盖缺失的完成事件。
 
+### 工具活动预览滚动
+
+折叠的工具活动预览最多显示三行，并在用户没有展开工具详情时跟随最新活动。自动滚动必须同时响应工具行数量变化和底部“正在思考”行的出现或消失；工具完成后即使行数不变，“正在思考”也必须保持在内层滚动区域的可见范围内。展开详情时预览解除高度限制，不能用强制滚动覆盖用户阅读位置。
+
 ## Goal 与任务执行状态
 
 Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App Server 明确返回当前任务 `running: false` 时，仍为 `active` 的 goal 在 UI 中必须派生为 `paused`，并停止累计显示的耗时。这避免在重新打开已中断任务时，goal 继续显示“进行中”并计时。
@@ -57,6 +61,12 @@ Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App
 - 仅当 `running` 是明确的布尔值时，任务执行状态才是已知状态；缺失该字段意味着状态尚不确定，不能据此暂停 goal。
 - 此派生只影响 Wework 的展示与计时，不会自动调用 goal 暂停接口。用户点击“暂停目标”才会持久化 `paused` 状态。
 - 任务重新处于 `running: true` 时，goal 继续使用 runtime goal API 返回的原始状态。
+
+用户停止一个带有 active goal 的当前回复时，Wework 必须先通过 runtime goal API
+持久化 `paused`，确认成功后再取消当前 turn。这个顺序先关闭自动续跑源，避免当前
+turn 被取消后 goal 在暂停请求到达前启动下一 turn。如果 goal 暂停失败，不得继续把
+当前回复标记为已停止。Goal 详情仍在加载时，停止流程必须使用任务列表快照中的
+`goalStatus` 判断是否需要暂停，不能因为尚未渲染 Goal 条而跳过持久化。
 
 ## Composer 模式提示
 
@@ -103,6 +113,10 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 工作台包含输入草稿、Terminal 会话和内置浏览器等无法可靠序列化的实时状态。用户从工作台切换到插件、应用或 iframe 应用时，`AppRoutes` 必须保持 `WorkbenchProvider` 和 `WorkbenchPage` 挂载，只隐藏工作台表面；返回后继续使用原组件实例。直接打开辅助页面时可以延迟首次挂载工作台，避免创建没有使用过的后台会话。
 
 不要通过路由切换卸载工作台，也不要为 Terminal 或浏览器增加不完整的状态恢复 fallback。新增顶层页面时，应将它纳入辅助页面渲染分支，并保持工作台生命周期不变。
+
+## 工作台 pane 缓存
+
+桌面工作台最多缓存 20 个普通 pane，使用户在并行任务之间切换时保留消息、输入草稿和局部 UI 状态。超出上限后按最近使用顺序淘汰非活跃 pane；正在运行的任务和已固定终端的 pane 不计入普通缓存上限，并保持挂载直到任务结束或终端解除固定。维护此边界时应继续复用 `CachedWorkbenchPaneStack` 的 LRU 与固定机制，不能在布局层增加第二套 pane 缓存。
 
 ## 审核结果
 

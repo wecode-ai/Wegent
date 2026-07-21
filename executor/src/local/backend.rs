@@ -11,7 +11,10 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tokio::{sync::broadcast, time::sleep};
+use tokio::{
+    sync::broadcast,
+    time::{sleep, sleep_until, Instant},
+};
 
 use crate::{
     agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
@@ -19,7 +22,8 @@ use crate::{
     local::{
         app_ipc::{AppIpcError, AppIpcServer, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
-        session::{LocalSessionHandler, SessionType},
+        session::{LocalSessionHandler, SessionType, TerminalEvent},
+        session_gateway::start_session_gateway,
         workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     },
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
@@ -65,9 +69,13 @@ const DEVICE_EXECUTE_COMMAND_EVENT: &str = "device:execute_command";
 const DEVICE_SYNC_CAPABILITIES_EVENT: &str = "device:sync_capabilities";
 const DEVICE_START_TERMINAL_SESSION_EVENT: &str = "device:start_terminal_session";
 const DEVICE_START_CODE_SERVER_SESSION_EVENT: &str = "device:start_code_server_session";
+const TERMINAL_ATTACH_EVENT: &str = "terminal:attach";
 const TERMINAL_INPUT_EVENT: &str = "terminal:input";
 const TERMINAL_RESIZE_EVENT: &str = "terminal:resize";
 const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
+const TERMINAL_OUTPUT_EVENT: &str = "terminal:output";
+const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
+const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
@@ -115,6 +123,7 @@ pub struct LocalBackendRunner<
     task_controller: Option<Arc<dyn LocalTaskController>>,
     capability_sync_handler: Option<Arc<dyn CapabilitySyncRpcHandler>>,
     session_handler: Option<Arc<Mutex<LocalSessionHandler>>>,
+    start_session_gateway: bool,
     upgrade_handler: Option<Arc<dyn DeviceUpgradeHandler>>,
     upgrade_service: Option<Arc<dyn LocalUpgradeService>>,
     extension_handler: Option<Arc<dyn DeviceExtensionHandler>>,
@@ -154,6 +163,7 @@ where
         backend.session_handler = Some(Arc::new(Mutex::new(default_session_handler(Some(
             backend.client.config.local_workspace_root.clone(),
         )))));
+        backend.start_session_gateway = true;
         backend.upgrade_handler = Some(Arc::new(default_upgrade_handler(
             backend.client.clone(),
             backend.task_controller.clone(),
@@ -185,6 +195,7 @@ where
             task_controller: None,
             capability_sync_handler: None,
             session_handler: None,
+            start_session_gateway: false,
             upgrade_handler: None,
             upgrade_service: None,
             extension_handler: None,
@@ -218,6 +229,11 @@ where
 
     pub fn with_session_handler(mut self, handler: LocalSessionHandler) -> Self {
         self.session_handler = Some(Arc::new(Mutex::new(handler)));
+        self
+    }
+
+    pub fn without_session_gateway(mut self) -> Self {
+        self.start_session_gateway = false;
         self
     }
 
@@ -287,6 +303,14 @@ where
 
     pub async fn run_forever(self) -> Result<(), String> {
         self.register_handlers();
+        let _session_gateway = if self.start_session_gateway {
+            match &self.session_handler {
+                Some(handler) => start_session_gateway(Arc::clone(handler)).await?,
+                None => None,
+            }
+        } else {
+            None
+        };
         let mut retry_delay = self.client.config.reconnect_delay;
         write_executor_log_line(&local_backend_starting_log_line(
             &self.client.config.backend_url,
@@ -345,6 +369,9 @@ where
             DEVICE_START_CODE_SERVER_SESSION_EVENT,
             self.session_start_handler(SessionType::CodeServer),
         );
+        self.client
+            .transport
+            .on(TERMINAL_ATTACH_EVENT, self.terminal_attach_handler());
         self.client
             .transport
             .on(TERMINAL_INPUT_EVENT, self.terminal_input_handler());
@@ -572,6 +599,28 @@ where
         })
     }
 
+    fn terminal_attach_handler(&self) -> EventHandler {
+        let session_handler = self.session_handler.clone();
+        Arc::new(move |payload| {
+            let session_handler = session_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = session_handler else {
+                    return Some(
+                        json!({"success": false, "error": "Session handler is not available"}),
+                    );
+                };
+                let Some(session_id) = value_string(payload.get("session_id")) else {
+                    return Some(json!({"success": false, "error": "session_id is required"}));
+                };
+                let result = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .handle_terminal_attach(&session_id);
+                Some(session_result_payload(result))
+            })
+        })
+    }
+
     fn terminal_resize_handler(&self) -> EventHandler {
         let session_handler = self.session_handler.clone();
         Arc::new(move |payload| {
@@ -680,9 +729,15 @@ where
 
     async fn heartbeat_until_reconnect(&self) {
         let mut consecutive_failures = 0_u32;
-        let mut next_heartbeat_delay = self.client.config.heartbeat_interval;
+        let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
         loop {
-            sleep(next_heartbeat_delay).await;
+            tokio::select! {
+                _ = sleep_until(next_heartbeat_at) => {}
+                _ = sleep(TERMINAL_POLL_INTERVAL) => {
+                    self.forward_terminal_events().await;
+                    continue;
+                }
+            }
             let failure = match self
                 .client
                 .send_heartbeat(self.client.config.heartbeat_timeout)
@@ -690,7 +745,7 @@ where
             {
                 Ok(true) => {
                     consecutive_failures = 0;
-                    next_heartbeat_delay = self.client.config.heartbeat_interval;
+                    next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
                     continue;
                 }
                 Ok(false) => "heartbeat was rejected by backend".to_owned(),
@@ -706,7 +761,50 @@ where
                 let _ = self.client.disconnect().await;
                 return;
             }
-            next_heartbeat_delay = self.client.config.heartbeat_timeout;
+            next_heartbeat_at = Instant::now() + self.client.config.heartbeat_timeout;
+        }
+    }
+
+    async fn forward_terminal_events(&self) {
+        let Some(handler) = &self.session_handler else {
+            return;
+        };
+        let events = handler
+            .lock()
+            .expect("session handler lock")
+            .drain_terminal_events();
+
+        for event in events {
+            let (event_name, payload, error) = match event {
+                TerminalEvent::Output { session_id, data } => (
+                    TERMINAL_OUTPUT_EVENT,
+                    json!({"session_id": session_id, "data": data}),
+                    None,
+                ),
+                TerminalEvent::Exit {
+                    session_id,
+                    exit_code,
+                    error,
+                } => {
+                    let mut payload = json!({"session_id": session_id, "exit_code": exit_code});
+                    if let Some(error) = &error {
+                        payload["error"] = json!(error);
+                    }
+                    (TERMINAL_EXIT_EVENT, payload, error)
+                }
+            };
+            if let Some(error) = error {
+                write_executor_error_line(&format_executor_log(
+                    "terminal session failed",
+                    &[("error", error)],
+                ));
+            }
+            if let Err(error) = self.client.emit_raw_event(event_name, payload).await {
+                write_executor_error_line(&format_executor_log(
+                    "terminal event relay failed",
+                    &[("event", event_name.to_owned()), ("error", error)],
+                ));
+            }
         }
     }
 }
@@ -763,7 +861,7 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
     )
 }
 
-pub async fn serve_local_sidecar(config: DeviceConfig) -> Result<(), String> {
+pub async fn serve_local_app_sidecar(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
     let runtime_instance_id = backend_config.runtime_instance_id.clone();
@@ -773,7 +871,14 @@ pub async fn serve_local_sidecar(config: DeviceConfig) -> Result<(), String> {
         .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary())
         .with_backend_connection_handler(backend_connection);
-    server.serve_forever().await
+    server.serve_stdio().await
+}
+
+pub async fn serve_remote_local_backend(config: DeviceConfig) -> Result<(), String> {
+    let backend_config = LocalBackendConfig::from_device_config(config);
+    LocalBackendRunner::new(backend_config, SocketIoTransport::default())
+        .run_forever()
+        .await
 }
 
 fn app_ipc_sidecar_device_id(config: &LocalBackendConfig) -> String {

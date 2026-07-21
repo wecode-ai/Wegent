@@ -82,6 +82,8 @@ If the command is not in your current `PATH`, use `~/.local/bin/wegent-standalon
 
 Download Wework and open a local project to start AI coding. Wework includes local execution and can also connect to a team deployment of Wegent from Settings.
 
+While a task runs, Wework keeps the latest tool activity visible. The tool list shows about 3.5 rows by default and remains scrollable; the latest row and any running tool use a shimmer cue, while command output, search details, and file changes can be expanded individually. Intermediate narrative text closes only the current tool segment, which remains summarized as called tools. Once the final answer starts, the processing timeline collapses into a separated processed row and expands back into the same tool list.
+
 **[Download Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
 ### Wegent Web Deployment Options
@@ -343,17 +345,17 @@ Thanks to everyone who helps Wegent grow.
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/sdadunderscoresdad">
+                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
+                    <br />
+                    <sub><b>+7</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/fingki">
                     <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
                     <br />
                     <sub><b>Fingki</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/flyhope">
-                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
-                    <br />
-                    <sub><b>李枨煊</b></sub>
                 </a>
             </td>
 		</tr>
@@ -363,6 +365,13 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
                     <br />
                     <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/flyhope">
+                    <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
+                    <br />
+                    <sub><b>李枨煊</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -391,13 +400,6 @@ Thanks to everyone who helps Wegent grow.
                     <img src="https://avatars.githubusercontent.com/u/36092701?v=4" width="80;" alt="LiDaiyan"/>
                     <br />
                     <sub><b>Li Daiyan</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/sdadunderscoresdad">
-                    <img src="https://avatars.githubusercontent.com/u/130071748?v=4" width="80;" alt="sdadunderscoresdad"/>
-                    <br />
-                    <sub><b>+7</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -474,6 +476,13 @@ Thanks to everyone who helps Wegent grow.
             </td>
 		</tr>
 		<tr>
+            <td align="center">
+                <a href="https://github.com/Qinxl0921">
+                    <img src="https://avatars.githubusercontent.com/u/79916629?v=4" width="80;" alt="Qinxl0921"/>
+                    <br />
+                    <sub><b>qinxll</b></sub>
+                </a>
+            </td>
             <td align="center">
                 <a href="https://github.com/salt-hai">
                     <img src="https://avatars.githubusercontent.com/u/43851000?v=4" width="80;" alt="salt-hai"/>

@@ -19,12 +19,24 @@ const runtimeConfigMock = vi.hoisted(() => ({
   value: {
     appBasePath: '',
     apiBaseUrl: '/api',
+    socketBaseUrl: 'http://10.201.3.200:8000',
+    socketPath: '/socket.io',
     cloudDeviceScalingWikiUrl: '',
   },
 }))
 const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
+}))
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
 }))
 
 vi.mock('@/config/runtime', () => ({
@@ -161,7 +173,6 @@ describe('ConnectionsSettingsPage', () => {
     deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
-    getVncConfig: vi.fn(),
   }
   const userApi = {
     updateCurrentUser: vi.fn(),
@@ -186,10 +197,25 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: '',
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
+    cloudDesktopExtensionMock.available = true
+    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+      ({ deviceId, disabled, onOpened }) => (
+        <button
+          type="button"
+          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          disabled={disabled}
+          onClick={onOpened}
+        >
+          桌面
+        </button>
+      )
+    )
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -199,11 +225,6 @@ describe('ConnectionsSettingsPage', () => {
       cpu: [],
       memory: [],
       disk: [],
-    })
-    api.getVncConfig.mockResolvedValue({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
     })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
       codexHome: '/Users/crystal/.wegent-executor/codex',
@@ -537,6 +558,104 @@ describe('ConnectionsSettingsPage', () => {
     }
   })
 
+  test('switches the endpoint and test payload for Chat Completions models', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-api-format-select'),
+        'openai-chat-completions'
+      )
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/chat/completions')
+      await userEvent.type(
+        screen.getByTestId('local-model-url-input'),
+        'https://api.kimi.com/coding/v1'
+      )
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.kimi.com/coding/v1/chat/completions',
+        expect.any(Object)
+      )
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        stream: false,
+      })
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
+  test('switches the endpoint, headers, and test payload for Anthropic Messages models', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const originalFetch = globalThis.fetch
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
+
+    try {
+      render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+      await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+      await screen.findByTestId('model-settings-page')
+      await userEvent.click(screen.getByTestId('local-model-add-button'))
+      await userEvent.selectOptions(
+        screen.getByTestId('local-model-api-format-select'),
+        'anthropic-messages'
+      )
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/v1/messages')
+      await userEvent.type(
+        screen.getByTestId('local-model-url-input'),
+        'https://api.kimi.com/coding/'
+      )
+      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
+      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      await userEvent.click(screen.getByTestId('local-model-test-button'))
+
+      expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.kimi.com/coding/v1/messages',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-api-key': 'local-secret',
+            'anthropic-version': '2023-06-01',
+          }),
+        })
+      )
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        stream: false,
+      })
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', {
+        configurable: true,
+        value: originalFetch,
+      })
+    }
+  })
+
   test('prompts before discarding an unsaved local model form', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
 
@@ -766,6 +885,44 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
+  })
+
+  test('renders the cloud desktop extension action and forwards its opened callback', async () => {
+    const onBack = vi.fn()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={onBack} />)
+
+    const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: false }),
+      undefined
+    )
+    await userEvent.click(button)
+
+    expect(onBack).toHaveBeenCalledOnce()
+  })
+
+  test('does not render a cloud desktop action when the extension is unavailable', async () => {
+    cloudDesktopExtensionMock.available = false
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    expect(screen.queryByTestId('connection-cloud-desktop-button-device-1')).not.toBeInTheDocument()
+  })
+
+  test('passes an offline device as disabled to the cloud desktop action', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: true }),
+      undefined
+    )
   })
 
   test('shows cloud device connection info from the compact more menu and copies values', async () => {
@@ -1032,6 +1189,8 @@ describe('ConnectionsSettingsPage', () => {
     runtimeConfigMock.value = {
       appBasePath: '',
       apiBaseUrl: '/api',
+      socketBaseUrl: 'http://10.201.3.200:8000',
+      socketPath: '/socket.io',
       cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
     }
     api.getAllDevices.mockResolvedValue([cloudDevice(), localDevice()])

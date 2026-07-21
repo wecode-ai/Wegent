@@ -25,6 +25,7 @@ import type { CodexOfficialModelList } from '@/features/model-settings/codexOffi
 import { testLocalModelConnection } from '@/features/model-settings/localModelConnectionTest'
 import {
   buildLocalModelRequestUrl,
+  defaultLocalModelRequestPath,
   deleteLocalModelConfig,
   DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   listLocalModelConfigs,
@@ -34,6 +35,7 @@ import {
   saveLocalModelConfig,
   splitLocalModelRequestUrl,
   type LocalModelConfig,
+  type LocalModelApiFormat,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -181,6 +183,7 @@ interface LocalModelFormState {
   group: string
   modelId: string
   baseUrl: string
+  apiFormat: LocalModelApiFormat
   requestPath: string
   apiKey: string
   contextWindow: string
@@ -210,6 +213,7 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   group: '',
   modelId: '',
   baseUrl: '',
+  apiFormat: 'openai-responses',
   requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
   contextWindow: '',
@@ -240,6 +244,24 @@ const LOCAL_MODEL_WEB_SEARCH_OPTIONS: Array<{
   {
     value: 'live',
     labelKey: 'workbench.local_model_web_search_live',
+  },
+]
+
+const LOCAL_MODEL_API_FORMAT_OPTIONS: Array<{
+  value: LocalModelApiFormat
+  labelKey: string
+}> = [
+  {
+    value: 'openai-responses',
+    labelKey: 'workbench.local_model_api_format_responses',
+  },
+  {
+    value: 'openai-chat-completions',
+    labelKey: 'workbench.local_model_api_format_chat_completions',
+  },
+  {
+    value: 'anthropic-messages',
+    labelKey: 'workbench.local_model_api_format_anthropic_messages',
   },
 ]
 
@@ -278,10 +300,14 @@ function localModelImageGenerationLabel(
   )
 }
 
-function localModelResponsesUrl(baseUrl: string, requestPath: string): string | null {
+function localModelRequestUrl(
+  baseUrl: string,
+  requestPath: string,
+  apiFormat: LocalModelApiFormat
+): string | null {
   if (!baseUrl.trim()) return null
   try {
-    return buildLocalModelRequestUrl(baseUrl, requestPath)
+    return buildLocalModelRequestUrl(baseUrl, requestPath, apiFormat)
   } catch {
     return null
   }
@@ -297,6 +323,7 @@ function isLocalModelFormDirty(
       form.group.trim() !== '' ||
       form.modelId.trim() !== '' ||
       form.baseUrl.trim() !== '' ||
+      form.apiFormat !== 'openai-responses' ||
       form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
       form.apiKey.trim() !== '' ||
       form.contextWindow.trim() !== '' ||
@@ -311,6 +338,7 @@ function isLocalModelFormDirty(
     form.group !== (editingModel.group ?? '') ||
     form.modelId !== editingModel.modelId ||
     form.baseUrl !== editingModel.baseUrl ||
+    form.apiFormat !== editingModel.apiFormat ||
     form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
     form.contextWindow !== (editingModel.contextWindow?.toString() ?? '') ||
@@ -596,8 +624,8 @@ function LocalModelSettingsSection({
     [editingId, models]
   )
   const testRequestUrl = useMemo(
-    () => localModelResponsesUrl(form.baseUrl, form.requestPath),
-    [form.baseUrl, form.requestPath]
+    () => localModelRequestUrl(form.baseUrl, form.requestPath, form.apiFormat),
+    [form.apiFormat, form.baseUrl, form.requestPath]
   )
   const formDirty = useMemo(
     () => formVisible && isLocalModelFormDirty(form, editingModel),
@@ -628,6 +656,7 @@ function LocalModelSettingsSection({
       group: model.group ?? '',
       modelId: model.modelId,
       baseUrl: model.baseUrl,
+      apiFormat: model.apiFormat,
       requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
       contextWindow: model.contextWindow?.toString() ?? '',
@@ -683,10 +712,10 @@ function LocalModelSettingsSection({
   const normalizeBaseUrlInput = () => {
     if (!form.baseUrl.trim()) return
     try {
-      const splitUrl = splitLocalModelRequestUrl(form.baseUrl, form.requestPath)
+      const splitUrl = splitLocalModelRequestUrl(form.baseUrl, form.requestPath, form.apiFormat)
       updateForm({
         baseUrl: normalizeLocalModelBaseUrl(splitUrl.baseUrl),
-        requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath),
+        requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath, form.apiFormat),
       })
     } catch {
       // Keep invalid input visible; submit/test will show the validation message.
@@ -695,14 +724,16 @@ function LocalModelSettingsSection({
 
   const handleBaseUrlPaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
     const text = event.clipboardData.getData('text')
-    const splitUrl = splitLocalModelRequestUrl(text, form.requestPath)
+    const splitUrl = splitLocalModelRequestUrl(text, form.requestPath, form.apiFormat)
     if (splitUrl.baseUrl === text) return
     event.preventDefault()
     updateForm(splitUrl)
   }
 
   const normalizeRequestPathInput = () => {
-    updateForm({ requestPath: normalizeLocalModelRequestPath(form.requestPath) })
+    updateForm({
+      requestPath: normalizeLocalModelRequestPath(form.requestPath, form.apiFormat),
+    })
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -715,6 +746,7 @@ function LocalModelSettingsSection({
         group: form.group,
         modelId: form.modelId,
         baseUrl: form.baseUrl,
+        apiFormat: form.apiFormat,
         requestPath: form.requestPath,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
         contextWindow: form.contextWindow,
@@ -737,6 +769,7 @@ function LocalModelSettingsSection({
         group: editingModel.group,
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
+        apiFormat: editingModel.apiFormat,
         requestPath: editingModel.requestPath,
         apiKey: null,
         contextWindow: editingModel.contextWindow,
@@ -762,6 +795,7 @@ function LocalModelSettingsSection({
     try {
       await testLocalModelConnection({
         baseUrl: form.baseUrl,
+        apiFormat: form.apiFormat,
         requestPath: form.requestPath,
         modelId: form.modelId,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
@@ -835,6 +869,48 @@ function LocalModelSettingsSection({
           >
             <div className="grid items-start gap-3 sm:grid-cols-2">
               <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                {t('workbench.local_model_api_format_label', 'API 格式')}
+                <select
+                  data-testid="local-model-api-format-select"
+                  value={form.apiFormat}
+                  onChange={event => {
+                    const apiFormat = event.target.value as LocalModelApiFormat
+                    const previousDefault = defaultLocalModelRequestPath(form.apiFormat)
+                    updateForm({
+                      apiFormat,
+                      ...(form.requestPath === previousDefault
+                        ? { requestPath: defaultLocalModelRequestPath(apiFormat) }
+                        : {}),
+                    })
+                  }}
+                  className={LOCAL_MODEL_FIELD_CLASS}
+                >
+                  {LOCAL_MODEL_API_FORMAT_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {t(option.labelKey)}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal leading-5 text-text-muted">
+                  {t(
+                    'workbench.local_model_api_format_hint',
+                    'Chat Completions 会在本机转换为 Codex 所需的 Responses 格式。'
+                  )}
+                </span>
+              </label>
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                {t('workbench.local_model_id_label', '模型 ID')}
+                <input
+                  data-testid="local-model-id-input"
+                  value={form.modelId}
+                  onChange={event => updateForm({ modelId: event.target.value })}
+                  placeholder="gpt-oss:20b"
+                  className={LOCAL_MODEL_FIELD_CLASS}
+                />
+              </label>
+            </div>
+            <div className="grid items-start gap-3">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_url_label', '模型 URL')}
                 <div
                   className={`${LOCAL_MODEL_COMPOUND_INPUT_CLASS} grid grid-cols-[minmax(0,1fr)_7rem]`}
@@ -858,7 +934,7 @@ function LocalModelSettingsSection({
                       onBlur={normalizeRequestPathInput}
                       placeholder={t(
                         'workbench.local_model_request_path_placeholder',
-                        '/responses'
+                        defaultLocalModelRequestPath(form.apiFormat)
                       )}
                       className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
                     />
@@ -878,16 +954,6 @@ function LocalModelSettingsSection({
                         '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
                       )}
                 </span>
-              </label>
-              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
-                {t('workbench.local_model_id_label', '模型 ID')}
-                <input
-                  data-testid="local-model-id-input"
-                  value={form.modelId}
-                  onChange={event => updateForm({ modelId: event.target.value })}
-                  placeholder="gpt-oss:20b"
-                  className={LOCAL_MODEL_FIELD_CLASS}
-                />
               </label>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">

@@ -296,12 +296,21 @@ export function TodoSidebar({
           <DesktopAppSwitcher
             activeApp="todo"
             onNavigate={app =>
-              navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+              navigateTo(
+                app === 'wework'
+                  ? '/'
+                  : app === 'todo'
+                    ? '/todo'
+                    : app === 'wegent'
+                      ? '/app/wegent'
+                      : '/apps'
+              )
             }
             testIds={{
               wework: 'todo-app-wework',
               todo: 'todo-app-current',
               apps: 'todo-app-apps',
+              wegent: 'todo-app-wegent',
             }}
           />
         </div>

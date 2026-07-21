@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
+import { saveStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
 
 vi.mock('@/features/auth/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -161,9 +162,9 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Task')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
@@ -175,6 +176,28 @@ describe('App center route', () => {
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('loads Agent from the connected cloud address', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://app.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-21T00:00:00.000Z',
+    })
+    window.history.pushState({}, '', '/app/wegent')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('app-iframe-wegent')).toHaveAttribute(
+      'src',
+      'https://app.example.com'
+    )
   })
 
   test('does not render the global chrome titlebar on the workbench route', async () => {
@@ -238,11 +261,9 @@ describe('App center route', () => {
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
 
     const weworkTab = screen.getByTestId('chrome-tab-wework')
-    const appsTab = screen.getByTestId('chrome-tab-apps')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
-    expect(
-      weworkTab.compareDocumentPosition(appsTab) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
+    expect(weworkTab).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('collapse-sidebar-button'))
 

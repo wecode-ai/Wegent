@@ -699,6 +699,7 @@ describe('createLocalAppServices', () => {
         taskId: 'task-1',
       },
       message: 'continue',
+      clientMessageId: 'runtime-local-pane-1',
       modelId: 'gpt-5.5',
       modelOptions: {
         collaborationMode: 'default',
@@ -732,6 +733,7 @@ describe('createLocalAppServices', () => {
           taskId: 'task-1',
         },
         message: 'continue',
+        clientMessageId: 'runtime-local-pane-1',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
@@ -757,6 +759,7 @@ describe('createLocalAppServices', () => {
           task_id: 'task-1',
           subtask_id: expect.any(String),
           prompt: 'continue',
+          client_user_message_id: 'runtime-local-pane-1',
           model_config: expect.objectContaining({
             model: 'openai',
             model_id: 'gpt-5.5',
@@ -806,6 +809,67 @@ describe('createLocalAppServices', () => {
     )
     expect(sendPayload).not.toHaveProperty('message_id')
     expect(sendPayload).not.toHaveProperty('modelId')
+  })
+
+  test('builds the shared execution request for local interrupt-and-send', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+        apiKey: 'cloud-login-token',
+      },
+    })
+
+    await services.runtimeWorkApi?.interruptAndSendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'stop and use this direction',
+      clientMessageId: 'runtime-interrupt-1',
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+      },
+    })
+
+    const payload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.interrupt_and_send'
+    )?.[1]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        taskId: 'task-1',
+        address: {
+          deviceId: 'device-uuid',
+          workspacePath: '/Users/me/project',
+          taskId: 'task-1',
+        },
+        message: 'stop and use this direction',
+        clientMessageId: 'runtime-interrupt-1',
+        executionRequest: expect.objectContaining({
+          prompt: 'stop and use this direction',
+          client_user_message_id: 'runtime-interrupt-1',
+          new_session: false,
+          model_config: expect.objectContaining({
+            model_id: 'shared-model',
+            base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+            api_key: 'cloud-login-token',
+            default_headers: {
+              'X-Wegent-Model-Type': 'user',
+              'X-Wegent-Model-Namespace': 'default',
+              'X-Wegent-Model-User-Id': '42',
+            },
+          }),
+        }),
+      })
+    )
+    expect(payload).not.toHaveProperty('modelId')
   })
 
   test('routes last user message edits through the local runtime rollback method', async () => {
@@ -1273,6 +1337,7 @@ describe('createLocalAppServices', () => {
               workspace_path: '/Users/me/worktrees/42/project',
               title: 'Build',
               runtime: 'codex',
+              goal_status: 'active',
               workspace_kind: 'worktree',
               worktree_id: '42',
             },
@@ -1327,6 +1392,7 @@ describe('createLocalAppServices', () => {
                   workspacePath: '/Users/me/worktrees/42/project',
                   workspaceKind: 'worktree',
                   worktreeId: '42',
+                  goalStatus: 'active',
                 }),
               ],
             }),

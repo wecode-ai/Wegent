@@ -34,6 +34,9 @@ from app.services.knowledge.folder_policy import (
     validate_folder_move_depth,
     validate_new_folder_depth,
 )
+from app.services.knowledge.knowledge_access_policy import (
+    get_user_knowledge_base_permission,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.permission_policy import (
     can_manage_accessible_knowledge_document,
@@ -646,10 +649,15 @@ class KnowledgeFolderService:
         user_id: int,
     ) -> dict[int, tuple[bool, BaseRole | None, bool]]:
         """Resolve user permissions for all touched knowledge bases once."""
-        return {
-            kb_id: KnowledgeService._get_user_kb_permission(db, kb_id, user_id)
-            for kb_id in knowledge_base_ids
-        }
+        permissions: dict[int, tuple[bool, BaseRole | None, bool]] = {}
+        for kb_id in knowledge_base_ids:
+            permission = get_user_knowledge_base_permission(db, kb_id, user_id)
+            permissions[kb_id] = (
+                permission.has_access,
+                permission.role,
+                permission.is_creator,
+            )
+        return permissions
 
     @staticmethod
     def _bulk_validate_target_folder(

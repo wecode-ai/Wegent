@@ -1,9 +1,8 @@
-import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
+import { File, FileDiff, Globe2, Loader2, SquareTerminal, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { createProjectApi } from '@/api/projects'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { getRuntimeConfig } from '@/config/runtime'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
@@ -12,6 +11,7 @@ import {
 import {
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
   supportsRemoteTerminalSessions,
 } from '@/lib/device-capabilities'
 import { openExternalUrl } from '@/lib/external-links'
@@ -24,8 +24,10 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { buildVncPageUrl } from '@/lib/vnc'
+import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
+import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
+import type { DeviceSessionResponse } from '@/types/devices'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
@@ -33,6 +35,7 @@ import { RemoteTerminal } from './RemoteTerminal'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 
 interface WorkspacePanelCardsProps {
+  showWorkbenchBackground?: boolean
   currentProject: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
@@ -48,9 +51,10 @@ interface WorkspacePanelCardsProps {
   testIdsEnabled?: boolean
   terminalContextTitle?: string | null
   onTerminalTitleChange?: (title: string) => void
+  workspaceSessionApi?: WorkspaceSessionApi
 }
 
-type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
+type WorkspaceTool = 'terminal' | 'ide'
 
 type WorkspaceToolAvailability = Record<WorkspaceTool, boolean>
 
@@ -64,23 +68,35 @@ interface WorkspaceToolErrorState {
   message: string | null
 }
 
+interface WorkspaceToolLoadingState {
+  tool: WorkspaceTool | 'extension'
+  projectKey: string
+}
+
 interface LocalTerminalCheckState {
   key: string
   executorDeviceId: string | null
   pathExists: boolean
 }
 
-type WorkspaceTerminalSession = ProjectDeviceSessionResponse & {
-  terminal_kind?: 'remote' | 'local'
+type WorkspaceTerminalSessionBase = ProjectDeviceSessionResponse & {
   cwd?: string
   title?: string
 }
+
+type WorkspaceTerminalSession =
+  | (WorkspaceTerminalSessionBase & {
+      terminal_kind: 'local'
+    })
+  | (WorkspaceTerminalSessionBase & {
+      terminal_kind: 'remote'
+      remoteClientFactory: RemoteTerminalClientFactory
+    })
 
 function createAvailableTools(): WorkspaceToolAvailability {
   return {
     terminal: true,
     ide: true,
-    desktop: true,
   }
 }
 
@@ -148,17 +164,8 @@ function buildLocalTerminalEnv({
   return env
 }
 
-function createProjectSessionApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function createDeviceSessionApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
 export function WorkspacePanelCards({
+  showWorkbenchBackground = false,
   currentProject,
   devices = [],
   workspaceTarget = null,
@@ -174,6 +181,7 @@ export function WorkspacePanelCards({
   testIdsEnabled = true,
   terminalContextTitle,
   onTerminalTitleChange,
+  workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
   const testId = useCallback(
@@ -182,7 +190,7 @@ export function WorkspacePanelCards({
   )
   const [terminalSessions, setTerminalSessions] = useState<WorkspaceTerminalSession[]>([])
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
-  const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
+  const [loadingToolState, setLoadingToolState] = useState<WorkspaceToolLoadingState | null>(null)
   const defaultOpenedProjectKeyRef = useRef<string | null>(null)
   const terminalSessionsRef = useRef<WorkspaceTerminalSession[]>([])
   const terminalProjectKeyRef = useRef<string | null>(null)
@@ -222,6 +230,9 @@ export function WorkspacePanelCards({
   })
   const localTerminalCheckReady = localTerminalCheck.key === localTerminalCheckKey
   const cloudToolsAvailable = Boolean(projectDevice && supportsCloudSessions(projectDevice))
+  const remoteIdeAvailable = Boolean(
+    projectDevice && (supportsCloudSessions(projectDevice) || supportsRemoteSessions(projectDevice))
+  )
   const remoteTerminalAvailable = Boolean(
     projectDevice && supportsRemoteTerminalSessions(projectDevice)
   )
@@ -253,15 +264,22 @@ export function WorkspacePanelCards({
     localTerminalSupported && localTerminalRuntimeAvailable && !localTerminalCheckReady
   )
   const localTerminalLaunchable = Boolean(localTerminalSupported && localTerminalRuntimeAvailable)
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
+  )
+  const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
   const localIdeLaunchable = Boolean(
-    localTerminalLaunchable && activeWorkspacePath?.trim() && localTerminalSupported
+    !remoteWorkspaceSession &&
+    localTerminalLaunchable &&
+    activeWorkspacePath?.trim() &&
+    localTerminalSupported
   )
   const projectTerminalAvailable =
     localTerminalLaunchable ||
     (!localTerminalSupported &&
       (Boolean(currentProject) || Boolean(workspaceSource === 'runtime' && activeWorkspacePath)) &&
       remoteTerminalAvailable)
-  const projectIdeAvailable = cloudToolsAvailable || localIdeLaunchable
+  const projectIdeAvailable = remoteIdeAvailable || localIdeLaunchable
   const hasLimitedProjectTools = Boolean(
     hasWorkspaceContext &&
     !cloudToolsAvailable &&
@@ -280,6 +298,7 @@ export function WorkspacePanelCards({
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
+  const loadingTool = loadingToolState?.projectKey === projectKey ? loadingToolState.tool : null
   const toolsDisabled = !hasWorkspaceContext || Boolean(loadingTool)
   const activeTerminalSession =
     terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
@@ -405,6 +424,21 @@ export function WorkspacePanelCards({
     [projectKey]
   )
 
+  const handleExtensionBusyChange = useCallback(
+    (busy: boolean) => {
+      setLoadingToolState(current => {
+        if (busy) return { projectKey, tool: 'extension' }
+        if (current?.projectKey === projectKey && current.tool === 'extension') return null
+        return current
+      })
+    },
+    [projectKey]
+  )
+
+  const handleExtensionOpened = useCallback(() => {
+    onRequestClose?.()
+  }, [onRequestClose])
+
   const getSessionStartErrorMessage = useCallback(
     () => t('workbench.project_tool_start_failed', '启动失败'),
     [t]
@@ -412,7 +446,7 @@ export function WorkspacePanelCards({
 
   const startTerminalSession = useCallback(async () => {
     if (!hasWorkspaceContext || loadingTool || !availableTools.terminal) return
-    setLoadingTool('terminal')
+    setLoadingToolState({ tool: 'terminal', projectKey })
     setProjectError(null)
     try {
       let shouldUseLocalTerminal = localTerminalAvailable
@@ -460,7 +494,10 @@ export function WorkspacePanelCards({
       }
 
       if (workspaceSource === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
-        const session = await createDeviceSessionApi().startTerminal(
+        if (!workspaceSessionApi) {
+          throw new Error('Remote workspace session service is unavailable')
+        }
+        const session = await workspaceSessionApi.startDeviceTerminal(
           activeWorkspaceDeviceId,
           activeWorkspacePath
         )
@@ -469,6 +506,7 @@ export function WorkspacePanelCards({
           type: 'terminal',
           project_id: currentProject?.id ?? 0,
           terminal_kind: 'remote',
+          remoteClientFactory: workspaceSessionApi.createRemoteTerminalClient,
         }
         if (startedSession.transport !== 'socketio') {
           throw new Error('Terminal session transport is not supported')
@@ -482,19 +520,30 @@ export function WorkspacePanelCards({
         return
       }
 
-      const projectApi = createProjectSessionApi()
-      const startedSession = await projectApi.startTerminalSession(currentProject.id)
+      if (!workspaceSessionApi) {
+        throw new Error('Remote workspace session service is unavailable')
+      }
+      const startedSession = await workspaceSessionApi.startProjectTerminal(currentProject.id)
       if (startedSession.transport !== 'socketio') {
         throw new Error('Terminal session transport is not supported')
       }
-      setTerminalSessions(sessions => [...sessions, { ...startedSession, terminal_kind: 'remote' }])
+      setTerminalSessions(sessions => [
+        ...sessions,
+        {
+          ...startedSession,
+          terminal_kind: 'remote',
+          remoteClientFactory: workspaceSessionApi.createRemoteTerminalClient,
+        },
+      ])
       setActiveTerminalSessionId(startedSession.session_id)
     } catch (e) {
       console.error('Failed to start project terminal:', e)
       markToolUnavailable('terminal')
       setProjectError(getSessionStartErrorMessage())
     } finally {
-      setLoadingTool(null)
+      setLoadingToolState(current =>
+        current?.tool === 'terminal' && current.projectKey === projectKey ? null : current
+      )
     }
   }, [
     activeWorkspaceDeviceId,
@@ -510,10 +559,12 @@ export function WorkspacePanelCards({
     localTerminalSupported,
     localTerminalAvailable,
     markToolUnavailable,
+    projectKey,
     readLocalTerminalCheck,
     setLocalTerminalCheck,
     setProjectError,
     terminalContextTitle,
+    workspaceSessionApi,
     workspaceSource,
   ])
 
@@ -602,7 +653,7 @@ export function WorkspacePanelCards({
     opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   ) => {
     if (loadingTool || !availableTools.ide) return
-    setLoadingTool('ide')
+    setLoadingToolState({ tool: 'ide', projectKey })
     setProjectError(null)
     let shouldClosePanel = false
     try {
@@ -618,9 +669,26 @@ export function WorkspacePanelCards({
         return
       }
 
-      if (!currentProject) return
-      const projectApi = createProjectSessionApi()
-      const session = await projectApi.startCodeServerSession(currentProject.id)
+      if (!workspaceSessionApi) {
+        throw new Error('Remote workspace session service is unavailable')
+      }
+      let session: ProjectDeviceSessionResponse | DeviceSessionResponse | null
+      if (useDeviceCodeServerSession) {
+        if (!activeWorkspaceDeviceId || !activeWorkspacePath) {
+          throw new Error('Remote workspace target is missing')
+        }
+        session = await workspaceSessionApi.startDeviceCodeServer(
+          activeWorkspaceDeviceId,
+          activeWorkspacePath
+        )
+      } else {
+        session = currentProject
+          ? await workspaceSessionApi.startProjectCodeServer(currentProject.id)
+          : null
+      }
+      if (!session) {
+        throw new Error('IDE session target is missing')
+      }
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
@@ -631,31 +699,9 @@ export function WorkspacePanelCards({
       markToolUnavailable('ide')
       setProjectError(getSessionStartErrorMessage())
     } finally {
-      setLoadingTool(null)
-      if (shouldClosePanel) {
-        onRequestClose?.()
-      }
-    }
-  }
-
-  const handleDesktopClick = async () => {
-    if (!activeWorkspaceDeviceId || loadingTool || !availableTools.desktop) return
-    setLoadingTool('desktop')
-    setProjectError(null)
-    let shouldClosePanel = false
-    try {
-      const config = await createDeviceSessionApi().getVncConfig(activeWorkspaceDeviceId)
-      if (!config.sandbox_id) {
-        throw new Error('Desktop sandbox ID is missing')
-      }
-      await openExternalUrl(buildVncPageUrl(activeWorkspaceDeviceId, config.sandbox_id))
-      shouldClosePanel = true
-    } catch (e) {
-      console.error('Failed to open project desktop:', e)
-      markToolUnavailable('desktop')
-      setProjectError(t('workbench.project_tool_start_failed', '启动失败'))
-    } finally {
-      setLoadingTool(null)
+      setLoadingToolState(current =>
+        current?.tool === 'ide' && current.projectKey === projectKey ? null : current
+      )
       if (shouldClosePanel) {
         onRequestClose?.()
       }
@@ -722,7 +768,10 @@ export function WorkspacePanelCards({
   const terminalWindow = activeTerminalSession ? (
     <div
       data-testid={testId('workspace-terminal-window')}
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background"
+      className={cn(
+        'flex h-full min-h-0 w-full flex-col overflow-hidden',
+        showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+      )}
     >
       {!hideTerminalChrome && (
         <div className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-surface px-2">
@@ -789,11 +838,13 @@ export function WorkspacePanelCards({
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         ) : (
           <RemoteTerminal
             key={session.session_id}
             sessionId={session.session_id}
+            clientFactory={session.remoteClientFactory}
             active={panelActive && isActive}
             taskId={workspaceTarget?.taskId}
             workspacePath={activeWorkspacePath}
@@ -802,6 +853,7 @@ export function WorkspacePanelCards({
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
+            showWorkbenchBackground={showWorkbenchBackground}
           />
         )
       })}
@@ -932,31 +984,19 @@ export function WorkspacePanelCards({
                         </span>
                       </button>
                     )}
-                    {cloudToolsAvailable && (
-                      <button
-                        type="button"
-                        data-testid={testId('workspace-desktop-card')}
-                        onClick={handleDesktopClick}
-                        disabled={
-                          toolsDisabled || !activeWorkspaceDeviceId || !availableTools.desktop
-                        }
-                        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {loadingTool === 'desktop' ? (
-                          <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                        ) : (
-                          <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
-                        )}
-                        <span className="text-sm font-semibold text-text-primary">
-                          {t('workbench.desktop', '桌面')}
-                        </span>
-                        <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                          {availableTools.desktop
-                            ? t('workbench.open_project_desktop', '打开项目桌面')
-                            : t('workbench.project_tool_unavailable', '暂不可用')}
-                        </span>
-                      </button>
-                    )}
+                    {cloudToolsAvailable &&
+                      cloudDesktopExtension.available &&
+                      activeWorkspaceDeviceId && (
+                        <cloudDesktopExtension.WorkspaceAction
+                          contextKey={projectKey}
+                          deviceId={activeWorkspaceDeviceId}
+                          disabled={toolsDisabled || projectDevice?.status !== 'online'}
+                          onBusyChange={handleExtensionBusyChange}
+                          onErrorChange={setProjectError}
+                          onOpened={handleExtensionOpened}
+                          testIdsEnabled={testIdsEnabled}
+                        />
+                      )}
                   </>
                 )}
               </div>

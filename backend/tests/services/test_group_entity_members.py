@@ -15,6 +15,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.namespace import GroupRole
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.group_member_helper import (
     create_group_entity_member,
     delete_group_entity_member,
@@ -31,7 +32,6 @@ from app.services.group_permission import (
     get_restricted_analyst_groups,
     get_user_groups,
 )
-from app.services.share.external_entity_resolver import register_entity_resolver
 from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 
@@ -639,7 +639,7 @@ class TestListResourcesByEntityMatch:
     """Tests for list_resources_by_entity_match utility."""
 
     def test_returns_resource_ids_for_matched_entities(self, test_db: Session):
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             list_resources_by_entity_match,
         )
 
@@ -664,7 +664,7 @@ class TestListResourcesByEntityMatch:
         assert group.id in result
 
     def test_returns_empty_list_for_no_matches(self, test_db: Session):
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             list_resources_by_entity_match,
         )
 
@@ -678,7 +678,7 @@ class TestListResourcesByEntityMatch:
         assert result == []
 
     def test_filters_by_resource_type(self, test_db: Session):
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             list_resources_by_entity_match,
         )
 
@@ -702,7 +702,7 @@ class TestListResourcesByEntityMatch:
         assert result == []
 
     def test_returns_empty_list_for_empty_matched_ids(self, test_db: Session):
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             list_resources_by_entity_match,
         )
 

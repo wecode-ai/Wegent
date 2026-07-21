@@ -22,7 +22,6 @@ export const APP_TABS: AppTab[] = [
     key: 'wegent',
     label: 'Wegent',
     mode: 'iframe',
-    url: import.meta.env.VITE_WEGENT_URL || 'http://localhost:3000',
     requiresAuth: true,
     hidden: true,
   },

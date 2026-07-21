@@ -9,7 +9,6 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
@@ -27,12 +26,15 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
+  --codex-home-initialization true
+                            Seed and verify isolated first-run Codex migration
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
+                            Required destination selector for drag
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
@@ -192,14 +194,21 @@ async function runServer(sessionPath, token) {
   const updated = {
     ...session,
     controlUrl,
-    socketPath: join(tmpdir(), `wework-ai-${randomUUID()}.sock`),
     status: 'starting',
   }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
   const executorHome = join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
+  const nativeCodexHome = session.verifyCodexHomeInitialization
+    ? join(session.directory, 'native-codex')
+    : undefined
   await mkdir(codexHome, { recursive: true })
+  if (nativeCodexHome) {
+    await mkdir(nativeCodexHome, { recursive: true })
+    await writeFile(join(nativeCodexHome, 'auth.json'), '{"test":"isolated-auth"}\n')
+    await writeFile(join(nativeCodexHome, 'config.toml'), 'model = "gpt-5"\n')
+  }
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
@@ -207,8 +216,10 @@ async function runServer(sessionPath, token) {
       controlUrl,
       token,
       codexHome,
+      nativeCodexHome,
+      verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
       deviceId: session.deviceId,
-      socketPath: updated.socketPath,
+      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
       executorHome,
       sessionDirectory: session.directory,
     }),
@@ -264,6 +275,7 @@ async function main() {
           directory,
           token,
           status: 'starting',
+          verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
         },
         null,
         2
@@ -300,7 +312,6 @@ async function main() {
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
-    await rm(session.socketPath, { force: true })
     await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
     return
   }
@@ -313,8 +324,10 @@ async function main() {
     snapshot: 'snapshot',
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
+    drag: 'drag',
     fill: 'fill',
     hover: 'hover',
+    navigate: 'navigate',
     'pointer-move': 'pointerMove',
     press: 'press',
     'select-text': 'selectText',
@@ -330,6 +343,7 @@ async function main() {
     options.selector ??
     (command === 'capture' ||
     command === 'snapshot' ||
+    command === 'navigate' ||
     command === 'text' ||
     command === 'pointer-move' ||
     command === 'close-to-tray'

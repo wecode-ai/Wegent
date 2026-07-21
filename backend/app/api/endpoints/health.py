@@ -32,12 +32,10 @@ def health_check(db: Session = Depends(get_db)):
     """
     try:
         # Check database connection by querying users table
-        result = db.execute(text("SELECT COUNT(*) FROM users"))
-        user_count = result.scalar()
+        db.execute(text("SELECT COUNT(*) FROM users")).scalar()
 
         return {
             "status": "healthy",
-            "database": "connected",
             "shutting_down": shutdown_manager.is_shutting_down,
         }
     except Exception as e:

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.distributed_lock import distributed_lock
 from app.models.user import User
-from app.services.share.external_entity_resolver import IExternalEntityResolver
+from app.services.external_entity_resolver import IExternalEntityResolver
 from wecode.cache.base import get_redis_client
 from wecode.models.erp_user import WecodeErpUser
 from wecode.service.erp_client import erp_client
@@ -222,7 +222,7 @@ class ErpEntityResolver(IExternalEntityResolver):
             return []
 
         # Delegate resource_id resolution to the shared base utility
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             list_resources_by_entity_match,
         )
 

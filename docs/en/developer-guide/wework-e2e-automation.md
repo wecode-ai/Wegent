@@ -26,6 +26,18 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+Run only the Wecode cloud-device desktop scenario:
+
+```bash
+pnpm --filter wework e2e:desktop:wecode
+```
+
+Run only the cloud-project desktop E2E:
+
+```bash
+pnpm --filter wework e2e:desktop:cloud
+```
+
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
 
 ```bash
@@ -49,7 +61,7 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 
 ## Desktop Task-Flow E2E
 
-`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task lifecycle in a local workspace:
+`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task lifecycle in a local workspace and lets product distributions inject an optional desktop scenario:
 
 1. Builds and starts the real Tauri Wework application, opening an isolated workspace with `--open-workspace`.
 2. Starts the real `wegent-executor` sidecar, which starts a real `codex app-server`.
@@ -58,6 +70,7 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 5. Sends a follow-up in the same conversation and verifies its request and rendered response.
 6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
+8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
 
@@ -68,6 +81,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+
+The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
 ## Responses API Mock
 
@@ -102,6 +117,8 @@ Available methods:
 - `clearStorage()`: clears local auth state and browser storage.
 
 The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`. Only when E2E mode and this URL are both present does the frontend poll a local loopback controller for `click`, `fill`, and wait assertions; normal development and production builds have no controller endpoint. The controller drives real WebView DOM events and does not replace task, model-selection, Executor, or Codex implementations.
+
+When a built-in action does not handle a command, the public controller delegates it through `@extensions/desktop-control` to a product extension. Without a product extension, unknown actions fail explicitly; public automation does not recognize concrete product protocols.
 
 The controller uses short polling: the server returns `204` when no command is available, and the frontend waits briefly before polling again. This prevents a stale long-poll connection, left behind by a WebView reload, task switch, or stream completion, from consuming later commands. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion. Failure diagnostics include delivered `commandHistory` in `scenario-state.json` to aid control-channel debugging.
 
@@ -139,6 +156,8 @@ Desktop task-flow E2E requires a Linux runner with a graphical session, for exam
 ```bash
 pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop
+xvfb-run -a pnpm --filter wework e2e:desktop:wecode
+xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.

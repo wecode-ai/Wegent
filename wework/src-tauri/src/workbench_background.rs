@@ -45,7 +45,24 @@ fn background_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("Failed to resolve the app data directory: {error}"))
 }
 
-fn import_background(source: &Path, directory: &Path) -> Result<PathBuf, String> {
+fn validated_theme(theme: &str) -> Result<&str, String> {
+    match theme {
+        "common" | "light" | "dark" => Ok(theme),
+        _ => Err("Background slot must be common, light, or dark".to_string()),
+    }
+}
+
+fn belongs_to_theme(path: &Path, theme: &str) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| {
+            name.starts_with(&format!("{theme}-background-"))
+                || (theme == "common" && name.starts_with("background-"))
+        })
+}
+
+fn import_background(source: &Path, directory: &Path, theme: &str) -> Result<PathBuf, String> {
+    let theme = validated_theme(theme)?;
     if !source.is_file() {
         return Err("The selected background image does not exist".to_string());
     }
@@ -58,8 +75,8 @@ fn import_background(source: &Path, directory: &Path) -> Result<PathBuf, String>
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| format!("Failed to create a background file name: {error}"))?
         .as_nanos();
-    let target = directory.join(format!("background-{nonce}.{extension}"));
-    let temporary = directory.join(format!("background-{nonce}.importing"));
+    let target = directory.join(format!("{theme}-background-{nonce}.{extension}"));
+    let temporary = directory.join(format!("{theme}-background-{nonce}.importing"));
     std::fs::copy(source, &temporary)
         .map_err(|error| format!("Failed to copy the background image: {error}"))?;
     std::fs::rename(&temporary, &target)
@@ -71,7 +88,7 @@ fn import_background(source: &Path, directory: &Path) -> Result<PathBuf, String>
         let path = entry
             .map_err(|error| format!("Failed to inspect a background file: {error}"))?
             .path();
-        if path != target && path.is_file() {
+        if path != target && path.is_file() && belongs_to_theme(&path, theme) {
             std::fs::remove_file(path)
                 .map_err(|error| format!("Failed to remove the previous background: {error}"))?;
         }
@@ -83,19 +100,46 @@ fn import_background(source: &Path, directory: &Path) -> Result<PathBuf, String>
 pub fn import_workbench_background(
     app: tauri::AppHandle,
     source_path: String,
+    theme: String,
 ) -> Result<String, String> {
-    let target = import_background(Path::new(&source_path), &background_directory(&app)?)?;
+    let target = import_background(
+        Path::new(&source_path),
+        &background_directory(&app)?,
+        &theme,
+    )?;
     Ok(target.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
-pub fn remove_workbench_background(app: tauri::AppHandle) -> Result<(), String> {
+pub fn remove_workbench_background(
+    app: tauri::AppHandle,
+    theme: Option<String>,
+) -> Result<(), String> {
     let directory = background_directory(&app)?;
+    remove_background(&directory, theme.as_deref())
+}
+
+fn remove_background(directory: &Path, theme: Option<&str>) -> Result<(), String> {
     if !directory.exists() {
         return Ok(());
     }
-    std::fs::remove_dir_all(directory)
-        .map_err(|error| format!("Failed to remove the background image: {error}"))
+    let Some(theme) = theme else {
+        return std::fs::remove_dir_all(directory)
+            .map_err(|error| format!("Failed to remove the background image: {error}"));
+    };
+    let theme = validated_theme(theme)?;
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| format!("Failed to inspect the background directory: {error}"))?
+    {
+        let path = entry
+            .map_err(|error| format!("Failed to inspect a background file: {error}"))?
+            .path();
+        if path.is_file() && belongs_to_theme(&path, theme) {
+            std::fs::remove_file(path)
+                .map_err(|error| format!("Failed to remove the background image: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -112,9 +156,10 @@ mod tests {
         let directory = root.join("managed");
         std::fs::write(&source, b"\x89PNG\r\n\x1a\nimage-data").unwrap();
         std::fs::create_dir_all(&directory).unwrap();
-        std::fs::write(directory.join("background.jpg"), b"old").unwrap();
+        std::fs::write(directory.join("light-background-old.jpg"), b"old").unwrap();
+        std::fs::write(directory.join("dark-background-current.jpg"), b"dark").unwrap();
 
-        let imported = import_background(&source, &directory).unwrap();
+        let imported = import_background(&source, &directory, "light").unwrap();
 
         assert_eq!(
             imported.extension().and_then(|value| value.to_str()),
@@ -124,7 +169,8 @@ mod tests {
             std::fs::read(imported).unwrap(),
             b"\x89PNG\r\n\x1a\nimage-data"
         );
-        assert!(!directory.join("background.jpg").exists());
+        assert!(!directory.join("light-background-old.jpg").exists());
+        assert!(directory.join("dark-background-current.jpg").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -143,8 +189,28 @@ mod tests {
         let previous = directory.join("background.png");
         std::fs::write(&previous, b"old").unwrap();
 
-        assert!(import_background(&source, &directory).is_err());
+        assert!(import_background(&source, &directory, "light").is_err());
         assert_eq!(std::fs::read(previous).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn removes_only_the_selected_theme_background() {
+        let root = std::env::temp_dir().join(format!(
+            "wework-background-remove-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let light = root.join("light-background-current.png");
+        let dark = root.join("dark-background-current.png");
+        std::fs::write(&light, b"light").unwrap();
+        std::fs::write(&dark, b"dark").unwrap();
+
+        remove_background(&root, Some("light")).unwrap();
+
+        assert!(!light.exists());
+        assert_eq!(std::fs::read(dark).unwrap(), b"dark");
         let _ = std::fs::remove_dir_all(root);
     }
 }

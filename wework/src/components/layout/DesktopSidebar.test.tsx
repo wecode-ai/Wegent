@@ -686,9 +686,9 @@ describe('DesktopSidebar', () => {
       expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
     }
     expect(searchButton).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
-    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
-    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
-    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-sm')
+    expect(newTaskButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(pluginsButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
+    expect(cloudButton).toHaveClass('h-[30px]', 'rounded-[10px]', 'text-base')
     expect(newTaskIcon).toHaveClass('text-current')
     expect(cloudIcon).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     expect(projectsTitle).toHaveClass(
@@ -723,7 +723,8 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
   })
 
-  test('shows cloud work availability on the sidebar entry', () => {
+  test('shows cloud work availability and opens connection settings from the sidebar entry', async () => {
+    const onOpenSettings = vi.fn()
     renderSidebar({
       devices: [
         localDevice(),
@@ -735,6 +736,7 @@ describe('DesktopSidebar', () => {
         }),
       ],
       cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      onOpenSettings,
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
@@ -757,6 +759,10 @@ describe('DesktopSidebar', () => {
       'group-focus-within/cloud:pointer-events-auto',
       'group-focus-within/cloud:opacity-100'
     )
+
+    await userEvent.click(cloudButton)
+
+    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
   })
 
   test('opens cloud connection settings from the sidebar cloud management button', async () => {
@@ -2493,6 +2499,55 @@ describe('DesktopSidebar', () => {
     expect(openLocalWorkspace).toHaveBeenCalledWith({
       opener: 'finder',
       path: '/Users/alice/dev/Wegent',
+    })
+  })
+
+  test('creates a permanent worktree from a runtime project', async () => {
+    const user = userEvent.setup()
+    const onCreatePermanentWorktree = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/dev/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'local',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onCreatePermanentWorktree,
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('create-permanent-worktree-7'))
+
+    expect(screen.getByTestId('permanent-worktree-name-7')).toHaveValue('Wegent_2')
+    await user.clear(screen.getByTestId('permanent-worktree-name-7'))
+    await user.type(screen.getByTestId('permanent-worktree-name-7'), 'Wegent docs')
+    await user.click(screen.getByTestId('confirm-create-permanent-worktree-7'))
+
+    await waitFor(() => {
+      expect(onCreatePermanentWorktree).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        sourcePath: '/Users/alice/dev/Wegent',
+        name: 'Wegent docs',
+      })
     })
   })
 

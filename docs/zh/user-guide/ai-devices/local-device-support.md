@@ -157,12 +157,13 @@ docker run -d \
 
 默认镜像由 Backend 环境变量 `REMOTE_DEVICE_DOCKER_IMAGE` 控制，未配置时使用 `ghcr.io/wecode-ai/wegent-device:latest`。如果目标部署需要使用内部镜像仓库，请部署方在 Backend 启动环境中设置 `REMOTE_DEVICE_DOCKER_IMAGE=<your-registry>/<your-image>:<tag>`，用户侧不需要手动填写镜像地址。
 
-设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；IDE/code-server 和桌面 VNC/VPN 入口仍然只对云设备开放。
+设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过 `DEVICE_PUBLIC_BASE_URL` 对应的 session gateway 访问，因此该地址必须能从用户浏览器访问。公开版 Wework 不提供云桌面；部分产品发行版可以通过可选扩展增加该能力。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
+- `POST /api/devices/{device_id}/code-server`：打开指定设备上的 code-server。请求 body 可选传入 `path`；传入时打开该远程项目目录，不传时使用设置页的默认工作目录。Executor 只接受默认 workspace、`WEGENT_WORKSPACE_ROOTS` 配置目录和已保存的 Codex 项目根目录，越界路径会被拒绝。
 
-Terminal 会话适用于本地设备和云设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace，Backend 再通过 `/local-executor` namespace 把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
+Terminal 会话适用于本地设备、云设备和远程 Docker 设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，云设备和远程 Docker 设备通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
 
 如果项目配置了 `workspace.localPath`、`workspace.devicePath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。`localPath` 用于本机 local executor，`devicePath` 用于绑定到具体 cloud 或 remote 设备的沙箱目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 
@@ -220,7 +221,7 @@ export WEGENT_BACKEND_URL=https://your-wegent-instance.com
 wegent-executor
 ```
 
-安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server；非 `docker` 模式还会启动本机 socket，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后连接 Backend。Wework App 会管理自己启动的 executor；如果你手动在 App 外启动 executor，App 会连接已有 socket，但退出 App 时不会终止这个外部进程。不要让多个手动 executor 复用同一个 executor home 或 socket 路径。日志写入 `~/.wegent-executor/logs/executor.log`。
+安装脚本和首次启动会创建 `~/.wegent-executor/device-config.json`。配置优先级是环境变量、device config、默认值；未设置 `WEGENT_EXECUTOR_HOME` 时默认使用 `~/.wegent-executor`。executor 启动时始终提供 HTTP server；非 `docker` 模式还会通过当前进程的 stdin/stdout 提供本地 JSONL IPC，并在设置 `WEGENT_BACKEND_URL` 或配置文件中的 `connection.backend_url` 后连接 Backend。Wework App 只与自己直接启动的 executor 子进程通信，不会发现或附着 App 外手动启动的 executor；完整退出 App 时也只回收自己管理的子进程。stdout 只承载协议帧，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。
 
 #### Claude Code 执行超时
 
@@ -300,7 +301,7 @@ wegent-executor
 | -------------------- | ------------ |
 | **终端**             | 不支持       |
 | **IDE/code-server**  | 不支持       |
-| **桌面 VNC/VPN**     | 不支持       |
+| **云桌面**           | 不支持       |
 | **CPU/MEM/磁盘监控** | 不支持       |
 
 如果项目绑定本地设备，工作区工具栏会隐藏终端、IDE 和桌面入口，并显示本地设备能力限制提示。需要这些连接和监控能力时，请选择云设备创建项目。
@@ -329,18 +330,17 @@ wegent-executor
 
 云设备会显示在线状态、executor 版本、CPU、内存和磁盘使用率。当没有云设备时，点击 **添加** 可以创建一台新的云设备。创建请求返回后，页面会保留“云设备创建中”的提示；初始化通常需要 2-3 分钟，设备上线后会自动出现在列表中。Wework 前端可通过 `VITE_CLOUD_DEVICE_SCALING_WIKI_URL` 配置资源说明卡中的扩容 Wiki 链接，用于引导用户在 CPU、MEM 或磁盘持续超过 80% 时申请扩容或清理工作区缓存。
 
-Web 端 **AI 设备** 页面的云设备卡片同样展示实时 CPU/内存/磁盘使用率，并可展开查看近 1 小时趋势图(鼠标悬停可查看每分钟数据)。任一指标 ≥ 80% 时，磁盘右侧出现警示图标，点击可查看扩容说明与 Wiki 链接。
+本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、云桌面、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
-本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、桌面 VNC/VPN、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
+在线云设备和远程 Docker 设备支持直接打开交互式会话：
 
-在线云设备支持直接打开交互式会话：
+| 操作     | 后端接口                                        | 说明                                                                                                                                 |
+| -------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **终端** | `POST /api/devices/{device_id}/terminal`        | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
+| **IDE**  | `POST /api/devices/{device_id}/code-server`     | 打开 code-server 会话；请求 body 可传 `path` 指定允许范围内的远程项目目录，不传时使用默认工作目录                                    |
+| **桌面** | `GET /api/cloud-devices/{device_id}/vnc-config` | 在 Wework 内置浏览器中打开云设备 VNC 桌面                                                                                            |
 
-| 操作     | 后端接口                                    | 说明                                                                                                                                 |
-| -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **终端** | `POST /api/devices/{device_id}/terminal`    | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 PTY；请求 body 可传 `path` 指定工作目录，并通过 Backend Socket.IO 中转 |
-| **IDE**  | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话                                                                                                                |
-
-终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
+终端会话不暴露设备端口；IDE 返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。桌面会话通过 `/vnc-proxy/{device_id}` 建立 WebSocket；代理地址和登录 token 只保存在 Tauri 与内置 VNC 页的本机内存中，不会写入地址栏或浏览历史。两分钟有效期只用于主 WebView 向 VNC 页交接凭据；VNC 页打开后可使用自己的内存缓存进行断线重试。设备离线时，终端、IDE 和桌面按钮不可用。
 
 更多菜单提供低频管理操作：
 

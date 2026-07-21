@@ -44,6 +44,7 @@ DEFAULT_OUTPUT_DIR="$WEWORK_DIR/src-tauri/target/release/minio-update"
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-aarch64-apple-darwin}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 UPLOAD="false"
 
 usage() {
@@ -62,6 +63,7 @@ Options:
   --output-dir <path>       Local artifact directory.
   --macos-build-target <target>
                             Default: aarch64-apple-darwin.
+  --brand-config <path>     Brand identity JSON used for this app bundle.
   --upload                  Upload artifacts with the backend MinIO SDK.
   -h, --help                Show this help message.
 
@@ -70,10 +72,13 @@ Environment:
   ATTACHMENT_S3_ENDPOINT, ATTACHMENT_S3_BUCKET
   ATTACHMENT_S3_ACCESS_KEY, ATTACHMENT_S3_SECRET_KEY
   ATTACHMENT_S3_REGION, ATTACHMENT_S3_USE_SSL
-  WEWORK_RELEASE_S3_PREFIX, WEWORK_RELEASE_OUTPUT_DIR, WEWORK_UPDATER_KEY_PATH
+  WEWORK_RELEASE_S3_PREFIX, WEWORK_RELEASE_OUTPUT_DIR, WEWORK_UPDATER_KEY_PATH,
+  WEWORK_BRAND_CONFIG
 
 Examples:
   bash wework/scripts/build-minio-mac-release.sh --version 0.1.12
+  bash wework/scripts/build-minio-mac-release.sh --version 0.1.12 \
+    --brand-config wework/branding/weibo.json
   bash wework/scripts/build-minio-mac-release.sh --version 0.1.12 --upload
 EOF
 }
@@ -218,6 +223,19 @@ while [ "$#" -gt 0 ]; do
       MACOS_BUILD_TARGET="$2"
       shift 2
       ;;
+    --brand-config)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a config path." >&2
+        usage >&2
+        exit 1
+      fi
+      BRAND_CONFIG="$2"
+      shift 2
+      ;;
+    --brand-config=*)
+      BRAND_CONFIG="${1#*=}"
+      shift
+      ;;
     --upload)
       UPLOAD="true"
       shift
@@ -242,6 +260,13 @@ fi
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "--version must use MAJOR.MINOR.PATCH format. Got: $VERSION" >&2
   exit 1
+fi
+if [ -n "$BRAND_CONFIG" ]; then
+  if [ ! -f "$BRAND_CONFIG" ]; then
+    echo "Error: brand config not found: $BRAND_CONFIG" >&2
+    exit 1
+  fi
+  BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
 fi
 if [ -z "$S3_ENDPOINT" ]; then
   echo "--endpoint or ATTACHMENT_S3_ENDPOINT is required." >&2
@@ -283,18 +308,26 @@ trap cleanup_build_output EXIT
 echo "Building Wework macOS MinIO release"
 echo "  VERSION=$VERSION"
 echo "  MACOS_BUILD_TARGET=$MACOS_BUILD_TARGET"
+echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
 echo "  OUTPUT_DIR=$OUTPUT_DIR"
 echo "  CARGO_TARGET_DIR=$PROJECT_TAURI_TARGET_DIR"
 echo "  UPLOAD=$UPLOAD"
 
-if ! CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" bash "$SCRIPT_DIR/release-mac-app.sh" \
-  --target local \
-  --version "$VERSION" \
-  --notes "$RELEASE_NOTES" \
-  --local-base-url "$UPDATE_BASE_URL" \
-  --local-dist-dir "$BUILD_OUTPUT_DIR" \
-  --macos-build-target "$MACOS_BUILD_TARGET"; then
+RELEASE_ARGS=(
+  --target local
+  --version "$VERSION"
+  --notes "$RELEASE_NOTES"
+  --local-base-url "$UPDATE_BASE_URL"
+  --local-dist-dir "$BUILD_OUTPUT_DIR"
+  --macos-build-target "$MACOS_BUILD_TARGET"
+)
+if [ -n "$BRAND_CONFIG" ]; then
+  RELEASE_ARGS+=(--brand-config "$BRAND_CONFIG")
+fi
+
+if ! CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR" \
+  bash "$SCRIPT_DIR/release-mac-app.sh" "${RELEASE_ARGS[@]}"; then
   echo "macOS release build failed; refusing to upload existing artifacts." >&2
   exit 1
 fi

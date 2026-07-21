@@ -25,6 +25,60 @@ const streamingTextBlock: ProcessingBlock = {
 }
 
 describe('ToolBlockItem', () => {
+  test('renders a completed tool duration with 0.1 second precision', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'tool-duration',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'bash',
+          toolInput: { command: 'sleep 3' },
+          status: 'done',
+          createdAt: 1770000000000,
+          completedAt: 1770000003278,
+        }}
+      />
+    )
+
+    expect(screen.getByText('3.3s')).toBeInTheDocument()
+  })
+
+  test('uses the standard tool row height for file changes', () => {
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'file-change-height',
+          subtaskId: 1,
+          type: 'file_changes',
+          status: 'done',
+          createdAt: 1770000000000,
+          fileChanges: {
+            version: 1,
+            status: 'completed',
+            artifact_id: 'artifact-1',
+            device_id: 'device-1',
+            workspace_path: '/workspace',
+            file_count: 1,
+            additions: 1,
+            deletions: 0,
+            files: [
+              {
+                path: 'src/example.ts',
+                change_type: 'modified',
+                additions: 1,
+                deletions: 0,
+                binary: false,
+              },
+            ],
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button')).toHaveClass('min-h-8')
+  })
+
   test('renders streaming thinking as a single live preview row', () => {
     render(<ToolBlockItem block={streamingThinkingBlock} />)
 
@@ -106,8 +160,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已搜索网页')).toBeInTheDocument()
-    expect(screen.queryByText('已运行 web_search')).not.toBeInTheDocument()
+    expect(screen.getByText('搜索网页')).toBeInTheDocument()
+    expect(screen.queryByText('运行 web_search')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -161,10 +215,65 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已执行')).toBeInTheDocument()
-    expect(screen.queryByText('custom_agent_tool')).not.toBeInTheDocument()
+    expect(screen.getByText('调用 custom agent tool')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /展开工具详情/ })).not.toBeInTheDocument()
     expect(screen.queryByText(/raw details should stay hidden/)).not.toBeInTheDocument()
+  })
+
+  test('expands view_image tool details with an image preview', async () => {
+    const user = userEvent.setup()
+    const imageUrl = 'data:image/png;base64,aW1hZ2U='
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'view-image-1',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'functions.view_image',
+          toolInput: { path: '/tmp/screenshot.png' },
+          toolOutput: { image_url: imageUrl, detail: 'high' },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    expect(screen.getByText('查看 screenshot.png')).toBeInTheDocument()
+    expect(screen.queryByTestId('image-view-preview')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByTestId('image-view-preview')).toHaveAttribute('src', imageUrl)
+    expect(screen.getByTestId('image-view-preview')).toHaveAttribute('alt', '工具查看的图片')
+  })
+
+  test('keeps view_image details expanded after remounting', async () => {
+    const user = userEvent.setup()
+    const block: ProcessingBlock = {
+      id: 'view-image-remount',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'view_image',
+      toolInput: { path: '/tmp/remount.png' },
+      toolOutput: { image_url: 'data:image/png;base64,aW1hZ2U=' },
+      status: 'done',
+      createdAt: 1770000000002,
+    }
+    const stateKey = 'view-image-remount-expansion'
+    const firstRender = render(<ToolBlockItem block={block} stateKey={stateKey} />)
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+    expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<ToolBlockItem block={block} stateKey={stateKey} />)
+
+    expect(screen.getByRole('button', { name: /收起工具详情/ })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(screen.getByTestId('image-view-preview')).toBeInTheDocument()
   })
 
   test('uses Codex filePath aliases for file tool labels and open actions', async () => {
@@ -186,7 +295,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: /已读取 package.json/ }))
+    await user.click(screen.getByRole('button', { name: /读取 package.json/ }))
 
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/crystal/package.json')
   })
@@ -216,7 +325,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑 config.ts')).toBeInTheDocument()
+    expect(screen.getByText('编辑 config.ts')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -251,7 +360,7 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑 mod.rs')).toBeInTheDocument()
+    expect(screen.getByText('编辑 mod.rs')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
 
@@ -273,8 +382,8 @@ describe('ToolBlockItem', () => {
       />
     )
 
-    expect(screen.getByText('已编辑文件')).toBeInTheDocument()
-    expect(screen.queryByText('已编辑 文件')).not.toBeInTheDocument()
+    expect(screen.getByText('编辑文件')).toBeInTheDocument()
+    expect(screen.queryByText('编辑 文件')).not.toBeInTheDocument()
   })
 
   test('renders process text code blocks with shared syntax highlighting', () => {

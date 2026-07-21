@@ -28,8 +28,13 @@ use crate::{
         CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
         CODEX_APP_SERVER_TURN_CANCELLED,
     },
+    hooks::{
+        codex::{post_tool_use_from_notification, CodexHookContext},
+        host::HookService,
+        model::{HookPluginManifest, HooksConfig},
+    },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
-    logging::{log_executor_event, wework_debug_log},
+    logging::log_executor_event,
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };
@@ -234,6 +239,22 @@ fn non_empty_string(value: &str) -> Option<String> {
     }
 }
 
+fn hook_payload<T: serde::de::DeserializeOwned>(
+    payload: &Value,
+    key: &str,
+) -> Result<T, AppIpcError> {
+    let value = payload
+        .get(key)
+        .cloned()
+        .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))?;
+    serde_json::from_value(value)
+        .map_err(|error| AppIpcError::new("bad_request", format!("invalid {key}: {error}")))
+}
+
+fn hook_rpc_error(error: String) -> AppIpcError {
+    AppIpcError::new("hook_error", error)
+}
+
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
@@ -250,6 +271,7 @@ pub struct RuntimeWorkRpcHandler {
     worktrees: WorktreeManager,
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
+    hook_service: HookService,
 }
 
 struct ActiveTurnCancellation {
@@ -305,6 +327,7 @@ impl RuntimeWorkRpcHandler {
             worktrees: WorktreeManager::from_env(),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
+            hook_service: HookService::from_env(),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -315,10 +338,14 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        Self {
+        let handler = Self {
             event_tx: Some(event_tx),
             ..Self::new(device_id, codex_binary)
+        };
+        if let Some(sender) = handler.event_tx.clone() {
+            handler.hook_service.set_event_sender(sender);
         }
+        handler
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
@@ -328,6 +355,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
+            "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.compact" => self.compact_task(payload).await,
@@ -341,6 +369,16 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
+            "runtime.hooks.list" | "runtime.hooks.reload" => {
+                Ok(json!({"plugins": self.hook_service.list()}))
+            }
+            "runtime.hooks.create" => self.create_hook(payload).await,
+            "runtime.hooks.install" => self.install_hook(payload).await,
+            "runtime.hooks.update" => self.update_hook(payload).await,
+            "runtime.hooks.set_enabled" => self.set_hook_enabled(payload).await,
+            "runtime.hooks.delete" => self.delete_hook(payload).await,
+            "runtime.hooks.reveal" => self.reveal_hook(payload).await,
+            "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
@@ -394,6 +432,110 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
+        }
+    }
+
+    async fn create_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let manifest = hook_payload::<HookPluginManifest>(&payload, "manifest")?;
+        let config = hook_payload::<HooksConfig>(&payload, "hooks")?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .create(manifest, config)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&plugin.manifest.id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn install_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .install(Path::new(&path))
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&plugin.manifest.id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn update_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        let manifest = hook_payload::<HookPluginManifest>(&payload, "manifest")?;
+        let config = hook_payload::<HooksConfig>(&payload, "hooks")?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .update(&id, manifest, config)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn set_hook_enabled(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        let enabled = payload
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| AppIpcError::new("bad_request", "enabled is required"))?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .set_enabled(&id, enabled)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn delete_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        self.hook_service
+            .registry()
+            .delete(&id)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&id);
+        Ok(json!({"success": true, "pluginId": id}))
+    }
+
+    async fn reveal_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        self.hook_service
+            .list()
+            .into_iter()
+            .find(|plugin| plugin.manifest.id == id)
+            .map(|plugin| json!({"path": plugin.install_path}))
+            .ok_or_else(|| AppIpcError::new("not_found", "hook plugin not found"))
+    }
+
+    async fn test_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let plugin_id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        let handler_id = string_field(&payload, "handlerId")
+            .or_else(|| string_field(&payload, "handler_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "handlerId is required"))?;
+        let cwd = string_field(&payload, "cwd")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        self.hook_service
+            .test(&plugin_id, &handler_id, cwd)
+            .await
+            .map(|run| json!({"run": run}))
+            .map_err(hook_rpc_error)
+    }
+
+    fn emit_hooks_changed(&self, plugin_id: &str) {
+        if let Some(sender) = &self.event_tx {
+            let _ = sender
+                .send(json!({"event":"runtime.hooks.changed","payload":{"pluginId":plugin_id}}));
         }
     }
 
@@ -517,9 +659,18 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "worktree_id"))
             .ok_or_else(|| AppIpcError::new("bad_request", "worktreeId is required"))?;
         let git_ref = string_field(&payload, "ref");
+        let permanent = payload
+            .get("permanent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let record = self
             .worktrees
-            .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
+            .prepare(
+                Path::new(&source_path),
+                &worktree_id,
+                git_ref.as_deref(),
+                permanent,
+            )
             .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
         self.schedule_worktree_prune();
         Ok(json!({
@@ -552,15 +703,7 @@ impl RuntimeWorkRpcHandler {
 
                 let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
                 match result {
-                    Ok(Err(error)) => {
-                        wework_debug_log(&format!("background worktree cleanup failed: {error}"));
-                    }
-                    Err(error) => {
-                        wework_debug_log(&format!(
-                            "background worktree cleanup task failed: {error}"
-                        ));
-                    }
-                    Ok(Ok(_)) => {}
+                    Ok(Err(_)) | Err(_) | Ok(Ok(_)) => {}
                 }
                 return;
             }
@@ -1726,7 +1869,6 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
-        Self::log_execution_request_summary("runtime.tasks.create", &request);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
@@ -1777,39 +1919,6 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
-    fn log_execution_request_summary(method: &str, request: &ExecutionRequest) {
-        let model_config = &request.model_config;
-        let base_url = model_config
-            .get("base_url")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let api_key_present = model_config
-            .get("api_key")
-            .and_then(Value::as_str)
-            .map(|value| !value.is_empty())
-            .unwrap_or(false);
-        let use_user_config = model_config
-            .get("runtime_config")
-            .and_then(Value::as_object)
-            .and_then(|config| config.get("codex"))
-            .and_then(Value::as_object)
-            .and_then(|codex| codex.get("use_user_config"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let model_id = model_config
-            .get("model_id")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let keys: Vec<String> = model_config
-            .as_object()
-            .map(|object| object.keys().cloned().collect())
-            .unwrap_or_default();
-        wework_debug_log(&format!(
-            "{method} task_id={} model_id={} base_url={} api_key_present={} use_user_config={} model_config_keys={:?}",
-            request.task_id, model_id, base_url, api_key_present, use_user_config, keys
-        ));
-    }
-
     async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1852,7 +1961,6 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
-        Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
@@ -1928,6 +2036,23 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "runtime": "codex",
         }))
+    }
+
+    async fn interrupt_and_send(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
+        if !self.abort_active_turn(&local_task_id).await {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": local_task_id,
+                "runtime": "codex",
+                "error": "runtime turn did not stop within timeout",
+                "code": "interrupt_timeout",
+            }));
+        }
+        self.send_message(payload).await
     }
 
     async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2196,7 +2321,7 @@ impl RuntimeWorkRpcHandler {
                 link.completed_at = Some(link.updated_at);
             })
             .or_else(|| self.local_task_link(&local_task_id));
-        self.resolve_pending_request_user_input_for_cancel(&local_task_id);
+        self.resolve_pending_request_user_input_for_stop(&local_task_id);
         if !self.abort_active_turn(&local_task_id).await {
             return Ok(json!({
                 "success": false,
@@ -2219,7 +2344,7 @@ impl RuntimeWorkRpcHandler {
         })
     }
 
-    fn resolve_pending_request_user_input_for_cancel(&self, local_task_id: &str) {
+    fn resolve_pending_request_user_input_for_stop(&self, local_task_id: &str) {
         let sender = self
             .active_request_user_inputs
             .lock()
@@ -2634,11 +2759,34 @@ impl RuntimeWorkRpcHandler {
             let mapper_handler = handler.clone();
             let mapper_local_task_id = turn_local_task_id.clone();
             let mapper_request = request.clone();
+            let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
+            let mapper_hook_turn = Arc::clone(&hook_turn);
             let mapper_handle = tokio::spawn(async move {
                 let mut event_mapper = CodexNotificationEventMapper::default();
                 while let Some(message) = notification_rx.recv().await {
                     mapper_handler
                         .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
+                    let active_turn = mapper_hook_turn
+                        .lock()
+                        .expect("hook turn context lock should not be poisoned")
+                        .clone();
+                    if let (Some(active_turn), Some(cwd)) = (active_turn, mapper_request.cwd()) {
+                        let context = CodexHookContext {
+                            session_id: active_turn.thread_id,
+                            turn_id: active_turn.turn_id,
+                            cwd: PathBuf::from(cwd),
+                            model: string_field(&mapper_request.model_config, "model_id"),
+                            permission_mode: "workspace-write".to_owned(),
+                        };
+                        match post_tool_use_from_notification(&context, &message) {
+                            Ok(Some(input)) => mapper_handler.hook_service.dispatch(input).await,
+                            Ok(None) => {}
+                            Err(error) => log_executor_event(
+                                "runtime work hook notification mapping failed",
+                                &[("error", error.to_string())],
+                            ),
+                        }
+                    }
                     event_mapper.map(
                         &mapper_handler.event_tx,
                         &mapper_handler.device_id,
@@ -2655,8 +2803,16 @@ impl RuntimeWorkRpcHandler {
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
+            let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    *callback_hook_turn
+                        .lock()
+                        .expect("hook turn context lock should not be poisoned") =
+                        Some(ActiveCodexTurn {
+                            thread_id: thread_id.clone(),
+                            turn_id: turn_id.clone(),
+                        });
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         thread_id,
@@ -3134,7 +3290,6 @@ impl RuntimeWorkRpcHandler {
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
-        let mut discovered_codex_task_signatures = HashSet::new();
 
         let threads = self.codex_threads(archived).await;
         let stage_started_at = Instant::now();
@@ -3178,9 +3333,6 @@ impl RuntimeWorkRpcHandler {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
                 discovered_local_task_ids.insert(link.local_task_id.clone());
-                if let Some(signature) = codex_task_signature(&link) {
-                    discovered_codex_task_signatures.insert(signature);
-                }
                 links.push(link);
             } else {
                 log_slow_runtime_collect_thread_missing(
@@ -3225,9 +3377,6 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
             {
-                continue;
-            }
-            if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
             if !self.is_active_local_task(&link.local_task_id)
@@ -3903,16 +4052,6 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn is_unmapped_pending_codex_shadow(
-    link: &RuntimeTaskLink,
-    discovered_codex_task_signatures: &HashSet<String>,
-) -> bool {
-    is_unmapped_pending_codex_task(link)
-        && codex_task_signature(link)
-            .as_ref()
-            .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
-}
-
 fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
     if !is_inactive_running_codex_task(link) {
         return false;
@@ -3932,28 +4071,6 @@ fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
         status.as_str(),
         "running" | "inprogress" | "busy" | "pending"
     )
-}
-
-fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
-    if !is_inactive_running_codex_task(link) {
-        return false;
-    }
-    link.thread_id.is_none()
-}
-
-fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
-    if !is_codex_runtime(&link.runtime) {
-        return None;
-    }
-    let title = link.title.trim().to_ascii_lowercase();
-    if title.is_empty() || link.workspace_path.trim().is_empty() {
-        return None;
-    }
-    Some(format!(
-        "{}\0{}",
-        workspace_group_path(&link.workspace_path),
-        title
-    ))
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
@@ -4572,6 +4689,18 @@ fn cached_user_message(
     message.insert("content".to_owned(), Value::String(content.to_owned()));
     message.insert("status".to_owned(), Value::String("done".to_owned()));
     message.insert("createdAt".to_owned(), Value::Number(now_ms().into()));
+    if let Some(client_message_id) = payload
+        .get("clientMessageId")
+        .or_else(|| payload.get("client_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        message.insert(
+            "clientMessageId".to_owned(),
+            Value::String(client_message_id.to_owned()),
+        );
+    }
     if let Some(source) = payload
         .get("source")
         .filter(|value| value.is_object())
@@ -5642,11 +5771,15 @@ mod tests {
         let message = cached_user_message(
             "local-task",
             &request,
-            &json!({"message": "visible user text"}),
+            &json!({
+                "message": "visible user text",
+                "clientMessageId": "runtime-local-pane-1"
+            }),
         )
         .expect("payload message should create a cached user message");
 
         assert_eq!(message["content"], "visible user text");
+        assert_eq!(message["clientMessageId"], "runtime-local-pane-1");
 
         let content_message = cached_user_message(
             "local-task",

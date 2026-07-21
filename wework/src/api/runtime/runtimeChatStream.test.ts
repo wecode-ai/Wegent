@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalExecutorEvent } from '@/tauri/localExecutor'
-import { createLocalChatStream, setLocalChatStreamDebugEnabled } from './localChatStream'
+import { createRuntimeChatStream, setRuntimeChatStreamDebugEnabled } from './runtimeChatStream'
 
-describe('createLocalChatStream', () => {
+describe('createRuntimeChatStream', () => {
   const subscribe = vi.fn()
   const request = vi.fn()
 
   beforeEach(() => {
     subscribe.mockReset()
+    subscribe.mockResolvedValue(vi.fn())
     request.mockReset()
     localStorage.clear()
   })
@@ -19,7 +20,7 @@ describe('createLocalChatStream', () => {
       return vi.fn()
     })
     const onChatChunk = vi.fn()
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({ onChatChunk })
     await Promise.resolve()
@@ -50,7 +51,7 @@ describe('createLocalChatStream', () => {
       return vi.fn()
     })
     const onRuntimePlanUpdated = vi.fn()
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({
       scope: { deviceId: 'local-device', taskId: 'previous-task' },
@@ -87,7 +88,7 @@ describe('createLocalChatStream', () => {
       return vi.fn()
     })
     const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({ onChatChunk: vi.fn() })
     await Promise.resolve()
@@ -102,7 +103,7 @@ describe('createLocalChatStream', () => {
     })
 
     expect(
-      consoleDebug.mock.calls.some(call => call[0] === '[Wework] Local chat stream event')
+      consoleDebug.mock.calls.some(call => call[0] === '[Wework] Runtime chat stream event')
     ).toBe(false)
 
     consoleDebug.mockRestore()
@@ -115,7 +116,7 @@ describe('createLocalChatStream', () => {
       return vi.fn()
     })
     const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({ onBlockUpdated: vi.fn() })
     await Promise.resolve()
@@ -130,7 +131,7 @@ describe('createLocalChatStream', () => {
     })
 
     expect(
-      consoleDebug.mock.calls.some(call => call[0] === '[Wework] Local chat stream event')
+      consoleDebug.mock.calls.some(call => call[0] === '[Wework] Runtime chat stream event')
     ).toBe(false)
 
     consoleDebug.mockRestore()
@@ -139,21 +140,21 @@ describe('createLocalChatStream', () => {
   test('logs local stream lifecycle only when stream debug is enabled', async () => {
     subscribe.mockImplementation(async () => vi.fn())
     const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     const cleanupWithoutDebug = stream.subscribe({ onChatChunk: vi.fn() })
     cleanupWithoutDebug()
     expect(consoleDebug).not.toHaveBeenCalledWith(
-      '[Wework] Local chat stream subscription',
+      '[Wework] Runtime chat stream subscription',
       expect.anything()
     )
 
-    setLocalChatStreamDebugEnabled(true)
+    setRuntimeChatStreamDebugEnabled(true)
     const cleanupWithDebug = stream.subscribe({ onChatChunk: vi.fn() })
     cleanupWithDebug()
 
     expect(consoleDebug).toHaveBeenCalledWith(
-      '[Wework] Local chat stream subscription',
+      '[Wework] Runtime chat stream subscription',
       expect.objectContaining({ action: 'subscribed' })
     )
 
@@ -168,7 +169,7 @@ describe('createLocalChatStream', () => {
     })
     const onChatDone = vi.fn()
     const consoleInfo = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({ onChatDone })
     await Promise.resolve()
@@ -189,7 +190,7 @@ describe('createLocalChatStream', () => {
       result: { value: 'complete' },
     })
     expect(consoleInfo).toHaveBeenCalledWith(
-      '[Wework] Local chat stream terminal event received',
+      '[Wework] Runtime chat stream terminal event received',
       expect.objectContaining({
         event: 'response.completed',
         taskId: 'task-1',
@@ -199,14 +200,14 @@ describe('createLocalChatStream', () => {
     consoleInfo.mockRestore()
   })
 
-  test('does not open a local executor listener for device-only subscriptions', () => {
-    const stream = createLocalChatStream({ subscribe, request })
+  test('opens the local executor listener before a task pane subscribes', () => {
+    const stream = createRuntimeChatStream({ subscribe, request })
     const cleanup = stream.subscribe({ onDeviceStatus: vi.fn() })
 
-    expect(subscribe).not.toHaveBeenCalled()
+    expect(subscribe).toHaveBeenCalledTimes(1)
 
     cleanup()
-    expect(subscribe).not.toHaveBeenCalled()
+    expect(subscribe).toHaveBeenCalledTimes(1)
   })
 
   test('shares one native event listener across multiple stream subscribers', async () => {
@@ -218,7 +219,7 @@ describe('createLocalChatStream', () => {
     })
     const firstChunk = vi.fn()
     const secondChunk = vi.fn()
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     const cleanupFirst = stream.subscribe({ onChatChunk: firstChunk })
     const cleanupSecond = stream.subscribe({ onChatChunk: secondChunk })
@@ -241,7 +242,7 @@ describe('createLocalChatStream', () => {
     cleanupFirst()
     expect(unlisten).not.toHaveBeenCalled()
     cleanupSecond()
-    expect(unlisten).toHaveBeenCalledTimes(1)
+    expect(unlisten).not.toHaveBeenCalled()
   })
 
   test('routes scoped events only to matching stream subscribers', async () => {
@@ -252,7 +253,7 @@ describe('createLocalChatStream', () => {
     })
     const firstChunk = vi.fn()
     const secondChunk = vi.fn()
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     stream.subscribe({
       scope: { deviceId: 'local-device', taskId: 'task-1' },
@@ -278,7 +279,7 @@ describe('createLocalChatStream', () => {
     expect(secondChunk).not.toHaveBeenCalled()
   })
 
-  test('cleans up a late native listener when all subscribers release before it is ready', async () => {
+  test('keeps a late native listener active when no pane is subscribed', async () => {
     let resolveSubscribe!: (unlisten: () => void) => void
     const unlisten = vi.fn()
     subscribe.mockImplementation(
@@ -287,20 +288,20 @@ describe('createLocalChatStream', () => {
           resolveSubscribe = resolve
         })
     )
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     const cleanup = stream.subscribe({ onChatChunk: vi.fn() })
     cleanup()
     resolveSubscribe(unlisten)
     await Promise.resolve()
 
-    expect(unlisten).toHaveBeenCalledTimes(1)
+    expect(unlisten).not.toHaveBeenCalled()
   })
 
   test('routes guidance and cancel requests through app ipc', async () => {
     request.mockResolvedValueOnce({ success: true, guidance_id: 'guide-1' })
     request.mockResolvedValueOnce({ success: true })
-    const stream = createLocalChatStream({ subscribe, request })
+    const stream = createRuntimeChatStream({ subscribe, request })
 
     await expect(
       stream.sendGuidance({

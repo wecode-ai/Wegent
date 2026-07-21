@@ -4,7 +4,7 @@ import { useState } from 'react'
 import {
   CachedWorkbenchPaneStack,
   WorkbenchPaneActiveOnly,
-  getRunningRuntimeWorkbenchPaneKeys,
+  getRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneStack'
@@ -101,13 +101,13 @@ describe('workbenchPaneStack', () => {
     )
   })
 
-  test('keeps pinned runtime panes mounted beyond the normal cache limit', async () => {
+  test('keeps background runtime panes mounted beyond the normal cache limit', async () => {
     const panes: WorkbenchPaneIdentity[] = [
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 101 }, currentProject: null },
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 102 }, currentProject: null },
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 103 }, currentProject: null },
     ]
-    const pinnedKeys = [getWorkbenchPaneKey(panes[0])]
+    const pinnedKeys = panes.map(getWorkbenchPaneKey)
 
     function RuntimePaneStackProbe() {
       const [index, setIndex] = useState(0)
@@ -135,8 +135,8 @@ describe('workbenchPaneStack', () => {
     await userEvent.click(screen.getByText('open third'))
 
     expect(screen.getByTestId('runtime-pane-101')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-pane-102')).toBeInTheDocument()
     expect(screen.getByTestId('runtime-pane-103')).toBeInTheDocument()
-    expect(screen.queryByTestId('runtime-pane-102')).not.toBeInTheDocument()
   })
 
   test('hides cached runtime pane content after switching back to standalone chat', async () => {
@@ -248,9 +248,9 @@ describe('workbenchPaneStack', () => {
     expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('empty')
   })
 
-  test('derives running runtime pane keys from task ids', () => {
+  test('derives every runtime pane key so background subscriptions stay mounted', () => {
     expect(
-      getRunningRuntimeWorkbenchPaneKeys({
+      getRuntimeWorkbenchPaneKeys({
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
@@ -284,7 +284,7 @@ describe('workbenchPaneStack', () => {
         chats: [],
         totalTasks: 2,
       })
-    ).toEqual(['runtime:device-1:101'])
+    ).toEqual(['runtime:device-1:101', 'runtime:device-1:102'])
   })
 })
 

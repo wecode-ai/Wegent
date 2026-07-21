@@ -144,10 +144,13 @@ export function useResizableRightSplitChat({
 export function useResizableBottomPanel() {
   const [height, setHeight] = useState(BOTTOM_DEFAULT_HEIGHT)
   const [resizing, setResizing] = useState(false)
+  const panelRef = useRef<HTMLElement | null>(null)
   const resizeFrameRef = useRef<number | null>(null)
+  const activeResizeCleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     return () => {
+      activeResizeCleanupRef.current?.()
       if (resizeFrameRef.current !== null) {
         window.cancelAnimationFrame(resizeFrameRef.current)
       }
@@ -156,10 +159,27 @@ export function useResizableBottomPanel() {
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
+    activeResizeCleanupRef.current?.()
+
+    const resizeHandle = event.currentTarget
+    if (typeof resizeHandle.setPointerCapture === 'function') {
+      try {
+        resizeHandle.setPointerCapture(event.pointerId)
+      } catch {
+        // Synthetic verification events do not create an active browser pointer.
+      }
+    }
 
     const startY = event.clientY
     const startHeight = height
     let nextHeight = startHeight
+
+    const applyHeight = () => {
+      resizeFrameRef.current = null
+      if (panelRef.current) {
+        panelRef.current.style.height = `${nextHeight}px`
+      }
+    }
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       nextHeight = clamp(
@@ -169,31 +189,45 @@ export function useResizableBottomPanel() {
       )
       if (resizeFrameRef.current !== null) return
 
-      resizeFrameRef.current = window.requestAnimationFrame(() => {
-        resizeFrameRef.current = null
-        setHeight(nextHeight)
-      })
+      resizeFrameRef.current = window.requestAnimationFrame(applyHeight)
     }
 
-    const handleUp = () => {
+    const cleanupResize = () => {
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
+      document.removeEventListener('pointercancel', handleCancel)
       if (resizeFrameRef.current !== null) {
         window.cancelAnimationFrame(resizeFrameRef.current)
         resizeFrameRef.current = null
       }
-      setHeight(nextHeight)
-      setResizing(false)
+      if (resizeHandle.hasPointerCapture?.(event.pointerId)) {
+        resizeHandle.releasePointerCapture(event.pointerId)
+      }
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      activeResizeCleanupRef.current = null
     }
+
+    const finishResize = () => {
+      cleanupResize()
+      if (panelRef.current) {
+        panelRef.current.style.height = `${nextHeight}px`
+      }
+      setHeight(nextHeight)
+      setResizing(false)
+    }
+
+    const handleUp = () => finishResize()
+    const handleCancel = () => finishResize()
 
     setResizing(true)
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
+    document.addEventListener('pointercancel', handleCancel)
+    activeResizeCleanupRef.current = cleanupResize
   }
 
-  return { height, resizing, handleResizeStart }
+  return { height, resizing, panelRef, handleResizeStart }
 }

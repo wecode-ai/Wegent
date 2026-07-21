@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.0.20",
+  "version": "0.0.24",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
@@ -11,6 +11,7 @@
     "beforeBuildCommand": "pnpm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "WeWork",
@@ -53,7 +54,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/wegent-executor"],
-    "resources": ["binaries/codex/**/*"],
+    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -32,6 +32,7 @@ fn run() -> Result<(), String> {
     let manifest_dir = executor_source_dir();
     let manifest_path = manifest_dir.join("Cargo.toml");
     let executor_args = env::args().skip(1).collect::<Vec<_>>();
+    let parent_process_id = parent_process_id();
     let (tx, rx) = mpsc::channel::<DevEvent>();
     let _watcher = watch_executor_sources(&manifest_dir, tx.clone())?;
     install_shutdown_handler(tx)?;
@@ -45,6 +46,12 @@ fn run() -> Result<(), String> {
     let mut restart_requested = true;
 
     loop {
+        if parent_process_exited(parent_process_id) {
+            eprintln!("wegent-executor dev reload parent exited; shutting down");
+            stop_child(&mut child);
+            return Ok(());
+        }
+
         if restart_requested {
             stop_child(&mut child);
             child = rebuild_and_spawn(&manifest_dir, &manifest_path, &executor_args)?;
@@ -76,6 +83,32 @@ fn run() -> Result<(), String> {
             restart_requested = true;
         }
     }
+}
+
+#[cfg(unix)]
+fn parent_process_id() -> u32 {
+    unsafe { libc::getppid() as u32 }
+}
+
+#[cfg(not(unix))]
+fn parent_process_id() -> u32 {
+    0
+}
+
+#[cfg(unix)]
+fn parent_process_exited(expected_parent_process_id: u32) -> bool {
+    parent_process_changed(expected_parent_process_id, unsafe {
+        libc::getppid() as u32
+    })
+}
+
+#[cfg(not(unix))]
+fn parent_process_exited(_expected_parent_process_id: u32) -> bool {
+    false
+}
+
+fn parent_process_changed(expected_parent_process_id: u32, current_parent_process_id: u32) -> bool {
+    expected_parent_process_id > 1 && current_parent_process_id != expected_parent_process_id
 }
 
 fn executor_source_dir() -> PathBuf {
@@ -159,15 +192,21 @@ fn rebuild_and_spawn(
 }
 
 fn build_executor(manifest_path: &Path) -> Result<bool, String> {
-    let status = Command::new("cargo")
+    let output = Command::new("cargo")
         .arg("build")
         .arg("--manifest-path")
         .arg(manifest_path)
         .arg("--bin")
         .arg("wegent-executor")
-        .status()
+        .output()
         .map_err(|error| format!("failed to run cargo build: {error}"))?;
-    Ok(status.success())
+    if !output.stdout.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(output.status.success())
 }
 
 fn debug_binary_path(manifest_dir: &Path) -> PathBuf {
@@ -319,6 +358,14 @@ mod tests {
         let _env = EnvVarGuard::set("WEGENT_EXECUTOR_SOURCE_DIR", &source_dir);
 
         assert_eq!(executor_source_dir(), source_dir);
+    }
+
+    #[test]
+    fn parent_process_change_detects_orphaned_supervisor() {
+        assert!(parent_process_changed(42, 1));
+        assert!(parent_process_changed(42, 43));
+        assert!(!parent_process_changed(42, 42));
+        assert!(!parent_process_changed(1, 1));
     }
 
     fn executable_name() -> &'static str {

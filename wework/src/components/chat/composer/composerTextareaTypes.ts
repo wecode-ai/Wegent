@@ -4,6 +4,7 @@ import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 
 export interface ComposerSubmitOptions {
   guideWhenBusy?: boolean
+  interruptWhenBusy?: boolean
 }
 
 export interface ComposerTextareaProps {

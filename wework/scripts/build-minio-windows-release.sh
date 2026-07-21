@@ -44,6 +44,7 @@ OUTPUT_DIR="${WEWORK_WINDOWS_RELEASE_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
 CARGO_TARGET_DIR="${WEWORK_WINDOWS_CARGO_TARGET_DIR:-$WEWORK_DIR/src-tauri/target}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-}"
 UPLOAD="false"
 CONFIG_OVERRIDE=""
 
@@ -63,6 +64,7 @@ Options:
   --output-dir <path>       Local artifact directory.
   --windows-build-target <target>
                             Default: x86_64-pc-windows-msvc.
+  --brand-config <path>     Brand identity JSON used for this app bundle.
   --upload                  Upload artifacts and publish latest.json.
   -h, --help                Show this help message.
 
@@ -74,7 +76,8 @@ Environment:
   ATTACHMENT_S3_ACCESS_KEY, ATTACHMENT_S3_SECRET_KEY
   ATTACHMENT_S3_REGION, ATTACHMENT_S3_USE_SSL
   WEWORK_WINDOWS_RELEASE_S3_PREFIX, WEWORK_WINDOWS_RELEASE_OUTPUT_DIR
-  WEWORK_WINDOWS_CARGO_TARGET_DIR, WEWORK_UPDATER_KEY_PATH
+  WEWORK_WINDOWS_CARGO_TARGET_DIR, WEWORK_UPDATER_KEY_PATH,
+  WEWORK_BRAND_CONFIG
 
 Example:
   bash wework/scripts/build-minio-windows-release.sh --version 0.1.17 --upload
@@ -118,7 +121,10 @@ import os
 
 config = {
     "version": os.environ["VERSION"],
-    "bundle": {"createUpdaterArtifacts": True},
+    # The NSIS installer is patched after Tauri builds it, so the release script
+    # signs the final installer explicitly instead of keeping Tauri's stale
+    # pre-patch updater signature.
+    "bundle": {"createUpdaterArtifacts": False},
     "plugins": {
         "updater": {
             "endpoints": [os.environ["UPDATER_ENDPOINT"]],
@@ -265,6 +271,19 @@ while [ "$#" -gt 0 ]; do
       WINDOWS_BUILD_TARGET="$2"
       shift 2
       ;;
+    --brand-config)
+      if [ "$#" -lt 2 ]; then
+        echo "Error: $1 requires a config path." >&2
+        usage >&2
+        exit 1
+      fi
+      BRAND_CONFIG="$2"
+      shift 2
+      ;;
+    --brand-config=*)
+      BRAND_CONFIG="${1#*=}"
+      shift
+      ;;
     --upload)
       UPLOAD="true"
       shift
@@ -293,6 +312,13 @@ fi
 if [ "$WINDOWS_BUILD_TARGET" != "x86_64-pc-windows-msvc" ]; then
   echo "Only x86_64-pc-windows-msvc is currently supported." >&2
   exit 1
+fi
+if [ -n "$BRAND_CONFIG" ]; then
+  if [ ! -f "$BRAND_CONFIG" ]; then
+    echo "Error: brand config not found: $BRAND_CONFIG" >&2
+    exit 1
+  fi
+  BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
 fi
 if [ -z "$S3_ENDPOINT" ]; then
   echo "--endpoint or ATTACHMENT_S3_ENDPOINT is required." >&2
@@ -337,17 +363,24 @@ create_release_config
 echo "Building Wework Windows MinIO release"
 echo "  VERSION=$VERSION"
 echo "  WINDOWS_BUILD_TARGET=$WINDOWS_BUILD_TARGET"
+echo "  BRAND_CONFIG=${BRAND_CONFIG:-<default>}"
 echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
 echo "  OUTPUT_DIR=$OUTPUT_DIR"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
 echo "  UPLOAD=$UPLOAD"
 
-WEWORK_SKIP_ENV_FILE=1 bash "$SCRIPT_DIR/build-windows-app.sh" \
-  --profile release \
-  --target "$WINDOWS_BUILD_TARGET" \
-  --bundles nsis \
+BUILD_ARGS=(
+  --profile release
+  --target "$WINDOWS_BUILD_TARGET"
+  --bundles nsis
   --config "$CONFIG_OVERRIDE"
+)
+if [ -n "$BRAND_CONFIG" ]; then
+  BUILD_ARGS+=(--brand-config "$BRAND_CONFIG")
+fi
+
+WEWORK_SKIP_ENV_FILE=1 bash "$SCRIPT_DIR/build-windows-app.sh" "${BUILD_ARGS[@]}"
 
 installer_path="$(find_installer)"
 if [ -z "$installer_path" ] || [ ! -f "$installer_path" ]; then
