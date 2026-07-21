@@ -1362,6 +1362,7 @@
     "slash_command_menu_title": "快捷命令",
     "quick_phrases": "快捷短语",
     "quick_phrases_stash": "暂存区",
+    "quick_phrase_stash_clear": "清空",
     "quick_phrase_stash_delete": "删除暂存项",
     "quick_phrase_attachment_count": "{{count}} 个附件",
     "system_drag_new_chat": "创建新对话",

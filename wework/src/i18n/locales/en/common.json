@@ -1363,6 +1363,7 @@
     "slash_command_menu_title": "Slash commands",
     "quick_phrases": "Quick phrases",
     "quick_phrases_stash": "Stash",
+    "quick_phrase_stash_clear": "Clear",
     "quick_phrase_stash_delete": "Delete stashed item",
     "quick_phrase_attachment_count": "{{count}} attachment",
     "system_drag_new_chat": "Create new chat",

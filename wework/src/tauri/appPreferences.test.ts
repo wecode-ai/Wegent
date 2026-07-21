@@ -136,6 +136,37 @@ describe('appPreferences', () => {
     })
   })
 
+  test('removes stash phrases after seven days and preserves regular phrases', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-21T00:00:00Z'))
+    const now = Date.now()
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      quickPhrases: [
+        {
+          id: `stash-${now - 7 * 24 * 60 * 60 * 1000}`,
+          title: '过期暂存',
+          content: '过期',
+          mode: 'normal',
+        },
+        {
+          id: 'stash-recent',
+          title: '近期暂存',
+          content: '近期',
+          mode: 'normal',
+          createdAt: now - 7 * 24 * 60 * 60 * 1000 + 1,
+        },
+        { id: 'regular', title: '普通短语', content: '保留', mode: 'normal' },
+      ],
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+    const preferences = await getAppPreferences()
+
+    expect(preferences.quickPhrases.map(phrase => phrase.id)).toEqual(['stash-recent', 'regular'])
+    vi.useRealTimers()
+  })
+
   test('updates preferences through the Tauri command', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     invokeMock.mockResolvedValue({

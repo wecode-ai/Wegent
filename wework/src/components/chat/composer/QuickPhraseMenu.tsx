@@ -201,6 +201,18 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
     }
   }
 
+  const clearStash = async () => {
+    try {
+      const preferences = await getAppPreferences()
+      await updateAppPreferences({
+        quickPhrases: preferences.quickPhrases.filter(item => !item.id.startsWith('stash-')),
+      })
+      setPreviewedStash(null)
+    } catch (error) {
+      console.error('[quick-phrases] failed to clear stash', error)
+    }
+  }
+
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -258,8 +270,18 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
           {stashed.length > 0 && (
             <div className="relative mt-1 px-1 pt-2">
               {previewedStash && <StashPreview phrase={previewedStash} />}
-              <div className="mb-1.5 px-1 text-xs font-medium text-text-muted">
-                {t('workbench.quick_phrases_stash', '暂存区')}
+              <div className="mb-1.5 flex items-center justify-between px-1">
+                <span className="text-xs font-medium text-text-muted">
+                  {t('workbench.quick_phrases_stash', '暂存区')}
+                </span>
+                <button
+                  type="button"
+                  data-testid="quick-phrase-stash-clear-button"
+                  onClick={() => void clearStash()}
+                  className="rounded-md px-1.5 py-0.5 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
+                >
+                  {t('workbench.quick_phrase_stash_clear', '清空')}
+                </button>
               </div>
               <div
                 data-testid="quick-phrase-stash-tray"

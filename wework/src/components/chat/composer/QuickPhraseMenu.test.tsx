@@ -120,4 +120,33 @@ describe('QuickPhraseMenu', () => {
     )
     expect(onSelect).not.toHaveBeenCalled()
   })
+
+  test('clears every stash while preserving regular phrases', async () => {
+    appPreferenceMocks.get.mockResolvedValue({
+      quickPhrases: [
+        { id: 'summary', title: '总结进展', content: '总结当前进展', mode: 'normal' },
+        { id: 'stash-text', title: '文本', content: '暂存文本', mode: 'normal' },
+        {
+          id: 'stash-images',
+          title: '图片',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/image.png'],
+        },
+      ],
+    })
+    appPreferenceMocks.update.mockResolvedValue(undefined)
+    render(<QuickPhraseMenu onSelect={vi.fn()} />)
+
+    fireEvent.click(screen.getByTestId('quick-phrase-button'))
+    fireEvent.click(screen.getByTestId('quick-phrase-stash-clear-button'))
+
+    await waitFor(() =>
+      expect(appPreferenceMocks.update).toHaveBeenCalledWith({
+        quickPhrases: [
+          { id: 'summary', title: '总结进展', content: '总结当前进展', mode: 'normal' },
+        ],
+      })
+    )
+  })
 })
