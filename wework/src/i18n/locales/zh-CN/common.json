@@ -11,7 +11,7 @@
     "app_wework_label": "任务",
     "app_weloop_label": "看板",
     "app_wegent_label": "智能体",
-    "app_wegent_description": "构建并交付可嵌入业务的云端智能体",
+    "app_wegent_description": "构建、使用和交付可嵌入业务的云端智能体",
     "app_wegent_requires_cloud": "连接云端后可用",
     "app_wework_description": "使用 AI 解决具体问题",
     "app_weloop_description": "用 AI 管理项目的规划、执行与反馈",
