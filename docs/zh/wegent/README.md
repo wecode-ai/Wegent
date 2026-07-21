@@ -1,8 +1,13 @@
-# 📚 Wegent 中文文档
+---
+sidebar_position: 1
+slug: /wegent
+---
 
-欢迎来到 Wegent 中文文档中心！
+# Wegent 文档
 
-Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、组织和运行智能代理。
+Wegent 是用于定义、组织和运行智能体团队的 AI 原生平台。本组文档介绍 Wegent 的部署、智能体配置、任务管理、知识库、集成和平台开发。
+
+如果你要使用桌面 AI 工作台处理本地项目，请前往 [Wework 文档](/wework)。
 
 ---
 

@@ -1,8 +1,13 @@
-# 📚 Wegent English Documentation
+---
+sidebar_position: 1
+slug: /wegent
+---
 
-Welcome to the Wegent English Documentation!
+# Wegent documentation
 
-Wegent is an open-source AI native operating system that enables you to define, organize, and run intelligent agents at scale.
+Wegent is an AI-native platform for defining, organizing, and running agent teams. These guides cover deployment, agent configuration, task management, knowledge, integrations, and platform development.
+
+For the desktop AI workbench and local projects, open the [Wework documentation](/wework).
 
 ---
 
