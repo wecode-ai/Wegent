@@ -22,7 +22,7 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,
-        "dragDropEnabled": true,
+        "dragDropEnabled": false,
         "trafficLightPosition": {
           "x": 19,
           "y": 21
@@ -37,9 +37,7 @@
         "enable": true,
         "scope": {
           "requireLiteralLeadingDot": false,
-          "allow": [
-            "**/*"
-          ]
+          "allow": ["**/*"]
         }
       }
     }
@@ -55,13 +53,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/wegent-executor"
-    ],
-    "resources": [
-      "binaries/codex/**/*",
-      "bundled-hooks/**/*"
-    ],
+    "externalBin": ["binaries/wegent-executor"],
+    "resources": ["binaries/codex/**/*", "bundled-hooks/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
