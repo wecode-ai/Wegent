@@ -24,7 +24,7 @@ const APPLY_PATCH_OUTPUT_CONTRACT: &str = r#"Critical apply_patch input contract
 - The final marker must be `*** End Patch`, optionally followed by one newline, with no text after it.
 - Do not include Markdown code fences, prose, labels, or any characters before `*** Begin Patch` or after `*** End Patch`.
 - Follow the embedded Lark grammar exactly.
-- For `*** Add File`, EVERY content line must start with `+`, including empty lines (use a line containing only `+`). Never emit raw file contents below an Add File directive.
+- For `*** Add File`, every added-file content line must start with `+`, including empty lines (use a line containing only `+`). Never emit raw file contents below an Add File directive.
 
 Valid new-file example (the value of `input`, not a Markdown block):
 *** Begin Patch
@@ -1160,7 +1160,7 @@ mod tests {
         assert!(description.contains("exactly `*** Begin Patch\\n`"));
         assert!(description.contains("with no blank line"));
         assert!(description.contains("Do not include Markdown code fences"));
-        assert!(description.contains("EVERY content line must start with `+`"));
+        assert!(description.contains("every added-file content line must start with `+`"));
         assert!(description.contains("*** Add File: hello.txt\n+first line\n+\n+third line"));
         assert!(description.contains("*** Update File: hello.txt\n@@\n-old line\n+new line"));
         assert_eq!(

@@ -114,6 +114,7 @@ describe('localModelSettings', () => {
   test('stores Chat Completions format and applies its default endpoint', () => {
     const saved = saveLocalModelConfig({
       id: 'kimi-chat',
+      providerProfileId: 'kimi-coding',
       displayName: 'Kimi Chat',
       modelId: 'kimi-for-coding',
       baseUrl: 'https://api.kimi.com/coding/v1',
@@ -121,6 +122,7 @@ describe('localModelSettings', () => {
     })
 
     expect(saved).toMatchObject({
+      providerProfileId: 'kimi-coding',
       apiFormat: 'openai-chat-completions',
       baseUrl: 'https://api.kimi.com/coding/v1',
       requestPath: '/chat/completions',

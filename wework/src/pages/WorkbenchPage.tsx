@@ -13,10 +13,12 @@ import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
 import { syncTrayMenuState } from '@/tauri/trayNavigation'
+import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 export function WorkbenchPage() {
   const isMobileViewport = useIsMobile()
   const isTauri = isTauriRuntime()
   const { state, runtimeTaskReminders } = useWorkbench()
+  useRuntimeTaskRouteRestoration()
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled } = taskReminders.preferences
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())

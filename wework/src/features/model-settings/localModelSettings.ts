@@ -1,5 +1,6 @@
 export interface LocalModelConfig {
   id: string
+  providerProfileId?: string
   displayName: string
   group?: string
   modelId: string
@@ -26,6 +27,7 @@ export type LocalModelToolProfile = 'custom' | 'function' | 'shell'
 
 export interface SaveLocalModelConfigInput {
   id?: string | null
+  providerProfileId?: string | null
   displayName?: string | null
   group?: string | null
   modelId: string
@@ -111,6 +113,7 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
   const record = value as Record<string, unknown>
   return (
     typeof record.id === 'string' &&
+    (record.providerProfileId === undefined || typeof record.providerProfileId === 'string') &&
     typeof record.displayName === 'string' &&
     (record.group === undefined || typeof record.group === 'string') &&
     typeof record.modelId === 'string' &&
@@ -155,6 +158,9 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
         }
   const nextConfig: LocalModelConfig = {
     id: legacyConfig.id,
+    ...(legacyConfig.providerProfileId
+      ? { providerProfileId: legacyConfig.providerProfileId }
+      : {}),
     displayName: legacyConfig.displayName,
     ...(legacyConfig.group ? { group: legacyConfig.group } : {}),
     modelId: legacyConfig.modelId,
@@ -350,6 +356,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   )
   const next: LocalModelConfig = {
     id,
+    ...(input.providerProfileId ? { providerProfileId: input.providerProfileId } : {}),
     displayName,
     ...(group ? { group } : {}),
     modelId,

@@ -27,6 +27,7 @@ const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 
 interface DesktopControlResult {
   id: string
+  clientId: string
   ok: boolean
   value?: string
   error?: string
@@ -253,14 +254,20 @@ function desktopControlElementText(selector: string): string {
     .join('\n')
 }
 
-function desktopControlSnapshot(): string {
-  const testIds = Array.from(document.querySelectorAll<HTMLElement>('[data-testid]'))
+function desktopControlSnapshot(selector = 'body'): string {
+  const root = findDesktopControlElements(selector)[0]
+  if (!root) throw new Error(`Unable to find selector "${selector}"`)
+  const testIdElements = [
+    ...(root.dataset.testid ? [root] : []),
+    ...Array.from(root.querySelectorAll<HTMLElement>('[data-testid]')),
+  ]
+  const testIds = testIdElements
     .map(element => element.dataset.testid)
     .filter((testId): testId is string => Boolean(testId))
 
   return JSON.stringify({
     location: window.location.href,
-    text: document.body.innerText,
+    text: root.innerText,
     testIds: Array.from(new Set(testIds)).sort(),
   })
 }
@@ -554,7 +561,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return element.textContent?.trim() ?? ''
     }
     case 'snapshot':
-      return desktopControlSnapshot()
+      return desktopControlSnapshot(command.selector)
     case 'scrollIntoView': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -639,15 +646,21 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
 }
 
 async function runDesktopControlClient(url: string): Promise<void> {
-  await fetch(`${url}/ready`, {
+  const clientId = crypto.randomUUID()
+  const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ location: window.location.href }),
+    body: JSON.stringify({ clientId, location: window.location.href }),
   })
+  if (!readyResponse.ok) {
+    throw new Error(`Desktop E2E control registration failed with ${readyResponse.status}`)
+  }
 
   while (true) {
     try {
-      const response = await fetch(`${url}/commands`, { headers: desktopControlHeaders() })
+      const response = await fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}`, {
+        headers: desktopControlHeaders(),
+      })
       if (response.status === 204) {
         continue
       }
@@ -657,13 +670,14 @@ async function runDesktopControlClient(url: string): Promise<void> {
       const command = (await response.json()) as DesktopControlCommand
       try {
         const value = await executeDesktopControlCommand(command)
-        await postDesktopControlResult(url, { id: command.id, ok: true, value })
+        await postDesktopControlResult(url, { id: command.id, clientId, ok: true, value })
         if (command.action === 'closeMainWindowToTray') {
           await closeMainWindowToTray()
         }
       } catch (error) {
         await postDesktopControlResult(url, {
           id: command.id,
+          clientId,
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         })

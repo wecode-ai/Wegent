@@ -81,7 +81,8 @@ const CLOUD_FOLLOW_UP_PROMPT =
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
-const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
+const ACTIVE_WORKBENCH_SELECTOR =
+  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
@@ -212,7 +213,6 @@ async function appendProcessOutput(stream, destination) {
 }
 
 async function sendPrompt(control, selector, prompt) {
-  await control.command('focusMainWindow', 'body')
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('pause-response-button'),
@@ -244,10 +244,16 @@ async function prepareCompletedTurnScreenshot(control) {
   throw new Error('The model selector menu remained open before the verification screenshot')
 }
 
-async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
+async function waitForSnapshot(
+  control,
+  predicate,
+  message,
+  timeoutMs = UI_TIMEOUT_MS,
+  selector = 'body'
+) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const snapshot = JSON.parse(await control.command('snapshot', selector))
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -317,8 +323,6 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
     await runChecked('import', ['-window', 'root', screenshotPath])
     return screenshotPath
   }
-  await control.command('focusMainWindow', 'body')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
   let dataUrl
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -445,6 +449,12 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     text: modelLabel,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await control.command('press', 'body', { key: 'Escape' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('model-selector-menu'),
+    'The model selector menu did not close after selecting the E2E model'
+  )
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -496,6 +506,11 @@ async function verifyBackgroundTaskWindowLifecycle({
   if (process.platform === 'darwin') {
     setPhase('close-to-tray-and-reopen')
     const readyCountBeforeClose = control.readyCount
+    const controlClientIdBeforeClose = control.ready?.clientId
+    assert.ok(
+      controlClientIdBeforeClose,
+      'The original WebView did not register a control client ID'
+    )
     const readyEvidenceBeforeClose = await waitForExecutorReadyEvidence(executorLogPath)
     const executorProcessId = readyEvidenceBeforeClose.processIds.at(-1)
     assert.ok(executorProcessId, 'The executor stdio-ready log did not include a process ID')
@@ -521,10 +536,24 @@ async function verifyBackgroundTaskWindowLifecycle({
       WORKBENCH_READY_TIMEOUT_MS,
       'The reopened Wework WebView did not reconnect to the desktop controller'
     )
-    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    assert.notEqual(
+      control.ready?.clientId,
+      controlClientIdBeforeClose,
+      'The reopened WebView reused the closed control client identity'
+    )
+    const reopenedTaskWait = control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    const staleClientPoll = await fetch(
+      `${control.controlUrl}/commands?clientId=${encodeURIComponent(controlClientIdBeforeClose)}`
+    )
+    assert.equal(
+      staleClientPoll.status,
+      204,
+      'A closed WebView control client was able to steal a replacement WebView command'
+    )
+    await reopenedTaskWait
     const readyEvidenceAfterReopen = await waitForExecutorReadyEvidence(executorLogPath)
     assert.deepEqual(
       readyEvidenceAfterReopen.processIds,
@@ -558,34 +587,41 @@ async function verifyBackgroundTaskWindowLifecycle({
     )
   }
 
-  const reopenedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!reopenedSnapshot.text.includes(WINDOW_LIFECYCLE_PROMPT)) {
-    await control.command('deferredClick', `[data-testid="${taskRowTestId}"]`)
-  }
-  await control.command('waitFor', '[data-testid="message-user"]', {
-    text: WINDOW_LIFECYCLE_PROMPT,
-    visible: true,
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('message-user') && snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
+    'The reopened task did not restore its running user message',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('03-running-task-after-reopen.png')
   )
   control.releaseWindowLifecycleResponse()
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('message-assistant') &&
+      snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT),
+    'The reopened task did not render its completed assistant message',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   if (process.platform === 'darwin') {
     await waitForSnapshot(
       control,
       snapshot =>
         !snapshot.testIds.includes('thinking-indicator') &&
         !snapshot.testIds.includes(runningTaskTestId),
-      'The reopened task did not settle after its persisted transcript completed'
+      'The reopened task did not settle after its persisted transcript completed',
+      UI_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
     )
   }
   await captureVerificationScreenshot(
@@ -1171,11 +1207,13 @@ class DesktopE2EServer {
     this.ready = null
     this.readyResolver = null
     this.readyCount = 0
+    this.activeControlClientId = null
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
     this.commandHistory = []
     this.modelRequests = []
+    this.catalogRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
@@ -1427,12 +1465,14 @@ class DesktopE2EServer {
   }
 
   async command(action, selector, options = {}) {
+    assert.ok(this.activeControlClientId, 'No active desktop control client is registered')
     const id = randomUUID()
     const command = { id, action, selector, ...options }
+    const clientId = this.activeControlClientId
     const result = new Promise((resolvePromise, reject) => {
-      this.commandResults.set(id, { resolve: resolvePromise, reject })
+      this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
     })
-    this.commandQueue.push(command)
+    this.commandQueue.push({ clientId, command })
     return withTimeout(
       this.guard(result),
       options.timeoutMs ?? UI_TIMEOUT_MS,
@@ -1489,12 +1529,20 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
+      this.catalogRequests.push({
+        authorization: request.headers.authorization ?? null,
+        ifNoneMatch: request.headers['if-none-match'] ?? null,
+        pathname: url.pathname,
+        search: url.search,
+      })
+      assert.equal(
+        request.headers.authorization,
+        `Bearer ${MODEL_API_KEY}`,
+        'The local catalog router did not forward the configured model API key'
+      )
+      response.setHeader('ETag', '"wework-desktop-e2e-models-v1"')
       json(response, 200, {
-        object: 'list',
-        data: [
-          { id: MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID },
-          { id: DEFAULT_MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID },
-        ],
+        models: [],
       })
       return
     }
@@ -1518,6 +1566,21 @@ class DesktopE2EServer {
   async handleControlRoute(request, response, url) {
     if (request.method === 'POST' && url.pathname === '/ready') {
       const ready = await readRequestBody(request)
+      assert.equal(typeof ready.clientId, 'string', 'Desktop control client ID is required')
+      assert.ok(ready.clientId.length > 0, 'Desktop control client ID cannot be empty')
+      const previousClientId = this.activeControlClientId
+      this.activeControlClientId = ready.clientId
+      if (previousClientId && previousClientId !== ready.clientId) {
+        const replacementError = new Error(
+          `Desktop control client ${previousClientId} was replaced by ${ready.clientId}`
+        )
+        this.commandQueue = this.commandQueue.filter(item => item.clientId !== previousClientId)
+        for (const [id, pending] of this.commandResults) {
+          if (pending.clientId !== previousClientId) continue
+          this.commandResults.delete(id)
+          pending.reject(replacementError)
+        }
+      }
       this.ready = ready
       this.readyCount += 1
       this.readyResolver?.(ready)
@@ -1536,9 +1599,20 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === '/commands') {
-      if (this.commandQueue.length > 0) {
-        const command = this.commandQueue.shift()
-        this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
+      const clientId = url.searchParams.get('clientId')
+      if (!clientId || clientId !== this.activeControlClientId) {
+        response.writeHead(204)
+        response.end()
+        return true
+      }
+      const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
+      if (commandIndex >= 0) {
+        const [{ command }] = this.commandQueue.splice(commandIndex, 1)
+        this.commandHistory.push({
+          ...command,
+          clientId,
+          deliveredAt: new Date().toISOString(),
+        })
         json(response, 200, command)
         return true
       }
@@ -1560,6 +1634,12 @@ class DesktopE2EServer {
       const pending = this.commandResults.get(result.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${result.id}` })
+        return true
+      }
+      if (result.clientId !== pending.clientId || result.clientId !== this.activeControlClientId) {
+        json(response, 409, {
+          error: `Command ${result.id} belongs to a different desktop control client`,
+        })
         return true
       }
       this.commandResults.delete(result.id)
@@ -1670,6 +1750,10 @@ class DesktopE2EServer {
       )
       this.toolOutput = JSON.stringify(body.input)
       this.modelStage = 'complete'
+      // Let the workbench commit the completed tool items before the final response
+      // triggers a transcript refresh. Real providers have network latency here; an
+      // immediate mock response can otherwise race the live image-view rendering.
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(COMPLETION_TEXT),
@@ -1794,7 +1878,7 @@ class DesktopE2EServer {
       await this.requestUserInputRelease
       this.writeSse(response, [
         responseCreated(responseId),
-        functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
+        ...functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
         responseCompleted(responseId),
       ])
       this.resolveRequestUserInputResponseWritten()
@@ -3180,6 +3264,10 @@ async function main() {
       'The model service did not complete the Codex tool loop'
     )
     assert.ok(control.modelRequests.length >= 2, 'The real Codex did not make both model requests')
+    assert.ok(
+      control.catalogRequests.length >= 1,
+      'The Codex model catalog did not pass through the local router'
+    )
     assert.ok(
       typeof control.modelRequests[0].body.model === 'string' &&
         control.modelRequests[0].body.model.length > 0,

@@ -23,6 +23,7 @@ use std::{
 
 use axum::{
     body::{Body, Bytes},
+    extract::Path,
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
 };
@@ -33,7 +34,7 @@ use crate::logging::log_executor_event;
 
 use super::{codex_responses_proxy_transform, HttpError};
 
-pub(crate) const ROUTE: &str = "/v1/codex-responses-proxy/responses";
+pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalModelProxyUpstream {
@@ -44,6 +45,7 @@ pub(crate) struct LocalModelProxyUpstream {
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +125,7 @@ fn registration_token(upstream: &LocalModelProxyUpstream) -> String {
     upstream.api_key.hash(&mut hasher);
     upstream.default_headers.hash(&mut hasher);
     upstream.proxy_url.hash(&mut hasher);
+    upstream.model_id.hash(&mut hasher);
     format!("model-{}-{:016x}", std::process::id(), hasher.finish())
 }
 
@@ -148,12 +151,29 @@ fn registry() -> &'static Mutex<HashMap<String, RegisteredUpstream>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[cfg(test)]
 pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
-    let request_started_at = Instant::now();
     let token = local_token(&headers).ok_or_else(|| HttpError {
         status: StatusCode::UNAUTHORIZED,
         detail: "missing local model proxy token".to_owned(),
     })?;
+    handle_for_token(token, headers, body).await
+}
+
+pub(super) async fn handle_routed(
+    Path(token): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
+    handle_for_token(token, headers, body).await
+}
+
+async fn handle_for_token(
+    token: String,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
+    let request_started_at = Instant::now();
     let (upstream, history) = {
         let mut registry = registry()
             .lock()
@@ -170,8 +190,12 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
         .request_url
         .clone()
         .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
+    let request_body = match upstream.model_id.as_deref() {
+        Some(model_id) => rewrite_request_model(&body, model_id)?,
+        None => body.to_vec(),
+    };
     let (request_body, conversion, expanded_browser_tools) =
-        prepare_request_with_history(&upstream.api_format, &body, history.as_ref()).await?;
+        prepare_request_with_history(&upstream.api_format, &request_body, history.as_ref()).await?;
     log_executor_event(
         "local model proxy request started",
         &[
@@ -338,6 +362,22 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
     Ok(response)
 }
 
+fn rewrite_request_model(body: &[u8], model_id: &str) -> Result<Vec<u8>, HttpError> {
+    let mut request: Value = serde_json::from_slice(body).map_err(|error| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: format!("Invalid local model proxy request: {error}"),
+    })?;
+    let object = request.as_object_mut().ok_or_else(|| HttpError {
+        status: StatusCode::BAD_REQUEST,
+        detail: "Local model proxy request body must be an object".to_owned(),
+    })?;
+    object.insert("model".to_owned(), Value::String(model_id.to_owned()));
+    serde_json::to_vec(&request).map_err(|error| HttpError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: format!("Failed to encode local model proxy request: {error}"),
+    })
+}
+
 fn diagnostic_upstream_stream<S, E>(
     stream: S,
     api_format: String,
@@ -480,6 +520,7 @@ enum Conversion {
     Anthropic(chat::ToolContext),
 }
 
+#[cfg(test)]
 fn local_token(headers: &HeaderMap) -> Option<String> {
     let auth = headers
         .get(header::AUTHORIZATION)
@@ -864,6 +905,7 @@ mod tests {
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
+            model_id: None,
         };
         let token = register(upstream.clone());
         let repeated_token = register(upstream.clone());
@@ -905,12 +947,28 @@ mod tests {
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
+            model_id: None,
         };
         let first = registration_token(&upstream);
         let mut changed = upstream;
         changed.base_url = "https://two.example.com".to_owned();
 
         assert_ne!(registration_token(&changed), first);
+    }
+
+    #[test]
+    fn rewrites_internal_catalog_model_to_real_upstream_model() {
+        let body = serde_json::to_vec(&json!({
+            "model": "wework-custom-apply-patch",
+            "input": "hello"
+        }))
+        .expect("request body");
+
+        let rewritten = rewrite_request_model(&body, "k3").expect("rewritten request");
+        let request: Value = serde_json::from_slice(&rewritten).expect("request JSON");
+
+        assert_eq!(request["model"], "k3");
+        assert_eq!(request["input"], "hello");
     }
 
     #[tokio::test]
@@ -943,6 +1001,7 @@ mod tests {
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
+            model_id: None,
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -991,6 +1050,7 @@ mod tests {
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
+            model_id: None,
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1062,6 +1122,7 @@ mod tests {
             api_key: "secret".to_owned(),
             default_headers: Vec::new(),
             proxy_url: None,
+            model_id: None,
         });
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1116,6 +1177,7 @@ mod tests {
             api_key,
             default_headers: Vec::new(),
             proxy_url: None,
+            model_id: Some(model_id.clone()),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

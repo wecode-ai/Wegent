@@ -6,7 +6,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     future::Future,
-    hash::{DefaultHasher, Hash, Hasher},
     io::{self, Write},
     path::{Path, PathBuf},
     pin::Pin,
@@ -36,7 +35,7 @@ use crate::{
     runner::{AgentEngine, ExecutionOutcome},
     runtime_work::codex_stream_debug_enabled,
     server::{
-        executor_loopback_base_url,
+        codex_model_catalog, executor_loopback_base_url,
         local_model_proxy::{self, LocalModelProxyUpstream},
     },
 };
@@ -48,11 +47,11 @@ const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
-const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+const CODEX_ROUTER_API_KEY: &str = "wework-local-router";
 const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_BINARY",
     "WEGENT_EXECUTOR_HOME",
@@ -600,27 +599,6 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
-        let expected_catalog_signature = codex_process_model_catalog_signature(launch_config);
-        let catalog_changed = state
-            .process
-            .as_ref()
-            .is_some_and(|process| process.model_catalog_signature != expected_catalog_signature);
-        if catalog_changed {
-            if !state.active_threads.is_empty() {
-                return Err(
-                    "cannot switch the Codex model catalog while another thread is active"
-                        .to_owned(),
-                );
-            }
-            log_executor_event(
-                "codex shared app-server restarting for model catalog",
-                &[(
-                    "catalog_configured",
-                    expected_catalog_signature.is_some().to_string(),
-                )],
-            );
-            state.process = None;
-        }
         if state.process.is_none() {
             let (process, next_id) =
                 start_persistent_codex_app_server(&self.binary, state.next_id, launch_config)
@@ -681,7 +659,6 @@ struct CodexAppServerProcess {
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: broadcast::Sender<Value>,
     reader_task: tokio::task::JoinHandle<()>,
-    model_catalog_signature: Option<u64>,
 }
 
 impl CodexAppServerProcess {
@@ -739,7 +716,6 @@ async fn start_persistent_codex_app_server(
     request_launch_config: &CodexLaunchConfig,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
-    let model_catalog_signature = codex_process_model_catalog_signature(&launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
     let result: Result<(ChildStdin, BufReader<ChildStdout>, u64), String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
@@ -785,7 +761,6 @@ async fn start_persistent_codex_app_server(
                     pending,
                     notifications,
                     reader_task,
-                    model_catalog_signature,
                 },
                 next_id,
             ))
@@ -804,13 +779,9 @@ fn persistent_codex_app_server_launch_config(
         env: request_launch_config.env.clone(),
         ..CodexLaunchConfig::default()
     };
-    launch_config.config_overrides.extend(
-        request_launch_config
-            .config_overrides
-            .iter()
-            .filter(|value| value.trim_start().starts_with("model_catalog_json="))
-            .cloned(),
-    );
+    launch_config
+        .config_overrides
+        .extend(codex_router_provider_overrides());
     launch_config.config_overrides.extend([
         "goals=true".to_owned(),
         "features.code_mode_host=true".to_owned(),
@@ -818,21 +789,38 @@ fn persistent_codex_app_server_launch_config(
     launch_config
 }
 
-fn codex_process_model_catalog_signature(launch_config: &CodexLaunchConfig) -> Option<u64> {
-    let catalog_override = launch_config
-        .config_overrides
-        .iter()
-        .find(|value| value.trim_start().starts_with("model_catalog_json="))?;
-    let mut hasher = DefaultHasher::new();
-    catalog_override.hash(&mut hasher);
-    if let Some((_, raw_path)) = catalog_override.split_once('=') {
-        if let Value::String(path) = parse_config_override_value(raw_path.trim()) {
-            if let Ok(contents) = fs::read(path) {
-                contents.hash(&mut hasher);
-            }
-        }
-    }
-    Some(hasher.finish())
+fn codex_router_provider_overrides() -> Vec<String> {
+    let local_base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    let provider = codex_model_catalog::PROVIDER_ID;
+    let (auth_command, auth_args) = codex_router_auth_command();
+    vec![
+        format!("model_provider={provider}"),
+        format!("model_providers.{provider}.name=\"Wework model router\""),
+        format!("model_providers.{provider}.base_url=\"{local_base_url}/v1/codex-router\""),
+        format!("model_providers.{provider}.wire_api=\"responses\""),
+        format!(
+            "model_providers.{provider}.auth.command={}",
+            toml_value(auth_command)
+        ),
+        format!(
+            "model_providers.{provider}.auth.args={}",
+            serde_json::to_string(&auth_args).expect("router auth args must serialize")
+        ),
+    ]
+}
+
+#[cfg(unix)]
+fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
+    ("/usr/bin/printf", vec!["%s", CODEX_ROUTER_API_KEY])
+}
+
+#[cfg(windows)]
+fn codex_router_auth_command() -> (&'static str, Vec<&'static str>) {
+    (
+        "cmd.exe",
+        vec!["/D", "/S", "/C", "<nul set /p =wework-local-router"],
+    )
 }
 
 async fn read_persistent_codex_app_server_stdout(
@@ -1091,7 +1079,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
         }
-        if let Some(model) = model_id(request) {
+        if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
         log_executor_event("codex shared turn request started", &turn_fields);
@@ -1346,7 +1334,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         if let Some(cwd) = request.cwd() {
             turn_fields.push(("cwd", cwd.to_owned()));
         }
-        if let Some(model) = model_id(request) {
+        if let Some(model) = codex_request_model(request) {
             turn_fields.push(("model", model));
         }
         log_executor_event("codex turn request started", &turn_fields);
@@ -2849,7 +2837,7 @@ struct CodexLocalImage {
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
-    let model = model_id(request);
+    let model = codex_request_model(request);
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
@@ -2879,10 +2867,13 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let use_user_config = use_user_runtime_config(&request.model_config);
     let project_id = project_id(request);
     if use_user_config {
-        launch_config.model_provider = explicit_model_provider(&request.model_config);
-        if let Some(model_provider) = &launch_config.model_provider {
+        let inference_provider = inference_model_provider(&request.model_config);
+        if let Some(upstream) = configured_codex_provider(&inference_provider) {
+            configure_codex_router(&mut launch_config, upstream);
+        } else {
+            launch_config.model_provider = Some(inference_provider.clone());
             launch_config.config_overrides.extend(header_overrides(
-                model_provider,
+                &inference_provider,
                 request.model_config.get("default_headers"),
                 project_id.as_deref(),
             ));
@@ -2891,43 +2882,12 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         non_empty_config(&request.model_config, "base_url"),
         api_key(&request.model_config),
     ) {
-        let model_provider = model_provider(&request.model_config);
-        let (provider_base_url, provider_api_key, local_proxy_token) =
-            resolve_codex_provider_config(&request.model_config, &base_url, &api_key);
-        launch_config.local_proxy_registration =
-            local_proxy_token.map(|token| Arc::new(LocalProxyRegistration(token)));
-        launch_config.model_provider = Some(model_provider.clone());
-        launch_config.config_overrides.extend([
-            "forced_login_method=api".to_owned(),
-            format!("model_provider={model_provider}"),
-            format!(
-                "model_providers.{model_provider}.name={}",
-                toml_value(
-                    &non_empty_config(&request.model_config, "provider_name")
-                        .or_else(|| non_empty_config(&request.model_config, "display_name"))
-                        .unwrap_or_else(|| DEFAULT_PROVIDER_NAME.to_owned())
-                )
-            ),
-            format!(
-                "model_providers.{model_provider}.base_url={}",
-                toml_value(&provider_base_url)
-            ),
-            format!(
-                "model_providers.{model_provider}.wire_api={}",
-                toml_value(&wire_api(&request.model_config))
-            ),
-            format!(
-                "model_providers.{model_provider}.experimental_bearer_token={}",
-                toml_value(&provider_api_key)
-            ),
-        ]);
-        launch_config.config_overrides.extend(header_overrides(
-            &model_provider,
-            request.model_config.get("default_headers"),
-            project_id.as_deref(),
-        ));
+        configure_codex_router(
+            &mut launch_config,
+            explicit_codex_upstream(&request.model_config, &base_url, &api_key),
+        );
     } else {
-        launch_config.model_provider = explicit_model_provider(&request.model_config);
+        launch_config.model_provider = Some(inference_model_provider(&request.model_config));
     }
 
     launch_config
@@ -2941,6 +2901,49 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
 
     launch_config
+}
+
+fn configure_codex_router(
+    launch_config: &mut CodexLaunchConfig,
+    upstream: LocalModelProxyUpstream,
+) {
+    let local_token = local_model_proxy::register(upstream);
+    let local_base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    let provider = codex_model_catalog::PROVIDER_ID;
+    launch_config.local_proxy_registration =
+        Some(Arc::new(LocalProxyRegistration(local_token.clone())));
+    launch_config.model_provider = Some(provider.to_owned());
+    launch_config.config_overrides.extend([
+        "forced_login_method=api".to_owned(),
+        format!("model_provider={provider}"),
+        format!("model_providers.{provider}.name=\"Wework model router\""),
+        format!(
+            "model_providers.{provider}.base_url={}",
+            toml_value(&format!("{local_base_url}/v1/codex-router/{local_token}"))
+        ),
+        format!("model_providers.{provider}.wire_api=\"responses\""),
+    ]);
+}
+
+fn explicit_codex_upstream(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> LocalModelProxyUpstream {
+    LocalModelProxyUpstream {
+        registration_id: model_provider(model_config),
+        base_url: base_url.trim_end_matches('/').to_owned(),
+        request_url: non_empty_config(model_config, "responses_url")
+            .or_else(|| non_empty_config(model_config, "responsesUrl")),
+        api_format: non_empty_config(model_config, "upstream_api_format")
+            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
+            .unwrap_or_else(|| "openai-responses".to_owned()),
+        api_key: api_key.to_owned(),
+        default_headers: parse_header_map(model_config.get("default_headers")),
+        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
+        model_id: non_empty_config(model_config, "model_id"),
+    }
 }
 
 fn shell_path_config_override() -> String {
@@ -2959,12 +2962,6 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
 
 fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     let mut overrides = Vec::new();
-    if let Some(catalog_path) = write_local_model_catalog(model_config) {
-        overrides.push(format!(
-            "model_catalog_json={}",
-            toml_value(&catalog_path.to_string_lossy())
-        ));
-    }
     if let Some(web_search) = codex_web_search_mode(model_config) {
         overrides.push(format!("web_search={}", toml_value(&web_search)));
     }
@@ -2977,68 +2974,27 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     overrides
 }
 
-fn write_local_model_catalog(model_config: &Value) -> Option<PathBuf> {
-    if !bool_value(model_config.get("codex_responses_compat_proxy")).unwrap_or(false) {
-        return None;
+fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
+    if !bool_value(
+        request
+            .model_config
+            .get("codex_responses_compat_proxy")
+            .or_else(|| request.model_config.get("codexResponsesCompatProxy")),
+    )
+    .unwrap_or(false)
+    {
+        return model_id(request);
     }
-    let model = non_empty_config(model_config, "model_id")?;
-    let display_name = non_empty_config(model_config, "display_name")
-        .or_else(|| non_empty_config(model_config, "provider_name"))
-        .unwrap_or_else(|| model.clone());
-    let context_window = codex_model_context_window(model_config).unwrap_or(272_000);
-    let tool_profile =
-        non_empty_config(model_config, "tool_profile").unwrap_or_else(|| "custom".to_owned());
-    let mut entry = json!({
-        "slug": model,
-        "display_name": display_name,
-        "description": "Wework custom model",
-        "default_reasoning_level": null,
-        "supported_reasoning_levels": [],
-        "shell_type": "shell_command",
-        "visibility": "list",
-        "supported_in_api": true,
-        "priority": 1000,
-        "base_instructions": "You are Codex, a coding agent. You and the user share the same workspace and collaborate to achieve the user's goals.",
-        "supports_reasoning_summaries": true,
-        "default_reasoning_summary": "auto",
-        "support_verbosity": false,
-        "truncation_policy": {"mode": "bytes", "limit": 10000},
-        "supports_parallel_tool_calls": false,
-        "supports_image_detail_original": false,
-        "context_window": context_window,
-        "max_context_window": context_window,
-        "effective_context_window_percent": 95,
-        "experimental_supported_tools": [],
-        "input_modalities": ["text", "image"],
-        "supports_search_tool": false
-    });
-    if tool_profile != "shell" {
-        entry["apply_patch_tool_type"] = Value::String("freeform".to_owned());
-    }
-    let catalog = json!({"models": [entry]});
-    let provider = explicit_model_provider(model_config).unwrap_or_else(|| "local".to_owned());
-    let file_name = format!(
-        "wegent-codex-model-catalog-{provider}-{}.json",
-        std::process::id()
-    );
-    let path = env::temp_dir().join(file_name);
-    let body = serde_json::to_vec(&catalog).ok()?;
-    if let Err(error) = fs::write(&path, body) {
-        log_executor_event(
-            "codex local model catalog write failed",
-            &[("error", error.to_string())],
-        );
-        return None;
-    }
-    log_executor_event(
-        "codex local model catalog prepared",
-        &[
-            ("model", model),
-            ("tool_profile", tool_profile),
-            ("context_window", context_window.to_string()),
-        ],
-    );
-    Some(path)
+    let tool_profile = non_empty_config(&request.model_config, "tool_profile")
+        .unwrap_or_else(|| "custom".to_owned());
+    Some(
+        if tool_profile.eq_ignore_ascii_case("shell") {
+            codex_model_catalog::SHELL_MODEL
+        } else {
+            codex_model_catalog::APPLY_PATCH_MODEL
+        }
+        .to_owned(),
+    )
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -3069,39 +3025,52 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn resolve_codex_provider_config(
-    model_config: &Value,
-    base_url: &str,
-    api_key: &str,
-) -> (String, String, Option<String>) {
-    let normalized_base_url = base_url.trim_end_matches('/').to_owned();
-    let wire_api = wire_api(model_config);
-    let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
-        .unwrap_or(false)
-        || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
-    if wire_api != "responses" || !use_compat_proxy {
-        return (normalized_base_url, api_key.to_owned(), None);
-    }
+fn configured_codex_provider(provider: &str) -> Option<LocalModelProxyUpstream> {
+    use toml_edit::DocumentMut;
 
-    let local_token = local_model_proxy::register(LocalModelProxyUpstream {
-        registration_id: model_provider(model_config),
-        base_url: normalized_base_url,
-        request_url: non_empty_config(model_config, "responses_url")
-            .or_else(|| non_empty_config(model_config, "responsesUrl")),
-        api_format: non_empty_config(model_config, "upstream_api_format")
-            .or_else(|| non_empty_config(model_config, "upstreamApiFormat"))
-            .unwrap_or_else(|| "openai-responses".to_owned()),
-        api_key: api_key.to_owned(),
-        default_headers: parse_header_map(model_config.get("default_headers")),
-        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
-    });
-    let local_base_url = executor_loopback_base_url()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    (
-        format!("{local_base_url}/v1/codex-responses-proxy"),
-        local_token.clone(),
-        Some(local_token),
-    )
+    let document = fs::read_to_string(wework_codex_home().join("config.toml"))
+        .ok()?
+        .parse::<DocumentMut>()
+        .ok()?;
+    let provider_config = document
+        .get("model_providers")?
+        .get(provider)?
+        .as_table_like()?;
+    let base_url = provider_config.get("base_url")?.as_str()?.trim();
+    if base_url.is_empty() {
+        return None;
+    }
+    let api_key = provider_config
+        .get("experimental_bearer_token")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .or_else(|| {
+            provider_config
+                .get("env_key")
+                .and_then(|value| value.as_str())
+                .and_then(|key| env::var(key).ok())
+        })?;
+    let default_headers = provider_config
+        .get("http_headers")
+        .and_then(|value| value.as_table_like())
+        .map(|headers| {
+            headers
+                .iter()
+                .filter_map(|(key, value)| Some((key.to_owned(), value.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(LocalModelProxyUpstream {
+        registration_id: provider.to_owned(),
+        base_url: base_url.trim_end_matches('/').to_owned(),
+        request_url: None,
+        api_format: "openai-responses".to_owned(),
+        api_key,
+        default_headers,
+        proxy_url: None,
+        model_id: None,
+    })
 }
 
 fn executor_server_port() -> u16 {
@@ -3208,11 +3177,40 @@ fn model_provider(model_config: &Value) -> String {
     explicit_model_provider(model_config).unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned())
 }
 
+fn inference_model_provider(model_config: &Value) -> String {
+    explicit_model_provider(model_config).unwrap_or_else(configured_inference_model_provider)
+}
+
+pub(crate) fn configured_inference_model_provider() -> String {
+    configured_inference_model_provider_from_path(&wework_codex_home().join("config.toml"))
+}
+
+fn configured_inference_model_provider_from_path(config_path: &Path) -> String {
+    use toml_edit::DocumentMut;
+
+    fs::read_to_string(config_path)
+        .ok()
+        .and_then(|content| content.parse::<DocumentMut>().ok())
+        .and_then(|document| {
+            document
+                .get("model_provider")
+                .and_then(|item| item.as_str())
+                .map(sanitize_provider_id)
+        })
+        .filter(|provider| !is_internal_codex_provider(provider))
+        .unwrap_or_else(|| "openai".to_owned())
+}
+
 fn explicit_model_provider(model_config: &Value) -> Option<String> {
     non_empty_config(model_config, "codex_model_provider")
         .or_else(|| non_empty_config(model_config, "model_provider"))
         .or_else(|| non_empty_config(model_config, "provider"))
         .map(|value| sanitize_provider_id(&value))
+        .filter(|provider| !is_internal_codex_provider(provider))
+}
+
+fn is_internal_codex_provider(provider: &str) -> bool {
+    provider == codex_model_catalog::PROVIDER_ID || provider == "wework-catalog"
 }
 
 fn sanitize_provider_id(value: &str) -> String {
@@ -3233,21 +3231,6 @@ fn sanitize_provider_id(value: &str) -> String {
     } else {
         sanitized
     }
-}
-
-fn wire_api(model_config: &Value) -> String {
-    let api_format = non_empty_config(model_config, "api_format")
-        .or_else(|| non_empty_config(model_config, "apiFormat"))
-        .map(|value| value.to_ascii_lowercase());
-    let protocol =
-        non_empty_config(model_config, "protocol").map(|value| value.to_ascii_lowercase());
-    if api_format.as_deref() == Some("responses") || protocol.as_deref() == Some("openai-responses")
-    {
-        return "responses".to_owned();
-    }
-    non_empty_config(model_config, "wire_api")
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_else(|| "responses".to_owned())
 }
 
 fn api_key(request: &Value) -> Option<String> {
@@ -4205,7 +4188,7 @@ fn validate_codex_permission_profile(operation: &str, response: &Value) -> Resul
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
     let mut params = serde_json::Map::new();
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     append_thread_launch_params(&mut params, launch_config);
@@ -4235,7 +4218,7 @@ fn thread_fork_params(
         params.insert("path".to_owned(), Value::String(path.to_owned()));
     }
     params.insert("excludeTurns".to_owned(), Value::Bool(true));
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     append_thread_launch_params(&mut params, launch_config);
@@ -4298,7 +4281,7 @@ fn thread_resume_params(
 ) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     append_thread_launch_params(&mut params, launch_config);
@@ -4364,7 +4347,7 @@ fn turn_start_params(
     if let Some(cwd) = request.cwd() {
         params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
     }
-    if let Some(model) = model_id(request) {
+    if let Some(model) = codex_request_model(request) {
         params.insert("model".to_owned(), Value::String(model));
     }
     if let Some(effort) = &launch_config.effort {
@@ -4404,7 +4387,7 @@ fn codex_collaboration_mode_payload(
     Some(json!({
         "mode": mode,
         "settings": {
-            "model": model_id(request),
+            "model": codex_request_model(request),
             "reasoningEffort": launch_config.effort,
             "developerInstructions": Value::Null,
         }
@@ -5309,52 +5292,142 @@ mod tests {
     }
 
     #[test]
-    fn local_model_catalog_advertises_apply_patch_for_function_profile() {
-        let model_config = json!({
+    fn custom_function_profile_uses_stable_apply_patch_catalog_model() {
+        let request = ExecutionRequest {
+            model_config: json!({
             "model_id": "kimi-for-coding",
-            "display_name": "Kimi",
-            "model_provider": "local-catalog-test-function",
-            "model_context_window": 128000,
             "tool_profile": "function",
             "codex_responses_compat_proxy": true
-        });
+            }),
+            ..ExecutionRequest::default()
+        };
 
-        let path = write_local_model_catalog(&model_config).expect("catalog should be written");
-        let catalog: Value =
-            serde_json::from_slice(&fs::read(&path).expect("catalog should be readable"))
-                .expect("catalog should be valid JSON");
-
-        assert_eq!(catalog["models"][0]["slug"], "kimi-for-coding");
-        assert_eq!(catalog["models"][0]["context_window"], 128000);
-        assert_eq!(catalog["models"][0]["apply_patch_tool_type"], "freeform");
-        let expected_file_name = format!(
-            "wegent-codex-model-catalog-local-catalog-test-function-{}.json",
-            std::process::id()
-        );
         assert_eq!(
-            path.file_name().and_then(|name| name.to_str()),
-            Some(expected_file_name.as_str())
+            codex_request_model(&request).as_deref(),
+            Some(codex_model_catalog::APPLY_PATCH_MODEL)
         );
-        let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn local_model_catalog_uses_shell_without_apply_patch_for_shell_profile() {
-        let model_config = json!({
-            "model_id": "native-model",
-            "model_provider": "local-catalog-test-shell",
-            "tool_profile": "shell",
-            "codex_responses_compat_proxy": true
-        });
+    fn custom_shell_profile_uses_stable_shell_catalog_model() {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "native-model",
+                "tool_profile": "shell",
+                "codex_responses_compat_proxy": true
+            }),
+            ..ExecutionRequest::default()
+        };
 
-        let path = write_local_model_catalog(&model_config).expect("catalog should be written");
-        let catalog: Value =
-            serde_json::from_slice(&fs::read(&path).expect("catalog should be readable"))
-                .expect("catalog should be valid JSON");
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some(codex_model_catalog::SHELL_MODEL)
+        );
+    }
 
-        assert!(catalog["models"][0].get("apply_patch_tool_type").is_none());
-        assert_eq!(catalog["models"][0]["shell_type"], "shell_command");
-        let _ = fs::remove_file(path);
+    #[test]
+    fn internal_catalog_provider_is_never_used_for_thread_inference() {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "gpt-5.4",
+                "model_provider": "wework-catalog"
+            }),
+            ..ExecutionRequest::default()
+        };
+        let launch_config = build_codex_launch_config(&request);
+
+        assert_eq!(launch_config.model_provider.as_deref(), Some("openai"));
+        for params in [
+            thread_start_params(&request, &launch_config),
+            thread_resume_params("thread-1", &request, &launch_config),
+            thread_fork_params("thread-1", None, &request, &launch_config),
+        ] {
+            assert_eq!(params["modelProvider"], "openai");
+        }
+    }
+
+    #[test]
+    fn configured_inference_provider_reads_the_unmodified_user_config() {
+        let root = unique_test_path("configured-inference-provider");
+        fs::create_dir_all(&root).expect("test directory should be created");
+        let config_path = root.join("config.toml");
+        fs::write(
+            &config_path,
+            "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1/v1\"\n",
+        )
+        .expect("config should be written");
+
+        assert_eq!(
+            configured_inference_model_provider_from_path(&config_path),
+            "wework-e2e"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn user_configured_provider_routes_inference_through_the_local_router() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("configured-provider-router");
+        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        let _api_key = EnvRestore::capture("WEWORK_TEST_MODEL_API_KEY");
+        fs::create_dir_all(&root).expect("test directory should be created");
+        fs::write(
+            root.join("config.toml"),
+            "model_provider = \"wework-e2e\"\n[model_providers.wework-e2e]\nbase_url = \"http://127.0.0.1:3456/v1\"\nenv_key = \"WEWORK_TEST_MODEL_API_KEY\"\nwire_api = \"responses\"\n",
+        )
+        .expect("config should be written");
+        env::set_var(WEGENT_CODEX_HOME_ENV, &root);
+        env::set_var("WEWORK_TEST_MODEL_API_KEY", "test-key");
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "gpt-test",
+                "runtime_config": {
+                    "codex": {
+                        "use_user_config": true,
+                        "configured": true
+                    }
+                }
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+
+        assert_eq!(
+            launch_config.model_provider.as_deref(),
+            Some(codex_model_catalog::PROVIDER_ID)
+        );
+        assert!(launch_config.local_proxy_registration.is_some());
+        assert!(launch_config.config_overrides.iter().any(|value| {
+            value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
+                && value.contains("/v1/codex-router/model-")
+        }));
+        for params in [
+            thread_start_params(&request, &launch_config),
+            thread_resume_params("thread-1", &request, &launch_config),
+            thread_fork_params("thread-1", None, &request, &launch_config),
+        ] {
+            assert_eq!(params["modelProvider"], codex_model_catalog::PROVIDER_ID);
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn configured_inference_provider_rejects_the_internal_catalog_provider() {
+        let root = unique_test_path("configured-catalog-provider");
+        fs::create_dir_all(&root).expect("test directory should be created");
+        let config_path = root.join("config.toml");
+        fs::write(&config_path, "model_provider = \"wework-catalog\"\n")
+            .expect("config should be written");
+
+        assert_eq!(
+            configured_inference_model_provider_from_path(&config_path),
+            "openai"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -5398,14 +5471,18 @@ mod tests {
 
         let launch_config = build_codex_launch_config(&request);
 
+        assert_eq!(
+            launch_config.model_provider.as_deref(),
+            Some(codex_model_catalog::PROVIDER_ID)
+        );
         assert!(launch_config.config_overrides.iter().any(|override_value| {
-            override_value.starts_with("model_providers.wecode-openai.base_url=\"http://127.0.0.1:")
-                && override_value.ends_with("/v1/codex-responses-proxy\"")
+            override_value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
+                && override_value.contains("/v1/codex-router/model-")
         }));
-        assert!(launch_config.config_overrides.iter().any(|override_value| {
-            override_value
-                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"model-")
-        }));
+        assert!(!launch_config
+            .config_overrides
+            .iter()
+            .any(|override_value| override_value.contains("experimental_bearer_token")));
     }
 
     #[test]
@@ -5500,39 +5577,32 @@ mod tests {
             launch_config.env.get("HTTP_PROXY").map(String::as_str),
             Some("http://127.0.0.1:7890")
         );
-        assert_eq!(
-            launch_config.config_overrides,
-            vec![
-                "model_catalog_json=\"/tmp/wework-models.json\"",
-                "goals=true",
-                "features.code_mode_host=true"
-            ]
-        );
+        assert!(launch_config
+            .config_overrides
+            .iter()
+            .any(|value| value == "model_provider=wework-router"));
+        assert!(!launch_config
+            .config_overrides
+            .iter()
+            .any(|value| value.starts_with("model_catalog_json=")));
+        assert!(launch_config
+            .config_overrides
+            .contains(&"goals=true".to_owned()));
         assert!(launch_config.model_provider.is_none());
         assert!(launch_config.effort.is_none());
         assert!(launch_config.summary.is_none());
     }
 
     #[test]
-    fn codex_process_model_catalog_signature_tracks_catalog_contents() {
-        let directory = tempfile::tempdir().expect("temporary catalog directory");
-        let path = directory.path().join("models.json");
-        fs::write(&path, br#"{"models":[{"slug":"model-a"}]}"#).expect("initial catalog");
-        let launch_config = CodexLaunchConfig {
-            config_overrides: vec![format!(
-                "model_catalog_json={}",
-                toml_value(&path.to_string_lossy())
-            )],
-            ..CodexLaunchConfig::default()
-        };
-
-        let initial =
-            codex_process_model_catalog_signature(&launch_config).expect("catalog signature");
-        fs::write(&path, br#"{"models":[{"slug":"model-b"}]}"#).expect("updated catalog");
-
-        assert_ne!(
-            codex_process_model_catalog_signature(&launch_config),
-            Some(initial)
+    fn persistent_process_does_not_inherit_request_model_overrides() {
+        assert_eq!(
+            persistent_codex_app_server_launch_config(&CodexLaunchConfig::default())
+                .config_overrides,
+            persistent_codex_app_server_launch_config(&CodexLaunchConfig {
+                config_overrides: vec!["model=gpt-custom".to_owned()],
+                ..CodexLaunchConfig::default()
+            })
+            .config_overrides
         );
     }
 

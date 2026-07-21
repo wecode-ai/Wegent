@@ -199,6 +199,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
   const interruptedGuidanceIdsRef = useRef(new Set<string>())
   const interruptAndSendInFlightRef = useRef(false)
+  const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -615,6 +616,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     runtimeTaskLoadTarget,
     shouldReconcileRunningTranscript,
   ])
+
+  useEffect(() => {
+    if (!runtimeTaskLoadTarget || !shouldReconcileRunningTranscript || !taskExecution.running) {
+      return
+    }
+    setRunningTranscriptReconcileKey(current => current ?? runtimeTaskLoadTarget.key)
+  }, [runtimeTaskLoadTarget, shouldReconcileRunningTranscript, taskExecution.running])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -1479,6 +1487,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
+      if (queuedMessageSendInFlightIdsRef.current.has(queuedMessage.id)) return
+      queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
       setQueuedMessages(messages =>
         messages.map(message =>
           message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
@@ -1509,6 +1519,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
         )
         setSendPhase('idle')
+      } finally {
+        queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
     [sendRuntimeMessage]

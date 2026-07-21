@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createContext, StrictMode, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, StrictMode, useContext, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -17,6 +17,7 @@ import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSes
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
+import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
@@ -468,34 +469,9 @@ const WorkbenchProbeSessionContext = createContext<WorkbenchProbeSessionValue | 
 
 function WorkbenchProbeSessionProvider({ children }: { children: React.ReactNode }) {
   const workbench = useWorkbench()
-  const { state: workbenchState, openRuntimeTask } = workbench
-  const routeRuntimeTask = useMemo(() => {
-    if (workbenchState.isBootstrapping || workbenchState.currentRuntimeTask) return null
-    const route = parseRuntimeTaskRoute(window.location.pathname, window.location.search)
-    if (!route) return null
-    const localTask = findRuntimeTask(workbenchState.runtimeWork, route)
-    return {
-      ...route,
-      ...(localTask?.workspacePath ? { workspacePath: localTask.workspacePath } : {}),
-    }
-  }, [
-    workbenchState.currentRuntimeTask,
-    workbenchState.isBootstrapping,
-    workbenchState.runtimeWork,
-  ])
+  const { state: workbenchState } = workbench
+  const routeRuntimeTask = useRuntimeTaskRouteRestoration()
   const currentRuntimeTask = workbenchState.currentRuntimeTask ?? routeRuntimeTask
-
-  useEffect(() => {
-    if (workbenchState.isBootstrapping || workbenchState.currentRuntimeTask || !routeRuntimeTask) {
-      return
-    }
-    void openRuntimeTask(routeRuntimeTask)
-  }, [
-    routeRuntimeTask,
-    openRuntimeTask,
-    workbenchState.currentRuntimeTask,
-    workbenchState.isBootstrapping,
-  ])
 
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
