@@ -180,6 +180,7 @@ function seedDesktopE2ECloudConnection() {
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
     ...config,
+    webUrl: config.backendUrl,
     token,
     tokenExpiresAt: null,
     user: {
