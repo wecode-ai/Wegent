@@ -9,7 +9,7 @@ import {
   writeStoredAppearance,
 } from './storage'
 import type { AppearanceConfig, AppearanceUpdate, ResolvedAppearanceMode } from './types'
-import { WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
+import { WEWORK_RESET_FONT_SIZE_EVENT, WEWORK_STEP_FONT_SIZE_EVENT } from '@/lib/keybindings'
 import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 
 function getInitialState(): {
@@ -47,6 +47,22 @@ export function AppearanceProvider({ children }: { children: React.ReactNode }) 
 
     mediaQuery.addEventListener('change', handleChange)
     return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [])
+
+  useEffect(() => {
+    const handleResetFontSize = () => {
+      setState(current => {
+        const appearance = mergeAppearance({
+          ...current.appearance,
+          uiFontSize: defaultAppearance.uiFontSize,
+          codeFontSize: defaultAppearance.codeFontSize,
+        })
+        return { ...current, appearance }
+      })
+    }
+
+    window.addEventListener(WEWORK_RESET_FONT_SIZE_EVENT, handleResetFontSize)
+    return () => window.removeEventListener(WEWORK_RESET_FONT_SIZE_EVENT, handleResetFontSize)
   }, [])
 
   useEffect(() => {

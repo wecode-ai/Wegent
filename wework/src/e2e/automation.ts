@@ -20,6 +20,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
 import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
+import { parseDesktopControlKey } from './desktop-control-keyboard'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -619,9 +620,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       element.focus()
-      const key = command.key ?? ''
+      const keyboardEvent = parseDesktopControlKey(command.key ?? '')
       for (const type of ['keydown', 'keyup']) {
-        element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))
+        element.dispatchEvent(
+          new KeyboardEvent(type, { ...keyboardEvent, bubbles: true, cancelable: true })
+        )
       }
       return element.textContent?.trim() ?? ''
     }

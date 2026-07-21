@@ -22,6 +22,7 @@ export function WorkbenchPage() {
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled } = taskReminders.preferences
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
+  const showTrayUsage = trayUsageEnabled && codexUsage.status === 'available'
   const trayMenuTaskGroups = useMemo(
     () =>
       buildTrayMenuTaskGroups(state.runtimeWork, {
@@ -39,23 +40,23 @@ export function WorkbenchPage() {
     if (trayUnreadEnabled && taskReminders.unreadCount > 0) {
       parts.push(i18nLabel('unread', taskReminders.unreadCount))
     }
-    if (trayUsageEnabled && codexUsage.tooltip) parts.push(codexUsage.tooltip)
-    return parts.length > 0 ? parts.join('\n') : trayUsageEnabled ? codexUsage.tooltip : null
+    if (showTrayUsage) parts.push(codexUsage.tooltip)
+    return parts.length > 0 ? parts.join('\n') : null
   }, [
     codexUsage.tooltip,
     taskReminders.hasRunningTasks,
     taskReminders.unreadCount,
     trayRunningEnabled,
     trayUnreadEnabled,
-    trayUsageEnabled,
+    showTrayUsage,
   ])
 
   useEffect(() => {
     syncTrayMenuState(trayMenuTaskGroups, undefined, {
-      title: trayUsageEnabled ? codexUsage.trayTitle : null,
+      title: showTrayUsage ? codexUsage.trayTitle : null,
       tooltip: trayTooltip,
     })
-  }, [trayMenuTaskGroups, codexUsage.trayTitle, trayTooltip, trayUsageEnabled])
+  }, [trayMenuTaskGroups, codexUsage.trayTitle, showTrayUsage, trayTooltip])
 
   useEffect(() => {
     if (!isTauri) {
