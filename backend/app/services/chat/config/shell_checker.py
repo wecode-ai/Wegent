@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Shell, Team
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
@@ -90,13 +91,12 @@ def get_team_first_bot_shell_type(db: Session, team: Kind) -> str:
         return ""
 
     first_member = team_crd.spec.members[0]
-    bot = kindReader.get_by_name_and_namespace(
+    bot = resolve_kind_reference(
         db,
-        team.user_id,
-        KindType.BOT,
-        first_member.botRef.namespace,
-        first_member.botRef.name,
-    )
+        kind="Bot",
+        ref=first_member.botRef,
+        actor_user_id=team.user_id,
+    ).resource
 
     if bot:
         return get_shell_type(db, bot, team.user_id)
@@ -128,13 +128,12 @@ def is_deep_research_protocol(db: Session, team: Kind) -> bool:
     first_member = team_crd.spec.members[0]
 
     # Get first bot
-    bot = kindReader.get_by_name_and_namespace(
+    bot = resolve_kind_reference(
         db,
-        team.user_id,
-        KindType.BOT,
-        first_member.botRef.namespace,
-        first_member.botRef.name,
-    )
+        kind="Bot",
+        ref=first_member.botRef,
+        actor_user_id=team.user_id,
+    ).resource
 
     if not bot:
         return False

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.services.adapters.pipeline_context import normalize_context_passing
+from app.services.adapters.pipeline_stage import _team_member_bot_matches
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,20 @@ def _get_team_from_task_ref(db: Session, team_ref: Any):
     team_owner_id = getattr(team_ref, "user_id", None)
     if team_owner_id is None:
         return None
+
+    team_id = getattr(team_ref, "id", None)
+    if team_id is not None:
+        team = db.query(Kind).filter(Kind.id == team_id).first()
+        if (
+            team is None
+            or team.user_id != team_owner_id
+            or team.kind != "Team"
+            or team.name != team_ref.name
+            or team.namespace != team_ref.namespace
+            or not team.is_active
+        ):
+            return None
+        return team
 
     return (
         db.query(Kind)
@@ -225,6 +240,7 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
 
         try:
             from app.schemas.kind import Task, Team
+            from app.services.kind_reference import resolve_kind_reference
             from app.services.readers.kinds import KindType, kindReader
 
             subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
@@ -288,10 +304,7 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
                 bot = kindReader.get_by_id(db, KindType.BOT, subtask.bot_ids[0])
                 if bot:
                     for i, member in enumerate(members):
-                        if (
-                            member.botRef.name == bot.name
-                            and member.botRef.namespace == bot.namespace
-                        ):
+                        if _team_member_bot_matches(member, bot):
                             subtask_stage_index = i
                             break
 
@@ -333,13 +346,21 @@ class PipelineCollaborationStrategy(CollaborationStrategy):
 
             # Fetch next stage bot
             next_member = members[next_stage_index]
-            next_bot = kindReader.get_by_name_and_namespace(
-                db,
-                team.user_id,
-                KindType.BOT,
-                next_member.botRef.namespace,
-                next_member.botRef.name,
-            )
+            if getattr(next_member.botRef, "id", None) is not None:
+                next_bot = resolve_kind_reference(
+                    db,
+                    kind="Bot",
+                    ref=next_member.botRef,
+                    actor_user_id=team.user_id,
+                ).resource
+            else:
+                next_bot = kindReader.get_by_name_and_namespace(
+                    db,
+                    team.user_id,
+                    KindType.BOT,
+                    next_member.botRef.namespace,
+                    next_member.botRef.name,
+                )
             if not next_bot:
                 logger.error(
                     "[PipelineStrategy] Auto-advance: bot not found for stage %s: %s/%s",

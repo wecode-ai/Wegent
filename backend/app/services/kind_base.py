@@ -118,11 +118,11 @@ class KindBaseService(ABC):
                     f"{self.kind} '{resource['metadata']['name']}' already exists"
                 )
 
-            # Extract resource data
-            resource_data = self._extract_resource_data(resource)
-
             # Validate references
             self._validate_references(db, user_id, resource)
+
+            # Extract after validation so services can enrich stable references.
+            resource_data = self._extract_resource_data(resource)
 
             # Create new resource
             db_resource = Kind(
