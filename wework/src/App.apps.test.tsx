@@ -162,7 +162,7 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Task')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
