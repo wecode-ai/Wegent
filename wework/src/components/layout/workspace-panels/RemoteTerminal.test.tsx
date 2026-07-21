@@ -1,5 +1,6 @@
 import { render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { StrictMode } from 'react'
 import { openExternalUrl } from '@/lib/external-links'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { RemoteTerminal } from './RemoteTerminal'
@@ -162,6 +163,38 @@ describe('RemoteTerminal', () => {
 
     await waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to write to remote terminal:', error)
+    })
+  })
+
+  test('keeps one terminal client during the StrictMode effect replay', async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null
+    const client = createClient({
+      onOutput: vi.fn(handler => {
+        outputHandler = handler
+        return vi.fn()
+      }),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    const { unmount } = render(
+      <StrictMode>
+        <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+      </StrictMode>
+    )
+
+    await waitFor(() => {
+      expect(createRemoteTerminalClientMock).toHaveBeenCalledTimes(1)
+      expect(client.attach).toHaveBeenCalledTimes(1)
+    })
+    outputHandler?.({ session_id: 'terminal-1', data: 'remote prompt$ ' })
+
+    expect(testState.terminalInstances).toHaveLength(1)
+    expect(testState.terminalInstances[0].write).toHaveBeenCalledWith('remote prompt$ ')
+
+    unmount()
+    await waitFor(() => {
+      expect(client.close).toHaveBeenCalledTimes(1)
+      expect(client.dispose).toHaveBeenCalledTimes(1)
     })
   })
 

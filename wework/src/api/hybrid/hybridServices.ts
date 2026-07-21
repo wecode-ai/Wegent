@@ -309,12 +309,11 @@ export function createHybridWorkbenchServices(
     redirectOnUnauthorized: false,
     transportKind: 'backend-relay',
   })
-  const localServices = createLocalAppServices({
-    cloudModelGateway: {
-      baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
-      apiKey: options.token,
-    },
-  })
+  const cloudModelGateway = {
+    baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
+    apiKey: options.token,
+  }
+  const localServices = createLocalAppServices({ cloudModelGateway })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
@@ -420,6 +419,7 @@ export function createHybridWorkbenchServices(
       async () => runtimeDeviceIdFor(logicalDeviceId),
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
+        cloudModelGateway,
         transportLabel: 'Cloud',
       }
     ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
