@@ -15,7 +15,12 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
-import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/appPreferences'
+
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('@/lib/local-terminal', () => ({
   openLocalWorkspace: vi.fn(),
@@ -136,6 +141,7 @@ function enableTauri() {
 
 describe('DesktopSidebar', () => {
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
@@ -942,19 +948,16 @@ describe('DesktopSidebar', () => {
   })
 
   test('shows Sites only while experimental features are enabled', async () => {
-    renderSidebar()
+    experimentalFeatures.enabled = false
+    const { unmount } = renderSidebar()
 
     expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
-          detail: { ...defaultAppPreferences, experimentalFeaturesEnabled: true },
-        })
-      )
-    })
+    unmount()
+    experimentalFeatures.enabled = true
+    renderSidebar()
 
-    expect(await screen.findByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
@@ -2642,6 +2645,14 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
 
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
+  })
+
+  test('hides global IM notifications while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    renderSidebar({ onToggleGlobalImNotification: vi.fn() })
+
+    expect(screen.queryByTestId('sidebar-global-im-notification-button')).not.toBeInTheDocument()
   })
 
   test('anchors the away reminder menu to the full-width account area', async () => {

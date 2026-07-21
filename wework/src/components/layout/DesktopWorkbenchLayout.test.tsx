@@ -39,6 +39,11 @@ import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
@@ -478,6 +483,7 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     vi.clearAllMocks()
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -1739,6 +1745,27 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onListImPrivateSessions).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
+  })
+
+  test('hides task fork and IM actions while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-1',
+          },
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
   })
 
   test('keeps continue-in-im action with workspace panel actions on web', () => {
