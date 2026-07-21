@@ -457,6 +457,12 @@ class ChatContext:
             knowledge_base_ids=self._request.knowledge_base_ids,
             external_knowledge_refs=external_refs,
             user_id=self._request.user_id,
+            external_knowledge_actor_user_id=(
+                self._request.external_knowledge_actor_user_id
+            ),
+            external_knowledge_actor_user_name=(
+                self._request.external_knowledge_actor_user_name
+            ),
             db=db,
             base_system_prompt=base_system_prompt,
             task_id=self._request.task_id,

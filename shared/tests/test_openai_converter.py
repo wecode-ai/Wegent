@@ -34,6 +34,20 @@ def test_to_execution_request_normalizes_null_kb_tool_access_mode():
     assert request.kb_tool_access_mode == KnowledgeBaseToolAccessMode.FULL
 
 
+def test_round_trip_preserves_request_scoped_external_actor():
+    request = ExecutionRequest(
+        external_knowledge_refs=[{"provider": "ap", "mode": "explicit", "id": "kb-1"}],
+        external_knowledge_actor_user_id=7,
+        external_knowledge_actor_user_name="owner",
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert converted.external_knowledge_actor_user_id == 7
+    assert converted.external_knowledge_actor_user_name == "owner"
+
+
 def test_round_trip_preserves_skill_reference_metadata():
     request = ExecutionRequest(
         skill_names=["analysis-skill"],

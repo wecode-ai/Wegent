@@ -150,6 +150,8 @@ class TestBuildExecutionRequestUserSubtaskId:
             request,
             user_subtask_id,
             user_id,
+            *,
+            has_explicit_internal_knowledge=False,
         ):
             return request
 
@@ -432,6 +434,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                         request_from_builder,
                         123,
                         7,
+                        has_explicit_internal_knowledge=False,
                     )
 
     async def test_does_not_process_contexts_when_user_subtask_id_is_none(self):
@@ -568,7 +571,12 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
         async def _process_contexts_with_selected_kb(
-            db, request, user_subtask_id, user_id
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            has_explicit_internal_knowledge=False,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -634,7 +642,12 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder.build.return_value = request_from_builder
 
         async def _process_contexts_with_selected_kb(
-            db, request, user_subtask_id, user_id
+            db,
+            request,
+            user_subtask_id,
+            user_id,
+            *,
+            has_explicit_internal_knowledge=False,
         ):
             request.knowledge_base_ids = [1408]
             request.is_user_selected_kb = True
@@ -683,6 +696,68 @@ class TestBuildExecutionRequestUserSubtaskId:
 
 
 @pytest.mark.unit
+class TestOpenAPIContextOrdering:
+    async def test_openapi_context_is_created_before_explicit_selection_check(self):
+        """OpenAPI KB refs must suppress Task fallback in the same execution."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        events = []
+        mock_db = MagicMock()
+        request = ExecutionRequest(task_id=1, subtask_id=2)
+        builder = MagicMock()
+        builder.build.return_value = request
+        task = MagicMock(id=1, json={})
+        assistant_subtask = MagicMock(id=2)
+        team = MagicMock()
+        user = MagicMock(id=7)
+
+        async def create_contexts(*args, **kwargs):
+            events.append("create")
+            assert kwargs["task"] is task
+
+        def inspect_contexts(*args, **kwargs):
+            events.append("inspect")
+            return True, False, []
+
+        async def process_contexts(*args, **kwargs):
+            assert kwargs["has_explicit_internal_knowledge"] is True
+            return args[1]
+
+        with (
+            patch.object(trigger_unified, "SessionLocal", return_value=mock_db),
+            patch(
+                "app.services.execution.TaskRequestBuilder",
+                return_value=builder,
+            ),
+            patch.object(
+                trigger_unified,
+                "_create_kb_contexts_from_api_request",
+                new=AsyncMock(side_effect=create_contexts),
+            ),
+            patch.object(
+                trigger_unified,
+                "_inspect_message_knowledge_contexts",
+                side_effect=inspect_contexts,
+            ),
+            patch.object(
+                trigger_unified,
+                "_process_contexts",
+                new=AsyncMock(side_effect=process_contexts),
+            ),
+        ):
+            await trigger_unified.build_execution_request(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+                message="question",
+                user_subtask_id=123,
+                knowledge_base_refs=[{"id": 10, "name": "KB 10"}],
+            )
+
+        assert events == ["create", "inspect"]
+
+
 class TestProcessContextsAttachments:
     @pytest.mark.asyncio
     async def test_populates_request_attachments_from_subtask_contexts(self):

@@ -155,6 +155,62 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
     )
 
 
+def format_external_knowledge_meta_prompt(
+    external_source_meta_list: list[dict[str, Any]],
+) -> str:
+    """Format external knowledge source refs into a dynamic_context prompt."""
+
+    if not external_source_meta_list:
+        return ""
+
+    lines: list[str] = []
+    for source_meta in external_source_meta_list:
+        provider = sanitize_prompt_identifier(
+            source_meta.get("provider", "external"), "external"
+        )
+        mode = sanitize_prompt_identifier(source_meta.get("mode", "explicit"), "N/A")
+        source_name = sanitize_prompt_identifier(
+            source_meta.get("source_name") or source_meta.get("name") or "Unknown",
+            "Unknown",
+        )
+        source_id = sanitize_prompt_identifier(source_meta.get("source_id"), "N/A")
+        target_type = sanitize_prompt_identifier(
+            source_meta.get("target_type") or "knowledge_base", "knowledge_base"
+        )
+        target_name = sanitize_prompt_identifier(
+            source_meta.get("target_name") or source_name,
+            source_name,
+        )
+        scope = sanitize_prompt_identifier(source_meta.get("scope"), "N/A")
+
+        lines.append(
+            f"- Provider: {provider}, Mode: {mode}, Source Name: {source_name}, "
+            f"Source ID: {source_id}, Target Type: {target_type}, "
+            f"Target Name: {target_name}, Scope: {scope}"
+        )
+
+    return (
+        "External Knowledge Sources In Scope:\n"
+        f"{chr(10).join(lines)}\n\n"
+        "Note:\n"
+        "- This block is request-scoped metadata only.\n"
+        "- Use external knowledge tools to retrieve actual content when needed."
+    )
+
+
+def format_knowledge_source_meta_prompt(
+    internal_meta_prompt: str,
+    external_source_meta_list: list[dict[str, Any]],
+) -> str:
+    """Combine internal and external knowledge metadata prompts."""
+
+    external_meta_prompt = format_external_knowledge_meta_prompt(
+        external_source_meta_list
+    )
+    parts = [part for part in [internal_meta_prompt, external_meta_prompt] if part]
+    return "\n\n".join(parts)
+
+
 def format_restricted_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
     """Format a restricted KB meta prompt with safe routing hints."""
 

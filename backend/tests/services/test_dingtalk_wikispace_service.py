@@ -340,50 +340,13 @@ class TestFetchAllWikispaceNodes:
         assert kb_root["name"] == "Test KB"
 
     @pytest.mark.asyncio
-    async def test_uses_wikispace_mcp_url_as_docs_fallback(self) -> None:
-        """Falls back to wikispace MCP URL when docs MCP URL is not configured."""
-        kb_nodes = [{"workspaceId": "WS1", "name": "KB 1"}]
-        captured_sessions: list = []
-
-        async def capture_session(
-            session: object, workspace_id: str, all_nodes: list
-        ) -> None:
-            captured_sessions.append(session)
-
-        mock_session = AsyncMock()
-        mock_session.initialize = AsyncMock()
-
-        with (
-            patch.object(
-                DingTalkWikiSpaceService,
-                "_list_wiki_spaces",
-                new=AsyncMock(return_value=kb_nodes),
-            ),
-            patch.object(
-                DingTalkWikiSpaceService,
-                "_list_nodes_in_wikispace",
-                new=AsyncMock(side_effect=capture_session),
-            ),
-            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
-            patch("mcp.ClientSession") as mock_cls,
-        ):
-            mock_http.return_value.__aenter__ = AsyncMock(
-                return_value=(MagicMock(), MagicMock(), None)
-            )
-            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
+    async def test_requires_docs_mcp_for_document_listing(self) -> None:
+        """WikiSpace MCP cannot be used as the Docs MCP fallback."""
+        with pytest.raises(ValueError, match="Docs MCP URL is not configured"):
             await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
                 docs_mcp_url=None,
             )
-
-        assert len(captured_sessions) == 1
-        mock_http.assert_called_once()
-        call_args = mock_http.call_args
-        assert call_args is not None
-        assert call_args.kwargs.get("url") == "https://ws.mcp.example.com"
 
     @pytest.mark.asyncio
     async def test_skips_kb_with_no_workspace_id(self) -> None:
@@ -425,6 +388,7 @@ class TestFetchAllWikispaceNodes:
 
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
+                docs_mcp_url="https://docs.mcp.example.com",
             )
 
         assert list_nodes_calls == ["WS2"]
@@ -474,6 +438,7 @@ class TestFetchAllWikispaceNodes:
 
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
+                docs_mcp_url="https://docs.mcp.example.com",
             )
 
         assert call_count == 2

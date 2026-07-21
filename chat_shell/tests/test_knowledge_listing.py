@@ -173,6 +173,8 @@ class TestKnowledgeListDocumentsTool:
             ],
             user_id=2,
             user_name="wuhua3",
+            external_knowledge_actor_user_id=2,
+            external_knowledge_actor_user_name="wuhua3",
             auth_token="user-token",
         )
         internal_response = MagicMock()
@@ -326,6 +328,7 @@ class TestKnowledgeListDocumentsTool:
             knowledge_base_ids=[107],
             external_knowledge_refs=[{"provider": "demo", "id": "demo-kb-1"}],
             user_id=2,
+            external_knowledge_actor_user_id=2,
             auth_token="user-token",
         )
         internal_response = MagicMock()
@@ -379,6 +382,7 @@ class TestKnowledgeListDocumentsTool:
         tool = KnowledgeListDocumentsTool(
             external_knowledge_refs=[{"provider": "demo", "id": "demo-kb-1"}],
             user_id=2,
+            external_knowledge_actor_user_id=2,
         )
         external_response = MagicMock()
         external_response.status_code = 503
@@ -416,6 +420,7 @@ class TestKnowledgeListDocumentsTool:
                 }
             ],
             user_id=2,
+            external_knowledge_actor_user_id=2,
         )
         external_response = MagicMock()
         external_response.status_code = 200
