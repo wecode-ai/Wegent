@@ -37,7 +37,7 @@ describe('DesktopAppSwitcher', () => {
     window.history.pushState({}, '', '/')
   })
 
-  test('renders Task as a compact product menu with a divider', () => {
+  test('renders 任务 as a compact product menu with a divider', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
 
     expect(screen.getByTestId('desktop-app-switcher')).toHaveClass(
@@ -45,8 +45,8 @@ describe('DesktopAppSwitcher', () => {
       'pl-2',
       'before:bg-border'
     )
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Task')
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveTextContent('Task')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveTextContent('任务')
     expect(screen.getByTestId('chrome-tab-wework')).toHaveAttribute('aria-haspopup', 'menu')
   })
 
@@ -57,12 +57,12 @@ describe('DesktopAppSwitcher', () => {
     fireEvent.click(screen.getByTestId('chrome-tab-wework'))
     expect(screen.getByTestId('app-switcher-option-wework').parentElement).toHaveClass('pl-2')
     expect(screen.getByTestId('app-switcher-option-wework')).toHaveTextContent(
-      'Task使用 AI 解决具体问题'
+      '任务使用 AI 解决具体问题'
     )
     expect(screen.queryByTestId('app-switcher-option-todo')).not.toBeInTheDocument()
     const wegentOption = screen.getByTestId('app-switcher-option-wegent')
     expect(wegentOption).not.toHaveClass('opacity-60')
-    expect(within(wegentOption).getByText('Agent')).toBeInTheDocument()
+    expect(within(wegentOption).getByText('智能体')).toBeInTheDocument()
     expect(within(wegentOption).getByText('构建并交付可嵌入业务的云端智能体')).toBeInTheDocument()
     const unavailableStatus = screen.getByTestId('app-switcher-unavailable-wegent')
     expect(unavailableStatus).toHaveAccessibleName('连接云端后可用')
@@ -82,9 +82,38 @@ describe('DesktopAppSwitcher', () => {
     render(<DesktopAppSwitcher activeApp="wework" onNavigate={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('chrome-tab-wework'))
+    expect(
+      within(screen.getByTestId('desktop-app-switcher-menu'))
+        .getAllByRole('menuitemradio')
+        .map(option => option.textContent)
+    ).toEqual([
+      '任务使用 AI 解决具体问题',
+      '看板用 AI 管理项目的规划、执行与反馈',
+      '智能体构建并交付可嵌入业务的云端智能体',
+    ])
     expect(screen.getByTestId('app-switcher-option-todo')).toHaveTextContent(
-      'Kanban用 AI 管理项目的规划、执行与反馈'
+      '看板用 AI 管理项目的规划、执行与反馈'
     )
+  })
+
+  test('keeps the Task, Kanban, Agent order when Agent is active', () => {
+    experimentalFeatures.enabled = true
+    render(
+      <CloudConnectionContext.Provider value={connectedCloud}>
+        <DesktopAppSwitcher activeApp="wegent" onNavigate={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    fireEvent.click(screen.getByTestId('chrome-tab-wegent'))
+    expect(
+      within(screen.getByTestId('desktop-app-switcher-menu'))
+        .getAllByRole('menuitemradio')
+        .map(option => option.textContent)
+    ).toEqual([
+      '任务使用 AI 解决具体问题',
+      '看板用 AI 管理项目的规划、执行与反馈',
+      '智能体构建并交付可嵌入业务的云端智能体',
+    ])
   })
 
   test('shows Agent after connecting and navigates to it', () => {
@@ -105,7 +134,7 @@ describe('DesktopAppSwitcher', () => {
   test('labels the TODO board as Kanban', () => {
     render(<DesktopAppSwitcher activeApp="todo" onNavigate={vi.fn()} />)
 
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Kanban')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('看板')
   })
 
   test('opens settings from the switcher menu', () => {
@@ -118,7 +147,7 @@ describe('DesktopAppSwitcher', () => {
 
     fireEvent.click(screen.getByTestId('chrome-tab-wegent'))
     expect(screen.getByTestId('app-switcher-option-wegent')).toHaveTextContent(
-      'Agent构建并交付可嵌入业务的云端智能体'
+      '智能体构建并交付可嵌入业务的云端智能体'
     )
     fireEvent.click(screen.getByTestId('app-switcher-settings'))
     expect(window.location.pathname).toBe('/settings')

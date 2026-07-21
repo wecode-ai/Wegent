@@ -8,6 +8,9 @@
   "workbench": {
     "brand": "Wework",
     "app_wework": "Wework",
+    "app_wework_label": "Task",
+    "app_weloop_label": "Kanban",
+    "app_wegent_label": "Agent",
     "app_wegent_description": "Build and deliver embedded cloud agents",
     "app_wegent_requires_cloud": "Available after connecting to cloud",
     "app_wework_description": "Use AI to solve specific problems",
