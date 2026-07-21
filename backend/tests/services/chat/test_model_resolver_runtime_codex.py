@@ -79,7 +79,6 @@ def test_resolves_runtime_codex_model_when_user_auth_enabled(
         "modelType": "llm",
         "videoConfig": None,
         "think_config": None,
-        "supports_developer_role": None,
         "temperature": None,
         "model_name": "codex-gpt-5.5",
         "model_namespace": "default",

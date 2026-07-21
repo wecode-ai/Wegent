@@ -377,12 +377,31 @@ def test_authorized_parent_team_defaults_are_resolved_dynamically(
         user_id=child_member.id,
     )
 
-    assert kb is not None
-    assert refs == [
-        {
-            "id": kb.id,
-            "name": "Parent KB",
-            "boundBy": owner.user_name,
-            "boundAt": refs[0]["boundAt"],
-        }
-    ]
+    assert len(initial_refs) == 1
+    assert initial_refs[0]["id"] == kb.id
+    assert initial_refs[0]["name"] == "Parent KB"
+    assert initial_refs[0]["boundBy"] == owner.user_name
+    assert initial_refs[0]["boundAt"]
+    assert resolved_ids == [kb.id]
+
+    owner_membership = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == parent_namespace.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(owner.id),
+        )
+        .one()
+    )
+    test_db.delete(owner_membership)
+    test_db.commit()
+
+    assert (
+        resolve_task_default_knowledge_base_ids(
+            test_db,
+            task_id=result["id"],
+            user_id=child_member.id,
+        )
+        == []
+    )

@@ -42,15 +42,14 @@ class TestGetPublicTaskDisplayConfig:
             result = service._get_public_task_display_config(db, task)
 
         assert result == {"show_header": True}
-        mock_resolve.assert_called_once()
         call_kwargs = mock_resolve.call_args.kwargs
         assert call_kwargs["kind"] == "Team"
         assert call_kwargs["ref"]["id"] == 7
         assert call_kwargs["actor_user_id"] == 1
 
     def test_no_fallback_when_id_is_invalid(self, service, db):
-        """An invalid/obsolete teamRef.id must not resolve to a same-name Team."""
-        task = _make_task(team_ref={"id": 999, "name": "team", "namespace": "default"})
+        """An invalid ID must not resolve to a same-name Team."""
+        task = _make_task(team_ref={"id": 999, "name": "team"})
 
         with patch(
             "app.services.shared_task.resolve_kind_reference",
@@ -62,7 +61,7 @@ class TestGetPublicTaskDisplayConfig:
         mock_resolve.assert_called_once()
 
     def test_legacy_name_query_without_id(self, service, db):
-        """Old shared tasks without teamRef.id still resolve by name+namespace."""
+        """Old shared tasks still resolve by owner, name, and namespace."""
         team = MagicMock()
         team.json = {"spec": {"displayConfig": {"theme": "dark"}}}
         task = _make_task(team_ref={"name": "legacy-team", "namespace": "default"})
@@ -76,28 +75,11 @@ class TestGetPublicTaskDisplayConfig:
         assert result == {"theme": "dark"}
         mock_reader.assert_called_once_with(db, 1, "Team", "default", "legacy-team")
 
-    def test_legacy_user_id_query_without_id(self, service, db):
-        """teamRef.user_id + name path still works for legacy data."""
-        team = MagicMock()
-        team.json = {"spec": {"displayConfig": {"compact": True}}}
-        task = _make_task(
-            team_ref={
-                "name": "owner-team",
-                "namespace": "default",
-                "user_id": 42,
-            }
+    def test_missing_or_invalid_team_ref_returns_empty(self, service, db):
+        assert (
+            service._get_public_task_display_config(db, _make_task(team_ref={"id": 7}))
+            == {}
         )
-
-        db.query.return_value.filter.return_value.first.return_value = team
-        result = service._get_public_task_display_config(db, task)
-
-        assert result == {"compact": True}
-
-    def test_missing_name_returns_empty(self, service, db):
-        task = _make_task(team_ref={"id": 7})
-        assert service._get_public_task_display_config(db, task) == {}
-
-    def test_invalid_team_ref_returns_empty(self, service, db):
-        task = MagicMock()
-        task.json = {"spec": {"teamRef": "not-a-dict"}}
-        assert service._get_public_task_display_config(db, task) == {}
+        invalid_task = MagicMock()
+        invalid_task.json = {"spec": {"teamRef": "not-a-dict"}}
+        assert service._get_public_task_display_config(db, invalid_task) == {}

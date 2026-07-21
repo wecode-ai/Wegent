@@ -52,14 +52,17 @@ class TestTaskMemberServiceGroupChatDetection:
         When a user copies a shared task, a ResourceMember record is created with
         copied_resource_id > 0. This should NOT make them a member of the original task.
         """
-        with patch(
-            "app.services.task_member_service.task_stores.task_access_store.is_member",
-            return_value=False,
-        ) as is_member:
+        with patch.object(
+            task_member_service, "is_task_owner", return_value=False
+        ) as mock_owner:
+            mock_query = MagicMock()
+            mock_db.query.return_value = mock_query
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None
             result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
 
         assert result is False
-        is_member.assert_called_once_with(mock_db, task_id=100, user_id=2)
+        mock_owner.assert_called_once_with(mock_db, 100, 2)
 
     def test_is_member_includes_real_group_chat_members(
         self, task_member_service, mock_db
@@ -69,14 +72,19 @@ class TestTaskMemberServiceGroupChatDetection:
 
         Real group chat members have copied_resource_id = 0.
         """
-        with patch(
-            "app.services.task_member_service.task_stores.task_access_store.is_member",
-            return_value=True,
-        ) as is_member:
+        mock_member = Mock(spec=ResourceMember)
+        mock_member.id = 1
+        with patch.object(
+            task_member_service, "is_task_owner", return_value=False
+        ) as mock_owner:
+            mock_query = MagicMock()
+            mock_db.query.return_value = mock_query
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = mock_member
             result = task_member_service.is_member(mock_db, task_id=100, user_id=2)
 
         assert result is True
-        is_member.assert_called_once_with(mock_db, task_id=100, user_id=2)
+        mock_owner.assert_called_once_with(mock_db, 100, 2)
 
     def test_get_member_count_excludes_share_records(
         self, task_member_service, mock_db
@@ -203,14 +211,10 @@ class TestSharedTaskDoesNotBecomeGroupChat:
         mock_task.user_id = 1  # User A owns this task
         mock_task.json = {"spec": {"is_group_chat": False}}  # Not a group chat
 
-        with patch(
-            "app.services.task_member_service.task_stores.task_access_store.is_group_chat",
-            return_value=False,
-        ) as is_group_chat:
+        with patch.object(task_member_service, "get_task", return_value=mock_task):
             result = task_member_service.is_group_chat(mock_db, task_id=100)
 
         assert result is False
-        is_group_chat.assert_called_once_with(mock_db, task_id=100)
 
     def test_member_count_is_one_after_share(self, task_member_service, mock_db):
         """

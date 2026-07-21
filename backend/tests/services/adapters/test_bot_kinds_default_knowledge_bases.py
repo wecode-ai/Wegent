@@ -18,8 +18,9 @@ from app.services.rag.sources import ExternalRefValidationError
 @pytest.fixture(autouse=True)
 def allow_direct_knowledge_base_access():
     with patch(
-        "app.services.adapters.bot_kinds.KnowledgeService.can_directly_access_knowledge_base",
-        return_value=True,
+        "app.services.adapters.bot_kinds."
+        "KnowledgeBindingResolver.filter_internal_bindings",
+        return_value=([], []),
     ):
         yield
 
@@ -81,15 +82,15 @@ def test_default_knowledge_base_binding_requires_direct_access():
     service = BotKindsService(Kind)
 
     with patch(
-        "app.services.adapters.bot_kinds.KnowledgeService.can_directly_access_knowledge_base",
-        return_value=False,
+        "app.services.adapters.bot_kinds."
+        "KnowledgeBindingResolver.filter_internal_bindings",
+        return_value=([], [{"reason": "not_accessible"}]),
     ):
-        with pytest.raises(HTTPException, match="not directly accessible"):
+        with pytest.raises(HTTPException, match="not accessible"):
             service._validate_default_knowledge_bases(
                 Mock(),
                 [SimpleNamespace(id=101, name="Hidden Docs")],
                 user_id=7,
-                namespace="default",
             )
 
 

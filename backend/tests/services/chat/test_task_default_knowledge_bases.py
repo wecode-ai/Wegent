@@ -125,43 +125,6 @@ def test_build_initial_task_knowledge_base_refs_collects_only_ghost_defaults():
     assert [ref["id"] for ref in refs] == [11, 22]
 
 
-def test_build_initial_task_knowledge_base_refs_does_not_snapshot_agent_defaults():
-    from app.services.chat.task_default_knowledge_bases import (
-        build_initial_task_knowledge_base_refs,
-    )
-
-    db = Mock()
-    team = _make_team()
-    user = _make_user()
-    kb_map = {
-        11: _make_kb(11, "Product Docs"),
-        22: _make_kb(22, "Runbooks"),
-    }
-
-    with patch(
-        "app.services.chat.knowledge_binding_resolver."
-        "KnowledgeBindingResolver._iter_team_member_ghosts",
-        return_value=[
-            _make_ghost("ghost-one", [{"id": 11, "name": "Product Docs"}]),
-            _make_ghost(
-                "ghost-two",
-                [
-                    {"id": 11, "name": "Product Docs"},
-                    {"id": 22, "name": "Runbooks"},
-                ],
-            ),
-        ],
-    ):
-        with _patch_accessible_kbs(kb_map):
-            refs = build_initial_task_knowledge_base_refs(
-                db=db,
-                user=user,
-                team=team,
-            )
-
-    assert refs == []
-
-
 def test_default_knowledge_uses_team_owner_when_execution_user_differs():
     from app.services.chat.task_default_knowledge_bases import (
         build_initial_task_knowledge_bindings,

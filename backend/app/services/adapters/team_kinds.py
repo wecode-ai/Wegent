@@ -675,27 +675,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         all_shell_refs = set()  # (user_id, name, namespace)
         all_model_refs = set()  # (user_id, name, namespace)
 
-        # Collect from personal bots
-        for bot in bots_cache.values():
-            bot_crd = Bot.model_validate(bot.json)
-            all_shell_refs.add(
-                (
-                    bot.user_id,
-                    bot_crd.spec.shellRef.name,
-                    bot_crd.spec.shellRef.namespace,
-                )
-            )
-            if bot_crd.spec.modelRef:
-                all_model_refs.add(
-                    (
-                        bot.user_id,
-                        bot_crd.spec.modelRef.name,
-                        bot_crd.spec.modelRef.namespace,
-                    )
-                )
-
-        # Collect from group bots
-        for bot in group_bots_cache.values():
+        # Include both stable-ID and legacy name-backed references.  ID-backed
+        # bots are kept separately so they are not accidentally resolved by a
+        # same-name resource, but their shell/model dependencies still need the
+        # same batch preloading as legacy bots.
+        referenced_bots = {
+            bot.id: bot
+            for bot in [
+                *bots_by_id.values(),
+                *bots_cache.values(),
+                *group_bots_cache.values(),
+            ]
+        }
+        for bot in referenced_bots.values():
             bot_crd = Bot.model_validate(bot.json)
             all_shell_refs.add(
                 (
@@ -1753,14 +1745,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         agent_type = None
         if bots:
             first_bot_id = bots[0]["bot_id"]
-            # Find first bot in cache (check both caches for group resources)
-            first_bot = None
-            if is_group_resource:
+            first_bot = bots_by_id.get(first_bot_id)
+            if first_bot is None and is_group_resource:
                 for key, bot in group_bots_cache.items():
                     if bot.id == first_bot_id:
                         first_bot = bot
                         break
-            else:
+            elif first_bot is None:
                 for key, bot in bots_cache.items():
                     if bot.id == first_bot_id:
                         first_bot = bot

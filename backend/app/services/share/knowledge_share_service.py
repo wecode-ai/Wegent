@@ -41,17 +41,17 @@ from app.schemas.share import (
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
 # All role-related code should use BaseRole as the single source of truth
 SchemaMemberRole = BaseRole
-from app.services.knowledge.knowledge_access_policy import (
-    get_user_knowledge_base_permission,
-    meets_direct_access_requirement,
-    resolve_knowledge_base_permission,
-)
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import (
     get_effective_role_in_group,
     get_restricted_analyst_groups,
     get_user_groups,
     is_restricted_analyst,
+)
+from app.services.knowledge.knowledge_access_policy import (
+    get_user_knowledge_base_permission,
+    meets_direct_access_requirement,
+    resolve_knowledge_base_permission,
 )
 from app.services.knowledge.namespace_utils import (
     classify_namespace_level,

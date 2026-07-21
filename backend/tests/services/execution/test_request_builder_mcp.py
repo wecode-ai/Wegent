@@ -312,17 +312,17 @@ class TestFilterReachableMcpServers:
 class TestBuildMcpServers:
     """Tests for request-level MCP server merging."""
 
-    @patch(
-        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
-    )
+    @patch("app.services.execution.request_builder.resolve_kind_reference")
     @patch(
         "app.services.execution.request_builder.settings.CHAT_MCP_SERVERS",
         '{"mcpServers":{"env-server":{"type":"streamable-http","url":"http://env.example.com/mcp"}}}',
     )
-    def test_system_team_excludes_env_mcp_servers(self, mock_get_kind):
+    def test_system_team_excludes_env_mcp_servers(self, mock_resolve_reference):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         builder.db = SimpleNamespace()
-        mock_get_kind.return_value = _ghost_kind_with_mcp()
+        mock_resolve_reference.return_value = SimpleNamespace(
+            resource=_ghost_kind_with_mcp()
+        )
 
         result = builder._build_mcp_servers(
             _bot_kind_with_ghost(user_id=0),
@@ -338,17 +338,17 @@ class TestBuildMcpServers:
             }
         ]
 
-    @patch(
-        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
-    )
+    @patch("app.services.execution.request_builder.resolve_kind_reference")
     @patch(
         "app.services.execution.request_builder.settings.CHAT_MCP_SERVERS",
         '{"mcpServers":{"env-server":{"type":"streamable-http","url":"http://env.example.com/mcp"}}}',
     )
-    def test_user_team_keeps_env_mcp_servers(self, mock_get_kind):
+    def test_user_team_keeps_env_mcp_servers(self, mock_resolve_reference):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         builder.db = SimpleNamespace()
-        mock_get_kind.return_value = _ghost_kind_with_mcp()
+        mock_resolve_reference.return_value = SimpleNamespace(
+            resource=_ghost_kind_with_mcp()
+        )
 
         result = builder._build_mcp_servers(
             _bot_kind_with_ghost(user_id=1),
@@ -361,26 +361,26 @@ class TestBuildMcpServers:
             "ghost-server",
         ]
 
-    @patch(
-        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
-    )
+    @patch("app.services.execution.request_builder.resolve_kind_reference")
     @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
-    def test_bot_mcp_preserves_timeout_fields(self, mock_get_kind):
+    def test_bot_mcp_preserves_timeout_fields(self, mock_resolve_reference):
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         builder.db = SimpleNamespace()
-        mock_get_kind.return_value = _ghost_kind_with_mcp(
-            {
-                "seconds-server": {
-                    "type": "http",
-                    "url": "http://seconds.example.com/mcp",
-                    "timeoutSeconds": 900,
-                },
-                "native-server": {
-                    "type": "http",
-                    "url": "http://native.example.com/mcp",
-                    "timeout": 900000,
-                },
-            }
+        mock_resolve_reference.return_value = SimpleNamespace(
+            resource=_ghost_kind_with_mcp(
+                {
+                    "seconds-server": {
+                        "type": "http",
+                        "url": "http://seconds.example.com/mcp",
+                        "timeoutSeconds": 900,
+                    },
+                    "native-server": {
+                        "type": "http",
+                        "url": "http://native.example.com/mcp",
+                        "timeout": 900000,
+                    },
+                }
+            )
         )
 
         result = builder._build_mcp_servers(

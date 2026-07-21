@@ -22,7 +22,7 @@ class TestKbLsTool:
     @pytest.mark.asyncio
     async def test_http_mode_lists_docs_with_pagination(self) -> None:
         """HTTP mode should pass offset/limit and surface pagination metadata."""
-        tool = KbLsTool(knowledge_base_ids=[3])
+        tool = KbLsTool(knowledge_base_ids=[3], auth_token="test-token")
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -481,6 +481,7 @@ class TestKbHeadTool:
             knowledge_base_ids=[3, 4],
             user_id=7,
             user_subtask_id=8,
+            auth_token="test-token",
         )
         mock_response = MagicMock()
         mock_response.status_code = 200
