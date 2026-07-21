@@ -19,7 +19,7 @@ import {
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
-import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
+import { getRuntimeTaskWorkspacePath, removeRuntimeTasks } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
@@ -119,6 +119,7 @@ export type WorkbenchAction =
       type: 'runtime_task_optimistic_removed'
       address: RuntimeTaskAddress
     }
+  | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'runtime_task_started'; address: RuntimeTaskAddress }
   | { type: 'runtime_task_settled'; address: RuntimeTaskAddress }
   | { type: 'current_task_cleared' }
@@ -1129,6 +1130,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
+      }
+    case 'runtime_tasks_archived':
+      return {
+        ...state,
+        runtimeWork: state.runtimeWork
+          ? removeRuntimeTasks(state.runtimeWork, action.addresses)
+          : null,
       }
     case 'runtime_task_started':
       return {
