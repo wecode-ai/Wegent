@@ -1086,7 +1086,7 @@ function ArchiveProjectConversationsProbe() {
         type="button"
         onClick={() =>
           void workbench
-            .archiveProjectsConversations(['project:7'])
+            .archiveProjectsConversations(['project:7', 'remote-project-key'])
             .then(result => setLastArchiveResult(result?.status ?? 'none'))
         }
       >
@@ -1096,11 +1096,36 @@ function ArchiveProjectConversationsProbe() {
         type="button"
         onClick={() =>
           void workbench
-            .archiveProjectsConversations(['project:7'], { force: true })
+            .archiveProjectsConversations(['project:7', 'remote-project-key'], { force: true })
             .then(result => setLastArchiveResult(result?.status ?? 'none'))
         }
       >
         force archive project conversations
+      </button>
+    </div>
+  )
+}
+
+function ArchiveRemoteRuntimeTaskProbe() {
+  const workbench = useWorkbench()
+  const taskTitles =
+    workbench.state.runtimeWork?.projects.flatMap(project =>
+      project.deviceWorkspaces.flatMap(workspace => workspace.tasks.map(task => task.title))
+    ) ?? []
+  return (
+    <div>
+      <span data-testid="archive-remote-task-titles">{taskTitles.join('|')}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.archiveRuntimeTask({
+            deviceId: 'remote-device',
+            workspacePath: '/srv/Wegent',
+            taskId: 'remote-task',
+          })
+        }
+      >
+        archive remote task
       </button>
     </div>
   )
@@ -4900,8 +4925,29 @@ describe('WorkbenchProvider runtime tasks', () => {
               ],
               totalTasks: 1,
             },
+            {
+              project: { key: 'remote-project-key', name: 'Remote project' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'remote-device',
+                  deviceName: 'Remote device',
+                  deviceStatus: 'online',
+                  workspacePath: '/srv/remote-project',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'remote-project-task',
+                      workspacePath: '/srv/remote-project',
+                      title: 'Remote project task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
           ],
-          totalTasks: 1,
+          totalTasks: 2,
         })
       ),
     })
@@ -4916,13 +4962,97 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await userEvent.click(screen.getByText('archive project conversations'))
 
-    await waitFor(() => expect(runtimeWorkApi.archiveProjectConversations).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(2))
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      taskId: 'runtime-worktree',
+    })
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
+      deviceId: 'remote-device',
+      workspacePath: '/srv/remote-project',
+      taskId: 'remote-project-task',
+    })
+    expect(runtimeWorkApi.archiveProjectConversations).not.toHaveBeenCalled()
     expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
       deviceId: 'device-1',
       path: '/workspace/worktrees/9/project-alpha',
       preserveSnapshot: true,
     })
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
+  })
+
+  test('does not restore an archived remote task from the previous cloud snapshot', async () => {
+    const remoteRuntimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'remote-project', name: 'Remote Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '10.201.3.200',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/srv/Wegent',
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+              tasks: [
+                {
+                  taskId: 'remote-task',
+                  workspacePath: '/srv/Wegent',
+                  title: 'Remote task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const postArchiveCloudWork = deferred<RuntimeWorkListResponse>()
+    const cloudListRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(remoteRuntimeWork)
+      .mockReturnValue(postArchiveCloudWork.promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            id: 2,
+            device_id: 'remote-device',
+            name: '10.201.3.200',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+          }),
+        ]),
+        listRuntimeWork: cloudListRuntimeWork,
+      },
+    })
+
+    renderWorkbench(<ArchiveRemoteRuntimeTaskProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('Remote task')
+    )
+    await userEvent.click(screen.getByText('archive remote task'))
+
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+
+    postArchiveCloudWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+    )
   })
 
   test('renders streaming runtime task chunks when the socket connects after chat start', async () => {

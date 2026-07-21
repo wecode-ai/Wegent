@@ -458,14 +458,19 @@ export function WorkbenchProvider({
     deleteAttachment: resolvedServices.attachmentApi?.deleteAttachment,
     scopeKey: projectChatScopeKey,
   })
-  const { cloudWorkStatus, refreshWorkLists, refreshDevices, getRemoteDeviceStartupCommand } =
-    useWorkbenchDataRefresh({
-      user,
-      state,
-      dispatch,
-      executorClient,
-      services: resolvedServices,
-    })
+  const {
+    cloudWorkStatus,
+    markRuntimeTasksArchived,
+    refreshWorkLists,
+    refreshDevices,
+    getRemoteDeviceStartupCommand,
+  } = useWorkbenchDataRefresh({
+    user,
+    state,
+    dispatch,
+    executorClient,
+    services: resolvedServices,
+  })
 
   const localRuntimeStateDeviceId = useMemo(
     () => getLocalRuntimeStateDeviceId(state.devices),
@@ -930,6 +935,7 @@ export function WorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    markRuntimeTasksArchived,
     refreshWorkLists,
   })
 
