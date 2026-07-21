@@ -34,7 +34,7 @@ MAX_COMMAND_TIMEOUT_SECONDS = 600
 DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 5 * 1024 * 1024
 SOCKET_ACK_GRACE_SECONDS = 5
-REMOTE_DIRECTORY_COMMAND_KEYS = frozenset({"pwd", "home_dir", "ls_dirs"})
+REMOTE_DEVICE_COMMAND_KEYS = frozenset({"pwd", "home_dir", "ls_dirs", "mkdir_p"})
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 
 
@@ -102,7 +102,7 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    if command_key not in REMOTE_DIRECTORY_COMMAND_KEYS:
+    if command_key not in REMOTE_DEVICE_COMMAND_KEYS:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"
