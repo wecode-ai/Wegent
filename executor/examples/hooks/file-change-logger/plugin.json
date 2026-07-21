@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "file-change-logger",
+  "name": "File change logger",
+  "description": "Logs changed files and line/character counts locally",
+  "version": "1.0.0"
+}

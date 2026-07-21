@@ -1,5 +1,5 @@
 import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
@@ -287,7 +287,7 @@ export function ComposerTextarea({
   const isSlashMentionLoading =
     !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loading) || appsLoading)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeMenuRef.current = activeMenu
     highlightedIndexRef.current = highlightedIndex
     showSkillMenuRef.current = showSkillMenu

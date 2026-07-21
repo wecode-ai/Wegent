@@ -31,6 +31,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
 dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+regex = "1.11"
 futures-util = "0.3"
 flate2 = "1.0"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
