@@ -42,6 +42,7 @@ import {
   GO_FORWARD_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
   DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
@@ -55,6 +56,7 @@ import {
   dispatchToggleSidePanelShortcut,
   dispatchToggleModelSelectorShortcut,
   dispatchStepFontSizeShortcut,
+  dispatchResetFontSizeShortcut,
   isEditableShortcutTarget,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -283,7 +285,6 @@ function AppShell() {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
       const terminalKey = activeBindings[OPEN_TERMINAL_COMMAND]
       const settingsKey = activeBindings[OPEN_SETTINGS_COMMAND]
       const goBackKey = activeBindings[GO_BACK_COMMAND]
@@ -293,7 +294,15 @@ function AppShell() {
       const modelSelectorKey = activeBindings[TOGGLE_MODEL_SELECTOR_COMMAND]
       const increaseFontSizeKey = activeBindings[INCREASE_FONT_SIZE_COMMAND]
       const decreaseFontSizeKey = activeBindings[DECREASE_FONT_SIZE_COMMAND]
+      const resetFontSizeKey = activeBindings[RESET_FONT_SIZE_COMMAND]
       const eventKey = keybindingFromKeyboardEvent(event)
+      const matchesFontSizeShortcut =
+        eventKey === increaseFontSizeKey ||
+        eventKey === decreaseFontSizeKey ||
+        eventKey === resetFontSizeKey
+      // The page zoom guard prevents WebView zoom before this window-level
+      // handler runs. Keep application font-size shortcuts actionable.
+      if (event.defaultPrevented && !matchesFontSizeShortcut) return
       const matchesRegisteredShortcut = [
         terminalKey,
         settingsKey,
@@ -304,6 +313,7 @@ function AppShell() {
         modelSelectorKey,
         increaseFontSizeKey,
         decreaseFontSizeKey,
+        resetFontSizeKey,
       ].some(key => key && key === eventKey)
       if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
 
@@ -345,6 +355,11 @@ function AppShell() {
       if (decreaseFontSizeKey && eventKey === decreaseFontSizeKey) {
         event.preventDefault()
         dispatchStepFontSizeShortcut(-1)
+        return
+      }
+      if (resetFontSizeKey && eventKey === resetFontSizeKey) {
+        event.preventDefault()
+        dispatchResetFontSizeShortcut()
         return
       }
       if (!terminalKey || eventKey !== terminalKey) return

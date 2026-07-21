@@ -970,6 +970,8 @@
     "keyboard_shortcuts_increase_font_size_description": "Increase both UI and code font sizes",
     "keyboard_shortcuts_decrease_font_size": "Decrease font size",
     "keyboard_shortcuts_decrease_font_size_description": "Decrease both UI and code font sizes",
+    "keyboard_shortcuts_reset_font_size": "Reset font size",
+    "keyboard_shortcuts_reset_font_size_description": "Restore the default UI and code font sizes",
     "keyboard_shortcuts_recording": "Press shortcut",
     "keyboard_shortcuts_unassigned": "Unassigned",
     "keyboard_shortcuts_reset": "Reset",
