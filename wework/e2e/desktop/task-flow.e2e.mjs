@@ -2070,9 +2070,10 @@ async function main() {
       'Cancelling folder selection did not restore the workbench'
     )
 
-    phase = 'project-folder-select'
-    await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    phase = 'composer-project-folder-select'
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('hover', '[data-testid="add-local-project-option"]')
+    await control.command('click', '[data-testid="add-local-existing-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
@@ -2087,7 +2088,7 @@ async function main() {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
-    phase = 'project-folder-remove-immediately'
+    phase = 'composer-project-visible-in-sidebar'
     const openedProjectSnapshot = await waitForSnapshot(
       control,
       snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -2098,6 +2099,30 @@ async function main() {
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
     const projectId = projectMenuTestId.slice('project-menu-'.length)
+    const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    await control.command('waitFor', projectRowSelector, {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
+    phase = 'sidebar-project-new-conversation'
+    await control.command(
+      'click',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    )
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
+    phase = 'project-folder-remove-immediately'
     await control.command('click', `[data-testid="${projectMenuTestId}"]`)
     await control.command('click', `[data-testid="remove-project-${projectId}"]`)
     await control.command(
