@@ -32,6 +32,10 @@ When **Show main window on launch** is enabled, Wework opens the main window whe
 
 When the main window is not visible, click the system tray icon to reopen it.
 
+## Tray Display
+
+**Settings → General → Tray display** controls unread completions, running tasks, and Codex quota independently. When **Codex quota** is enabled, the 5-hour and 7-day remaining quota appears next to the tray icon only when local Codex is available and its quota was read successfully. Wework does not show empty quota placeholders when Codex is unavailable. The tray tooltip and settings menu identify the data as Codex quota.
+
 ## Import from Other AI Apps
 
 **Settings → General → Import work from other AI apps** imports compatible content from other local coding apps into Wework's separate Codex home. Importing replaces files with the same name in the destination, but does not remove content from the source app.
