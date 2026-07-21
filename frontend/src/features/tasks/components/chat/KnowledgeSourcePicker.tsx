@@ -5,12 +5,14 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import {
   Building2,
   Check,
   ChevronRight,
   Cloud,
   Database,
+  ExternalLink,
   FileText,
   Folder,
   FolderOpen,
@@ -23,9 +25,9 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import type {
   ContextItem,
@@ -34,7 +36,9 @@ import type {
   KnowledgeBaseContext,
 } from '@/types/context'
 import type {
+  ExternalKnowledgeBaseDisplayDescriptor,
   ExternalKnowledgeScopeDescriptor,
+  ExternalKnowledgeScopeStatus,
   ExternalKnowledgeSource,
 } from '@/features/knowledge/externalKnowledgeSourceRegistry'
 import {
@@ -49,14 +53,6 @@ import type {
 import { cn } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useDingTalkDocTrees } from './DingTalkDocContextSelector'
-import {
-  countDingTalkNodes,
-  DingTalkDocsRootRow,
-  DingTalkDocumentColumn,
-  DingTalkWikispaceRows,
-  useDingTalkKnowledgeSelection,
-} from './DingTalkKnowledgePicker'
 
 export interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
@@ -70,14 +66,7 @@ export interface GroupedKnowledgeBaseGroup {
   items: KnowledgeBase[]
 }
 
-type SourceKey =
-  | 'personal'
-  | 'group'
-  | 'organization'
-  | 'dingtalk'
-  | 'dingtalk:docs'
-  | 'dingtalk:wikispace'
-  | `external:${string}`
+type SourceKey = 'personal' | 'group' | 'organization' | `external:${string}`
 
 const INTERNAL_DOCUMENT_PAGE_SIZE = 200
 const DEFAULT_EXTERNAL_SCOPE_ICON = 'cloud'
@@ -93,8 +82,6 @@ interface KnowledgeSourcePickerProps {
   onRetry: () => void
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
-  onSelectMultiple?: (contexts: ContextItem[]) => void
-  onDeselectMultiple?: (ids: (number | string)[]) => void
   onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
 }
 
@@ -351,14 +338,27 @@ function getExternalKnowledgeScopes(
     {
       key: 'all',
       label: source.label ?? source.providerId,
+      labelKey: source.labelKey,
       icon: DEFAULT_EXTERNAL_SCOPE_ICON,
     },
   ]
 }
 
 function getExternalScopeIcon(scope: ExternalKnowledgeScopeDescriptor) {
-  if (scope.icon === 'personal') return User
-  if (scope.icon === 'organization') return Building2
+  return getExternalDisplayIcon(scope.icon)
+}
+
+function getExternalSourceIcon(source: ExternalKnowledgeSource) {
+  return getExternalDisplayIcon(source.icon)
+}
+
+function getExternalDisplayIcon(icon?: string) {
+  if (icon === 'personal') return User
+  if (icon === 'organization') return Building2
+  if (icon === 'file') return FileText
+  if (icon === 'database') return Database
+  if (icon === 'message') return MessageSquareText
+  if (icon === 'folderOpen') return FolderOpen
   return Cloud
 }
 
@@ -366,9 +366,44 @@ function getExternalScopeLabel(
   scope: ExternalKnowledgeScopeDescriptor,
   t: (key: string) => string
 ) {
-  if (scope.label) return scope.label
   if (scope.labelKey) return t(scope.labelKey)
+  if (scope.label) return scope.label
   return scope.key
+}
+
+function getExternalSourceLabel(source: ExternalKnowledgeSource, t: (key: string) => string) {
+  if (source.labelKey) return t(source.labelKey)
+  if (source.label) return source.label
+  return source.providerId
+}
+
+function getExternalKnowledgeBaseDisplay(
+  source: ExternalKnowledgeSource,
+  knowledgeBase: ExternalKnowledgeBase
+): ExternalKnowledgeBaseDisplayDescriptor {
+  return source.getKnowledgeBaseDisplay?.(knowledgeBase) ?? {}
+}
+
+function getExternalScopeActionHref(
+  source: ExternalKnowledgeSource,
+  scopeKey: ExternalKnowledgeScope,
+  action: 'configure' | 'sync'
+) {
+  const scope = source.scopes?.find(item => item.key === scopeKey)
+  if (action === 'sync') {
+    return scope?.syncHref || source.syncHref || scope?.configureHref || source.configureHref
+  }
+  return scope?.configureHref || source.configureHref
+}
+
+function getExternalKnowledgeBaseLabel(
+  display: ExternalKnowledgeBaseDisplayDescriptor,
+  knowledgeBase: ExternalKnowledgeBase,
+  t: (key: string) => string
+) {
+  if (display.labelKey) return t(display.labelKey)
+  if (display.label) return display.label
+  return knowledgeBase.knowledge_base_name
 }
 
 function hasSelectedInternalDocument(node: InternalTreeNode, selectedDocIds: Set<number>): boolean {
@@ -410,6 +445,10 @@ function hasSelectedExternalDocument(node: ExternalKbNode, selectedNodeIds: Set<
 
 function matchesPathSearch(name: string, path: string[], query: string) {
   return groupMatchesSearch([name, ...path].join(' '), query)
+}
+
+function formatKnowledgePath(path: string[], name: string) {
+  return path.length > 0 ? [...path, name].join(' / ') : name
 }
 
 function getKnowledgeContext(
@@ -478,34 +517,26 @@ export function KnowledgeSourcePicker({
   onRetry,
   onSelect,
   onDeselect,
-  onSelectMultiple,
-  onDeselectMultiple,
   onReplaceContexts,
 }: KnowledgeSourcePickerProps) {
   const { t } = useTranslation('knowledge')
-  const { t: tChat } = useTranslation('chat')
   const { toast } = useToast()
   const browseableExternalSources = useMemo(
-    () => externalSources.filter(source => source.listKnowledgeBases),
-    [externalSources]
+    () =>
+      externalSources
+        .filter(source => source.listKnowledgeBases)
+        .sort((a, b) => {
+          const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER
+          const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER
+          if (orderA !== orderB) return orderA - orderB
+          return getExternalSourceLabel(a, t).localeCompare(getExternalSourceLabel(b, t))
+        }),
+    [externalSources, t]
   )
   const [activeSource, setActiveSource] = useState<SourceKey>('personal')
   const [activeGroup, setActiveGroup] = useState<string | null>(null)
   const [externalScope, setExternalScope] = useState<ExternalKnowledgeScope | null>(null)
   const [activeKnowledgeBase, setActiveKnowledgeBase] = useState<ActiveKnowledgeBase | null>(null)
-  const [activeDingTalkSpace, setActiveDingTalkSpace] = useState<DingtalkDocNode | null>(null)
-  const dingtalkTrees = useDingTalkDocTrees({ enabled: activeSource.startsWith('dingtalk') })
-  const {
-    selectedIds: selectedDingTalkIds,
-    toggleNode: toggleDingTalkNode,
-    toggleNodeList: toggleDingTalkNodeList,
-  } = useDingTalkKnowledgeSelection({
-    selectedContexts,
-    onSelect,
-    onDeselect,
-    onSelectMultiple,
-    onDeselectMultiple,
-  })
 
   const externalProviderId = activeSource.startsWith('external:')
     ? activeSource.slice('external:'.length)
@@ -522,7 +553,7 @@ export function KnowledgeSourcePicker({
       source => source.getKnowledgeBaseCount
     )
     if (sourcesWithCount.length === 0) {
-      setExternalKnowledgeBaseCounts(new Map())
+      setExternalKnowledgeBaseCounts(prev => (prev.size === 0 ? prev : new Map()))
       return
     }
 
@@ -610,17 +641,11 @@ export function KnowledgeSourcePicker({
         count: groupedKnowledgeBases.organization.length,
         icon: Building2,
       },
-      {
-        key: 'dingtalk' as SourceKey,
-        label: tChat('dingtalkDocs.tabTitle'),
-        count: 2,
-        icon: MessageSquareText,
-      },
       ...browseableExternalSources.map(source => ({
         key: `external:${source.providerId}` as SourceKey,
-        label: source.label ?? source.providerId,
+        label: getExternalSourceLabel(source, t),
         count: externalKnowledgeBaseCounts.get(source.providerId) ?? 0,
-        icon: Cloud,
+        icon: getExternalSourceIcon(source),
       })),
     ],
     [
@@ -630,7 +655,6 @@ export function KnowledgeSourcePicker({
       groupedKnowledgeBases.organization.length,
       groupedKnowledgeBases.personal.length,
       t,
-      tChat,
     ]
   )
 
@@ -665,7 +689,7 @@ export function KnowledgeSourcePicker({
 
       toast({
         title: t('picker.externalSelectionLimit', {
-          source: source.label ?? source.providerId,
+          source: getExternalSourceLabel(source, t),
           count: maxKnowledgeBases,
         }),
         variant: 'destructive',
@@ -852,11 +876,14 @@ export function KnowledgeSourcePicker({
   const [externalKbByScope, setExternalKbByScope] = useState<
     Map<string, { loading: boolean; error: string | null; items: ExternalKnowledgeBase[] }>
   >(new Map())
-  const externalKbRequestIds = useRef(new Map<string, number>())
   const externalKbQueries = useRef(new Map<string, string>())
   const [externalNodesByKb, setExternalNodesByKb] = useState<
     Map<string, { loading: boolean; error: string | null; items: ExternalKbNode[] }>
   >(new Map())
+  const [externalScopeStatusesByProvider, setExternalScopeStatusesByProvider] = useState<
+    Map<string, ExternalKnowledgeScopeStatus[]>
+  >(new Map())
+  const [syncingExternalScopes, setSyncingExternalScopes] = useState<Set<string>>(new Set())
 
   const loadInternalTree = useCallback(
     async (kb: KnowledgeBase) => {
@@ -900,9 +927,7 @@ export function KnowledgeSourcePicker({
     async (source: ExternalKnowledgeSource, scope: ExternalKnowledgeScope, query = '') => {
       if (!source.listKnowledgeBases) return
       const cacheKey = `${source.providerId}:${scope}`
-      const requestId = (externalKbRequestIds.current.get(cacheKey) ?? 0) + 1
       const normalizedQuery = query.trim()
-      externalKbRequestIds.current.set(cacheKey, requestId)
       externalKbQueries.current.set(cacheKey, normalizedQuery)
       setExternalKbByScope(prev => {
         const next = new Map(prev)
@@ -910,18 +935,24 @@ export function KnowledgeSourcePicker({
         return next
       })
       try {
-        const items = await listAllExternalKnowledgeBases(source, {
-          scope,
-          query: normalizedQuery || undefined,
-        })
-        if (externalKbRequestIds.current.get(cacheKey) !== requestId) return
+        const [items, statuses] = await Promise.all([
+          listAllExternalKnowledgeBases(source, {
+            scope,
+            query: normalizedQuery || undefined,
+          }),
+          source.getScopeStatuses?.() ?? Promise.resolve([]),
+        ])
         setExternalKbByScope(prev => {
           const next = new Map(prev)
           next.set(cacheKey, { loading: false, error: null, items })
           return next
         })
+        setExternalScopeStatusesByProvider(prev => {
+          const next = new Map(prev)
+          next.set(source.providerId, statuses)
+          return next
+        })
       } catch (loadError) {
-        if (externalKbRequestIds.current.get(cacheKey) !== requestId) return
         setExternalKbByScope(prev => {
           const next = new Map(prev)
           next.set(cacheKey, {
@@ -934,6 +965,36 @@ export function KnowledgeSourcePicker({
       }
     },
     [t]
+  )
+
+  const syncExternalScope = useCallback(
+    async (source: ExternalKnowledgeSource, scope: ExternalKnowledgeScope) => {
+      if (!source.syncScope) return
+      const syncKey = `${source.providerId}:${scope}`
+      setSyncingExternalScopes(prev => new Set(prev).add(syncKey))
+      try {
+        await source.syncScope(scope)
+        await loadExternalKnowledgeBases(source, scope, searchValue)
+      } catch (syncError) {
+        setExternalKbByScope(prev => {
+          const next = new Map(prev)
+          next.set(syncKey, {
+            loading: false,
+            error:
+              syncError instanceof Error ? syncError.message : t('chat:dingtalkDocs.syncFailed'),
+            items: [],
+          })
+          return next
+        })
+      } finally {
+        setSyncingExternalScopes(prev => {
+          const next = new Set(prev)
+          next.delete(syncKey)
+          return next
+        })
+      }
+    },
+    [loadExternalKnowledgeBases, searchValue, t]
   )
 
   useEffect(() => {
@@ -1060,42 +1121,6 @@ export function KnowledgeSourcePicker({
       )
     }
 
-    if (activeSource === 'dingtalk') {
-      return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
-    }
-
-    if (activeSource === 'dingtalk:docs') {
-      return (
-        <DingTalkDocsRootRow
-          nodes={dingtalkTrees.nodes}
-          totalCount={dingtalkTrees.totalCount}
-          loading={dingtalkTrees.loading}
-          error={dingtalkTrees.error}
-          configured={dingtalkTrees.isConfigured}
-          selectedIds={selectedDingTalkIds}
-          onRetry={dingtalkTrees.fetchDocs}
-          onToggle={() => toggleDingTalkNodeList(dingtalkTrees.nodes)}
-        />
-      )
-    }
-
-    if (activeSource === 'dingtalk:wikispace') {
-      return (
-        <DingTalkWikispaceRows
-          nodes={dingtalkTrees.wikispaceNodes}
-          query={searchValue}
-          loading={dingtalkTrees.wikispaceLoading}
-          error={dingtalkTrees.wikispaceError}
-          configured={dingtalkTrees.wikispaceConfigured}
-          selectedIds={selectedDingTalkIds}
-          activeNode={activeDingTalkSpace}
-          onRetry={dingtalkTrees.fetchWikispace}
-          onOpen={setActiveDingTalkSpace}
-          onToggle={toggleDingTalkNode}
-        />
-      )
-    }
-
     if (activeExternalSource) {
       if (!externalScope) {
         return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
@@ -1103,17 +1128,48 @@ export function KnowledgeSourcePicker({
 
       const cacheKey = `${activeExternalSource.providerId}:${externalScope}`
       const state = externalKbByScope.get(cacheKey)
+      const scopeStatus = externalScopeStatusesByProvider
+        .get(activeExternalSource.providerId)
+        ?.find(status => status.key === externalScope)
+      const syncing =
+        scopeStatus?.syncing ||
+        syncingExternalScopes.has(`${activeExternalSource.providerId}:${externalScope}`)
+      const supportsScopeSync =
+        !state?.error &&
+        (Boolean(activeExternalSource.syncScope) ||
+          Boolean(activeExternalSource.getScopeStatuses) ||
+          activeExternalSource.capabilities?.supportsSyncStatus === true)
       return (
-        <div className="flex min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col">
+          {supportsScopeSync ? (
+            <ExternalScopeSyncToolbar
+              source={activeExternalSource}
+              scope={externalScope}
+              status={scopeStatus}
+              syncing={Boolean(syncing)}
+              onSync={() => syncExternalScope(activeExternalSource, externalScope)}
+            />
+          ) : null}
           {state?.loading ? (
             <PickerLoading label={t('picker.loading')} />
           ) : state?.error ? (
             <PickerError
               message={state.error}
+              testId={`knowledge-picker-${activeExternalSource.providerId}-catalog-retry-button`}
               onRetry={() =>
                 loadExternalKnowledgeBases(activeExternalSource, externalScope, searchValue)
               }
             />
+          ) : (state?.items ?? []).length === 0 && supportsScopeSync ? (
+            <ExternalScopeEmptyState
+              source={activeExternalSource}
+              scope={externalScope}
+              status={scopeStatus}
+              syncing={Boolean(syncing)}
+              onSync={() => syncExternalScope(activeExternalSource, externalScope)}
+            />
+          ) : (state?.items ?? []).length === 0 ? (
+            <PickerEmpty label={t('picker.emptyKnowledgeBases')} />
           ) : (
             <ExternalKnowledgeBaseRows
               source={activeExternalSource}
@@ -1134,9 +1190,7 @@ export function KnowledgeSourcePicker({
     <div className="space-y-1 p-2">
       {sourceRows.map(row => {
         const Icon = row.icon
-        const active =
-          activeSource === row.key ||
-          (row.key === 'dingtalk' && activeSource.startsWith('dingtalk'))
+        const active = activeSource === row.key
         const isGroupSource = row.key === 'group'
         const externalSource =
           row.key.startsWith('external:') && active
@@ -1145,33 +1199,35 @@ export function KnowledgeSourcePicker({
 
         return (
           <React.Fragment key={row.key}>
-            <button
-              type="button"
-              className={cn(
-                'flex min-h-11 w-full items-center justify-between rounded-md px-3 py-2 text-left',
-                active ? 'bg-primary/10 text-primary' : 'hover:bg-surface text-text-primary'
-              )}
-              onClick={() => {
-                setActiveSource(row.key)
-                setActiveGroup(null)
-                setExternalScope(null)
-                setActiveKnowledgeBase(null)
-                setActiveDingTalkSpace(null)
-              }}
-              data-testid={
-                row.key === 'dingtalk'
-                  ? 'knowledge-picker-dingtalk-parent'
-                  : `knowledge-picker-source-${row.key}`
-              }
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="truncate text-sm font-medium">{row.label}</span>
-              </span>
-              <Badge variant="secondary" size="sm">
-                {row.count}
-              </Badge>
-            </button>
+            <LongTextTooltip content={row.label}>
+              <button
+                type="button"
+                className={cn(
+                  'flex min-h-11 w-full items-center justify-between rounded-md px-3 py-2 text-left',
+                  active ? 'bg-primary/10 text-primary' : 'hover:bg-surface text-text-primary'
+                )}
+                onClick={() => {
+                  setActiveSource(row.key)
+                  setActiveGroup(null)
+                  setExternalScope(null)
+                  setActiveKnowledgeBase(null)
+                }}
+                data-testid={`knowledge-picker-source-${row.key}`}
+                aria-label={row.label}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <TruncatedText
+                    text={row.label}
+                    focusable={false}
+                    className="text-sm font-medium"
+                  />
+                </span>
+                <Badge variant="secondary" size="sm">
+                  {row.count}
+                </Badge>
+              </button>
+            </LongTextTooltip>
 
             {isGroupSource && active
               ? groupEntries
@@ -1181,124 +1237,85 @@ export function KnowledgeSourcePicker({
                   .map(([name, group]) => {
                     const groupActive = activeGroup === name
                     return (
-                      <button
-                        key={name}
-                        type="button"
-                        className={cn(
-                          'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
-                          groupActive
-                            ? 'bg-primary/10 text-primary'
-                            : 'hover:bg-surface text-text-primary'
-                        )}
-                        onClick={() => {
-                          setActiveSource('group')
-                          setActiveGroup(name)
-                          setExternalScope(null)
-                          setActiveKnowledgeBase(null)
-                          setActiveDingTalkSpace(null)
-                        }}
-                        data-testid={`knowledge-picker-group-${name}`}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <Users className="h-4 w-4 shrink-0 text-text-muted" />
-                          <span className="truncate text-sm font-medium">{group.displayName}</span>
-                        </span>
-                        <Badge variant="secondary" size="sm">
-                          {group.items.length}
-                        </Badge>
-                      </button>
+                      <LongTextTooltip key={name} content={group.displayName}>
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
+                            groupActive
+                              ? 'bg-primary/10 text-primary'
+                              : 'hover:bg-surface text-text-primary'
+                          )}
+                          onClick={() => {
+                            setActiveSource('group')
+                            setActiveGroup(name)
+                            setExternalScope(null)
+                            setActiveKnowledgeBase(null)
+                          }}
+                          data-testid={`knowledge-picker-group-${name}`}
+                          aria-label={group.displayName}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Users className="h-4 w-4 shrink-0 text-text-muted" />
+                            <TruncatedText
+                              text={group.displayName}
+                              focusable={false}
+                              className="text-sm font-medium"
+                            />
+                          </span>
+                          <Badge variant="secondary" size="sm">
+                            {group.items.length}
+                          </Badge>
+                        </button>
+                      </LongTextTooltip>
                     )
                   })
               : null}
 
             {externalSource
-              ? getExternalKnowledgeScopes(externalSource).map(scope => {
-                  const ScopeIcon = getExternalScopeIcon(scope)
-                  const scopeActive = externalScope === scope.key
-                  return (
-                    <button
-                      key={scope.key}
-                      type="button"
-                      className={cn(
-                        'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
-                        scopeActive
-                          ? 'bg-primary/10 text-primary'
-                          : 'hover:bg-surface text-text-primary'
-                      )}
-                      onClick={() => {
-                        setActiveSource(`external:${externalSource.providerId}`)
-                        setActiveGroup(null)
-                        setExternalScope(scope.key)
-                        setActiveKnowledgeBase(null)
-                        setActiveDingTalkSpace(null)
-                        void loadExternalKnowledgeBases(externalSource, scope.key, searchValue)
-                      }}
-                      data-testid={`knowledge-picker-external-scope-${scope.key}`}
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <ScopeIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium">
-                          {getExternalScopeLabel(scope, t)}
-                        </span>
-                      </span>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                    </button>
-                  )
-                })
-              : null}
-
-            {row.key === 'dingtalk' && activeSource.startsWith('dingtalk')
-              ? (
-                  [
-                    {
-                      key: 'dingtalk:docs' as SourceKey,
-                      label: tChat('dingtalkDocs.myDocsTab'),
-                      count: dingtalkTrees.totalCount,
-                      icon: FileText,
-                    },
-                    {
-                      key: 'dingtalk:wikispace' as SourceKey,
-                      label: tChat('dingtalkDocs.wikispaceTab'),
-                      count: dingtalkTrees.wikispaceTotalCount,
-                      icon: Database,
-                    },
-                  ] as const
-                ).map(section => {
-                  const SectionIcon = section.icon
-                  const sectionActive = activeSource === section.key
-                  return (
-                    <button
-                      key={section.key}
-                      type="button"
-                      className={cn(
-                        'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
-                        sectionActive
-                          ? 'bg-primary/10 text-primary'
-                          : 'hover:bg-surface text-text-primary'
-                      )}
-                      onClick={() => {
-                        setActiveSource(section.key)
-                        setActiveGroup(null)
-                        setExternalScope(null)
-                        setActiveKnowledgeBase(null)
-                        setActiveDingTalkSpace(null)
-                      }}
-                      data-testid={
-                        section.key === 'dingtalk:docs'
-                          ? 'knowledge-picker-dingtalk-docs'
-                          : 'knowledge-picker-dingtalk-wikispace'
-                      }
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <SectionIcon className="h-4 w-4 shrink-0 text-text-muted" />
-                        <span className="truncate text-sm font-medium">{section.label}</span>
-                      </span>
-                      <Badge variant="secondary" size="sm">
-                        {section.count}
-                      </Badge>
-                    </button>
-                  )
-                })
+              ? getExternalKnowledgeScopes(externalSource)
+                  .sort((a, b) => {
+                    const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER
+                    const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER
+                    if (orderA !== orderB) return orderA - orderB
+                    return getExternalScopeLabel(a, t).localeCompare(getExternalScopeLabel(b, t))
+                  })
+                  .map(scope => {
+                    const ScopeIcon = getExternalScopeIcon(scope)
+                    const scopeActive = externalScope === scope.key
+                    return (
+                      <LongTextTooltip key={scope.key} content={getExternalScopeLabel(scope, t)}>
+                        <button
+                          type="button"
+                          className={cn(
+                            'flex min-h-11 w-full items-center justify-between rounded-md py-2 pl-8 pr-3 text-left',
+                            scopeActive
+                              ? 'bg-primary/10 text-primary'
+                              : 'hover:bg-surface text-text-primary'
+                          )}
+                          onClick={() => {
+                            setActiveSource(`external:${externalSource.providerId}`)
+                            setActiveGroup(null)
+                            setExternalScope(scope.key)
+                            setActiveKnowledgeBase(null)
+                            void loadExternalKnowledgeBases(externalSource, scope.key, searchValue)
+                          }}
+                          data-testid={`knowledge-picker-external-scope-${scope.key}`}
+                          aria-label={getExternalScopeLabel(scope, t)}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <ScopeIcon className="h-4 w-4 shrink-0 text-text-muted" />
+                            <TruncatedText
+                              text={getExternalScopeLabel(scope, t)}
+                              focusable={false}
+                              className="text-sm font-medium"
+                            />
+                          </span>
+                          <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                        </button>
+                      </LongTextTooltip>
+                    )
+                  })
               : null}
           </React.Fragment>
         )
@@ -1307,53 +1324,6 @@ export function KnowledgeSourcePicker({
   )
 
   const renderDocumentColumn = () => {
-    if (activeSource === 'dingtalk') {
-      return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
-    }
-
-    if (activeSource === 'dingtalk:docs') {
-      return (
-        <DingTalkDocumentColumn
-          title={tChat('dingtalkDocs.allDocs')}
-          nodes={dingtalkTrees.nodes}
-          totalCount={dingtalkTrees.totalCount}
-          loading={dingtalkTrees.loading}
-          error={dingtalkTrees.error}
-          configured={dingtalkTrees.isConfigured}
-          notConfiguredLabel={tChat('dingtalkDocs.notConfigured')}
-          emptyLabel={tChat('dingtalkDocs.empty')}
-          query={searchValue}
-          selectedIds={selectedDingTalkIds}
-          onRetry={dingtalkTrees.fetchDocs}
-          onToggle={toggleDingTalkNode}
-          onToggleAll={toggleDingTalkNodeList}
-        />
-      )
-    }
-
-    if (activeSource === 'dingtalk:wikispace') {
-      if (!activeDingTalkSpace) {
-        return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
-      }
-      return (
-        <DingTalkDocumentColumn
-          title={activeDingTalkSpace.name}
-          nodes={activeDingTalkSpace.children ?? []}
-          totalCount={countDingTalkNodes(activeDingTalkSpace.children ?? [])}
-          loading={dingtalkTrees.wikispaceLoading}
-          error={dingtalkTrees.wikispaceError}
-          configured={dingtalkTrees.wikispaceConfigured}
-          notConfiguredLabel={tChat('dingtalkDocs.wikispaceNotConfigured')}
-          emptyLabel={tChat('dingtalkDocs.wikispaceEmpty')}
-          query={searchValue}
-          selectedIds={selectedDingTalkIds}
-          onRetry={dingtalkTrees.fetchWikispace}
-          onToggle={toggleDingTalkNode}
-          onToggleAll={toggleDingTalkNodeList}
-        />
-      )
-    }
-
     if (!activeKnowledgeBase) {
       return <PickerEmpty label={t('picker.selectKnowledgeBase')} />
     }
@@ -1426,6 +1396,7 @@ export function KnowledgeSourcePicker({
         .map(ctx => ctx.ref.node_id as string)
     )
     const supportsDocumentSelection = provider.capabilities?.supportsDocumentSelection === true
+    const display = getExternalKnowledgeBaseDisplay(provider, knowledgeBase)
     const query = searchValue.trim()
     const documentResults = query
       ? flattenExternalDocuments(state?.items ?? []).filter(item =>
@@ -1435,7 +1406,7 @@ export function KnowledgeSourcePicker({
     return (
       <div className="flex h-full min-h-0 flex-col">
         <DocumentColumnHeader
-          title={knowledgeBase.knowledge_base_name}
+          title={getExternalKnowledgeBaseLabel(display, knowledgeBase, t)}
           documentCount={knowledgeBase.document_count ?? 0}
         />
         {state?.loading ? (
@@ -1460,6 +1431,7 @@ export function KnowledgeSourcePicker({
               <ExternalDocumentNode
                 key={node.node_id}
                 node={node}
+                path={[]}
                 depth={0}
                 disabled={!supportsDocumentSelection}
                 selectedNodeIds={selectedNodeIds}
@@ -1493,6 +1465,116 @@ export function KnowledgeSourcePicker({
   )
 }
 
+function ExternalScopeSyncToolbar({
+  source,
+  scope,
+  status,
+  syncing,
+  onSync,
+}: {
+  source: ExternalKnowledgeSource
+  scope: ExternalKnowledgeScope
+  status?: ExternalKnowledgeScopeStatus
+  syncing: boolean
+  onSync: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const configured = status?.configured ?? true
+  const canSync = configured && Boolean(source.syncScope)
+  const lastSyncedLabel = status?.lastSyncedAt
+    ? t('dingtalkDocs.lastSynced', { time: new Date(status.lastSyncedAt).toLocaleString() })
+    : t('dingtalkDocs.neverSynced')
+
+  return (
+    <div
+      className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2"
+      data-testid={`knowledge-picker-external-scope-sync-toolbar-${source.providerId}-${scope}`}
+    >
+      <span className="min-w-0 truncate text-xs text-text-muted">{lastSyncedLabel}</span>
+      {canSync ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 shrink-0 gap-1.5 px-2 text-primary"
+          disabled={syncing}
+          onClick={onSync}
+          data-testid={`knowledge-picker-external-scope-sync-button-${source.providerId}-${scope}`}
+        >
+          <RotateCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
+          {syncing ? t('dingtalkDocs.syncing') : t('dingtalkDocs.sync')}
+        </Button>
+      ) : (
+        <Link
+          href={
+            getExternalScopeActionHref(source, scope, 'configure') ||
+            '/settings?section=integrations&tab=integrations'
+          }
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 px-2 text-sm font-medium text-primary hover:text-primary/80"
+          data-testid={`knowledge-picker-external-scope-configure-link-${source.providerId}-${scope}`}
+        >
+          {t('dingtalkDocs.goToConfigure')}
+          <ExternalLink className="h-3.5 w-3.5" />
+        </Link>
+      )}
+    </div>
+  )
+}
+
+function ExternalScopeEmptyState({
+  source,
+  scope,
+  status,
+  syncing,
+  onSync,
+}: {
+  source: ExternalKnowledgeSource
+  scope: ExternalKnowledgeScope
+  status?: ExternalKnowledgeScopeStatus
+  syncing: boolean
+  onSync: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const configured = status?.configured ?? true
+  const message = status?.messageKey
+    ? t(status.messageKey)
+    : scope === 'organization'
+      ? t('dingtalkDocs.wikispaceEmpty')
+      : t('dingtalkDocs.empty')
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+      <p className="text-sm text-text-muted">{message}</p>
+      {configured && source.syncScope ? (
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          className="h-8 gap-1.5 px-3"
+          disabled={syncing}
+          onClick={onSync}
+          data-testid={`knowledge-picker-external-scope-empty-sync-button-${source.providerId}-${scope}`}
+        >
+          <RotateCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
+          {syncing ? t('dingtalkDocs.syncing') : t('dingtalkDocs.syncNow')}
+        </Button>
+      ) : (
+        <Link
+          href={
+            getExternalScopeActionHref(source, scope, 'configure') ||
+            '/settings?section=integrations&tab=integrations'
+          }
+          className="inline-flex h-8 items-center gap-1.5 px-2 text-sm font-medium text-primary hover:text-primary/80"
+          data-testid={`knowledge-picker-external-scope-empty-configure-link-${source.providerId}-${scope}`}
+        >
+          {t('dingtalkDocs.goToConfigure')}
+          <ExternalLink className="h-3.5 w-3.5" />
+        </Link>
+      )}
+    </div>
+  )
+}
+
 function KnowledgeBaseRows({
   items,
   query,
@@ -1519,29 +1601,33 @@ function KnowledgeBaseRows({
       {visibleItems.map(item => {
         const existing = getKnowledgeContext(selectedContexts, item.id)
         return (
-          <button
-            key={item.id}
-            type="button"
-            className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
-            onClick={() => {
-              onToggle(item)
-              onOpen(item)
-            }}
-            data-testid={`knowledge-picker-kb-${item.id}`}
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <Database className="h-4 w-4 shrink-0 text-text-muted" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-text-primary">
-                  {item.name}
-                </span>
-                <span className="block text-xs text-text-muted">
-                  {t('picker.count.documents', { count: item.document_count ?? 0 })}
+          <LongTextTooltip key={item.id} content={item.name}>
+            <button
+              type="button"
+              className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
+              onClick={() => {
+                onToggle(item)
+                onOpen(item)
+              }}
+              data-testid={`knowledge-picker-kb-${item.id}`}
+              aria-label={item.name}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Database className="h-4 w-4 shrink-0 text-text-muted" />
+                <span className="min-w-0">
+                  <TruncatedText
+                    text={item.name}
+                    focusable={false}
+                    className="text-sm font-medium text-text-primary"
+                  />
+                  <span className="block text-xs text-text-muted">
+                    {t('picker.count.documents', { count: item.document_count ?? 0 })}
+                  </span>
                 </span>
               </span>
-            </span>
-            {existing ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
-          </button>
+              {existing ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+            </button>
+          </LongTextTooltip>
         )
       })}
     </div>
@@ -1571,6 +1657,9 @@ function ExternalKnowledgeBaseRows({
     <div className="space-y-1 p-2">
       {visibleItems.map(item => {
         const canSelectKnowledgeBase = supportsExternalKnowledgeBaseSelection(source)
+        const display = getExternalKnowledgeBaseDisplay(source, item)
+        const label = getExternalKnowledgeBaseLabel(display, item, t)
+        const ItemIcon = getExternalDisplayIcon(display.icon ?? 'database')
         const existing = getExternalContext(
           selectedContexts,
           source.providerId,
@@ -1580,38 +1669,52 @@ function ExternalKnowledgeBaseRows({
           getExternalChildContexts(selectedContexts, source.providerId, item.knowledge_base_id)
             .length > 0
         return (
-          <button
-            key={item.knowledge_base_id}
-            type="button"
-            className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left hover:bg-surface"
-            onClick={() => {
-              if (canSelectKnowledgeBase) {
-                onToggle(item)
+          <LongTextTooltip key={item.knowledge_base_id} content={label}>
+            <button
+              type="button"
+              className={cn(
+                'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left',
+                display.rowVariant === 'primary'
+                  ? 'bg-primary/10 text-primary hover:bg-primary/15'
+                  : 'hover:bg-surface'
+              )}
+              onClick={() => {
+                if (canSelectKnowledgeBase) {
+                  onToggle(item)
+                }
+                onOpen(item)
+              }}
+              data-testid={
+                display.testId ?? `knowledge-picker-external-kb-${item.knowledge_base_id}`
               }
-              onOpen(item)
-            }}
-            data-testid={`knowledge-picker-external-kb-${item.knowledge_base_id}`}
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <Database className="h-4 w-4 shrink-0 text-text-muted" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-medium text-text-primary">
-                  {item.knowledge_base_name}
-                </span>
-                <span className="block text-xs text-text-muted">
-                  {t('picker.count.documents', { count: item.document_count ?? 0 })}
+              aria-label={label}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <ItemIcon className="h-4 w-4 shrink-0 text-text-muted" />
+                <span className="min-w-0">
+                  <TruncatedText
+                    text={label}
+                    focusable={false}
+                    className={cn(
+                      'text-sm font-medium',
+                      display.rowVariant === 'primary' ? 'text-primary' : 'text-text-primary'
+                    )}
+                  />
+                  <span className="block text-xs text-text-muted">
+                    {t('picker.count.documents', { count: item.document_count ?? 0 })}
+                  </span>
                 </span>
               </span>
-            </span>
-            {(canSelectKnowledgeBase && existing) || childSelected ? (
-              <Check
-                className={cn(
-                  'h-4 w-4 shrink-0 text-primary',
-                  !existing && childSelected ? 'opacity-50' : ''
-                )}
-              />
-            ) : null}
-          </button>
+              {(canSelectKnowledgeBase && existing) || childSelected ? (
+                <Check
+                  className={cn(
+                    'h-4 w-4 shrink-0 text-primary',
+                    !existing && childSelected ? 'opacity-50' : ''
+                  )}
+                />
+              ) : null}
+            </button>
+          </LongTextTooltip>
         )
       })}
     </div>
@@ -1623,7 +1726,7 @@ function DocumentColumnHeader({ title, documentCount }: { title: string; documen
   return (
     <div className="shrink-0 border-b border-border px-3 py-2">
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-text-primary">{title}</div>
+        <TruncatedText text={title} className="text-sm font-semibold text-text-primary" />
         <div className="text-xs text-text-muted">
           {t('picker.count.documents', { count: documentCount })}
         </div>
@@ -1634,7 +1737,8 @@ function DocumentColumnHeader({ title, documentCount }: { title: string; documen
 
 function PathLabel({ path }: { path: string[] }) {
   if (path.length === 0) return null
-  return <span className="block truncate text-xs text-text-muted">{path.join(' / ')}</span>
+  const pathLabel = path.join(' / ')
+  return <TruncatedText text={pathLabel} focusable={false} className="text-xs text-text-muted" />
 }
 
 function InternalDocumentSearchResults({
@@ -1666,45 +1770,53 @@ function InternalDocumentSearchResults({
             ? inheritedSelected || selectedFolderIds.has(node.folderId)
             : inheritedSelected || Boolean(document && selectedDocIds.has(document.id))
         const Icon = isFolder ? Folder : FileText
+        const fullPath = isFolder ? path.join(' / ') : formatKnowledgePath(path, node.name)
         return (
-          <button
-            key={node.id}
-            type="button"
-            disabled={inheritedSelected}
-            aria-disabled={inheritedSelected}
-            className={cn(
-              'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
-              selected ? 'bg-primary/10 text-primary' : '',
-              inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
-            )}
-            onClick={() => {
-              if (isFolder) {
-                onToggleFolder(node)
-              } else if (document && !inheritedSelected) {
-                onToggleDocument(document)
+          <LongTextTooltip key={node.id} content={fullPath}>
+            <button
+              type="button"
+              disabled={inheritedSelected}
+              aria-disabled={inheritedSelected}
+              className={cn(
+                'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
+                selected ? 'bg-primary/10 text-primary' : '',
+                inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
+              )}
+              onClick={() => {
+                if (isFolder) {
+                  onToggleFolder(node)
+                } else if (document && !inheritedSelected) {
+                  onToggleDocument(document)
+                }
+              }}
+              data-testid={
+                isFolder
+                  ? `knowledge-picker-search-folder-${node.folderId}`
+                  : `knowledge-picker-document-node-document-${document?.id}`
               }
-            }}
-            data-testid={
-              isFolder
-                ? `knowledge-picker-search-folder-${node.folderId}`
-                : `knowledge-picker-document-node-document-${document?.id}`
-            }
-          >
-            <span className="flex min-w-0 items-start gap-2">
-              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-              <span className="min-w-0">
-                <span className="block truncate text-text-primary">{node.name}</span>
-                <PathLabel path={path} />
+              aria-label={fullPath}
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+                <span className="min-w-0">
+                  <TruncatedText
+                    text={node.name}
+                    tooltipText={fullPath}
+                    focusable={false}
+                    className="text-text-primary"
+                  />
+                  <PathLabel path={path} />
+                </span>
               </span>
-            </span>
-            {isFolder && !selected ? (
-              <Badge variant="secondary" size="sm">
-                {node.documentCount}
-              </Badge>
-            ) : selected ? (
-              <Check className="h-4 w-4 shrink-0 text-primary" />
-            ) : null}
-          </button>
+              {isFolder && !selected ? (
+                <Badge variant="secondary" size="sm">
+                  {node.documentCount}
+                </Badge>
+              ) : selected ? (
+                <Check className="h-4 w-4 shrink-0 text-primary" />
+              ) : null}
+            </button>
+          </LongTextTooltip>
         )
       })}
     </div>
@@ -1731,29 +1843,37 @@ function ExternalDocumentSearchResults({
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {items.map(({ node, path }) => {
         const selected = selectedNodeIds.has(node.node_id)
+        const fullPath = formatKnowledgePath(path, node.name)
         return (
-          <button
-            key={node.node_id}
-            type="button"
-            disabled={disabled}
-            aria-disabled={disabled}
-            className={cn(
-              'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
-              selected ? 'bg-primary/10 text-primary' : '',
-              disabled ? 'cursor-not-allowed opacity-50' : ''
-            )}
-            onClick={() => onToggleDocument(node)}
-            data-testid={`knowledge-picker-external-node-${node.node_id}`}
-          >
-            <span className="flex min-w-0 items-start gap-2">
-              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-              <span className="min-w-0">
-                <span className="block truncate text-text-primary">{node.name}</span>
-                <PathLabel path={path} />
+          <LongTextTooltip key={node.node_id} content={fullPath}>
+            <button
+              type="button"
+              disabled={disabled}
+              aria-disabled={disabled}
+              className={cn(
+                'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
+                selected ? 'bg-primary/10 text-primary' : '',
+                disabled ? 'cursor-not-allowed opacity-50' : ''
+              )}
+              onClick={() => onToggleDocument(node)}
+              data-testid={`knowledge-picker-external-node-${node.node_id}`}
+              aria-label={fullPath}
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+                <span className="min-w-0">
+                  <TruncatedText
+                    text={node.name}
+                    tooltipText={fullPath}
+                    focusable={false}
+                    className="text-text-primary"
+                  />
+                  <PathLabel path={path} />
+                </span>
               </span>
-            </span>
-            {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
-          </button>
+              {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+            </button>
+          </LongTextTooltip>
         )
       })}
     </div>
@@ -1794,6 +1914,10 @@ function InternalDocumentNode({
   const selected =
     inheritedSelected || Boolean(node.document && selectedDocIds.has(node.document.id))
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
+  const fullPath =
+    node.type === 'folder' && node.path.length > 0
+      ? node.path.join(' / ')
+      : formatKnowledgePath(node.path, node.name)
 
   return (
     <div>
@@ -1806,22 +1930,30 @@ function InternalDocumentNode({
           style={{ paddingLeft: 8 + depth * 16 }}
           data-testid={`knowledge-picker-document-node-${node.id}`}
         >
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-start gap-2 text-left"
-            onClick={() => setOpen(!open)}
-          >
-            <ChevronRight
-              className={cn(
-                'mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted transition-transform',
-                open ? 'rotate-90' : ''
-              )}
-            />
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-            <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
-            </span>
-          </button>
+          <LongTextTooltip content={fullPath}>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start gap-2 text-left"
+              onClick={() => setOpen(!open)}
+              aria-label={fullPath}
+            >
+              <ChevronRight
+                className={cn(
+                  'mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted transition-transform',
+                  open ? 'rotate-90' : ''
+                )}
+              />
+              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+              <span className="min-w-0">
+                <TruncatedText
+                  text={node.name}
+                  tooltipText={fullPath}
+                  focusable={false}
+                  className="text-text-primary"
+                />
+              </span>
+            </button>
+          </LongTextTooltip>
           <span className="flex shrink-0 items-center gap-2">
             <Badge variant="secondary" size="sm">
               {node.documentCount}
@@ -1840,7 +1972,8 @@ function InternalDocumentNode({
                 }
               }}
               data-testid={`knowledge-picker-folder-scope-${node.folderId}`}
-              aria-label={node.name}
+              title={fullPath}
+              aria-label={fullPath}
             >
               <span
                 className={cn(
@@ -1854,34 +1987,42 @@ function InternalDocumentNode({
           </span>
         </div>
       ) : (
-        <button
-          type="button"
-          className={cn(
-            'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
-            selected ? 'bg-primary/10 text-primary' : '',
-            disabled ? 'opacity-50' : '',
-            inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
-          )}
-          disabled={inheritedSelected}
-          aria-disabled={inheritedSelected}
-          style={{ paddingLeft: 8 + depth * 16 }}
-          onClick={() => {
-            if (node.document && !disabled && !inheritedSelected) {
-              onToggleDocument(node.document)
-            }
-          }}
-          data-testid={`knowledge-picker-document-node-${node.id}`}
-        >
-          <span className="flex min-w-0 items-start gap-2">
-            <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-            <span className="min-w-0">
-              <span className="block truncate text-text-primary">{node.name}</span>
-              <PathLabel path={node.path} />
+        <LongTextTooltip content={fullPath}>
+          <button
+            type="button"
+            className={cn(
+              'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
+              selected ? 'bg-primary/10 text-primary' : '',
+              disabled ? 'opacity-50' : '',
+              inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
+            )}
+            disabled={inheritedSelected}
+            aria-disabled={inheritedSelected}
+            style={{ paddingLeft: 8 + depth * 16 }}
+            onClick={() => {
+              if (node.document && !disabled && !inheritedSelected) {
+                onToggleDocument(node.document)
+              }
+            }}
+            data-testid={`knowledge-picker-document-node-${node.id}`}
+            aria-label={fullPath}
+          >
+            <span className="flex min-w-0 items-start gap-2">
+              <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+              <span className="min-w-0">
+                <TruncatedText
+                  text={node.name}
+                  tooltipText={fullPath}
+                  focusable={false}
+                  className="text-text-primary"
+                />
+                <PathLabel path={node.path} />
+              </span>
             </span>
-          </span>
-          {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
-        </button>
+            {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+          </button>
+        </LongTextTooltip>
       )}
       {isFolder && open
         ? node.children.map(child => (
@@ -1903,12 +2044,14 @@ function InternalDocumentNode({
 
 function ExternalDocumentNode({
   node,
+  path,
   depth,
   disabled,
   selectedNodeIds,
   onToggleDocument,
 }: {
   node: ExternalKbNode
+  path: string[]
   depth: number
   disabled: boolean
   selectedNodeIds: Set<string>
@@ -1926,56 +2069,66 @@ function ExternalDocumentNode({
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
   const documentCount = isFolder ? countExternalDocuments(node) : 1
   const documentDisabled = disabled && !isFolder
+  const fullPath = formatKnowledgePath(path, node.name)
 
   return (
     <div>
-      <button
-        type="button"
-        disabled={documentDisabled}
-        aria-disabled={documentDisabled}
-        className={cn(
-          'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
-          documentDisabled ? 'cursor-not-allowed opacity-50' : ''
-        )}
-        style={{ paddingLeft: 8 + depth * 16 }}
-        onClick={() => {
-          if (isFolder) {
-            setOpen(!open)
-          } else if (!documentDisabled) {
-            onToggleDocument(node)
-          }
-        }}
-        data-testid={`knowledge-picker-external-node-${node.node_id}`}
-      >
-        <span className="flex min-w-0 items-start gap-2">
-          {isFolder ? (
-            <ChevronRight
-              className={cn(
-                'mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted transition-transform',
-                open ? 'rotate-90' : ''
-              )}
-            />
-          ) : (
-            <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <LongTextTooltip content={fullPath}>
+        <button
+          type="button"
+          disabled={documentDisabled}
+          aria-disabled={documentDisabled}
+          className={cn(
+            'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
+            documentDisabled ? 'cursor-not-allowed opacity-50' : ''
           )}
-          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-          <span className="min-w-0">
-            <span className="block truncate text-text-primary">{node.name}</span>
+          style={{ paddingLeft: 8 + depth * 16 }}
+          onClick={() => {
+            if (isFolder) {
+              setOpen(!open)
+            } else if (!documentDisabled) {
+              onToggleDocument(node)
+            }
+          }}
+          data-testid={`knowledge-picker-external-node-${node.node_id}`}
+          aria-label={fullPath}
+        >
+          <span className="flex min-w-0 items-start gap-2">
+            {isFolder ? (
+              <ChevronRight
+                className={cn(
+                  'mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted transition-transform',
+                  open ? 'rotate-90' : ''
+                )}
+              />
+            ) : (
+              <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            )}
+            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+            <span className="min-w-0">
+              <TruncatedText
+                text={node.name}
+                tooltipText={fullPath}
+                focusable={false}
+                className="text-text-primary"
+              />
+            </span>
           </span>
-        </span>
-        {isFolder ? (
-          <Badge variant="secondary" size="sm">
-            {documentCount}
-          </Badge>
-        ) : selected ? (
-          <Check className="h-4 w-4 shrink-0 text-primary" />
-        ) : null}
-      </button>
+          {isFolder ? (
+            <Badge variant="secondary" size="sm">
+              {documentCount}
+            </Badge>
+          ) : selected ? (
+            <Check className="h-4 w-4 shrink-0 text-primary" />
+          ) : null}
+        </button>
+      </LongTextTooltip>
       {isFolder && open
         ? (node.children ?? []).map(child => (
             <ExternalDocumentNode
               key={child.node_id}
               node={child}
+              path={[...path, node.name]}
               depth={depth + 1}
               disabled={disabled}
               selectedNodeIds={selectedNodeIds}
@@ -1996,12 +2149,20 @@ function PickerLoading({ label }: { label: string }) {
   )
 }
 
-function PickerError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function PickerError({
+  message,
+  onRetry,
+  testId,
+}: {
+  message: string
+  onRetry: () => void
+  testId?: string
+}) {
   const { t } = useTranslation('knowledge')
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
       <div className="text-sm text-red-500">{message}</div>
-      <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+      <Button type="button" variant="outline" size="sm" onClick={onRetry} data-testid={testId}>
         <RotateCw className="mr-1.5 h-3.5 w-3.5" />
         {t('picker.retry')}
       </Button>

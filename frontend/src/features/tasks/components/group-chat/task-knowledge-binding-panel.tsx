@@ -9,13 +9,17 @@ import { AlertCircle, Database, Loader2, Plus, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
+import { loadKBExtensions } from '@/features/knowledge/document/extension-loader'
 import { getExternalKnowledgeSource } from '@/features/knowledge/externalKnowledgeSourceRegistry'
+import { groupExternalRefs } from '@/features/tasks/utils/knowledge-selection-groups'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 import { cn } from '@/lib/utils'
 import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import type { ExternalKnowledgeRef } from '@/types/context'
+import type { ContextWarning } from '@/types/api'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import BindKnowledgeBaseDialog from './BindKnowledgeBaseDialog'
 
@@ -37,7 +41,8 @@ type TaskKnowledgeBindingItem =
       providerLabel: string
       targetName?: string
       detailText: string
-      raw: ExternalKnowledgeRef
+      fullLabel: string
+      raw: ExternalKnowledgeRef[]
     }
 
 interface TaskKnowledgeBindingPanelProps {
@@ -45,19 +50,9 @@ interface TaskKnowledgeBindingPanelProps {
   onClose?: () => void
 }
 
-function externalRefKey(ref: ExternalKnowledgeRef) {
-  const targetType = ref.target_type ?? 'knowledge_base'
-  const targetId = ref.node_id ?? ref.document_id ?? 'source'
-  return `external:${ref.provider}:${ref.mode}:${ref.id ?? 'all'}:${targetType}:${targetId}`
-}
-
 function providerBadgeLabel(provider: string) {
   const source = getExternalKnowledgeSource(provider)
   return source?.shortLabel ?? provider.toUpperCase()
-}
-
-function externalDisplayName(ref: ExternalKnowledgeRef) {
-  return ref.name ?? ref.id ?? ref.provider
 }
 
 function externalTargetName(ref: ExternalKnowledgeRef) {
@@ -81,6 +76,13 @@ function formatBoundTime(boundAt?: string) {
   }
 }
 
+function contextWarningMessage(warning: ContextWarning, t: ReturnType<typeof useTranslation>['t']) {
+  if (warning.reason === 'unsupported_binding') {
+    return t('knowledgeBinding.warningUnsupportedBinding')
+  }
+  return warning.message || warning.reason
+}
+
 export default function TaskKnowledgeBindingPanel({
   taskId,
   onClose,
@@ -91,12 +93,19 @@ export default function TaskKnowledgeBindingPanel({
     []
   )
   const [externalRefs, setExternalRefs] = useState<ExternalKnowledgeRef[]>([])
+  const [contextWarnings, setContextWarnings] = useState<ContextWarning[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [externalError, setExternalError] = useState<string | null>(null)
   const [maxInternalLimit, setMaxInternalLimit] = useState(10)
   const [removingKey, setRemovingKey] = useState<string | null>(null)
   const [bindDialogOpen, setBindDialogOpen] = useState(false)
+
+  useEffect(() => {
+    loadKBExtensions().catch((err: unknown) => {
+      console.warn('Failed to load KB extensions for task knowledge binding panel', err)
+    })
+  }, [])
 
   const bindings = useMemo<TaskKnowledgeBindingItem[]>(() => {
     const internalItems: TaskKnowledgeBindingItem[] = internalKnowledgeBases.map(kb => ({
@@ -110,15 +119,36 @@ export default function TaskKnowledgeBindingPanel({
       raw: kb,
     }))
 
-    const externalItems: TaskKnowledgeBindingItem[] = externalRefs.map(ref => ({
-      kind: 'external',
-      key: externalRefKey(ref),
-      displayName: externalDisplayName(ref),
-      providerLabel: providerBadgeLabel(ref.provider),
-      targetName: externalTargetName(ref),
-      detailText: t('knowledgeBinding.externalKnowledge'),
-      raw: ref,
-    }))
+    const externalItems: TaskKnowledgeBindingItem[] = groupExternalRefs(externalRefs).map(group => {
+      const rawRefs = group.refs
+        .filter(
+          (context): context is import('@/types/context').ExternalKnowledgeContext =>
+            context.type === 'external_knowledge'
+        )
+        .map(context => context.ref)
+      const firstRef = rawRefs[0]
+      const fullLabel =
+        group.selectionMode === 'all' || group.selectedTargetNames.length === 0
+          ? group.sourceName
+          : group.selectedTargetNames
+              .map(targetName => `${group.sourceName} / ${targetName}`)
+              .join('\n')
+      return {
+        kind: 'external',
+        key: group.key,
+        displayName: group.sourceName,
+        providerLabel: providerBadgeLabel(group.provider ?? ''),
+        targetName:
+          group.selectionMode === 'all'
+            ? t('knowledgeBinding.externalKnowledge')
+            : t('knowledgeBinding.selectedExternalTargets', {
+                count: group.selectedTargetCount,
+              }),
+        detailText: firstRef ? (externalTargetName(firstRef) ?? '') : '',
+        fullLabel,
+        raw: rawRefs,
+      }
+    })
 
     return [...internalItems, ...externalItems]
   }, [externalRefs, internalKnowledgeBases, t])
@@ -151,9 +181,11 @@ export default function TaskKnowledgeBindingPanel({
       }
       const externalResponse = externalResult.value
       setExternalRefs(externalResponse.items)
+      setContextWarnings(externalResponse.context_warnings ?? [])
     } catch (err) {
       console.warn('Failed to fetch external task knowledge bindings:', err)
       setExternalRefs([])
+      setContextWarnings([])
       setExternalError(t('knowledgeBinding.externalLoadFailed'))
     } finally {
       setLoading(false)
@@ -169,13 +201,21 @@ export default function TaskKnowledgeBindingPanel({
     try {
       if (item.kind === 'internal') {
         const kb = item.raw
-        await taskKnowledgeBaseApi.unbindKnowledgeBase(taskId, kb.name, kb.namespace)
+        await taskKnowledgeBaseApi.unbindKnowledgeBase(taskId, kb.name, kb.namespace, kb.id)
         setInternalKnowledgeBases(prev =>
-          prev.filter(current => !(current.name === kb.name && current.namespace === kb.namespace))
+          prev.filter(current =>
+            current.id != null && kb.id != null
+              ? current.id !== kb.id
+              : !(current.name === kb.name && current.namespace === kb.namespace)
+          )
         )
       } else {
-        const response = await taskKnowledgeBaseApi.removeExternalKnowledgeRef(taskId, item.raw)
-        setExternalRefs(response.items)
+        let nextRefs = externalRefs
+        for (const ref of item.raw) {
+          const response = await taskKnowledgeBaseApi.removeExternalKnowledgeRef(taskId, ref)
+          nextRefs = response.items
+        }
+        setExternalRefs(nextRefs)
       }
       toast({
         description: t('knowledgeBinding.removeSuccess', { name: item.displayName }),
@@ -193,6 +233,12 @@ export default function TaskKnowledgeBindingPanel({
 
   const handleBindSuccess = (newKb: BoundKnowledgeBaseDetail) => {
     setInternalKnowledgeBases(prev => [...prev, newKb])
+    setBindDialogOpen(false)
+  }
+
+  const handleExternalBindSuccess = (refs: ExternalKnowledgeRef[]) => {
+    setExternalRefs(refs)
+    fetchBindings()
     setBindDialogOpen(false)
   }
 
@@ -217,8 +263,8 @@ export default function TaskKnowledgeBindingPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
         <div>
           <h3 className="text-sm font-medium text-text-primary">{t('knowledgeBinding.title')}</h3>
           <p className="mt-0.5 text-xs text-text-muted">
@@ -229,20 +275,42 @@ export default function TaskKnowledgeBindingPanel({
           variant="outline"
           size="sm"
           onClick={() => setBindDialogOpen(true)}
-          disabled={internalKnowledgeBases.length >= maxInternalLimit}
           className="gap-1"
-          data-testid="task-knowledge-binding-add-internal-button"
+          data-testid="task-knowledge-binding-add-button"
         >
           <Plus className="h-4 w-4" />
           {t('groupChat.knowledge.add')}
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+        data-testid="task-knowledge-binding-list"
+      >
         {externalError ? (
           <div className="mb-3 flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-200">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{externalError}</span>
+          </div>
+        ) : null}
+
+        {contextWarnings.length > 0 ? (
+          <div
+            className="mb-3 space-y-1 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950 dark:text-amber-200"
+            data-testid="task-knowledge-binding-context-warnings"
+          >
+            {contextWarnings.map((warning, index) => (
+              <div
+                key={`${warning.type}:${warning.id ?? index}:${warning.reason}`}
+                className="flex items-start gap-2"
+              >
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  {warning.name ? `${warning.name}: ` : ''}
+                  {contextWarningMessage(warning, t)}
+                </span>
+              </div>
+            ))}
           </div>
         ) : null}
 
@@ -252,87 +320,121 @@ export default function TaskKnowledgeBindingPanel({
             <p className="text-sm text-text-muted">{t('knowledgeBinding.empty')}</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {bindings.map(item => {
-              const isRemoving = removingKey === item.key
-              return (
-                <div
-                  key={item.key}
-                  className={cn(
-                    'flex items-center justify-between rounded-lg bg-muted p-3 transition-colors hover:bg-muted/80',
-                    isRemoving && 'opacity-50'
-                  )}
-                  data-testid={`task-knowledge-binding-${item.key}`}
+          <div className="space-y-4">
+            {[
+              {
+                key: 'internal',
+                title: t('knowledgeBinding.internalKnowledge'),
+                items: bindings.filter(item => item.kind === 'internal'),
+              },
+              {
+                key: 'external',
+                title: t('knowledgeBinding.externalKnowledgeSection'),
+                items: bindings.filter(item => item.kind === 'external'),
+              },
+            ]
+              .filter(section => section.items.length > 0)
+              .map(section => (
+                <section
+                  key={section.key}
+                  data-testid={`task-knowledge-binding-${section.key}-section`}
                 >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                      <Database className="h-4 w-4 text-primary" />
-                    </div>
+                  <h4 className="mb-2 text-xs font-medium text-text-muted">{section.title}</h4>
+                  <div className="space-y-2">
+                    {section.items.map(item => {
+                      const isRemoving = removingKey === item.key
+                      const fullLabel = item.kind === 'external' ? item.fullLabel : item.displayName
+                      return (
+                        <LongTextTooltip key={item.key} content={fullLabel}>
+                          <div
+                            className={cn(
+                              'flex items-center justify-between rounded-lg bg-muted p-3 transition-colors hover:bg-muted/80',
+                              isRemoving && 'opacity-50'
+                            )}
+                            data-testid={`task-knowledge-binding-${item.key}`}
+                            aria-label={fullLabel}
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-3">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                                <Database className="h-4 w-4 text-primary" />
+                              </div>
 
-                    <div className="min-w-0">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="truncate text-sm font-medium text-text-primary">
-                          {item.displayName}
-                        </span>
-                        {item.kind === 'external' ? (
-                          <Badge variant="secondary" size="sm">
-                            {item.providerLabel}
-                          </Badge>
-                        ) : (
-                          <span className="rounded bg-surface px-1.5 py-0.5 text-xs text-text-muted">
-                            {formatDocumentCount(item.documentCount, t)}
-                          </span>
-                        )}
-                      </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <TruncatedText
+                                    text={item.displayName}
+                                    tooltipText={fullLabel}
+                                    focusable={false}
+                                    className="text-sm font-medium text-text-primary"
+                                  />
+                                  {item.kind === 'external' ? (
+                                    <Badge variant="secondary" size="sm" className="shrink-0">
+                                      {item.providerLabel}
+                                    </Badge>
+                                  ) : (
+                                    <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-xs text-text-muted">
+                                      {formatDocumentCount(item.documentCount, t)}
+                                    </span>
+                                  )}
+                                </div>
 
-                      {item.kind === 'internal' ? (
-                        <>
-                          {item.description && (
-                            <p className="mt-0.5 max-w-[240px] truncate text-xs text-text-muted">
-                              {item.description}
-                            </p>
-                          )}
-                          {item.boundBy || item.boundAt ? (
-                            <p className="mt-0.5 text-xs text-text-muted/70">
-                              {t('groupChat.knowledge.boundBy', {
-                                name: item.boundBy,
-                                time: formatBoundTime(item.boundAt),
-                              })}
-                            </p>
-                          ) : null}
-                        </>
-                      ) : (
-                        <p className="mt-0.5 max-w-[240px] truncate text-xs text-text-muted">
-                          {item.targetName ?? item.detailText}
-                        </p>
-                      )}
-                    </div>
+                                {item.kind === 'internal' ? (
+                                  <>
+                                    {item.description && (
+                                      <TruncatedText
+                                        text={item.description}
+                                        focusable={false}
+                                        className="mt-0.5 max-w-[240px] text-xs text-text-muted"
+                                      />
+                                    )}
+                                    {item.boundBy || item.boundAt ? (
+                                      <p className="mt-0.5 text-xs text-text-muted/70">
+                                        {t('groupChat.knowledge.boundBy', {
+                                          name: item.boundBy,
+                                          time: formatBoundTime(item.boundAt),
+                                        })}
+                                      </p>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  <TruncatedText
+                                    text={item.targetName ?? item.detailText}
+                                    tooltipText={item.fullLabel}
+                                    focusable={false}
+                                    className="mt-0.5 max-w-[240px] text-xs text-text-muted"
+                                  />
+                                )}
+                              </div>
+                            </div>
+
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 text-text-muted hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
+                              onClick={() => handleRemove(item)}
+                              disabled={isRemoving}
+                              aria-label={t('knowledgeBinding.remove', { name: item.displayName })}
+                              data-testid={`task-knowledge-binding-remove-${item.key}`}
+                            >
+                              {isRemoving ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </div>
+                        </LongTextTooltip>
+                      )
+                    })}
                   </div>
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-text-muted hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
-                    onClick={() => handleRemove(item)}
-                    disabled={isRemoving}
-                    aria-label={t('knowledgeBinding.remove', { name: item.displayName })}
-                    data-testid={`task-knowledge-binding-remove-${item.key}`}
-                  >
-                    {isRemoving ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              )
-            })}
+                </section>
+              ))}
           </div>
         )}
       </div>
 
       {onClose && (
-        <div className="px-4 pb-4">
+        <div className="shrink-0 px-4 pb-4">
           <Button variant="outline" onClick={onClose} className="w-full">
             {t('common:actions.done')}
           </Button>
@@ -344,7 +446,10 @@ export default function TaskKnowledgeBindingPanel({
         onOpenChange={setBindDialogOpen}
         taskId={taskId}
         boundKnowledgeBases={internalKnowledgeBases}
+        boundExternalRefs={externalRefs}
         onSuccess={handleBindSuccess}
+        onExternalSuccess={handleExternalBindSuccess}
+        internalLimitReached={internalKnowledgeBases.length >= maxInternalLimit}
       />
     </div>
   )

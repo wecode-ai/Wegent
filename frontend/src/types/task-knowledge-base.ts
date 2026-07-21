@@ -7,6 +7,7 @@
  */
 
 import type { ExternalKnowledgeRef } from './context'
+import type { ContextWarning } from './api'
 
 export interface KnowledgeBaseRef {
   name: string
@@ -24,6 +25,10 @@ export interface BoundKnowledgeBaseDetail {
   document_count: number
   bound_by: string
   bound_at: string
+  scope_restricted?: boolean
+  document_ids?: number[]
+  folder_ids?: number[]
+  include_subfolders?: boolean
 }
 
 export interface BoundKnowledgeBaseListResponse {
@@ -44,6 +49,13 @@ export interface UnbindKnowledgeBaseResponse {
 }
 
 export interface BoundExternalKnowledgeRefListResponse {
+  items: ExternalKnowledgeRef[]
+  total: number
+  context_warnings?: ContextWarning[]
+}
+
+export interface BindExternalKnowledgeRefsResponse {
+  message: string
   items: ExternalKnowledgeRef[]
   total: number
 }

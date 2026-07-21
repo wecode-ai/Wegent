@@ -217,8 +217,8 @@ export function TaskMembersPanel({
   return (
     <>
       <Dialog open={open} onOpenChange={open => !open && handleClose()}>
-        <DialogContent className="sm:max-w-md max-h-[80vh] flex flex-col">
-          <DialogHeader>
+        <DialogContent className="flex h-[80vh] max-h-[640px] min-h-0 flex-col overflow-hidden sm:max-w-md">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <Users className="w-5 h-5" />
               {taskTitle}
@@ -229,8 +229,8 @@ export function TaskMembersPanel({
           </DialogHeader>
 
           {!inviteUrl ? (
-            <Tabs defaultValue="members" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="grid w-full grid-cols-2">
+            <Tabs defaultValue="members" className="flex min-h-0 flex-1 flex-col">
+              <TabsList className="grid w-full shrink-0 grid-cols-2">
                 <TabsTrigger value="members" className="flex items-center gap-1.5">
                   <Users className="h-4 w-4" />
                   {t('chat:groupChat.tabs.members')}
@@ -241,8 +241,8 @@ export function TaskMembersPanel({
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="members" className="flex-1 overflow-hidden mt-4">
-                <div className="space-y-4 h-full flex flex-col">
+              <TabsContent value="members" className="mt-4 min-h-0 flex-1 overflow-hidden">
+                <div className="flex h-full min-h-0 flex-col space-y-4">
                   {/* Action buttons */}
                   <div className="flex gap-2">
                     <Button
@@ -344,7 +344,7 @@ export function TaskMembersPanel({
                 </div>
               </TabsContent>
 
-              <TabsContent value="knowledge" className="flex-1 overflow-hidden mt-4 -mx-6 -mb-6">
+              <TabsContent value="knowledge" className="-mx-6 mt-4 min-h-0 flex-1 overflow-hidden">
                 <TaskKnowledgeBindingPanel taskId={taskId} onClose={handleClose} />
               </TabsContent>
             </Tabs>

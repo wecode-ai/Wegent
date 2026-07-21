@@ -43,6 +43,7 @@
     "selectKnowledgeBase": "选择一个知识库查看文档",
     "selectWholeKb": "选择知识库",
     "selected": "已选择",
+    "allDocuments": "整库",
     "selectedDocuments": "已选 {{count}} 个文档",
     "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
     "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
