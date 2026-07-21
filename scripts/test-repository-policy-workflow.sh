@@ -34,6 +34,7 @@ require_line "$POLICY_WORKFLOW" "contents: read" "read-only repository permissio
 require_line "$POLICY_WORKFLOW" "path: trusted-policy" "trusted script checkout path"
 require_line "$POLICY_WORKFLOW" "path: policy-target" "PR content checkout path"
 require_line "$POLICY_WORKFLOW" 'ref: refs/pull/${{ github.event.pull_request.number }}/merge' "PR merge ref checkout"
+require_line "$POLICY_WORKFLOW" "allow-unsafe-pr-checkout: true" "reviewed fork PR checkout opt-in"
 require_line "$POLICY_WORKFLOW" "REPOSITORY_POLICY_ROOT: \${{ github.workspace }}/policy-target" "target repository scan root"
 require_line "$POLICY_WORKFLOW" "trusted-policy/scripts/hooks/check-repository-policy.sh" "trusted policy script execution"
 
