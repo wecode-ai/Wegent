@@ -748,7 +748,7 @@ export function ModelSelector({
   const modelRowActive = activeDesktopSubmenu?.type === 'models'
 
   return (
-    <div ref={containerRef} className="group/model-selector relative">
+    <div ref={containerRef} className="group/model-selector relative min-w-0">
       {open && isMobile && renderMobileSheet()}
       {open &&
         !isMobile &&

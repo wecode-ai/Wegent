@@ -1064,6 +1064,26 @@ export function WorkspaceBrowserPanel({
   }, [active, embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
 
   useEffect(() => {
+    if (!embeddedBrowserAvailable) return
+
+    const handlePageHide = () => {
+      void hideEmbeddedBrowser().catch(error => {
+        console.error('Failed to hide embedded browser before page unload:', error)
+      })
+    }
+    const handlePageShow = () => {
+      if (activeRef.current) scheduleEmbeddedBrowserBoundsSync(true)
+    }
+
+    window.addEventListener('pagehide', handlePageHide)
+    window.addEventListener('pageshow', handlePageShow)
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide)
+      window.removeEventListener('pageshow', handlePageShow)
+    }
+  }, [embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
+
+  useEffect(() => {
     if (!embeddedBrowserAvailable || !currentUrl) return
     const host = browserHostRef.current
     if (!host) return
