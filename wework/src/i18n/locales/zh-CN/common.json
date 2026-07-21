@@ -970,6 +970,8 @@
     "keyboard_shortcuts_increase_font_size_description": "同时增大 UI 和代码字号",
     "keyboard_shortcuts_decrease_font_size": "减小字号",
     "keyboard_shortcuts_decrease_font_size_description": "同时减小 UI 和代码字号",
+    "keyboard_shortcuts_reset_font_size": "重置字号",
+    "keyboard_shortcuts_reset_font_size_description": "将 UI 和代码字号恢复为默认值",
     "keyboard_shortcuts_recording": "按下快捷键",
     "keyboard_shortcuts_unassigned": "未设置",
     "keyboard_shortcuts_reset": "恢复默认",
