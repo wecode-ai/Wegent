@@ -139,7 +139,9 @@ describe('QuickPhraseMenu', () => {
     render(<QuickPhraseMenu onSelect={vi.fn()} />)
 
     fireEvent.click(screen.getByTestId('quick-phrase-button'))
-    fireEvent.click(screen.getByTestId('quick-phrase-stash-clear-button'))
+    const clearButton = screen.getByTestId('quick-phrase-stash-clear-button')
+    expect(clearButton).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0')
+    fireEvent.click(clearButton)
 
     await waitFor(() =>
       expect(appPreferenceMocks.update).toHaveBeenCalledWith({

@@ -278,7 +278,7 @@ export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: Quick
                   type="button"
                   data-testid="quick-phrase-stash-clear-button"
                   onClick={() => void clearStash()}
-                  className="rounded-md px-1.5 py-0.5 text-xs text-text-muted hover:bg-muted hover:text-text-primary"
+                  className="min-h-11 min-w-11 rounded-md px-1.5 py-0.5 text-xs text-text-muted hover:bg-muted hover:text-text-primary md:min-h-0 md:min-w-0"
                 >
                   {t('workbench.quick_phrase_stash_clear', '清空')}
                 </button>
