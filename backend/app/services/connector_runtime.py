@@ -58,7 +58,7 @@ class ConnectorRuntimeService:
                 continue
             try:
                 upstream_tools = await ConnectorRuntimeService._upstream_tools(
-                    db, app, connection
+                    db, app, connection, user
                 )
             except HTTPException as exc:
                 logger.warning(
@@ -72,21 +72,7 @@ class ConnectorRuntimeService:
                 upstream_name = tool.name
                 if allowlist and upstream_name not in allowlist:
                     continue
-                tools.append(
-                    ConnectorTool(
-                        name=f"{app.slug}__{upstream_name}",
-                        title=getattr(tool, "title", None),
-                        description=getattr(tool, "description", "") or "",
-                        input_schema=getattr(tool, "inputSchema", None)
-                        or {"type": "object", "properties": {}},
-                        annotations=ConnectorRuntimeService._model_dump(
-                            getattr(tool, "annotations", None)
-                        ),
-                        app_id=app.id,
-                        app_slug=app.slug,
-                        app_name=app.name,
-                    )
-                )
+                tools.append(ConnectorRuntimeService._tool_from_upstream(app, tool))
         return tools
 
     @staticmethod
@@ -126,7 +112,7 @@ class ConnectorRuntimeService:
         allowlist = set(app.tool_allowlist or [])
         if allowlist and upstream_name not in allowlist:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")
-        config = await ConnectorRuntimeService._server_config(db, app, connection)
+        config = await ConnectorRuntimeService._server_config(db, app, connection, user)
         if app.transport == "http":
             definition = ConnectorRuntimeService._http_tool_definition(
                 app, upstream_name
@@ -189,6 +175,16 @@ class ConnectorRuntimeService:
                 name=f"{app.slug}__{definition.name}",
                 description=definition.description,
                 input_schema=definition.input_schema,
+                connector_id=app.slug,
+                connector_slug=app.slug,
+                connector_name=app.name,
+                raw_tool_name=definition.name,
+                model_visible=True,
+                risk_hints={
+                    "destructive": definition.method in {"DELETE", "PUT", "PATCH"},
+                    "open_world": True,
+                },
+                source_transport=app.transport or "http",
                 app_id=app.id,
                 app_slug=app.slug,
                 app_name=app.name,
@@ -196,6 +192,30 @@ class ConnectorRuntimeService:
             for definition in ConnectorRuntimeService._http_tool_definitions(app)
             if not allowlist or definition.name in allowlist
         ]
+
+    @staticmethod
+    def _tool_from_upstream(app: ConnectorApp, tool: Any) -> ConnectorTool:
+        upstream_name = tool.name
+        return ConnectorTool(
+            name=f"{app.slug}__{upstream_name}",
+            title=getattr(tool, "title", None),
+            description=getattr(tool, "description", "") or "",
+            input_schema=getattr(tool, "inputSchema", None)
+            or {"type": "object", "properties": {}},
+            annotations=ConnectorRuntimeService._model_dump(
+                getattr(tool, "annotations", None)
+            ),
+            connector_id=app.slug,
+            connector_slug=app.slug,
+            connector_name=app.name,
+            raw_tool_name=upstream_name,
+            model_visible=True,
+            risk_hints=ConnectorRuntimeService._risk_hints(tool),
+            source_transport=app.transport or "streamable-http",
+            app_id=app.id,
+            app_slug=app.slug,
+            app_name=app.name,
+        )
 
     @staticmethod
     def _http_tool_definitions(
@@ -230,10 +250,15 @@ class ConnectorRuntimeService:
 
     @staticmethod
     async def _upstream_tools(
-        db: Session, app: ConnectorApp, connection: ConnectorConnection | None
+        db: Session,
+        app: ConnectorApp,
+        connection: ConnectorConnection | None,
+        user: User,
     ) -> list[Any]:
         try:
-            config = await ConnectorRuntimeService._server_config(db, app, connection)
+            config = await ConnectorRuntimeService._server_config(
+                db, app, connection, user
+            )
             async with ConnectorRuntimeService._mcp_session(config) as session:
                 return await ConnectorRuntimeService._list_all_tools(session)
         except Exception as exc:
@@ -427,11 +452,17 @@ class ConnectorRuntimeService:
 
     @staticmethod
     async def _server_config(
-        db: Session, app: ConnectorApp, connection: ConnectorConnection | None
+        db: Session,
+        app: ConnectorApp,
+        connection: ConnectorConnection | None,
+        user: User | None = None,
     ) -> dict[str, Any]:
         if connection:
             await ConnectorRuntimeService._refresh_oauth_if_needed(db, app, connection)
         headers = _decrypt_json(app.provider_headers_encrypted)
+        if user:
+            headers["X-Wegent-Username"] = user.user_name
+            headers["X-Wegent-User-Id"] = str(user.id)
         if connection and connection.access_token_encrypted:
             access_token = decrypt_sensitive_data_with_embedded_iv(
                 connection.access_token_encrypted
@@ -548,6 +579,22 @@ class ConnectorRuntimeService:
         if hasattr(value, "model_dump"):
             return value.model_dump(mode="json", by_alias=True, exclude_none=True)
         return None
+
+    @staticmethod
+    def _risk_hints(tool: Any) -> dict[str, Any]:
+        annotations = ConnectorRuntimeService._model_dump(
+            getattr(tool, "annotations", None)
+        )
+        if not annotations:
+            return {}
+        return {
+            "destructive": bool(
+                annotations.get("destructiveHint") or annotations.get("destructive")
+            ),
+            "open_world": bool(
+                annotations.get("openWorldHint") or annotations.get("open_world")
+            ),
+        }
 
     @staticmethod
     def _json_safe(value: Any) -> Any:

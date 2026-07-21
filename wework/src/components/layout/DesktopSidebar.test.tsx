@@ -15,7 +15,6 @@ import {
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
 import { openLocalWorkspace } from '@/lib/local-terminal'
-import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/appPreferences'
 
 vi.mock('@/lib/local-terminal', () => ({
   openLocalWorkspace: vi.fn(),
@@ -941,20 +940,10 @@ describe('DesktopSidebar', () => {
     expect(onOpenSites).toHaveBeenCalledTimes(1)
   })
 
-  test('shows Sites only while experimental features are enabled', async () => {
+  test('shows Sites navigation by default', async () => {
     renderSidebar()
 
-    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
-
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
-          detail: { ...defaultAppPreferences, experimentalFeaturesEnabled: true },
-        })
-      )
-    })
-
-    expect(await screen.findByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {

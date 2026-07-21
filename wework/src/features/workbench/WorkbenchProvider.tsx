@@ -18,7 +18,7 @@ import {
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
   LocalDeviceApp,
@@ -1200,27 +1200,28 @@ export function WorkbenchProvider({
     }
     if (cloudConnection.isConnected && cloudConnection.apiBaseUrl && cloudConnection.token) {
       try {
-        const connectorApps = await listWegentConnectorApps(
+        const installedConnectors = await listWegentInstalledConnectorApps(
           cloudConnection.apiBaseUrl,
           cloudConnection.token
         )
-        const connectedApps = connectorApps.filter(app => app.connection.status === 'connected')
+        const connectedApps = installedConnectors.apps.filter(app => app.enabled && app.callable)
         const synced = await requestLocalExecutor<{
           apps: Array<{ slug: string; skillPath: string }>
         }>('runtime.connectors.apps.sync', {
           apps: connectedApps.map(app => ({
             slug: app.slug,
-            name: app.name,
-            description: app.description,
+            name: app.runtime_name ?? app.slug,
+            description: app.description ?? '',
+            tools: app.tool_summaries ?? [],
           })),
         })
         const skillPathBySlug = new Map(synced.apps.map(app => [app.slug, app.skillPath]))
         apps.push(
           ...connectedApps.map(app => ({
             id: `wegent:${app.slug}`,
-            name: app.name,
-            description: app.description,
-            logoUrl: app.icon_url,
+            name: app.runtime_name ?? app.slug,
+            description: app.description ?? '',
+            logoUrl: app.icon_url ?? null,
             isAccessible: true,
             isEnabled: true,
             pluginDisplayNames: ['Wegent Cloud'],

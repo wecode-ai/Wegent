@@ -130,6 +130,28 @@ export interface ConnectorHttpToolDefinition {
   timeout_seconds: number
 }
 
+export interface ConnectorToolInfo {
+  name: string
+  title: string | null
+  description: string
+  input_schema: Record<string, unknown>
+  connector_id: string
+  raw_tool_name: string
+  model_visible: boolean
+  risk_hints: Record<string, unknown>
+  source_transport: ConnectorTransport
+}
+
+export interface ConnectorToolListResponse {
+  tools: ConnectorToolInfo[]
+}
+
+export interface ConnectorToolCallResponse {
+  content: unknown
+  structured_content: Record<string, unknown> | null
+  is_error: boolean
+}
+
 export interface AdminConnectorApp {
   id: number
   slug: string
@@ -1300,6 +1322,21 @@ export const adminApis = {
 
   async disableConnectorApp(appId: number): Promise<void> {
     return apiClient.delete(`/admin/connector-apps/${appId}`)
+  },
+
+  async discoverConnectorAppTools(appId: number): Promise<ConnectorToolListResponse> {
+    return apiClient.post(`/admin/connector-apps/${appId}/tools/discover`, {})
+  },
+
+  async testConnectorAppTool(
+    appId: number,
+    name: string,
+    argumentsValue: Record<string, unknown> = {}
+  ): Promise<ConnectorToolCallResponse> {
+    return apiClient.post(`/admin/connector-apps/${appId}/tools/test`, {
+      name,
+      arguments: argumentsValue,
+    })
   },
 
   // ==================== Template Management ====================

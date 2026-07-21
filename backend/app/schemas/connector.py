@@ -271,6 +271,70 @@ class ConnectorAppResponse(BaseModel):
     connection: ConnectorConnectionResponse
 
 
+class ConnectorAppListItem(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str
+    logo_url: str | None = None
+    install_url: str | None = None
+    auth_type: str
+    is_accessible: bool
+    is_enabled: bool
+    callable: bool = False
+    runtime_name: str | None = None
+    connection: ConnectorConnectionResponse
+
+
+class ConnectorAppListResponse(BaseModel):
+    data: list[ConnectorAppListItem]
+    next_cursor: str | None = None
+
+
+class ConnectorAppReadRequest(BaseModel):
+    app_ids: list[str] = Field(default_factory=list, max_length=100)
+    include_tools: bool = False
+
+
+class ConnectorToolSummary(BaseModel):
+    name: str
+    title: str | None = None
+    description: str = ""
+    raw_tool_name: str | None = None
+
+
+class ConnectorAppReadItem(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str
+    icon_url: str | None = None
+    auth_type: str
+    tool_summaries: list[ConnectorToolSummary] = Field(default_factory=list)
+
+
+class ConnectorAppReadResponse(BaseModel):
+    apps: list[ConnectorAppReadItem]
+    missing_app_ids: list[str] = Field(default_factory=list)
+
+
+class ConnectorInstalledApp(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str = ""
+    icon_url: str | None = None
+    runtime_name: str | None = None
+    enabled: bool
+    callable: bool
+    connection: ConnectorConnectionResponse
+    tool_summaries: list[ConnectorToolSummary] = Field(default_factory=list)
+
+
+class ConnectorInstalledResponse(BaseModel):
+    apps: list[ConnectorInstalledApp]
+
+
 class ConnectorAuthorizeResponse(BaseModel):
     authorization_url: str | None = None
     status: Literal["connected", "pending"]
@@ -293,6 +357,13 @@ class ConnectorTool(BaseModel):
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
     annotations: dict[str, Any] | None = None
+    connector_id: str
+    connector_slug: str
+    connector_name: str
+    raw_tool_name: str
+    model_visible: bool = True
+    risk_hints: dict[str, Any] = Field(default_factory=dict)
+    source_transport: str
     app_id: int
     app_slug: str
     app_name: str

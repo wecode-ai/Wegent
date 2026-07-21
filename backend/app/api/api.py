@@ -7,6 +7,7 @@ from app.api.endpoints import (
     api_keys,
     attachments_open,
     auth,
+    connector_app_projection,
     connector_apps,
     connector_runtime,
     deep_research,
@@ -117,6 +118,9 @@ api_router.include_router(
     connector_apps.router, prefix="/connector-apps", tags=["connector-apps"]
 )
 api_router.include_router(
+    connector_app_projection.router, prefix="/apps", tags=["apps"]
+)
+api_router.include_router(
     connector_runtime.router,
     prefix="/connector-runtime",
     tags=["connector-runtime"],
@@ -183,7 +187,7 @@ api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
-api_router.include_router(sites.router, prefix="/v1/sites", tags=["sites"])
+api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
 api_router.include_router(
     device_chat_tasks.router, prefix="/device-chat", tags=["device-chat"]

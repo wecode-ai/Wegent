@@ -18,7 +18,7 @@ vi.mock('./cloudConnectionAvailability', () => ({
 
 vi.mock('@/api/cloud/connectorApps', () => ({
   issueWegentConnectorToken: mocks.issueToken,
-  listWegentConnectorApps: mocks.listApps,
+  listWegentInstalledConnectorApps: mocks.listApps,
 }))
 
 vi.mock('@/tauri/localExecutor', () => ({
@@ -40,20 +40,27 @@ describe('LocalExecutorCloudBridge', () => {
       token_type: 'bearer',
       expires_in: 900,
     })
-    mocks.listApps.mockResolvedValue([
-      {
-        id: 1,
-        slug: 'tickets',
-        name: 'Tickets',
-        connection: { status: 'connected' },
-      },
-      {
-        id: 2,
-        slug: 'docs',
-        name: 'Docs',
-        connection: { status: 'disconnected' },
-      },
-    ])
+    mocks.listApps.mockResolvedValue({
+      apps: [
+        {
+          id: 'tickets',
+          slug: 'tickets',
+          runtime_name: 'Tickets',
+          enabled: true,
+          callable: true,
+          connection: { status: 'connected' },
+          tool_summaries: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+        },
+        {
+          id: 'docs',
+          slug: 'docs',
+          runtime_name: 'Docs',
+          enabled: true,
+          callable: false,
+          connection: { status: 'connected' },
+        },
+      ],
+    })
   })
 
   test('updates backend connection whenever the cloud target changes', async () => {
@@ -109,7 +116,14 @@ describe('LocalExecutorCloudBridge', () => {
       )
     })
     expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.apps.sync', {
-      apps: [{ slug: 'tickets', name: 'Tickets' }],
+      apps: [
+        {
+          slug: 'tickets',
+          name: 'Tickets',
+          description: '',
+          tools: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+        },
+      ],
     })
     expect(mocks.notifySkillsChanged).toHaveBeenCalled()
     expect(

@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { issueWegentConnectorToken, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  issueWegentConnectorToken,
+  listWegentInstalledConnectorApps,
+} from '@/api/cloud/connectorApps'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import {
@@ -79,12 +82,17 @@ export function LocalExecutorCloudBridge({
           syncRevision,
         })
         if (cancelled) return
-        const apps = await listWegentConnectorApps(apiBaseUrl, authToken)
+        const installed = await listWegentInstalledConnectorApps(apiBaseUrl, authToken)
         if (cancelled) return
         await requestLocalExecutor('runtime.connectors.apps.sync', {
-          apps: apps
-            .filter(app => app.connection.status === 'connected')
-            .map(app => ({ slug: app.slug, name: app.name })),
+          apps: installed.apps
+            .filter(app => app.enabled && app.callable)
+            .map(app => ({
+              slug: app.slug,
+              name: app.runtime_name ?? app.slug,
+              description: app.description ?? '',
+              tools: app.tool_summaries ?? [],
+            })),
         })
         notifyLocalPluginSkillsChanged()
         scheduleConnectorSync(connectorRefreshDelayMs(connectorToken.expires_in))

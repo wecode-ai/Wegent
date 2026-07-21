@@ -357,6 +357,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.connectors.configure" => self.connectors.configure(payload).await,
             "runtime.connectors.clear" => self.connectors.clear(payload).await,
+            "runtime.connectors.status" => self.connectors.status().await,
             "runtime.connectors.tools" => self.connectors.tools().await,
             "runtime.connectors.call" => self.connectors.call(payload).await,
             "runtime.connectors.apps.sync" => self.connectors.sync_apps(payload).await,

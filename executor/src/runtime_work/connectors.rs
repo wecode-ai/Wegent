@@ -29,6 +29,7 @@ use super::util::{now_ms, string_field};
 pub(super) struct ConnectorRuntime {
     codex_app_server: CodexAppServerClient,
     cloud: Arc<RwLock<Option<ConnectorGatewayConfig>>>,
+    synced_apps: Arc<RwLock<Vec<Value>>>,
     mutation: Arc<Mutex<()>>,
     revision: Arc<AtomicU64>,
 }
@@ -40,6 +41,7 @@ impl ConnectorRuntime {
             cloud: Arc::new(RwLock::new(
                 crate::connector_gateway::load_connector_gateway_config().ok(),
             )),
+            synced_apps: Arc::new(RwLock::new(Vec::new())),
             mutation: Arc::new(Mutex::new(())),
             revision: Arc::new(AtomicU64::new(0)),
         }
@@ -109,6 +111,7 @@ impl ConnectorRuntime {
             }));
         }
         self.cloud.write().await.take();
+        self.synced_apps.write().await.clear();
         clear_connector_gateway_config()
             .map_err(|error| AppIpcError::new("connector_authorization_clear_failed", error))?;
         let config_result = self.write_mcp_config(false).await;
@@ -138,6 +141,15 @@ impl ConnectorRuntime {
         .await
     }
 
+    pub(super) async fn status(&self) -> Result<Value, AppIpcError> {
+        let cloud = self.cloud.read().await.clone();
+        Ok(json!({
+            "configured": cloud.is_some(),
+            "expiresAtMs": cloud.as_ref().map(|config| config.expires_at_ms),
+            "apps": self.synced_apps.read().await.clone(),
+        }))
+    }
+
     pub(super) async fn sync_apps(&self, payload: Value) -> Result<Value, AppIpcError> {
         let apps = payload
             .get("apps")
@@ -150,7 +162,13 @@ impl ConnectorRuntime {
                 "Connect Wework to Wegent cloud before synchronizing apps",
             ));
         }
-        materialize_skills(&skills_root(), apps)
+        let result = materialize_skills(&skills_root(), apps)?;
+        *self.synced_apps.write().await = result
+            .get("apps")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(result)
     }
 
     async fn write_mcp_config(&self, enabled: bool) -> Result<(), AppIpcError> {
@@ -266,6 +284,7 @@ fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIp
             .ok_or_else(|| AppIpcError::new("bad_request", "Invalid connector app slug"))?;
         string_field(app, "name")
             .ok_or_else(|| AppIpcError::new("bad_request", "Connector app name is required"))?;
+        let description = string_field(app, "description").unwrap_or_default();
         let dir_name = format!("wegent-connector-{slug}");
         active_dirs.insert(dir_name.clone());
         let skill_dir = skills_root.join(&dir_name);
@@ -276,8 +295,27 @@ fn materialize_skills(skills_root: &Path, apps: &[Value]) -> Result<Value, AppIp
             )
         })?;
         let skill_path = skill_dir.join("SKILL.md");
+        let tool_names = app
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| string_field(tool, "name"))
+            .collect::<Vec<_>>();
+        let tool_section = if tool_names.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\nAvailable synced tools:\n{}\n",
+                tool_names
+                    .iter()
+                    .map(|name| format!("- `{name}`"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
         let body = format!(
-            "---\nname: wegent-connector-{slug}\ndescription: Use one administrator-managed Wegent connector app.\n---\n\n# Wegent connector `{slug}`\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n"
+            "---\nname: wegent-connector-{slug}\ndescription: Use the administrator-managed Wegent connector app {slug}.\n---\n\n# Wegent connector `{slug}`\n\n{description}\n\nUse the `wegent_apps` MCP server. Only call tools whose names start with `{slug}__`.\nAuthentication and credentials are managed by Wegent; never request or expose them.\n{tool_section}"
         );
         fs::write(&skill_path, body).map_err(|error| {
             AppIpcError::new(

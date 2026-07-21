@@ -5,7 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Cable, Loader2, Pencil, Plus, Power } from 'lucide-react'
+import { Cable, Loader2, Pencil, Play, Plus, Power, Search } from 'lucide-react'
 import { adminApis } from '@/apis/admin'
 import type {
   AdminConnectorApp,
@@ -173,6 +173,8 @@ export default function ConnectorAppList() {
   const [apps, setApps] = useState<AdminConnectorApp[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [discoveringId, setDiscoveringId] = useState<number | null>(null)
+  const [testingId, setTestingId] = useState<number | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AdminConnectorApp | null>(null)
   const [form, setForm] = useState<ConnectorForm>(EMPTY_FORM)
@@ -296,6 +298,50 @@ export default function ConnectorAppList() {
     }
   }
 
+  const discoverTools = async (app: AdminConnectorApp) => {
+    setDiscoveringId(app.id)
+    try {
+      const response = await adminApis.discoverConnectorAppTools(app.id)
+      toast({
+        title: t('connector_apps.success.discovered', { count: response.tools.length }),
+        description: response.tools.map(tool => tool.raw_tool_name).join(', ') || undefined,
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('connector_apps.errors.discover_failed'),
+        description: (error as Error).message,
+      })
+    } finally {
+      setDiscoveringId(null)
+    }
+  }
+
+  const testTool = async (app: AdminConnectorApp) => {
+    const toolName = app.tool_allowlist[0] || app.http_tools[0]?.name
+    if (!toolName) {
+      toast({ variant: 'destructive', title: t('connector_apps.errors.no_test_tool') })
+      return
+    }
+    setTestingId(app.id)
+    try {
+      const response = await adminApis.testConnectorAppTool(app.id, toolName)
+      toast({
+        title: response.is_error
+          ? t('connector_apps.errors.test_returned_error')
+          : t('connector_apps.success.tested'),
+      })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('connector_apps.errors.test_failed'),
+        description: (error as Error).message,
+      })
+    } finally {
+      setTestingId(null)
+    }
+  }
+
   return (
     <div className="space-y-4" data-testid="connector-app-admin-page">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -344,6 +390,36 @@ export default function ConnectorAppList() {
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => void discoverTools(app)}
+                    disabled={discoveringId === app.id}
+                    data-testid={`discover-connector-app-tools-${app.id}`}
+                    aria-label={t('connector_apps.discover_tools')}
+                  >
+                    {discoveringId === app.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Search className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => void testTool(app)}
+                    disabled={testingId === app.id}
+                    data-testid={`test-connector-app-tool-${app.id}`}
+                    aria-label={t('connector_apps.test_tool')}
+                  >
+                    {testingId === app.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Play className="h-4 w-4" />
+                    )}
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"

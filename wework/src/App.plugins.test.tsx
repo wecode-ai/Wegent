@@ -736,7 +736,7 @@ describe('App plugins route', () => {
           json: () => Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' }),
         } as Response
       }
-      if (url.includes('/v1/sites?')) {
+      if (url.includes('/sites?')) {
         return {
           ok: true,
           status: 200,
@@ -766,7 +766,7 @@ describe('App plugins route', () => {
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      'http://127.0.0.1:9100/api/sites?offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
@@ -805,7 +805,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/sites?offset=0&limit=20',
+      '/api/sites?offset=0&limit=20',
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),

@@ -17,16 +17,68 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-def upgrade() -> None:
-    op.add_column(
-        "connector_apps",
-        sa.Column("http_tools", sa.JSON(), nullable=False, server_default="[]"),
+def _column_exists(table_name: str, column_name: str) -> bool:
+    return any(
+        column["name"] == column_name
+        for column in sa.inspect(op.get_bind()).get_columns(table_name)
     )
+
+
+def _column_nullable(table_name: str, column_name: str) -> bool:
+    return next(
+        (
+            bool(column["nullable"])
+            for column in sa.inspect(op.get_bind()).get_columns(table_name)
+            if column["name"] == column_name
+        ),
+        False,
+    )
+
+
+def _fill_empty_http_tools() -> None:
     if op.get_bind().dialect.name == "sqlite":
+        op.execute(
+            "UPDATE connector_apps SET http_tools = json('[]') "
+            "WHERE http_tools IS NULL"
+        )
+    else:
+        op.execute(
+            "UPDATE connector_apps SET http_tools = JSON_ARRAY() "
+            "WHERE http_tools IS NULL"
+        )
+
+
+def upgrade() -> None:
+    if _column_exists("connector_apps", "http_tools"):
+        _fill_empty_http_tools()
+        if op.get_bind().dialect.name != "sqlite" and _column_nullable(
+            "connector_apps", "http_tools"
+        ):
+            op.alter_column(
+                "connector_apps",
+                "http_tools",
+                existing_type=sa.JSON(),
+                nullable=False,
+            )
+        return
+    if op.get_bind().dialect.name == "sqlite":
+        op.add_column(
+            "connector_apps",
+            sa.Column("http_tools", sa.JSON(), nullable=False, server_default="[]"),
+        )
         with op.batch_alter_table("connector_apps") as batch_op:
             batch_op.alter_column("http_tools", server_default=None)
     else:
-        op.alter_column("connector_apps", "http_tools", server_default=None)
+        op.add_column(
+            "connector_apps", sa.Column("http_tools", sa.JSON(), nullable=True)
+        )
+        op.execute("UPDATE connector_apps SET http_tools = JSON_ARRAY()")
+        op.alter_column(
+            "connector_apps",
+            "http_tools",
+            existing_type=sa.JSON(),
+            nullable=False,
+        )
 
 
 def downgrade() -> None:

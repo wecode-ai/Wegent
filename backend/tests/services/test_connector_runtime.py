@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.connector import ConnectorApp, ConnectorConnection
 from app.models.user import User
-from app.services.connector_apps import _token_expiry
+from app.services.connector_apps import _encrypt_json, _token_expiry
 from app.services.connector_runtime import ConnectorRuntimeService
 
 
@@ -72,7 +72,7 @@ async def test_lists_only_allowlisted_tools_with_connector_namespace(
 
     assert [tool.name for tool in tools] == ["crm__search"]
     assert tools[0].annotations == {"readOnlyHint": True}
-    upstream_tools.assert_awaited_once_with(test_db, app, None)
+    upstream_tools.assert_awaited_once_with(test_db, app, None, test_user)
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_tool_discovery_isolates_an_unavailable_app(
         inputSchema = {"type": "object", "properties": {}}
         annotations = None
 
-    async def upstream_tools(_db, app, _connection):
+    async def upstream_tools(_db, app, _connection, _user):
         if app.slug == "offline":
             raise HTTPException(502, "upstream unavailable")
         return [Tool()]
@@ -198,6 +198,37 @@ async def test_mcp_session_initializes_streamable_http_transport(
     }
     assert observed["session"] == ("read-stream", "write-stream", 180.0)
     assert observed["initialized"] is True
+
+
+@pytest.mark.asyncio
+async def test_server_config_sends_trusted_user_headers(
+    test_db: Session,
+    test_admin_user: User,
+    test_user: User,
+) -> None:
+    app = ConnectorApp(
+        slug="sites",
+        name="Sites",
+        description="",
+        enabled=True,
+        visibility="all",
+        allowed_roles=[],
+        auth_type="none",
+        transport="streamable-http",
+        mcp_url="https://mcp.example.test/sites",
+        oauth_scopes=[],
+        tool_allowlist=[],
+        provider_headers_encrypted=_encrypt_json({"X-Provider": "configured"}),
+        created_by=test_admin_user.id,
+    )
+
+    config = await ConnectorRuntimeService._server_config(test_db, app, None, test_user)
+
+    assert config["headers"] == {
+        "X-Provider": "configured",
+        "X-Wegent-Username": test_user.user_name,
+        "X-Wegent-User-Id": str(test_user.id),
+    }
 
 
 @pytest.mark.asyncio

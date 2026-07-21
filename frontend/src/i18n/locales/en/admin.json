@@ -1064,6 +1064,8 @@
     "create": "Add App",
     "edit": "Edit app",
     "disable": "Disable app",
+    "discover_tools": "Discover tools",
+    "test_tool": "Test tool",
     "enabled": "Enabled",
     "disabled": "Disabled",
     "empty": "No apps have been configured.",
@@ -1118,12 +1120,18 @@
     },
     "success": {
       "saved": "App saved",
-      "disabled": "App disabled"
+      "disabled": "App disabled",
+      "discovered": "Discovered {{count}} tools",
+      "tested": "Tool test completed"
     },
     "errors": {
       "load_failed": "Failed to load apps",
       "save_failed": "Failed to save app",
       "disable_failed": "Failed to disable app",
+      "discover_failed": "Failed to discover tools",
+      "test_failed": "Failed to test tool",
+      "test_returned_error": "Tool test returned an error",
+      "no_test_tool": "Configure or allow at least one tool before testing",
       "required": "Name, slug, endpoint URL, and required transport configuration are required",
       "provider_headers_invalid": "Provider headers must be a JSON object with string values",
       "http_tools_invalid": "HTTP tool definitions must be a JSON array"

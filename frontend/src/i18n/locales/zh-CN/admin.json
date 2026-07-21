@@ -1064,6 +1064,8 @@
     "create": "添加应用",
     "edit": "编辑应用",
     "disable": "停用应用",
+    "discover_tools": "发现工具",
+    "test_tool": "测试工具",
     "enabled": "已启用",
     "disabled": "已停用",
     "empty": "尚未配置应用。",
@@ -1118,12 +1120,18 @@
     },
     "success": {
       "saved": "应用已保存",
-      "disabled": "应用已停用"
+      "disabled": "应用已停用",
+      "discovered": "发现 {{count}} 个工具",
+      "tested": "工具测试完成"
     },
     "errors": {
       "load_failed": "加载应用失败",
       "save_failed": "保存应用失败",
       "disable_failed": "停用应用失败",
+      "discover_failed": "发现工具失败",
+      "test_failed": "测试工具失败",
+      "test_returned_error": "工具测试返回错误",
+      "no_test_tool": "请先配置或开放至少一个工具再测试",
       "required": "名称、标识、端点地址和所选协议的必要配置不能为空",
       "provider_headers_invalid": "固定请求头必须是值均为字符串的 JSON 对象",
       "http_tools_invalid": "HTTP 工具定义必须是 JSON 数组"

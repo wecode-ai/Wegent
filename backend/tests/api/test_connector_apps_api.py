@@ -512,3 +512,104 @@ def test_http_connector_requires_valid_tool_definitions(
     assert missing_tools.status_code == 422
     assert unsafe_path.status_code == 422
     assert unknown_allowlist.status_code == 422
+
+
+def test_apps_projection_lists_reads_and_installs_callable_connector(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_user: User,
+    test_token: str,
+):
+    app = ConnectorApp(
+        slug="projection-api",
+        name="Projection API",
+        description="Projection coverage",
+        enabled=True,
+        visibility="all",
+        allowed_roles=[],
+        auth_type="none",
+        transport="http",
+        mcp_url="https://projection.example.test/api",
+        oauth_scopes=[],
+        tool_allowlist=["lookup"],
+        http_tools=[
+            {
+                "name": "lookup",
+                "description": "Lookup projection data",
+                "method": "GET",
+                "path": "/lookup",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        created_by=test_admin_user.id,
+    )
+    test_db.add(app)
+    test_db.commit()
+
+    list_response = test_client.get(
+        "/api/apps/list", headers=_admin_headers(test_token)
+    )
+    read_response = test_client.post(
+        "/api/apps/read",
+        headers=_admin_headers(test_token),
+        json={"app_ids": ["projection-api", "missing"], "include_tools": True},
+    )
+    installed_response = test_client.get(
+        "/api/apps/installed", headers=_admin_headers(test_token)
+    )
+
+    assert list_response.status_code == 200
+    listed = [
+        item for item in list_response.json()["data"] if item["id"] == "projection-api"
+    ][0]
+    assert listed["is_accessible"] is True
+    assert listed["callable"] is True
+
+    assert read_response.status_code == 200
+    assert read_response.json()["missing_app_ids"] == ["missing"]
+    assert (
+        read_response.json()["apps"][0]["tool_summaries"][0]["raw_tool_name"]
+        == "lookup"
+    )
+
+    assert installed_response.status_code == 200
+    installed = [
+        item
+        for item in installed_response.json()["apps"]
+        if item["id"] == "projection-api"
+    ][0]
+    assert installed["callable"] is True
+    assert installed["tool_summaries"][0]["name"] == "projection-api__lookup"
+
+
+def test_admin_can_register_wegent_sites_mcp_connector(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_token: str,
+):
+    response = test_client.post(
+        "/api/admin/connector-apps",
+        headers=_admin_headers(test_admin_token),
+        json=_app_payload(
+            slug="wegent-sites",
+            name="Wegent Sites",
+            description="Create, version, deploy, inspect, and roll back Wegent Sites projects.",
+            auth_type="none",
+            transport="streamable-http",
+            mcp_url="https://sites.example.test/mcp",
+            provider_headers={"Authorization": "Bearer mcp-token"},
+            tool_allowlist=[],
+        ),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["slug"] == "wegent-sites"
+    assert body["provider_headers_configured"] is True
+    assert body["provider_header_names"] == ["Authorization"]
+
+    app = test_db.query(ConnectorApp).filter_by(slug="wegent-sites").one()
+    assert app.name == "Wegent Sites"
+    assert app.transport == "streamable-http"
+    assert app.auth_type == "none"
+    assert app.mcp_url == "https://sites.example.test/mcp"

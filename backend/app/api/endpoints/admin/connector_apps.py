@@ -15,8 +15,12 @@ from app.schemas.connector import (
     ConnectorAppAdminResponse,
     ConnectorAppUpdate,
     ConnectorAppWrite,
+    ConnectorToolCallRequest,
+    ConnectorToolCallResponse,
+    ConnectorToolListResponse,
 )
 from app.services.connector_apps import connector_app_service
+from app.services.connector_runtime import connector_runtime_service
 
 router = APIRouter(prefix="/connector-apps")
 
@@ -47,6 +51,49 @@ def get_connector_app(
 ) -> ConnectorAppAdminResponse:
     return connector_app_service.admin_response(
         db, connector_app_service.get_app(db, app_id)
+    )
+
+
+@router.post("/{app_id}/tools/discover", response_model=ConnectorToolListResponse)
+async def discover_connector_tools(
+    app_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+) -> ConnectorToolListResponse:
+    app = connector_app_service.get_app(db, app_id)
+    connection = connector_app_service.connection(db, admin.id, app.id)
+    if app.transport == "http":
+        tools = connector_runtime_service._http_tools(app)
+    else:
+        upstream_tools = await connector_runtime_service._upstream_tools(
+            db, app, connection, admin
+        )
+        tools = []
+        for tool in upstream_tools:
+            tools.append(connector_runtime_service._tool_from_upstream(app, tool))
+    return ConnectorToolListResponse(tools=tools)
+
+
+@router.post("/{app_id}/tools/test", response_model=ConnectorToolCallResponse)
+async def test_connector_tool(
+    app_id: int,
+    payload: ConnectorToolCallRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+) -> ConnectorToolCallResponse:
+    app = connector_app_service.get_app(db, app_id)
+    tool_name = (
+        payload.name
+        if payload.name.startswith(f"{app.slug}__")
+        else f"{app.slug}__{payload.name}"
+    )
+    content, structured_content, is_error = await connector_runtime_service.call_tool(
+        db, admin, tool_name, payload.arguments
+    )
+    return ConnectorToolCallResponse(
+        content=content,
+        structured_content=structured_content,
+        is_error=is_error,
     )
 
 
