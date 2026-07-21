@@ -420,6 +420,8 @@ struct QuickPhrase {
     mode: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachment_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_at: Option<u64>,
 }
 
 fn default_quick_phrases() -> Vec<QuickPhrase> {
@@ -430,6 +432,7 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             content: "总结目前完成的工作和下一步建议".into(),
             mode: "normal".into(),
             attachment_paths: Vec::new(),
+            created_at: None,
         },
         QuickPhrase {
             id: "default-create-plan".into(),
@@ -437,6 +440,7 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             content: "分析需求并制定详细的实施计划".into(),
             mode: "plan".into(),
             attachment_paths: Vec::new(),
+            created_at: None,
         },
         QuickPhrase {
             id: "default-pursue-goal".into(),
@@ -444,6 +448,7 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             content: "持续推进这个目标，直到真正完成".into(),
             mode: "goal".into(),
             attachment_paths: Vec::new(),
+            created_at: None,
         },
     ]
 }
@@ -649,9 +654,17 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
     let Ok(content) = std::fs::read_to_string(path) else {
         return AppPreferences::default();
     };
-    serde_json::from_str::<AppPreferences>(&content)
-        .map(normalize_app_preferences)
-        .unwrap_or_default()
+    let Ok(preferences) = serde_json::from_str::<AppPreferences>(&content) else {
+        return AppPreferences::default();
+    };
+    let stored_phrase_count = preferences.quick_phrases.len();
+    let preferences = normalize_app_preferences(preferences);
+    if preferences.quick_phrases.len() < stored_phrase_count {
+        if let Err(error) = write_app_preferences_impl(app, &preferences) {
+            log::warn!("Failed to persist expired quick phrase stash cleanup: {error}");
+        }
+    }
+    preferences
 }
 
 #[cfg(desktop)]
@@ -668,11 +681,37 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
         .browser_download_directory
         .and_then(normalized_non_empty);
     preferences
+        .quick_phrases
+        .retain(|phrase| !is_expired_quick_phrase_stash(phrase));
+    preferences
 }
 
 #[cfg(desktop)]
-fn write_app_preferences_impl(
-    app: &tauri::AppHandle,
+fn is_expired_quick_phrase_stash(phrase: &QuickPhrase) -> bool {
+    const STASH_MAX_AGE_MILLIS: u64 = 7 * 24 * 60 * 60 * 1_000;
+
+    if !phrase.id.starts_with("stash-") {
+        return false;
+    }
+    let created_at = phrase.created_at.or_else(|| {
+        phrase
+            .id
+            .strip_prefix("stash-")?
+            .split('-')
+            .next()?
+            .parse::<u64>()
+            .ok()
+    });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default();
+    created_at.is_some_and(|timestamp| now.saturating_sub(timestamp) >= STASH_MAX_AGE_MILLIS)
+}
+
+#[cfg(desktop)]
+fn write_app_preferences_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     preferences: &AppPreferences,
 ) -> Result<(), String> {
     let path = app_preferences_path(app)?;
