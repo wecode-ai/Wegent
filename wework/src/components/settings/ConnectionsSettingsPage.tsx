@@ -26,6 +26,7 @@ import {
   Terminal,
   Trash2,
   UserRound,
+  Webhook,
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
@@ -75,6 +76,7 @@ import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
@@ -194,6 +196,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: FolderGit2,
     label: 'settings_nav_worktrees',
     fallback: '工作树',
+    category: 'coding',
+  },
+  {
+    key: 'hooks',
+    icon: Webhook,
+    label: 'settings_nav_hooks',
+    fallback: 'Hooks',
     category: 'coding',
   },
   {
@@ -1447,6 +1456,8 @@ export function ConnectionsSettingsPage({
             onRefreshWorkLists={onRefreshWorkLists}
             onLeaveSettings={onBack}
           />
+        ) : activeNav === 'hooks' ? (
+          <HooksSettingsPage />
         ) : activeNav === 'archived-conversations' ? (
           <ArchivedConversationsSettingsPage
             api={services?.runtimeWorkApi}

@@ -86,7 +86,7 @@ describe('ChromeTitlebar', () => {
     render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
 
     const weworkTab = screen.getByTestId('chrome-tab-wework')
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(weworkTab).toHaveAttribute('aria-haspopup', 'menu')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()

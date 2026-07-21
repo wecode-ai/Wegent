@@ -88,6 +88,8 @@ The macOS desktop app enables the system drag panel by default. When you start d
 - **Follow up** appears only while a conversation is open and appends the content to that conversation's composer.
 - **Temporary stash** saves the dropped content in the stash above the quick-phrase list.
 
+A drop occurs only after you drag content and release the pointer over the panel. Clicking the panel area does not create a chat, add a follow-up, or stash content.
+
 The stash presents content as horizontal attachment cards. Multiple files appear as a stack, and images use thumbnails. You can scroll horizontally, hover to preview, remove an item, or select a stashed item to append its text and attachments to any conversation. Web links retain both the page title and URL. Turn the feature off or back on under **Settings > General > System drag panel**.
 
 ## Commit and Push Changes

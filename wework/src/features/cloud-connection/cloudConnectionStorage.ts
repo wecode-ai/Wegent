@@ -24,6 +24,7 @@ export interface PreferredCloudSocketConfig {
 }
 
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
+  webUrl?: string
   token: string
   tokenExpiresAt: number | null
   user: User
@@ -31,6 +32,7 @@ export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
 }
 
 export interface CloudConnectionSnapshot extends Partial<CloudConnectionRuntimeConfig> {
+  webUrl?: string
   status: CloudConnectionStatus
   token: string | null
   tokenExpiresAt: number | null

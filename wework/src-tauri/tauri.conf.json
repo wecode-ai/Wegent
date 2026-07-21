@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "WeWork",
   "mainBinaryName": "WeWork",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "identifier": "io.wecode.wework",
   "build": {
     "frontendDist": "../dist",
@@ -59,7 +59,8 @@
       "binaries/wegent-executor"
     ],
     "resources": [
-      "binaries/codex/**/*"
+      "binaries/codex/**/*",
+      "bundled-hooks/**/*"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"

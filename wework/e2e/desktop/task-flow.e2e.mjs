@@ -1770,6 +1770,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     join(resultDir, 'cloud-executor-home'),
     'The remote folder picker did not load the real executor home directory'
   )
+  await captureVerificationScreenshot(control, 'cloud-01-remote-device-selected.png')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -1783,26 +1784,40 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     workspacePath,
     'The remote folder picker did not retain the selected cloud workspace path'
   )
+  await captureVerificationScreenshot(control, 'cloud-02-workspace-path-confirmed.png')
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
-  const projectSnapshot = await waitForSnapshot(
+  await waitForSnapshot(
     control,
-    value => value.testIds.some(testId => testId.startsWith('project-device-status-')),
+    value =>
+      !value.testIds.includes('standalone-folder-project-dialog') &&
+      value.testIds.some(testId => testId.startsWith('project-device-status-')),
     'The real cloud project was not shown with its remote device status'
   )
+  await control.command('waitFor', '[data-testid^="project-menu-"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS * 2,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const deviceStatusTestId = projectSnapshot.testIds.find(testId =>
     testId.startsWith('project-device-status-')
   )
   assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
   const projectId = deviceStatusTestId.slice('project-device-status-'.length)
+  await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
   await control.command(
     'clickWhenEnabled',
     `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
   )
   await control.command('waitFor', '[data-testid="project-work-button"]', {
     text: 'workspace',
+    stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
@@ -1830,7 +1845,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(control, 'cloud-project-task-completed.png')
+  await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
 
   control.setScenario('cloud_follow_up')
   await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
@@ -1844,6 +1859,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
     timeoutMs: UI_TIMEOUT_MS,
   })
+  await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
 
   const projectMenuTestId = `project-menu-${projectId}`
   await waitForSnapshot(
@@ -1858,6 +1874,14 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
   )
   await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes(projectMenuTestId) &&
+      !value.testIds.includes(`remove-project-dialog-${projectId}`),
+    'The removed cloud project remained visible in the workbench'
+  )
+  await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
 }
 
 async function main() {
