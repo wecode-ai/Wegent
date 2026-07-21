@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Slider } from '@/components/ui/slider'
 import { Button } from '@/components/ui/button'
 import { ChevronDown, Plus, X } from 'lucide-react'
@@ -19,6 +20,7 @@ import {
   SimpleConfigRow,
 } from '@/features/settings/components/team-edit/SimpleConfigLayout'
 import type {
+  DirectAccessRequirement,
   KnowledgeResourceScope,
   RetrievalConfigDraft,
   SummaryModelRef,
@@ -34,6 +36,8 @@ interface KnowledgeBaseFormProps {
   description: string
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
+  directAccessRequirement?: DirectAccessRequirement
+  onDirectAccessRequirementChange?: (value: DirectAccessRequirement) => void
   summaryEnabled: boolean
   onSummaryEnabledChange: (value: boolean) => void
   summaryModelRef: SummaryModelRef | null
@@ -136,6 +140,8 @@ export function KnowledgeBaseForm({
   description,
   onNameChange,
   onDescriptionChange,
+  directAccessRequirement,
+  onDirectAccessRequirementChange,
   summaryEnabled,
   onSummaryEnabledChange,
   summaryModelRef,
@@ -414,6 +420,63 @@ export function KnowledgeBaseForm({
                   </p>
                 )}
               </div>
+            </SimpleConfigRow>
+          </SimpleConfigGroup>
+        </FormSection>
+      )}
+
+      {directAccessRequirement && onDirectAccessRequirementChange && (
+        <FormSection
+          title={t('knowledge:document.formSections.access')}
+          sectionId="knowledge-access"
+        >
+          <SimpleConfigGroup>
+            <SimpleConfigRow
+              label={t('knowledge:document.knowledgeBase.directAccessRange')}
+              description={t('knowledge:document.knowledgeBase.directAccessRangeDescription')}
+              align="start"
+            >
+              <RadioGroup
+                value={directAccessRequirement}
+                onValueChange={value =>
+                  onDirectAccessRequirementChange(value as DirectAccessRequirement)
+                }
+                className="space-y-2"
+                data-testid="knowledge-base-direct-access-requirement"
+              >
+                <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
+                  <RadioGroupItem
+                    value="read"
+                    id="knowledge-direct-access-read"
+                    data-testid="knowledge-base-direct-access-read"
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="knowledge-direct-access-read" className="flex-1 cursor-pointer">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {t('knowledge:document.knowledgeBase.directAccessAllMembers')}
+                    </span>
+                    <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
+                      {t('knowledge:document.knowledgeBase.directAccessAllMembersDescription')}
+                    </span>
+                  </Label>
+                </div>
+                <div className="flex items-start gap-3 rounded-lg border border-border p-3 hover:bg-surface/50">
+                  <RadioGroupItem
+                    value="edit"
+                    id="knowledge-direct-access-edit"
+                    data-testid="knowledge-base-direct-access-edit"
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="knowledge-direct-access-edit" className="flex-1 cursor-pointer">
+                    <span className="block text-sm font-medium text-text-primary">
+                      {t('knowledge:document.knowledgeBase.directAccessEditorsOnly')}
+                    </span>
+                    <span className="mt-1 block text-xs font-normal leading-5 text-text-muted">
+                      {t('knowledge:document.knowledgeBase.directAccessEditorsOnlyDescription')}
+                    </span>
+                  </Label>
+                </div>
+              </RadioGroup>
             </SimpleConfigRow>
           </SimpleConfigGroup>
         </FormSection>

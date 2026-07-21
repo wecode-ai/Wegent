@@ -8,7 +8,7 @@ Internal API endpoints
 import logging
 
 # Register ERP entity resolver for org_department entity type
-from app.services.share.external_entity_resolver import register_entity_resolver
+from app.services.external_entity_resolver import register_entity_resolver
 from wecode.service.erp_entity_resolver import ErpEntityResolver
 
 logger = logging.getLogger(__name__)

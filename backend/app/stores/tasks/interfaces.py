@@ -359,6 +359,17 @@ class TaskStore(Protocol):
         client_origin: Optional[str] = None,
     ) -> tuple[list[int], int]: ...
 
+    def list_personal_task_candidates_after(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        cursor_created_at: datetime | None = None,
+        cursor_id: int | None = None,
+        client_origin: str | None = None,
+    ) -> list[TaskResource]: ...
+
     def list_group_task_ids_for_accessible_user(
         self, db: Session, *, user_id: int
     ) -> set[int]: ...
@@ -368,10 +379,6 @@ class TaskStore(Protocol):
     ) -> set[int]: ...
 
     def list_active_tasks_for_user(
-        self, db: Session, *, user_id: int
-    ) -> list[TaskResource]: ...
-
-    def list_accessible_active_tasks_for_user(
         self, db: Session, *, user_id: int
     ) -> list[TaskResource]: ...
 

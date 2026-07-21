@@ -41,7 +41,7 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 
 公开版 Wework 只定义云桌面的扩展契约和不可用时的默认实现，不包含具体远程桌面协议、鉴权接口、代理、页面或第三方客户端资源。工作台和设备设置页只能通过 `src/extensions/cloud-desktop-contract.ts` 使用该能力；默认实现的 `available` 为 `false`，因此不会展示桌面入口。
 
-产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。实现负责完成连接、在内置浏览器中打开页面，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。不要在公开组件中增加具体 VNC API、`vnc.html` 或 noVNC 资源作为回退路径。
+产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口；具体实现负责连接、异步状态和在内置浏览器中打开页面，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。公共 Wework 只提供不可用的空实现，不应包含具体远程桌面协议、页面或资源。
 
 ### Wecode VNC 实现
 

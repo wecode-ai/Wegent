@@ -61,7 +61,7 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 
 ## Desktop Task-Flow E2E
 
-`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task lifecycle in a local workspace and allows product extensions to inject optional desktop scenarios:
+`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task lifecycle in a local workspace and lets product distributions inject an optional desktop scenario:
 
 1. Builds and starts the real Tauri Wework application, opening an isolated workspace with `--open-workspace`.
 2. Starts the real `wegent-executor` sidecar, which starts a real `codex app-server`.
@@ -70,9 +70,7 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 5. Sends a follow-up in the same conversation and verifies its request and rendered response.
 6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
-8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set; the public runner contains no VNC fixture or assertions.
-
-`pnpm --filter wework e2e:desktop:wecode` uses the `wework/wecode/e2e/desktop/task-flow.e2e.mjs` wrapper and enables `WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true`. The Wecode scenario reads cloud-device VNC configuration through a real Bearer-authenticated HTTP request, opens the embedded VNC page from both settings and the workspace Desktop entry, verifies the address contains neither the WebSocket URL nor token, and completes a token-authenticated WebSocket upgrade, RFB 3.8 handshake, and connected-marker assertion. The simulated RFB service, VNC HTTP/WebSocket fixture, diagnostic state, and concrete controller actions all live under `wework/wecode/`.
+8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
 
@@ -120,7 +118,7 @@ Available methods:
 
 The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`. Only when E2E mode and this URL are both present does the frontend poll a local loopback controller for `click`, `fill`, and wait assertions; normal development and production builds have no controller endpoint. The controller drives real WebView DOM events and does not replace task, model-selection, Executor, or Codex implementations.
 
-When a built-in action does not handle a command, the public controller delegates it to a product extension through `wework/src/extensions/desktop-control-contract.ts`. Wecode's `wework/wecode/extensions/desktop-control.ts` supplies `evalEmbeddedBrowserJson`, `closeEmbeddedBrowser`, and `prepareEmbeddedBrowserRelabelRegression`; public automation does not recognize VNC. The Wecode desktop scenario uses the generic evaluation action to read the connected marker and title, confirm that noVNC reports connected only after the real RFB handshake completes, and identify the sandbox from the title. A separate wait assertion in the main WebView checks the address for credentials.
+When a built-in action does not handle a command, the public controller delegates it through `@extensions/desktop-control` to a product extension. Without a product extension, unknown actions fail explicitly; public automation does not recognize concrete product protocols.
 
 The controller uses short polling: the server returns `204` when no command is available, and the frontend waits briefly before polling again. This prevents a stale long-poll connection, left behind by a WebView reload, task switch, or stream completion, from consuming later commands. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion. Failure diagnostics include delivered `commandHistory` in `scenario-state.json` to aid control-channel debugging.
 

@@ -42,6 +42,7 @@ import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
+import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
@@ -1654,18 +1655,6 @@ export function WorkbenchProvider({
       </WorkbenchPaneContext.Provider>
     </WorkbenchContext.Provider>
   )
-}
-
-function useStableEvent<TArgs extends unknown[], TResult>(
-  handler: (...args: TArgs) => TResult
-): (...args: TArgs) => TResult {
-  const handlerRef = useRef(handler)
-
-  useEffect(() => {
-    handlerRef.current = handler
-  }, [handler])
-
-  return useCallback((...args: TArgs) => handlerRef.current(...args), [])
 }
 
 function getProjectChatScopeKey({

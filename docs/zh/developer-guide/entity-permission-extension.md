@@ -314,7 +314,7 @@ register_entity_resolver("namespace", NamespaceEntityResolver)
 # app/services/share/department_resolver.py
 from typing import Optional
 from sqlalchemy.orm import Session
-from app.services.share.external_entity_resolver import IExternalEntityResolver
+from app.services.external_entity_resolver import IExternalEntityResolver
 
 class DepartmentResolver(IExternalEntityResolver):
     """企业部门权限解析器示例"""
