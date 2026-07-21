@@ -1,0 +1,8 @@
+{
+  "label": "Integrations",
+  "position": 5,
+  "link": {
+    "type": "doc",
+    "id": "wegent/user-guide/integrations/README"
+  }
+}

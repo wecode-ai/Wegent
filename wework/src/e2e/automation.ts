@@ -18,46 +18,12 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { saveLocalUserPreferences } from '@/api/local/localSession'
+import { desktopControlExtension } from '@extensions/desktop-control'
+import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
-
-type DesktopControlAction =
-  | 'capture'
-  | 'click'
-  | 'deferredClick'
-  | 'clickWhenEnabled'
-  | 'closeMainWindowToTray'
-  | 'dispatchLocalModelSettingsChanged'
-  | 'drag'
-  | 'fill'
-  | 'focusMainWindow'
-  | 'getText'
-  | 'getValue'
-  | 'hover'
-  | 'pointerDown'
-  | 'navigate'
-  | 'pointerMove'
-  | 'snapshot'
-  | 'waitFor'
-  | 'press'
-  | 'selectText'
-  | 'scrollIntoView'
-
-interface DesktopControlCommand {
-  id: string
-  action: DesktopControlAction
-  selector: string
-  value?: string
-  target?: string
-  text?: string
-  timeoutMs?: number
-  enabled?: boolean
-  visible?: boolean
-  stableMs?: number
-  key?: string
-}
 
 interface DesktopControlResult {
   id: string
@@ -208,11 +174,14 @@ function createBridge(): WeworkAutomationBridge {
 function seedDesktopE2ECloudConnection() {
   const backendUrl = import.meta.env.VITE_WEWORK_E2E_CLOUD_BACKEND_URL?.trim()
   if (!backendUrl) return
+  const token =
+    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() || 'wework-desktop-e2e-cloud-token'
 
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
     ...config,
-    token: 'wework-desktop-e2e-cloud-token',
+    webUrl: config.backendUrl,
+    token,
     tokenExpiresAt: null,
     user: {
       id: 9001,
@@ -530,6 +499,26 @@ function selectDesktopControlText(selector: string, value: string): string {
   return value
 }
 
+function dropDesktopControlFile(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const filename = command.filename?.trim()
+  if (!filename) throw new Error('dropFile requires a filename')
+  const binary = window.atob(command.value ?? '')
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  const file = new File([bytes], filename, { type: command.mimeType ?? '' })
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  const event = new DragEvent('drop', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'dataTransfer', { value: transfer })
+  element.dispatchEvent(event)
+  return filename
+}
+
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
     case 'capture':
@@ -546,6 +535,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dropFile':
+      return dropDesktopControlFile(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
@@ -630,6 +621,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
   }
+
+  const extensionResult = await desktopControlExtension.execute(command)
+  if (extensionResult.handled) return extensionResult.value
+  throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {

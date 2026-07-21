@@ -1434,7 +1434,9 @@ def _get_user_kb_tool_access_mode(
     Returns:
         Tuple of (access_mode, reason)
     """
-    from app.services.share import get_knowledge_base_tool_access_mode_by_ids
+    from app.services.knowledge.knowledge_access_policy import (
+        get_knowledge_base_tool_access_mode_by_ids,
+    )
 
     return get_knowledge_base_tool_access_mode_by_ids(db, user_id, knowledge_base_ids)
 
@@ -1485,9 +1487,21 @@ def _prepare_kb_tools_from_contexts(
     elif task_id:
         # Priority 2: Fall back to task-level bound knowledge bases
         knowledge_base_scopes = _get_bound_knowledge_base_scopes(db, task_id, user_id)
-        knowledge_base_ids = [
+        bound_knowledge_base_ids = [
             scope.knowledge_base_id for scope in knowledge_base_scopes
-        ] or _get_bound_knowledge_base_ids(db, task_id)
+        ] or _get_bound_knowledge_base_ids(db, task_id, user_id)
+        from app.services.chat.task_default_knowledge_bases import (
+            resolve_task_default_knowledge_base_ids,
+        )
+
+        default_knowledge_base_ids = resolve_task_default_knowledge_base_ids(
+            db,
+            task_id,
+            user_id,
+        )
+        knowledge_base_ids = list(
+            dict.fromkeys(bound_knowledge_base_ids + default_knowledge_base_ids)
+        )
         if knowledge_base_ids:
             logger.info(
                 f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
@@ -1713,7 +1727,11 @@ def _normalize_folder_ids(raw_folder_ids: Any) -> List[int]:
     return normalized_ids
 
 
-def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
+def _get_bound_knowledge_base_ids(
+    db: Session,
+    task_id: int,
+    user_id: int,
+) -> List[int]:
     """
     Get knowledge base IDs bound to a task.
 
@@ -1728,6 +1746,7 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     Args:
         db: Database session
         task_id: Task ID
+        user_id: User ID used to enforce access to the current task
 
     Returns:
         List of knowledge base IDs bound to the task
@@ -1739,7 +1758,11 @@ def _get_bound_knowledge_base_ids(db: Session, task_id: int) -> List[int]:
     logger.info(f"[_get_bound_knowledge_base_ids] START task_id={task_id}")
 
     try:
-        kb_ids = task_knowledge_base_service.get_bound_knowledge_base_ids(db, task_id)
+        kb_ids = task_knowledge_base_service.get_bound_knowledge_base_ids(
+            db,
+            task_id,
+            user_id=user_id,
+        )
         logger.info(
             f"[_get_bound_knowledge_base_ids] RESULT task_id={task_id}, kb_ids={kb_ids}"
         )

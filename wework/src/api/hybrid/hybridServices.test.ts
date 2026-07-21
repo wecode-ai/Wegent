@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => {
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
+  const captureRuntimeIpcOptions = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
   const localArchiveAllConversations = vi.fn()
@@ -36,7 +37,6 @@ const mocks = vi.hoisted(() => {
     startProjectCodeServer: vi.fn(),
     startDeviceTerminal: vi.fn(),
     startDeviceCodeServer: vi.fn(),
-    getDeviceVncConfig: vi.fn(),
     createRemoteTerminalClient: vi.fn(),
   }
 
@@ -139,6 +139,7 @@ const mocks = vi.hoisted(() => {
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
     cloudRuntimeIpcSubscribe,
+    captureRuntimeIpcOptions,
     localListArchivedConversations,
     cloudListArchivedConversations,
     localArchiveAllConversations,
@@ -159,48 +160,52 @@ vi.mock('@/api/local/localServices', () => ({
       params?: Record<string, unknown>,
       deviceId?: string
     ) => Promise<unknown>,
-    getDefaultDeviceId: () => Promise<string>
-  ) => ({
-    async listRuntimeWork() {
-      const deviceId = await getDefaultDeviceId()
-      return request('runtime.tasks.list', {}, deviceId)
-    },
-    createRuntimeTask(data: Record<string, unknown>) {
-      return request('runtime.tasks.create', data, String(data.deviceId))
-    },
-    rollbackRuntimeTask(data: Record<string, unknown>) {
-      return request('runtime.tasks.rollback', data, String(data.deviceId))
-    },
-    compactRuntimeTask(data: Record<string, unknown>) {
-      return request('runtime.tasks.compact', data, String(data.deviceId))
-    },
-    async searchRuntimeWork(data: Record<string, unknown>) {
-      return request(
-        'runtime.tasks.search',
-        data,
-        String(data.deviceId ?? (await getDefaultDeviceId()))
-      )
-    },
-    getWorktreeSettings(data: Record<string, unknown>) {
-      return request('runtime.worktrees.settings.get', data, String(data.deviceId))
-    },
-    listWorktrees(data: Record<string, unknown>) {
-      return request('runtime.worktrees.list', data, String(data.deviceId))
-    },
-    listArchivedConversations: vi.fn(async () => ({
-      items: [],
-      projectGroups: [],
-      total: 0,
-    })),
-    archiveAllConversations: vi.fn(async () => ({
-      accepted: true,
-      requestedCount: 0,
-      acceptedCount: 0,
-      deletedCount: 0,
-      results: [],
-    })),
-    getImNotificationSettings: vi.fn(),
-  }),
+    getDefaultDeviceId: () => Promise<string>,
+    options: Record<string, unknown>
+  ) => {
+    mocks.captureRuntimeIpcOptions(options)
+    return {
+      async listRuntimeWork() {
+        const deviceId = await getDefaultDeviceId()
+        return request('runtime.tasks.list', {}, deviceId)
+      },
+      createRuntimeTask(data: Record<string, unknown>) {
+        return request('runtime.tasks.create', data, String(data.deviceId))
+      },
+      rollbackRuntimeTask(data: Record<string, unknown>) {
+        return request('runtime.tasks.rollback', data, String(data.deviceId))
+      },
+      compactRuntimeTask(data: Record<string, unknown>) {
+        return request('runtime.tasks.compact', data, String(data.deviceId))
+      },
+      async searchRuntimeWork(data: Record<string, unknown>) {
+        return request(
+          'runtime.tasks.search',
+          data,
+          String(data.deviceId ?? (await getDefaultDeviceId()))
+        )
+      },
+      getWorktreeSettings(data: Record<string, unknown>) {
+        return request('runtime.worktrees.settings.get', data, String(data.deviceId))
+      },
+      listWorktrees(data: Record<string, unknown>) {
+        return request('runtime.worktrees.list', data, String(data.deviceId))
+      },
+      listArchivedConversations: vi.fn(async () => ({
+        items: [],
+        projectGroups: [],
+        total: 0,
+      })),
+      archiveAllConversations: vi.fn(async () => ({
+        accepted: true,
+        requestedCount: 0,
+        acceptedCount: 0,
+        deletedCount: 0,
+        results: [],
+      })),
+      getImNotificationSettings: vi.fn(),
+    }
+  },
 }))
 
 vi.mock('@/api/backend/backendServices', () => ({
@@ -826,6 +831,29 @@ describe('createHybridWorkbenchServices', () => {
       'runtime.tasks.create',
       expect.objectContaining({ deviceId: 'cloud-device', message: 'cloud' }),
       'cloud-device'
+    )
+  })
+
+  it('configures the cloud model gateway for cloud device runtime tasks', async () => {
+    const services = createServices()
+    await services.deviceApi.listDevices()
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'cloud-device',
+      workspacePath: '/tmp/cloud',
+      teamId: 1,
+      runtime: 'codex',
+      message: 'cloud model',
+    })
+
+    expect(mocks.captureRuntimeIpcOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cloudModelGateway: {
+          baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
+          apiKey: 'cloud-token',
+        },
+        transportLabel: 'Cloud',
+      })
     )
   })
 

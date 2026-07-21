@@ -48,6 +48,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   dispatch: Dispatch<WorkbenchAction>
   executorClient: ExecutorClient
   services: WorkbenchServices
+  markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: () => Promise<void>
 }
 
@@ -59,6 +60,7 @@ export function useWorkbenchRuntimeTasks({
   dispatch,
   executorClient,
   services,
+  markRuntimeTasksArchived,
   refreshWorkLists,
 }: UseWorkbenchRuntimeTasksOptions) {
   const { t } = useTranslation('common')
@@ -232,44 +234,71 @@ export function useWorkbenchRuntimeTasks({
     [dispatch, services.runtimeWorkApi, t]
   )
 
-  const archiveRuntimeTask = useCallback(
+  const archiveRuntimeConversations = useCallback(
     async (
-      address: RuntimeTaskAddress,
-      options: ArchiveRuntimeTaskOptions = {}
-    ): Promise<ArchiveRuntimeTaskResult> => {
-      const worktreeTarget = findRuntimeTaskWorktree(state.runtimeWork, address)
-      const worktreeTargets = worktreeTarget ? [worktreeTarget] : []
-      console.debug('[Wework] Runtime archive task start', {
-        address: runtimeAddressDebug(address),
-        worktreeTargets: worktreeTargets.length,
-        force: Boolean(options.force),
-      })
-      const response = await executorClient.runtime.archiveConversation(address)
-      console.debug('[Wework] Runtime archive task response', {
-        address: runtimeAddressDebug(address),
-        accepted: response.accepted,
-        error: response.error ?? null,
-      })
-      if (!response.accepted) {
-        dispatch({ type: 'error_set', error: response.error || 'Failed to archive runtime task' })
-        return { status: 'failed' }
+      addresses: RuntimeTaskAddress[],
+      fallbackError: string
+    ): Promise<ArchiveRuntimeConversationsResult> => {
+      const archiveTargets = uniqueRuntimeTaskAddresses(addresses)
+      if (archiveTargets.length === 0) return { status: 'archived' }
+      const results = await Promise.all(
+        archiveTargets.map(async address => {
+          try {
+            return { address, response: await executorClient.runtime.archiveConversation(address) }
+          } catch (error) {
+            return { address, error }
+          }
+        })
+      )
+      const archivedAddresses = results.flatMap(result =>
+        result.response?.accepted ? [result.address] : []
+      )
+      if (archivedAddresses.length > 0) {
+        markRuntimeTasksArchived(archivedAddresses)
+        await removeArchivedWorktrees(
+          findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
+        )
+        clearCurrentRuntimeTaskIfArchived(archivedAddresses)
+        await refreshWorkLists()
       }
-      await removeArchivedWorktrees(worktreeTargets)
-      clearCurrentRuntimeTaskIfArchived([address])
-      await refreshWorkLists()
-      console.debug('[Wework] Runtime archive task finished', {
-        address: runtimeAddressDebug(address),
+      const failedResult = results.find(result => !result.response?.accepted)
+      if (!failedResult) return { status: 'archived' }
+      dispatch({
+        type: 'error_set',
+        error:
+          failedResult.response?.error ||
+          (failedResult.error instanceof Error ? failedResult.error.message : fallbackError),
       })
-      return { status: 'archived' }
+      return { status: 'failed' }
     },
     [
       clearCurrentRuntimeTaskIfArchived,
       dispatch,
       executorClient,
+      markRuntimeTasksArchived,
       refreshWorkLists,
       removeArchivedWorktrees,
       state.runtimeWork,
     ]
+  )
+
+  const archiveRuntimeTask = useCallback(
+    async (
+      address: RuntimeTaskAddress,
+      options: ArchiveRuntimeTaskOptions = {}
+    ): Promise<ArchiveRuntimeTaskResult> => {
+      console.debug('[Wework] Runtime archive task start', {
+        address: runtimeAddressDebug(address),
+        force: Boolean(options.force),
+      })
+      const result = await archiveRuntimeConversations([address], 'Failed to archive runtime task')
+      console.debug('[Wework] Runtime archive task finished', {
+        address: runtimeAddressDebug(address),
+        status: result.status,
+      })
+      return result
+    },
+    [archiveRuntimeConversations]
   )
 
   const renameRuntimeTask = useCallback(
@@ -290,44 +319,20 @@ export function useWorkbenchRuntimeTasks({
       options: ArchiveRuntimeTaskOptions = {}
     ): Promise<ArchiveRuntimeConversationsResult> => {
       const addresses = projectTaskAddresses(state.runtimeWork, [runtimeProjectKey])
-      const worktreeTargets = findRuntimeTaskWorktrees(state.runtimeWork, addresses)
       console.debug('[Wework] Runtime archive project start', {
         runtimeProjectKey,
         addresses: addresses.map(runtimeAddressDebug),
-        worktreeTargets: worktreeTargets.length,
         force: Boolean(options.force),
       })
-      const response = await executorClient.runtime.archiveProjectConversations({
-        runtimeProjectKey,
-      })
-      console.debug('[Wework] Runtime archive project response', {
-        runtimeProjectKey,
-        accepted: response.accepted,
-        requestedCount: response.requestedCount,
-        acceptedCount: response.acceptedCount,
-        error: response.error ?? null,
-      })
-      if (!response.accepted) {
-        dispatch({ type: 'error_set', error: response.error || 'Failed to archive project' })
-        return { status: 'failed' }
-      }
-      await removeArchivedWorktrees(worktreeTargets)
-      clearCurrentRuntimeTaskIfArchived(addresses)
-      await refreshWorkLists()
+      const result = await archiveRuntimeConversations(addresses, 'Failed to archive project')
       console.debug('[Wework] Runtime archive project finished', {
         runtimeProjectKey,
+        status: result.status,
         archivedAddresses: addresses.length,
       })
-      return { status: 'archived' }
+      return result
     },
-    [
-      clearCurrentRuntimeTaskIfArchived,
-      dispatch,
-      executorClient,
-      refreshWorkLists,
-      removeArchivedWorktrees,
-      state.runtimeWork,
-    ]
+    [archiveRuntimeConversations, state.runtimeWork]
   )
 
   const archiveProjectsConversations = useCallback(
@@ -339,53 +344,23 @@ export function useWorkbenchRuntimeTasks({
       if (uniqueProjectKeys.length === 0) return { status: 'archived' }
 
       const archivedAddresses = projectTaskAddresses(state.runtimeWork, uniqueProjectKeys)
-      const worktreeTargets = findRuntimeTaskWorktrees(state.runtimeWork, archivedAddresses)
       console.debug('[Wework] Runtime archive projects start', {
         runtimeProjectKeys: uniqueProjectKeys,
         addresses: archivedAddresses.map(runtimeAddressDebug),
-        worktreeTargets: worktreeTargets.length,
         force: Boolean(options.force),
       })
-      const responses = await Promise.all(
-        uniqueProjectKeys.map(runtimeProjectKey =>
-          executorClient.runtime.archiveProjectConversations({ runtimeProjectKey })
-        )
+      const result = await archiveRuntimeConversations(
+        archivedAddresses,
+        'Failed to archive project conversations'
       )
-      console.debug('[Wework] Runtime archive projects response', {
-        responses: responses.map((response, index) => ({
-          runtimeProjectKey: uniqueProjectKeys[index],
-          accepted: response.accepted,
-          requestedCount: response.requestedCount,
-          acceptedCount: response.acceptedCount,
-          error: response.error ?? null,
-        })),
-      })
-      const failedResponse = responses.find(response => !response.accepted)
-      if (failedResponse) {
-        dispatch({
-          type: 'error_set',
-          error: failedResponse.error || 'Failed to archive project conversations',
-        })
-        return { status: 'failed' }
-      }
-
-      await removeArchivedWorktrees(worktreeTargets)
-      clearCurrentRuntimeTaskIfArchived(archivedAddresses)
-      await refreshWorkLists()
       console.debug('[Wework] Runtime archive projects finished', {
         runtimeProjectKeys: uniqueProjectKeys,
+        status: result.status,
         archivedAddresses: archivedAddresses.length,
       })
-      return { status: 'archived' }
+      return result
     },
-    [
-      clearCurrentRuntimeTaskIfArchived,
-      dispatch,
-      executorClient,
-      refreshWorkLists,
-      removeArchivedWorktrees,
-      state.runtimeWork,
-    ]
+    [archiveRuntimeConversations, state.runtimeWork]
   )
 
   const archiveChatConversations = useCallback(
@@ -395,47 +370,21 @@ export function useWorkbenchRuntimeTasks({
     ): Promise<ArchiveRuntimeConversationsResult> => {
       if (addresses.length === 0) return { status: 'archived' }
 
-      const worktreeTargets = findRuntimeTaskWorktrees(state.runtimeWork, addresses)
       console.debug('[Wework] Runtime archive chats start', {
         addresses: addresses.map(runtimeAddressDebug),
-        worktreeTargets: worktreeTargets.length,
         force: Boolean(options.force),
       })
-      const responses = await Promise.all(
-        addresses.map(address => executorClient.runtime.archiveConversation(address))
+      const result = await archiveRuntimeConversations(
+        addresses,
+        'Failed to archive chat conversations'
       )
-      console.debug('[Wework] Runtime archive chats response', {
-        responses: responses.map((response, index) => ({
-          address: runtimeAddressDebug(addresses[index]),
-          accepted: response.accepted,
-          error: response.error ?? null,
-        })),
-      })
-      const failedResponse = responses.find(response => !response.accepted)
-      if (failedResponse) {
-        dispatch({
-          type: 'error_set',
-          error: failedResponse.error || 'Failed to archive chat conversations',
-        })
-        return { status: 'failed' }
-      }
-
-      await removeArchivedWorktrees(worktreeTargets)
-      clearCurrentRuntimeTaskIfArchived(addresses)
-      await refreshWorkLists()
       console.debug('[Wework] Runtime archive chats finished', {
+        status: result.status,
         archivedAddresses: addresses.length,
       })
-      return { status: 'archived' }
+      return result
     },
-    [
-      clearCurrentRuntimeTaskIfArchived,
-      dispatch,
-      executorClient,
-      refreshWorkLists,
-      removeArchivedWorktrees,
-      state.runtimeWork,
-    ]
+    [archiveRuntimeConversations]
   )
 
   const searchRuntimeWork = useCallback(
@@ -519,6 +468,13 @@ export function useWorkbenchRuntimeTasks({
 }
 
 type RuntimeTaskWorktreeTarget = { workspace: RuntimeDeviceWorkspace; task: RuntimeTaskSummary }
+
+function uniqueRuntimeTaskAddresses(addresses: RuntimeTaskAddress[]): RuntimeTaskAddress[] {
+  const uniqueAddresses = new Map(
+    addresses.map(address => [getRuntimeTaskRouteKey(address), address])
+  )
+  return [...uniqueAddresses.values()]
+}
 
 function findRuntimeTaskWorktree(
   runtimeWork: WorkbenchState['runtimeWork'],

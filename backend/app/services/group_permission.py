@@ -62,7 +62,7 @@ def _resolve_entity_roles_in_namespace(
     Returns:
         List of role strings from matched entity bindings
     """
-    from app.services.share.external_entity_resolver import (
+    from app.services.external_entity_resolver import (
         resolve_entity_roles_for_resource,
     )
 

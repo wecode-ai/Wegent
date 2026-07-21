@@ -68,6 +68,7 @@ import {
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -102,9 +103,16 @@ interface AppRoutesProps {
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
+  const cloudConnection = useCloudConnection()
   const { activeTab, isNativeApp } = useChromeTabs(path)
+  const resolvedActiveTab =
+    activeTab?.key === 'wegent' && cloudConnection.webUrl
+      ? { ...activeTab, url: cloudConnection.webUrl }
+      : activeTab
   const activeIframeTab =
-    !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? activeTab : null
+    !isNativeApp && resolvedActiveTab?.mode === 'iframe' && resolvedActiveTab.url
+      ? resolvedActiveTab
+      : null
   const isAuxiliaryRoute =
     Boolean(activeIframeTab) ||
     path === '/plugins/manage' ||
@@ -133,9 +141,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }
 
   useEffect(() => {
-    if (isLoading || !user || isNativeApp || !activeTab?.url) return
+    if (isLoading || !user || isNativeApp || !resolvedActiveTab?.url) return
     onWorkbenchStartupReadyChange?.(true)
-  }, [activeTab?.url, isLoading, isNativeApp, onWorkbenchStartupReadyChange, user])
+  }, [isLoading, isNativeApp, onWorkbenchStartupReadyChange, resolvedActiveTab?.url, user])
 
   if (path === '/login') {
     return <LoginPage />
@@ -369,6 +377,10 @@ function AppShell() {
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     }
   }, [isTauri])
+
+  useEffect(() => {
+    return installMacOSInputArrowKeyGuard()
+  }, [])
 
   useEffect(() => {
     if (

@@ -1,5 +1,6 @@
-import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal, X } from 'lucide-react'
+import { File, FileDiff, Globe2, Loader2, SquareTerminal, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { getRuntimeConfig } from '@/config/runtime'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,7 +24,6 @@ import {
   startLocalTerminal,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { buildVncPageUrl } from '@/lib/vnc'
 import type { RemoteTerminalClientFactory } from '@/lib/remote-terminal-socket'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
@@ -54,7 +54,7 @@ interface WorkspacePanelCardsProps {
   workspaceSessionApi?: WorkspaceSessionApi
 }
 
-type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
+type WorkspaceTool = 'terminal' | 'ide'
 
 type WorkspaceToolAvailability = Record<WorkspaceTool, boolean>
 
@@ -66,6 +66,11 @@ interface WorkspaceToolAvailabilityState {
 interface WorkspaceToolErrorState {
   projectKey: string
   message: string | null
+}
+
+interface WorkspaceToolLoadingState {
+  tool: WorkspaceTool | 'extension'
+  projectKey: string
 }
 
 interface LocalTerminalCheckState {
@@ -92,7 +97,6 @@ function createAvailableTools(): WorkspaceToolAvailability {
   return {
     terminal: true,
     ide: true,
-    desktop: true,
   }
 }
 
@@ -186,7 +190,7 @@ export function WorkspacePanelCards({
   )
   const [terminalSessions, setTerminalSessions] = useState<WorkspaceTerminalSession[]>([])
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
-  const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
+  const [loadingToolState, setLoadingToolState] = useState<WorkspaceToolLoadingState | null>(null)
   const defaultOpenedProjectKeyRef = useRef<string | null>(null)
   const terminalSessionsRef = useRef<WorkspaceTerminalSession[]>([])
   const terminalProjectKeyRef = useRef<string | null>(null)
@@ -294,6 +298,7 @@ export function WorkspacePanelCards({
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
+  const loadingTool = loadingToolState?.projectKey === projectKey ? loadingToolState.tool : null
   const toolsDisabled = !hasWorkspaceContext || Boolean(loadingTool)
   const activeTerminalSession =
     terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
@@ -419,6 +424,21 @@ export function WorkspacePanelCards({
     [projectKey]
   )
 
+  const handleExtensionBusyChange = useCallback(
+    (busy: boolean) => {
+      setLoadingToolState(current => {
+        if (busy) return { projectKey, tool: 'extension' }
+        if (current?.projectKey === projectKey && current.tool === 'extension') return null
+        return current
+      })
+    },
+    [projectKey]
+  )
+
+  const handleExtensionOpened = useCallback(() => {
+    onRequestClose?.()
+  }, [onRequestClose])
+
   const getSessionStartErrorMessage = useCallback(
     () => t('workbench.project_tool_start_failed', '启动失败'),
     [t]
@@ -426,7 +446,7 @@ export function WorkspacePanelCards({
 
   const startTerminalSession = useCallback(async () => {
     if (!hasWorkspaceContext || loadingTool || !availableTools.terminal) return
-    setLoadingTool('terminal')
+    setLoadingToolState({ tool: 'terminal', projectKey })
     setProjectError(null)
     try {
       let shouldUseLocalTerminal = localTerminalAvailable
@@ -525,7 +545,9 @@ export function WorkspacePanelCards({
       markToolUnavailable('terminal')
       setProjectError(getSessionStartErrorMessage())
     } finally {
-      setLoadingTool(null)
+      setLoadingToolState(current =>
+        current?.tool === 'terminal' && current.projectKey === projectKey ? null : current
+      )
     }
   }, [
     activeWorkspaceDeviceId,
@@ -541,6 +563,7 @@ export function WorkspacePanelCards({
     localTerminalSupported,
     localTerminalAvailable,
     markToolUnavailable,
+    projectKey,
     readLocalTerminalCheck,
     setLocalTerminalCheck,
     setProjectError,
@@ -634,7 +657,7 @@ export function WorkspacePanelCards({
     opener: LocalWorkspaceOpenerId = DEFAULT_LOCAL_WORKSPACE_OPENER_ID
   ) => {
     if (loadingTool || !availableTools.ide) return
-    setLoadingTool('ide')
+    setLoadingToolState({ tool: 'ide', projectKey })
     setProjectError(null)
     let shouldClosePanel = false
     try {
@@ -680,34 +703,9 @@ export function WorkspacePanelCards({
       markToolUnavailable('ide')
       setProjectError(getSessionStartErrorMessage())
     } finally {
-      setLoadingTool(null)
-      if (shouldClosePanel) {
-        onRequestClose?.()
-      }
-    }
-  }
-
-  const handleDesktopClick = async () => {
-    if (!activeWorkspaceDeviceId || loadingTool || !availableTools.desktop) return
-    setLoadingTool('desktop')
-    setProjectError(null)
-    let shouldClosePanel = false
-    try {
-      if (!workspaceSessionApi) {
-        throw new Error('Remote workspace session service is unavailable')
-      }
-      const config = await workspaceSessionApi.getDeviceVncConfig(activeWorkspaceDeviceId)
-      if (!config.sandbox_id) {
-        throw new Error('Desktop sandbox ID is missing')
-      }
-      await openExternalUrl(buildVncPageUrl(activeWorkspaceDeviceId, config.sandbox_id))
-      shouldClosePanel = true
-    } catch (e) {
-      console.error('Failed to open project desktop:', e)
-      markToolUnavailable('desktop')
-      setProjectError(t('workbench.project_tool_start_failed', '启动失败'))
-    } finally {
-      setLoadingTool(null)
+      setLoadingToolState(current =>
+        current?.tool === 'ide' && current.projectKey === projectKey ? null : current
+      )
       if (shouldClosePanel) {
         onRequestClose?.()
       }
@@ -990,31 +988,19 @@ export function WorkspacePanelCards({
                         </span>
                       </button>
                     )}
-                    {cloudToolsAvailable && (
-                      <button
-                        type="button"
-                        data-testid={testId('workspace-desktop-card')}
-                        onClick={handleDesktopClick}
-                        disabled={
-                          toolsDisabled || !activeWorkspaceDeviceId || !availableTools.desktop
-                        }
-                        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {loadingTool === 'desktop' ? (
-                          <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                        ) : (
-                          <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
-                        )}
-                        <span className="text-sm font-semibold text-text-primary">
-                          {t('workbench.desktop', '桌面')}
-                        </span>
-                        <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                          {availableTools.desktop
-                            ? t('workbench.open_project_desktop', '打开项目桌面')
-                            : t('workbench.project_tool_unavailable', '暂不可用')}
-                        </span>
-                      </button>
-                    )}
+                    {cloudToolsAvailable &&
+                      cloudDesktopExtension.available &&
+                      activeWorkspaceDeviceId && (
+                        <cloudDesktopExtension.WorkspaceAction
+                          contextKey={projectKey}
+                          deviceId={activeWorkspaceDeviceId}
+                          disabled={toolsDisabled || projectDevice?.status !== 'online'}
+                          onBusyChange={handleExtensionBusyChange}
+                          onErrorChange={setProjectError}
+                          onOpened={handleExtensionOpened}
+                          testIdsEnabled={testIdsEnabled}
+                        />
+                      )}
                   </>
                 )}
               </div>

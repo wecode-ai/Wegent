@@ -73,6 +73,24 @@ describe('QuickPhraseMenu', () => {
     expect(screen.getByTestId('quick-phrase-stash-preview')).toHaveTextContent('两张图片')
   })
 
+  test('renders icon-only without label when iconOnly is true', () => {
+    render(<QuickPhraseMenu iconOnly onSelect={vi.fn()} />)
+
+    const button = screen.getByTestId('quick-phrase-button')
+    expect(button).not.toHaveTextContent('快捷短语')
+    expect(button.className).toContain('h-8')
+    expect(button.className).toContain('w-8')
+  })
+
+  test('renders compact circular button without label when compact is true', () => {
+    render(<QuickPhraseMenu compact onSelect={vi.fn()} />)
+
+    const button = screen.getByTestId('quick-phrase-button')
+    expect(button).not.toHaveTextContent('快捷短语')
+    expect(button.className).toContain('h-11')
+    expect(button.className).toContain('w-11')
+  })
+
   test('deletes a stash without selecting it', async () => {
     const onSelect = vi.fn()
     appPreferenceMocks.get.mockResolvedValue({

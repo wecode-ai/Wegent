@@ -27,7 +27,6 @@ interface DesktopAppSwitcherProps {
 
 interface AppOption {
   key: DesktopAppKey
-  suffix: string
   label: string
   description: string
   availabilityLabel?: string
@@ -40,7 +39,7 @@ interface MenuPosition {
   originY: number
 }
 
-interface RollingSuffix {
+interface RollingLabel {
   from: string
   to: string
   direction: 'up' | 'down'
@@ -51,7 +50,7 @@ interface TooltipPosition {
   top: number
 }
 
-const MENU_WIDTH = 184
+const MENU_WIDTH = 304
 const MENU_ROW_STEP = 42
 const MENU_VIEWPORT_PADDING = 8
 const MENU_TRANSITION_MS = 160
@@ -120,47 +119,46 @@ export function DesktopAppSwitcher({
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
   const [displayedKey, setDisplayedKey] = useState<DesktopAppKey>(activeApp)
-  const [rollingSuffix, setRollingSuffix] = useState<RollingSuffix | null>(null)
+  const [rollingLabel, setRollingLabel] = useState<RollingLabel | null>(null)
   const [menuBlurred, setMenuBlurred] = useState(false)
 
   const options = useMemo<AppOption[]>(
     () => [
       {
-        key: 'wegent',
-        suffix: 'gent',
-        label: 'Wegent',
-        description: t('workbench.app_wegent_description', '云端智能体平台'),
-        availabilityLabel: cloudConnection?.isConnected
-          ? undefined
-          : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
-        disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
-      },
-      {
         key: 'wework',
-        suffix: 'work',
-        label: 'Wework',
-        description: t('workbench.app_wework_description', 'AI对话工作台'),
+        label: t('workbench.app_wework_label', '任务'),
+        description: t('workbench.app_wework_description', '使用 AI 解决具体问题'),
       },
       ...(experimentalFeaturesEnabled || activeApp === 'todo'
         ? [
             {
               key: 'todo' as const,
-              suffix: 'loop',
-              label: 'Weloop',
-              description: t('workbench.app_weloop_description', 'AI原生工作流'),
+              label: t('workbench.app_weloop_label', '看板'),
+              description: t(
+                'workbench.app_weloop_description',
+                '用 AI 管理项目的规划、执行与反馈'
+              ),
             },
           ]
         : []),
+      {
+        key: 'wegent',
+        label: t('workbench.app_wegent_label', '智能体'),
+        description: t('workbench.app_wegent_description', '构建并交付可嵌入业务的云端智能体'),
+        availabilityLabel: cloudConnection?.isConnected
+          ? undefined
+          : t('workbench.app_wegent_requires_cloud', '连接云端后可用'),
+        disabled: !cloudConnection?.isConnected && activeApp !== 'wegent',
+      },
     ],
     [activeApp, cloudConnection?.isConnected, experimentalFeaturesEnabled, t]
   )
-  const displayedAppKey = rollingSuffix ? displayedKey : activeApp
+  const displayedAppKey = rollingLabel ? displayedKey : activeApp
   const selected =
     options.find(option => option.key === displayedAppKey) ??
     options.find(option => option.key === 'wework') ??
     options[0]
   const selectedIndex = options.findIndex(option => option.key === selected.key)
-  const menuOptions = [selected, ...options.filter(option => option.key !== selected.key)]
   const triggerTestId = testIds?.[selected.key] ?? `chrome-tab-${selected.key}`
 
   const clearTimer = useCallback(() => {
@@ -260,16 +258,16 @@ export function DesktopAppSwitcher({
     }
 
     const nextIndex = options.findIndex(item => item.key === option.key)
-    setRollingSuffix({
-      from: selected.suffix,
-      to: option.suffix,
+    setRollingLabel({
+      from: selected.label,
+      to: option.label,
       direction: nextIndex > selectedIndex ? 'up' : 'down',
     })
     setDisplayedKey(option.key)
     closeMenu()
     clearTimer()
     timerRef.current = window.setTimeout(() => {
-      setRollingSuffix(null)
+      setRollingLabel(null)
       setMenuMounted(false)
       setMenuPosition(null)
       onNavigate(option.key)
@@ -298,29 +296,28 @@ export function DesktopAppSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span className="select-none">We</span>
-        <span className="relative inline-block h-[1em] w-[2.4em] overflow-hidden align-middle leading-none">
-          {rollingSuffix ? (
+        <span className="relative inline-block h-[1em] w-[4em] overflow-hidden align-middle leading-none">
+          {rollingLabel ? (
             <>
               <span
                 className={cn(
                   'absolute inset-y-0 left-0',
-                  rollingSuffix.direction === 'up' ? 'suffix-roll-out-up' : 'suffix-roll-out-down'
+                  rollingLabel.direction === 'up' ? 'suffix-roll-out-up' : 'suffix-roll-out-down'
                 )}
               >
-                {rollingSuffix.from}
+                {rollingLabel.from}
               </span>
               <span
                 className={cn(
                   'absolute inset-y-0 left-0',
-                  rollingSuffix.direction === 'up' ? 'suffix-roll-in-up' : 'suffix-roll-in-down'
+                  rollingLabel.direction === 'up' ? 'suffix-roll-in-up' : 'suffix-roll-in-down'
                 )}
               >
-                {rollingSuffix.to}
+                {rollingLabel.to}
               </span>
             </>
           ) : (
-            selected.suffix
+            selected.label
           )}
         </span>
         <ChevronDown
@@ -344,7 +341,7 @@ export function DesktopAppSwitcher({
                 left: menuPosition?.left ?? 0,
                 top: (menuPosition?.top ?? 0) + 20,
                 width: MENU_WIDTH,
-                height: Math.max(0, menuOptions.length * MENU_ROW_STEP + 8 - 20),
+                height: Math.max(0, options.length * MENU_ROW_STEP + 8 - 20),
                 visibility: menuPosition ? 'visible' : 'hidden',
                 backdropFilter: 'blur(10px)',
                 WebkitBackdropFilter: 'blur(10px)',
@@ -368,7 +365,7 @@ export function DesktopAppSwitcher({
                   : 'pointer-events-none -translate-y-1 opacity-0 [clip-path:inset(0_0_100%_0_round_0.75rem)]'
               )}
             >
-              {menuOptions.map((option, index) => {
+              {options.map((option, index) => {
                 const active = option.key === selected.key
                 return (
                   <div
@@ -399,10 +396,7 @@ export function DesktopAppSwitcher({
                           active && 'font-semibold'
                         )}
                       >
-                        <span>
-                          We
-                          {option.suffix}
-                        </span>
+                        <span>{option.label}</span>
                       </span>
                       <span className="whitespace-nowrap text-xs leading-4 text-text-muted">
                         {option.description}

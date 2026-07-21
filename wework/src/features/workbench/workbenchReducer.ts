@@ -19,7 +19,7 @@ import {
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
 import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
-import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
+import { getRuntimeTaskWorkspacePath, removeRuntimeTasks } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
@@ -119,6 +119,7 @@ export type WorkbenchAction =
       type: 'runtime_task_optimistic_removed'
       address: RuntimeTaskAddress
     }
+  | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'runtime_task_started'; address: RuntimeTaskAddress }
   | { type: 'runtime_task_settled'; address: RuntimeTaskAddress }
   | { type: 'current_task_cleared' }
@@ -307,8 +308,7 @@ function mergeRuntimeTasks(
       }
       if (
         isFreshOptimisticRuntimeTask(task) &&
-        !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task)) &&
-        !nextTasks.some(nextTask => isResolvedOptimisticRuntimeTask(task, nextTask))
+        !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task))
       ) {
         return task
       }
@@ -333,30 +333,6 @@ function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
   const rawTimestamp = task.updatedAt ?? task.createdAt
   const timestamp = typeof rawTimestamp === 'number' ? rawTimestamp : Date.parse(rawTimestamp ?? '')
   return Number.isNaN(timestamp) || Date.now() - timestamp < OPTIMISTIC_TASK_PRESERVE_MS
-}
-
-function isResolvedOptimisticRuntimeTask(
-  optimisticTask: RuntimeTaskSummary,
-  resolvedTask: RuntimeTaskSummary
-): boolean {
-  if (!isOptimisticRuntimeTask(optimisticTask)) return false
-  if (isOptimisticRuntimeTask(resolvedTask)) return false
-  if (!optimisticTask.title || optimisticTask.title !== resolvedTask.title) return false
-  if (
-    optimisticTask.runtime &&
-    resolvedTask.runtime &&
-    optimisticTask.runtime !== resolvedTask.runtime
-  ) {
-    return false
-  }
-  if (
-    optimisticTask.workspacePath &&
-    resolvedTask.workspacePath &&
-    optimisticTask.workspacePath !== resolvedTask.workspacePath
-  ) {
-    return false
-  }
-  return true
 }
 
 function runtimeTaskKey(deviceId: string, task: Pick<RuntimeTaskSummary, 'taskId'>): string {
@@ -453,12 +429,7 @@ function upsertRuntimeTask(
 ): RuntimeDeviceWorkspace {
   return {
     ...workspace,
-    tasks: [
-      task,
-      ...workspace.tasks.filter(
-        item => item.taskId !== task.taskId && !isResolvedOptimisticRuntimeTask(item, task)
-      ),
-    ],
+    tasks: [task, ...workspace.tasks.filter(item => item.taskId !== task.taskId)],
   }
 }
 
@@ -1159,6 +1130,13 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
+      }
+    case 'runtime_tasks_archived':
+      return {
+        ...state,
+        runtimeWork: state.runtimeWork
+          ? removeRuntimeTasks(state.runtimeWork, action.addresses)
+          : null,
       }
     case 'runtime_task_started':
       return {

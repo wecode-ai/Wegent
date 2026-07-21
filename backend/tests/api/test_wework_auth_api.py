@@ -23,6 +23,18 @@ def install_memory_auth_session_cache(monkeypatch) -> MemoryAuthSessionCache:
     return cache
 
 
+def test_wework_config_exposes_wegent_frontend_url(
+    test_client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://frontend.example.com/")
+
+    response = test_client.get("/api/auth/wework/config")
+
+    assert response.status_code == 200
+    assert response.json()["web_url"] == "https://frontend.example.com"
+
+
 def test_create_wework_auth_session_uses_dedicated_authorize_base_url(
     test_client: TestClient,
     monkeypatch,
@@ -40,6 +52,7 @@ def test_create_wework_auth_session_uses_dedicated_authorize_base_url(
     assert data["authorize_url"].startswith(
         "https://app.example.com/auth/wework/authorize?"
     )
+    assert data["web_url"] == "https://frontend.example.com"
     assert data["session_id"]
     assert data["poll_token"]
     assert data["poll_interval_seconds"] > 0

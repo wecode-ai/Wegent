@@ -192,6 +192,27 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
   })
 
+  test('keeps the desktop editor focused while submission is temporarily disabled', async () => {
+    const props = {
+      value: 'next draft',
+      onChange: vi.fn(),
+      onSubmit: vi.fn(),
+      disabled: false,
+      variant: 'desktop' as const,
+    }
+    const { rerender } = render(<ChatInput {...props} submitDisabled={false} />)
+    const editor = screen.getByTestId('chat-message-input')
+
+    editor.focus()
+    await waitFor(() => expect(editor).toHaveFocus())
+
+    rerender(<ChatInput {...props} submitDisabled />)
+
+    expect(editor).toHaveAttribute('contenteditable', 'true')
+    expect(editor).toHaveFocus()
+    expect(screen.getByTestId('send-message-button')).toBeDisabled()
+  })
+
   test('does not move selection when an unfocused composer syncs its value', async () => {
     const renderComposers = (backgroundValue?: string) => (
       <>
@@ -723,7 +744,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
       'py-[14px]',
       'scrollbar-none',
-      'text-sm',
+      'text-chat',
       'leading-5'
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -1232,7 +1253,7 @@ describe('ChatInput', () => {
       'data-enter-animation',
       'main'
     )
-    expect(selectorButton).toHaveStyle({ width: '240px' })
+    expect(selectorButton).toHaveStyle({ width: 'var(--model-selector-width, auto)' })
     expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
