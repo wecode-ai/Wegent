@@ -109,6 +109,11 @@ const authMocks = vi.hoisted(() => ({
   logout: vi.fn(),
 }))
 
+vi.mock('@extensions/cloud-desktop', async () => {
+  const { cloudDesktopExtension } = await import('@/extensions/cloud-desktop')
+  return { cloudDesktopExtension }
+})
+
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 
 function createRect({

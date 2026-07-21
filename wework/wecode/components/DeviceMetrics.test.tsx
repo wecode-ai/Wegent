@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { cloudDeviceInternalApis } from '@wecode/api/devices'
 import { DeviceMetrics } from './DeviceMetrics'
-import { VncDesktopButton } from './VncDesktopButton'
 
 describe('DeviceMetrics', () => {
   beforeEach(() => {
@@ -54,32 +53,5 @@ describe('DeviceMetrics', () => {
     })
     expect(document.querySelector('path[stroke="#409eff"]')).toBeInTheDocument()
     expect(document.querySelector('path[stroke="#14B8A6"]')).not.toBeInTheDocument()
-  })
-
-  test('opens VNC desktop through internal cloud device API', async () => {
-    const openMock = vi.spyOn(window, 'open').mockImplementation(() => null)
-    vi.mocked(cloudDeviceInternalApis.getVncConfig).mockResolvedValue({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
-    })
-
-    render(<VncDesktopButton deviceId="device-1" />)
-
-    await userEvent.click(screen.getByTestId('connection-vnc-button-device-1'))
-
-    await waitFor(() => {
-      expect(cloudDeviceInternalApis.getVncConfig).toHaveBeenCalledWith('device-1')
-    })
-    expect(openMock).toHaveBeenCalledWith(
-      expect.stringContaining('/vnc.html?wsUrl='),
-      '_blank',
-      'noopener'
-    )
-    expect(openMock).toHaveBeenCalledWith(
-      expect.stringContaining('sandboxId=sandbox-1'),
-      '_blank',
-      'noopener'
-    )
   })
 })

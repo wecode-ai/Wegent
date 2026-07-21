@@ -43,6 +43,31 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 
 产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口；具体实现负责连接、异步状态和在内置浏览器中打开页面，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。公共 Wework 只提供不可用的空实现，不应包含具体远程桌面协议、页面或资源。
 
+### Wecode VNC 实现
+
+Wecode 发行版在“设置 → 连接”和项目工作区中提供云设备桌面入口，两个入口都复用当前 Wework 内置浏览器。扩展先读取 `GET /api/cloud-devices/{device_id}/vnc-config`，再通过 `/vnc-proxy/{device_id}` 建立 noVNC WebSocket 连接。
+
+WebSocket 地址和 Bearer token 不得放入浏览器地址、历史记录或 React 可见路由。扩展调用 `prepare_vnc_session`，把连接信息写入 Tauri Rust 进程中的两分钟内存交接会话；浏览器只打开 `/vnc.html?sessionId=...&sandboxId=...`，页面再通过 `get_vnc_session_config` IPC 读取凭据。两分钟只限制主 WebView 向 VNC 页交接凭据；首次读取后，VNC 页会在自身生命周期内缓存认证 WebSocket 地址，断线重试不受该交接期限限制。完整刷新页面后，如果交接会话已经过期，则必须从云设备入口重新打开桌面。
+
+内部 VNC 页面只在 noVNC 真实连接成功后设置连接标记。断开或连接失败时必须清除该标记，并提供重试状态。为避免凭据或内部页面被导出，VNC 页面不允许使用系统浏览器打开，也不提供网页批注模式。
+
+#### 代码归属与宿主边界
+
+VNC 是 Wecode 发行版能力，不是公共 Wework 内置浏览器的默认能力。代码按以下边界组织：
+
+- `wework/wecode/features/vnc/` 持有 VNC API、会话编排、设置页按钮、工作区桌面入口、打开流程、页面、noVNC 资源和对应单元测试。
+- `wework/wecode/extensions/cloud-desktop.tsx` 把 VNC feature 的设置页 `DeviceAction` 和工作区 `WorkspaceAction` 绑定到通用 `cloudDesktopExtension` 契约。
+- `wework/wecode/extensions/desktop-control.ts` 持有关闭、求值和重命名内置浏览器等 Wecode 桌面自动化动作；公共自动化层只通过 `wework/src/extensions/desktop-control-contract.ts` 委派未处理的命令。
+- `wework/wecode/vitePlugins.mjs` 持有 Wecode 构建插件集合，并在内部加载 VNC 资源插件；公共 `vite.config.ts` 只负责可选加载 Wecode 插件集合，不识别 VNC 文件或资源名称。
+- `wework/wecode/e2e/desktop/` 持有 RFB 模拟服务、VNC HTTP/WebSocket fixture、专用状态和云桌面验证流程。Wecode 包装入口通过 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` 向公共 Desktop E2E 注入可选场景，公共 runner 不直接导入 Wecode。
+- `wework/src-tauri/src/wecode/vnc_session.rs` 持有 VNC 凭据交接、TTL、安全校验和原生单元测试。
+
+公共 `wework/src/` 只保留与协议无关的云桌面扩展契约、空实现、宿主调用，以及桌面控制扩展契约和委派入口，不实现具体的内置浏览器求值动作。公共组件测试只验证扩展契约接线；实际 VNC 集成断言放在 Wecode feature 测试或 Desktop E2E 中。
+
+`wework/src-tauri/src/lib.rs` 中的 `VncSessionState` 和两个 Tauri command 注册是原生宿主必须保留的静态接线。Backend 的 VNC 配置接口、WebSocket 代理和本文档也不迁入 Wecode。除这些必要接线外，公共 Vite 配置、React 组件、E2E 控制层和测试不得新增 VNC/noVNC/专用 IPC 实现。
+
+迁移只改变代码归属，不改变 URL、IPC 命令名、两分钟交接期限、认证方式、RFB 握手、现有 `data-testid`、错误恢复或内置浏览器行为。验证必须覆盖归属边界测试、VNC feature 单测、公共宿主单测、TypeScript、ESLint、Vite build、Rust 测试和 Desktop E2E。
+
 ## 批注流程
 
 右侧浏览器地址栏旁提供批注图标。进入批注模式后：

@@ -3716,6 +3716,7 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(wecode::vnc_session::VncSessionState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
@@ -3825,6 +3826,8 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
+            wecode::vnc_session::get_vnc_session_config,
+            wecode::vnc_session::prepare_vnc_session,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,

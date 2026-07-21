@@ -26,6 +26,12 @@ Run the real desktop task-flow E2E:
 pnpm --filter wework e2e:desktop
 ```
 
+Run only the Wecode cloud-device desktop scenario:
+
+```bash
+pnpm --filter wework e2e:desktop:wecode
+```
+
 Run only the cloud-project desktop E2E:
 
 ```bash
@@ -150,6 +156,7 @@ Desktop task-flow E2E requires a Linux runner with a graphical session, for exam
 ```bash
 pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop
+xvfb-run -a pnpm --filter wework e2e:desktop:wecode
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
 

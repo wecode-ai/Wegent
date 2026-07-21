@@ -332,12 +332,13 @@ Local devices display device name, online status, and executor version. They do 
 
 Online cloud and remote Docker devices can open interactive sessions directly:
 
-| Action       | Backend API                                 | Description                                                                                                                                                                                           |
-| ------------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Terminal** | `POST /api/devices/{device_id}/terminal`    | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
-| **IDE**      | `POST /api/devices/{device_id}/code-server` | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
+| Action       | Backend API                                     | Description                                                                                                                                                                                           |
+| ------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Terminal** | `POST /api/devices/{device_id}/terminal`        | Starts a PTY in the default working directory `/home/ubuntu/.wegent-executor/workspace`; the request body may include `path` to choose the working directory, and Backend relays it through Socket.IO |
+| **IDE**      | `POST /api/devices/{device_id}/code-server`     | Opens a code-server session; the request body may include `path` for a remote project directory within the allowed roots, or omit it to use the default workspace                                     |
+| **Desktop**  | `GET /api/cloud-devices/{device_id}/vnc-config` | Opens the cloud-device VNC desktop in Wework's embedded browser                                                                                                                                       |
 
-Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+Terminal sessions do not expose device ports. IDE sessions return a short-lived session-token URL exposed through the device-side session gateway. Desktop sessions connect through `/vnc-proxy/{device_id}`; the proxy URL and sign-in token remain only in local memory owned by Tauri and the embedded VNC page, never in the address bar or browser history. The two-minute lifetime applies only while the main WebView hands credentials to the VNC page; once open, that page can use its own memory cache for disconnect retries. Terminal, IDE, and Desktop buttons are disabled while the device is offline.
 
 The more menu contains lower-frequency management actions:
 
