@@ -310,7 +310,7 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
       .catch(error => {
         console.error('[CloudConnection] Failed to resolve cloud Web URL', error)
       })
-  }, [snapshot.backendUrl, snapshot.status])
+  }, [snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
 
   const connectWithAuthorization = useCallback(
     async (
