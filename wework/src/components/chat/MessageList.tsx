@@ -1623,7 +1623,10 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
+  const displayBlocks = useMemo(
+    () => getDisplayProcessingBlocks(message.blocks, isCancelled),
+    [isCancelled, message.blocks]
+  )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
@@ -1654,7 +1657,7 @@ function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
-  const generatedImages = getGeneratedImages(displayBlocks)
+  const generatedImages = useMemo(() => getGeneratedImages(displayBlocks), [displayBlocks])
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
   const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
@@ -1858,7 +1861,7 @@ function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[]
 }
 
 function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
-  const attachments = images.map(generatedImageAttachment)
+  const attachments = useMemo(() => images.map(generatedImageAttachment), [images])
 
   return (
     <div
@@ -1866,31 +1869,20 @@ function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] })
       data-testid="generated-image-gallery"
     >
       {images.map((image, index) => (
-        <GeneratedImagePreview
-          key={image.id}
-          image={image}
-          index={index}
-          galleryAttachments={attachments}
-        />
+        <GeneratedImagePreview key={image.id} index={index} galleryAttachments={attachments} />
       ))}
     </div>
   )
 }
 
 function GeneratedImagePreview({
-  image,
   index,
   galleryAttachments,
 }: {
-  image: GeneratedImageArtifact
   index: number
   galleryAttachments: Attachment[]
 }) {
-  const { id, src, alt } = image
-  const attachment = useMemo(
-    () => generatedImageAttachment({ id, src, alt }, index),
-    [alt, id, index, src]
-  )
+  const attachment = galleryAttachments[index]
 
   return (
     <AttachmentImagePreview

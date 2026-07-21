@@ -194,6 +194,13 @@ describe('MessageList', () => {
       'alt',
       'Minimal dashboard concept'
     )
+
+    await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+
+    expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
   })
 
   test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
