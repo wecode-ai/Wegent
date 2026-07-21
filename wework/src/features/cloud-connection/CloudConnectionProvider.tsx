@@ -24,6 +24,7 @@ interface WeworkAuthSessionCreateResponse {
   session_id: string
   poll_token: string
   authorize_url: string
+  web_url: string
   expires_at: number
   poll_interval_seconds: number
 }
@@ -94,6 +95,7 @@ function snapshotFromStored(): CloudConnectionSnapshot {
   if (isCloudTokenExpired(migrated.tokenExpiresAt)) {
     return {
       status: 'expired',
+      webUrl: migrated.webUrl,
       backendUrl: migrated.backendUrl,
       apiBaseUrl: migrated.apiBaseUrl,
       socketBaseUrl: migrated.socketBaseUrl,
@@ -109,6 +111,7 @@ function snapshotFromStored(): CloudConnectionSnapshot {
 
   return {
     status: 'connected',
+    webUrl: migrated.webUrl,
     backendUrl: migrated.backendUrl,
     apiBaseUrl: migrated.apiBaseUrl,
     socketBaseUrl: migrated.socketBaseUrl,
@@ -191,6 +194,17 @@ async function checkCloudHealth(config: CloudConnectionRuntimeConfig): Promise<v
   )
 }
 
+async function fetchCloudWebUrl(config: CloudConnectionRuntimeConfig): Promise<string> {
+  const client = createCloudClient(config, null)
+  const metadata = await client.get<{ web_url?: unknown }>('/auth/wework/config', {
+    redirectOnUnauthorized: false,
+  })
+  if (typeof metadata.web_url !== 'string' || !metadata.web_url.trim()) {
+    throw new Error('Cloud Backend did not provide a Web URL')
+  }
+  return metadata.web_url.replace(/\/+$/, '')
+}
+
 async function fetchCloudUser(config: CloudConnectionRuntimeConfig, token: string): Promise<User> {
   const client = createCloudClient(config, token)
   return runCloudRequest('读取云端用户', config, '/users/me', () =>
@@ -222,6 +236,7 @@ async function pollWeworkAuthSession(
 
 function connectionSnapshot(
   config: CloudConnectionRuntimeConfig,
+  webUrl: string,
   token: string,
   user: User,
   socketBaseUrlOverride?: string
@@ -229,6 +244,7 @@ function connectionSnapshot(
   return {
     ...config,
     socketBaseUrlOverride: socketBaseUrlOverride?.trim() || undefined,
+    webUrl: webUrl.replace(/\/+$/, ''),
     status: 'connected',
     token,
     tokenExpiresAt: getJwtExpiry(token),
@@ -258,6 +274,7 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
     socketBaseUrl: snapshot.socketBaseUrl,
     socketPath: snapshot.socketPath,
     socketBaseUrlOverride: snapshot.socketBaseUrlOverride,
+    webUrl: snapshot.webUrl,
     token: snapshot.token,
     tokenExpiresAt: snapshot.tokenExpiresAt,
     user: snapshot.user,
@@ -278,6 +295,22 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
     persistSnapshot(nextSnapshot)
     setSnapshot(nextSnapshot)
   }, [])
+
+  useEffect(() => {
+    if (snapshot.status !== 'connected' || !snapshot.backendUrl) return
+    const config = resolveCloudRuntimeConfig(snapshot.backendUrl, snapshot.socketBaseUrlOverride)
+    void fetchCloudWebUrl(config)
+      .then(webUrl => {
+        setSnapshot(current => {
+          const nextSnapshot = { ...current, webUrl }
+          persistSnapshot(nextSnapshot)
+          return nextSnapshot
+        })
+      })
+      .catch(error => {
+        console.error('[CloudConnection] Failed to resolve cloud Web URL', error)
+      })
+  }, [snapshot.backendUrl, snapshot.status])
 
   const connectWithAuthorization = useCallback(
     async (
@@ -329,7 +362,13 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
           })
           const user = await fetchCloudUser(config, pollResult.access_token)
           applyConnectedSnapshot(
-            connectionSnapshot(config, pollResult.access_token, user, socketBaseUrlOverride)
+            connectionSnapshot(
+              config,
+              session.web_url,
+              pollResult.access_token,
+              user,
+              socketBaseUrlOverride
+            )
           )
           return user
         }
@@ -359,8 +398,11 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
     try {
       const user = await fetchCloudUser(config, snapshot.token)
-      const nextSnapshot = { ...snapshot, status: 'connected' as const, user, error: null }
-      applyConnectedSnapshot(nextSnapshot)
+      setSnapshot(current => {
+        const nextSnapshot = { ...current, status: 'connected' as const, user, error: null }
+        persistSnapshot(nextSnapshot)
+        return nextSnapshot
+      })
       return user
     } catch (error) {
       setSnapshot(current => ({
@@ -371,7 +413,7 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
       }))
       return null
     }
-  }, [applyConnectedSnapshot, snapshot])
+  }, [snapshot])
 
   const disconnect = useCallback(() => {
     clearStoredCloudConnection()

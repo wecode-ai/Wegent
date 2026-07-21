@@ -19,6 +19,7 @@ export interface CloudConnectionRuntimeConfig {
 
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
   socketBaseUrlOverride?: string
+  webUrl?: string
   token: string
   tokenExpiresAt: number | null
   user: User
@@ -27,6 +28,7 @@ export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
 
 export interface CloudConnectionSnapshot extends Partial<CloudConnectionRuntimeConfig> {
   socketBaseUrlOverride?: string
+  webUrl?: string
   status: CloudConnectionStatus
   token: string | null
   tokenExpiresAt: number | null

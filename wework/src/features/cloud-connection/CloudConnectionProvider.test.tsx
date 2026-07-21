@@ -56,6 +56,7 @@ function CloudSocketProbe() {
     <>
       <span data-testid="cloud-connection-status">{cloud.status}</span>
       <span data-testid="cloud-socket-base-url">{cloud.socketBaseUrl}</span>
+      <span data-testid="cloud-web-url">{cloud.webUrl}</span>
     </>
   )
 }
@@ -104,6 +105,7 @@ describe('CloudConnectionProvider', () => {
       session_id: 'session-1',
       poll_token: 'poll-1',
       authorize_url: 'https://cloud.example.com/auth/wework/authorize?session_id=session-1',
+      web_url: 'https://cloud.example.com',
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 0.001,
     })
@@ -148,6 +150,7 @@ describe('CloudConnectionProvider', () => {
       apiBaseUrl: 'https://cloud.example.com/api',
       socketBaseUrl: 'https://wss-cloud.example.com',
       socketPath: '/socket.io',
+      webUrl: 'https://cloud.example.com',
       token: 'cloud-token',
       tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
@@ -173,6 +176,39 @@ describe('CloudConnectionProvider', () => {
         'wss://wss-cloud.example.com'
       )
     })
+  })
+
+  it('corrects and stores the Web URL for an existing cloud connection', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://api.example.com',
+      apiBaseUrl: 'https://api.example.com/api',
+      socketBaseUrl: 'https://api.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://wework.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({ web_url: 'https://app.example.com/' })
+      }
+      return Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' })
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-web-url')).toHaveTextContent('https://app.example.com')
+    })
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').webUrl).toBe(
+      'https://app.example.com'
+    )
   })
 
   it('discards a stored connection with an invalid backend URL', () => {
@@ -212,6 +248,7 @@ describe('CloudConnectionProvider', () => {
       session_id: 'session-1',
       poll_token: 'poll-1',
       authorize_url: 'https://cloud.example.com/auth/wework/authorize?session_id=session-1',
+      web_url: 'https://cloud.example.com',
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 0.001,
     })
@@ -256,6 +293,7 @@ describe('CloudConnectionProvider', () => {
       session_id: 'session-1',
       poll_token: 'poll-1',
       authorize_url: 'https://cloud.example.com/auth/wework/authorize?session_id=session-1',
+      web_url: 'https://cloud.example.com',
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 30,
     })
