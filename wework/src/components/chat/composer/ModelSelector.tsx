@@ -60,6 +60,15 @@ const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
 
+function getDesktopViewportRightBoundary(): number {
+  const shell = document.getElementById('right-workspace-panel-shell')
+  if (shell && shell.getAttribute('aria-hidden') !== 'true') {
+    const rect = shell.getBoundingClientRect()
+    if (rect.width > 0) return Math.round(rect.left)
+  }
+  return window.innerWidth
+}
+
 function isCloudModel(model: UnifiedModel): boolean {
   return getModelExecutionOverride(model)?.source === 'cloud'
 }
@@ -77,6 +86,7 @@ export function ModelSelector({
   menuPlacement = 'above',
   buttonClassName = '',
   menuClassName = '',
+  maxClosedWidth,
 }: ModelSelectorProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -166,7 +176,8 @@ export function ModelSelector({
     const maxTop = viewportBottom - menuHeight
     const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
     const menuWidth = menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH
-    const maxLeft = window.innerWidth - VIEWPORT_MARGIN - menuWidth
+    const viewportRight = getDesktopViewportRightBoundary()
+    const maxLeft = viewportRight - VIEWPORT_MARGIN - menuWidth
     const preferredLeft = buttonRect.right - menuWidth
     const clampedLeft = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
 
@@ -211,7 +222,7 @@ export function ModelSelector({
     const measuredMenuWidth = menuRect.width || MAIN_MENU_WIDTH
     const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
     const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
-    const viewportWidth = window.innerWidth
+    const viewportWidth = getDesktopViewportRightBoundary()
     const availableRight = viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
     const availableLeft = menuRect.left - VIEWPORT_MARGIN - SUBMENU_GAP
     const rightSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableRight))
@@ -1004,6 +1015,7 @@ export function ModelSelector({
         ariaLabel={t('workbench.model_selector')}
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
         buttonClassName={buttonClassName}
+        maxClosedWidth={maxClosedWidth}
         onToggle={() => {
           if (disabled) return
           setOpen(current => {

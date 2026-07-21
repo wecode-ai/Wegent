@@ -39,6 +39,7 @@ interface ComposerToolbarProps {
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
+const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
   canSend,
@@ -131,6 +132,7 @@ export function ComposerToolbar({
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
             buttonClassName="opacity-90 hover:opacity-100"
+            maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
           />
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />

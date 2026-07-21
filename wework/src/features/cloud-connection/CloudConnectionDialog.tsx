@@ -14,6 +14,7 @@ import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
 import { normalizeCloudBackendUrl } from './cloudConnectionStorage'
@@ -45,6 +46,7 @@ export function CloudConnectionDialog({
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
+  useEmbeddedBrowserOcclusion('cloud-connection-dialog', open)
   const [backendUrl, setBackendUrl] = useState(
     () => cloud.backendUrl || getRuntimeConfig().wegentBackendUrl
   )

@@ -10,7 +10,6 @@ import {
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { cn } from '@/lib/utils'
 
-const OPEN_WIDTH = 240
 const CLOSED_MAX_WIDTH = 208
 const HORIZONTAL_CHROME = 36
 
@@ -25,6 +24,7 @@ interface ModelSelectorTriggerProps {
   ariaLabel: string
   tooltipLabel: string
   buttonClassName?: string
+  maxClosedWidth?: number
   onToggle: () => void
 }
 
@@ -52,6 +52,7 @@ export function ModelSelectorTrigger({
   ariaLabel,
   tooltipLabel,
   buttonClassName,
+  maxClosedWidth = CLOSED_MAX_WIDTH,
   onToggle,
 }: ModelSelectorTriggerProps) {
   const measureRef = useRef<HTMLSpanElement>(null)
@@ -76,8 +77,8 @@ export function ModelSelectorTrigger({
       if (measuredWidth <= 0) return
       const naturalWidth = Math.ceil(measuredWidth) + HORIZONTAL_CHROME
       button.style.setProperty(
-        '--model-selector-closed-width',
-        `${Math.max(64, Math.min(CLOSED_MAX_WIDTH, naturalWidth))}px`
+        '--model-selector-width',
+        `${Math.max(64, Math.min(maxClosedWidth, naturalWidth))}px`
       )
     }
 
@@ -90,12 +91,12 @@ export function ModelSelectorTrigger({
       observer?.disconnect()
       window.removeEventListener('resize', updateWidth)
     }
-  }, [buttonRef, isMobile, label])
+  }, [buttonRef, isMobile, label, maxClosedWidth])
 
   const desktopStyle: CSSProperties | undefined = isMobile
     ? undefined
     : {
-        width: open ? OPEN_WIDTH : 'var(--model-selector-closed-width, auto)',
+        width: 'var(--model-selector-width, auto)',
       }
   const showTooltip = !isMobile && !open && !tooltipSuppressed
 
