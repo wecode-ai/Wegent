@@ -28,6 +28,7 @@ const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+const WEWORK_E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
@@ -823,6 +824,11 @@ fn wework_codex_home_path(executor_home: &str) -> Result<PathBuf, String> {
 }
 
 fn native_codex_home_path() -> Result<PathBuf, String> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() == Ok("true") {
+        if let Some(path) = non_empty_env(WEWORK_E2E_NATIVE_CODEX_HOME_ENV) {
+            return Ok(PathBuf::from(path));
+        }
+    }
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
     Ok(home.join(".codex"))
 }
@@ -1004,6 +1010,15 @@ fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, St
 fn copy_codex_initialization_entry(source: &Path, destination: &Path) -> Result<(), String> {
     if !source.exists() {
         return Ok(());
+    }
+    if destination.exists() {
+        if let (Ok(source_path), Ok(destination_path)) =
+            (fs::canonicalize(source), fs::canonicalize(destination))
+        {
+            if source_path == destination_path {
+                return Ok(());
+            }
+        }
     }
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
@@ -2419,6 +2434,34 @@ command = "example"
             .file_type()
             .is_symlink());
         assert_eq!(fs::read_to_string(target).unwrap(), "native-auth");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrating_codex_home_preserves_linked_native_auth() {
+        let root = import_test_root("codex-auth-migration");
+        let native_home = root.join("native");
+        let wework_home = root.join("wework");
+        fs::create_dir_all(&native_home).unwrap();
+        fs::write(native_home.join("auth.json"), "native-auth").unwrap();
+        fs::write(native_home.join("config.toml"), "model = \"gpt-5\"").unwrap();
+        link_native_codex_auth(&native_home, &wework_home).unwrap();
+
+        copy_codex_initialization_files(&native_home, &wework_home).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(native_home.join("auth.json")).unwrap(),
+            "native-auth"
+        );
+        assert!(fs::symlink_metadata(wework_home.join("auth.json"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_to_string(wework_home.join("config.toml")).unwrap(),
+            "model = \"gpt-5\""
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -29,6 +29,8 @@ function usage() {
   pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
+  --codex-home-initialization true
+                            Seed and verify isolated first-run Codex migration
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
@@ -198,7 +200,15 @@ async function runServer(sessionPath, token) {
   const log = join(session.directory, 'app.log')
   const executorHome = join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
+  const nativeCodexHome = session.verifyCodexHomeInitialization
+    ? join(session.directory, 'native-codex')
+    : undefined
   await mkdir(codexHome, { recursive: true })
+  if (nativeCodexHome) {
+    await mkdir(nativeCodexHome, { recursive: true })
+    await writeFile(join(nativeCodexHome, 'auth.json'), '{"test":"isolated-auth"}\n')
+    await writeFile(join(nativeCodexHome, 'config.toml'), 'model = "gpt-5"\n')
+  }
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
@@ -206,6 +216,8 @@ async function runServer(sessionPath, token) {
       controlUrl,
       token,
       codexHome,
+      nativeCodexHome,
+      verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
       deviceId: session.deviceId,
       appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
       executorHome,
@@ -263,6 +275,7 @@ async function main() {
           directory,
           token,
           status: 'starting',
+          verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
         },
         null,
         2
