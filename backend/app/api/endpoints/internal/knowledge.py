@@ -76,10 +76,9 @@ async def list_documents(
     refs_by_provider: dict[str, list[ExternalKnowledgeRef]] = {}
     for ref in request.external_knowledge_refs:
         refs_by_provider.setdefault(ref.provider, []).append(ref)
-
-    ctx = RetrievalContext(user_id=request.user_id, user_name=request.user_name)
     documents: list[KnowledgeDocumentItem] = []
     warnings: list[str] = []
+    ctx = RetrievalContext(user_id=request.user_id, user_name=request.user_name)
 
     for provider_name, provider_refs in refs_by_provider.items():
         provider = retrieval_source_registry.get(provider_name)

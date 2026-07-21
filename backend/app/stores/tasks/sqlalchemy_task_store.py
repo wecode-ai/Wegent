@@ -389,6 +389,18 @@ class SqlAlchemyTaskStore:
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
         return query.first()
 
+    def get_by_id_for_update(
+        self, db: Session, *, task_id: int
+    ) -> Optional[TaskResource]:
+        """Lock and refresh a Task row for an atomic read-modify-write cycle."""
+        return (
+            db.query(TaskResource)
+            .filter(TaskResource.id == task_id)
+            .populate_existing()
+            .with_for_update()
+            .first()
+        )
+
     def get_active_task(
         self,
         db: Session,

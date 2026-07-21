@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Task, Team, Workspace
+from app.services.kind_reference import resolve_kind_reference
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 from app.stores.tasks import task_store
@@ -219,6 +220,10 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         ref.model_dump(exclude_none=True)
         for ref in (task_crd.spec.externalKnowledgeRefs or [])
     ]
+    context_warnings = [
+        warning.model_dump(exclude_none=True)
+        for warning in (task_crd.spec.contextWarnings or [])
+    ]
 
     return {
         "id": task.id,
@@ -251,6 +256,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
         "external_knowledge_refs": external_knowledge_refs,
+        "context_warnings": context_warnings,
     }
 
 
@@ -293,6 +299,10 @@ def convert_to_task_dict_optimized(
         ref.model_dump(exclude_none=True)
         for ref in (task_crd.spec.externalKnowledgeRefs or [])
     ]
+    context_warnings = [
+        warning.model_dump(exclude_none=True)
+        for warning in (task_crd.spec.contextWarnings or [])
+    ]
 
     return {
         "id": task.id,
@@ -329,6 +339,7 @@ def convert_to_task_dict_optimized(
         "execution_workspace_path": execution_workspace_path,
         "preserve_executor": preserve_executor,
         "external_knowledge_refs": external_knowledge_refs,
+        "context_warnings": context_warnings,
     }
 
 
@@ -349,10 +360,12 @@ def convert_team_to_dict(team: Kind, db: Session, user_id: int) -> Dict[str, Any
     # Convert members to bots format
     bots = []
     for member in team_crd.spec.members:
-        # Find bot using kindReader
-        bot = kindReader.get_by_name_and_namespace(
-            db, user_id, KindType.BOT, member.botRef.namespace, member.botRef.name
-        )
+        bot = resolve_kind_reference(
+            db,
+            kind="Bot",
+            ref=member.botRef,
+            actor_user_id=team.user_id,
+        ).resource
 
         if bot:
             bot_info = {

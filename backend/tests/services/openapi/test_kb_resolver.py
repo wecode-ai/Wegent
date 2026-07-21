@@ -224,6 +224,51 @@ class TestKnowledgeBaseNameResolver:
         assert len(result.not_found) == 0
         assert len(result.no_access) == 0
 
+    def test_resolve_folder_only_scope_passes_none_document_ids(
+        self, resolver, mock_db
+    ):
+        """A folder-only scope must resolve without tripping the empty guard.
+
+        Regression: a task bound to a folder (no explicit documents) persists
+        ``folderIds=[8], explicitDocumentIds=[]``. The resolver must forward the
+        unused document dimension as ``None`` so the service does not raise
+        ``document_ids must not be empty``.
+        """
+        accessible_kb = self._create_mock_accessible_kb(107, "default", "scoped_kb")
+        grouped_response = self._create_mock_grouped_response(
+            created_by_me=[accessible_kb]
+        )
+
+        with (
+            patch(
+                "app.services.openapi.kb_resolver.KnowledgeService.get_all_knowledge_bases_grouped"
+            ) as mock_get_grouped,
+            patch(
+                "app.services.openapi.kb_resolver.KnowledgeFolderService."
+                "resolve_document_ids_for_scope"
+            ) as mock_resolve_scope,
+        ):
+            mock_get_grouped.return_value = grouped_response
+            mock_resolve_scope.return_value = [11, 12]
+
+            kb_names = [
+                {
+                    "namespace": "default",
+                    "name": "scoped_kb",
+                    "scope_specified": True,
+                    "folder_ids": [8],
+                    "document_ids": [],
+                    "include_subfolders": True,
+                }
+            ]
+            result = resolver.resolve(kb_names, raise_on_error=True)
+
+            assert len(result.resolved) == 1
+            assert result.resolved[0].resolved_document_ids == [11, 12]
+            _, kwargs = mock_resolve_scope.call_args
+            assert kwargs["folder_ids"] == [8]
+            assert kwargs["document_ids"] is None
+
 
 class TestGetAccessibleKbLookup:
     """Test cases for _get_accessible_kb_lookup method."""

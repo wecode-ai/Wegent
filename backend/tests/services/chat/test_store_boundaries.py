@@ -80,7 +80,7 @@ async def test_lifecycle_loads_existing_result_through_store(monkeypatch):
     store = SimpleNamespace(
         get_by_id=lambda db, subtask_id: _subtask(result={"value": "stored"})
     )
-    monkeypatch.setattr(lifecycle, "subtask_store", store, raising=False)
+    monkeypatch.setattr(lifecycle.task_stores, "subtask_store", store)
     monkeypatch.setattr(
         lifecycle, "SessionLocal", lambda: _NoModelCrudDb(), raising=False
     )

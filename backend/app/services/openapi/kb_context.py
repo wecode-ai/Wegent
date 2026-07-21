@@ -10,15 +10,13 @@ for knowledge bases specified in API requests.
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.knowledge.task_knowledge_base_service import (
-    task_knowledge_base_service,
+    project_task_knowledge_bindings,
 )
 from app.services.openapi.kb_resolver import (
     KnowledgeBaseNameResolver,
@@ -26,6 +24,9 @@ from app.services.openapi.kb_resolver import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.models.task import TaskResource
 
 
 class KnowledgeBaseContextCreator:
@@ -53,8 +54,7 @@ class KnowledgeBaseContextCreator:
         self,
         subtask_id: int,
         kb_names: List[dict],
-        task=None,
-        user_name: Optional[str] = None,
+        task: Optional["TaskResource"] = None,
     ) -> List[SubtaskContext]:
         """
         Create SubtaskContext records for knowledge bases.
@@ -66,9 +66,7 @@ class KnowledgeBaseContextCreator:
         Args:
             subtask_id: ID of the subtask to attach contexts to
             kb_names: List of dicts with 'namespace' and 'name' keys
-            task: Optional task to sync selected KBs into task-level refs
-            user_name: Optional user name used as boundBy during task-level sync
-
+            task: Optional Task whose conversation bindings should be updated
         Returns:
             List of created SubtaskContext records
         """
@@ -94,7 +92,7 @@ class KnowledgeBaseContextCreator:
         # Batch insert all contexts
         if contexts:
             self.db.add_all(contexts)
-            self.db.commit()
+            self.db.flush()
 
             # Refresh to get IDs
             for ctx in contexts:
@@ -107,11 +105,17 @@ class KnowledgeBaseContextCreator:
                 [ctx.id for ctx in contexts],
             )
 
-            if task is not None and user_name:
-                self._sync_resolved_refs_to_task(
-                    task=task,
-                    resolved_refs=resolution_result.resolved,
-                    user_name=user_name,
+            if task is not None:
+                from app.services.chat.task_knowledge_binding_service import (
+                    upsert_message_knowledge_bindings,
+                )
+
+                upsert_message_knowledge_bindings(
+                    self.db,
+                    task,
+                    contexts,
+                    [],
+                    self.user_id,
                 )
 
         return contexts
@@ -165,95 +169,32 @@ class KnowledgeBaseContextCreator:
 
         return context
 
-    def _sync_resolved_refs_to_task(
-        self,
-        task,
-        resolved_refs: List[ResolvedKnowledgeBase],
-        user_name: str,
-    ) -> None:
-        """Sync API-selected KB refs to task-level scope metadata."""
-        self._replace_task_scope_refs(task, resolved_refs, user_name)
-
-        for ref in resolved_refs:
-            if ref.scope_restricted:
-                continue
-            synced = task_knowledge_base_service.sync_subtask_kb_to_task(
-                db=self.db,
-                task=task,
-                knowledge_id=ref.kb_id,
-                user_id=self.user_id,
-                user_name=user_name,
-            )
-            if synced:
-                logger.info(
-                    "[KBContextCreator] Synced KB %s to task %s from subtask-level selection",
-                    ref.kb_id,
-                    task.id,
-                )
-
-    def _replace_task_scope_refs(
-        self,
-        task,
-        resolved_refs: List[ResolvedKnowledgeBase],
-        user_name: str,
-    ) -> None:
-        """Replace task-level API scope refs with the current request selection."""
-        task_json = task.json if isinstance(task.json, dict) else {}
-        spec = task_json.setdefault("spec", {})
-        bound_at = datetime.now(timezone.utc).isoformat()
-
-        spec["knowledgeBaseScopes"] = [
-            {
-                "id": ref.kb_id,
-                "namespace": ref.namespace,
-                "name": ref.name,
-                "scopeRestricted": ref.scope_restricted,
-                "folderIds": ref.folder_ids,
-                "explicitDocumentIds": ref.explicit_document_ids,
-                "includeSubfolders": ref.include_subfolders,
-                "boundBy": user_name,
-                "boundAt": bound_at,
-            }
-            for ref in resolved_refs
-        ]
-
-        task_json["spec"] = spec
-        task.json = task_json
-        flag_modified(task, "json")
-        self.db.commit()
-        logger.info(
-            "[KBContextCreator] Replaced task %s knowledgeBaseScopes with %d refs",
-            task.id,
-            len(resolved_refs),
-        )
-
 
 def get_task_knowledge_base_scope_refs(task) -> list[dict]:
-    """Return normalized task-level API KB scope refs for follow-up requests."""
+    """Return normalized task-level API KB refs for follow-up requests.
+
+    Reads both ``knowledgeBaseScopes`` and ``knowledgeBaseRefs`` and reuses the
+    same merge/deduplication logic as the display layer so that runtime RAG and
+    OpenAPI follow-up requests see the same whole/scope semantics as the UI.
+    """
     task_json = task.json if isinstance(task.json, dict) else {}
     spec = task_json.get("spec", {})
-    raw_scope_refs = spec.get("knowledgeBaseScopes") or []
-    if not raw_scope_refs:
-        return []
-
+    bindings = project_task_knowledge_bindings(spec)
     refs: list[dict] = []
-    for raw_ref in raw_scope_refs:
-        if not isinstance(raw_ref, dict):
+    for ref in bindings:
+        ref_id = ref.get("id")
+        name = ref.get("name", "")
+        if ref_id is None and not name:
             continue
-        name = raw_ref.get("name")
-        ref_id = raw_ref.get("id")
-        if not name and ref_id is None:
-            continue
-        scope_restricted = bool(raw_ref.get("scopeRestricted", False))
         refs.append(
             {
                 "id": ref_id,
-                "namespace": raw_ref.get("namespace", "default"),
-                "name": name or "",
-                "folder_ids": raw_ref.get("folderIds"),
-                "document_ids": raw_ref.get("explicitDocumentIds"),
-                "include_subfolders": raw_ref.get("includeSubfolders", True),
-                "scope_specified": scope_restricted,
+                "namespace": ref.get("namespace", "default"),
+                "name": name,
+                "folder_ids": ref.get("folder_ids"),
+                "document_ids": ref.get("document_ids"),
+                "include_subfolders": ref.get("include_subfolders", True),
+                "scope_specified": ref.get("scope_restricted", False),
             }
         )
     return refs

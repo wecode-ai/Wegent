@@ -446,7 +446,12 @@ def test_multiple_external_entity_types_isolated(test_db: Session) -> None:
             return []
 
         def get_resource_ids_by_entity(
-            self, db, user_id, entity_type, user_context=None
+            self,
+            db,
+            user_id,
+            entity_type,
+            resource_type=ResourceType.KNOWLEDGE_BASE.value,
+            user_context=None,
         ):
             if entity_type != "mock_team":
                 return []

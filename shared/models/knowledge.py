@@ -36,6 +36,27 @@ class KnowledgeBaseScope:
             object.__setattr__(self, "document_ids", [])
 
 
+def complete_knowledge_base_scopes(
+    knowledge_base_ids: list[int],
+    scopes: list[KnowledgeBaseScope] | None,
+) -> list[KnowledgeBaseScope]:
+    """Return one scope entry for every knowledge base while preserving restrictions."""
+    scope_by_id = {scope.knowledge_base_id: scope for scope in (scopes or [])}
+    completed: list[KnowledgeBaseScope] = []
+    seen_ids: set[int] = set()
+    for knowledge_base_id in knowledge_base_ids:
+        if knowledge_base_id in seen_ids:
+            continue
+        seen_ids.add(knowledge_base_id)
+        completed.append(
+            scope_by_id.get(
+                knowledge_base_id,
+                KnowledgeBaseScope(knowledge_base_id=knowledge_base_id),
+            )
+        )
+    return completed
+
+
 @dataclass(frozen=True)
 class KnowledgeBaseToolsResult:
     """Result container for knowledge base tool preparation."""

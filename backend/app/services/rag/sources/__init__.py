@@ -1,11 +1,14 @@
 """External retrieval source framework."""
 
+from .dingtalk import register_dingtalk_retrieval_source_provider
 from .models import (
     DocumentListingSourceProvider,
     ExternalKnowledgeBindingLevel,
     ExternalKnowledgeDocument,
     ExternalKnowledgeDocumentListResult,
     ExternalKnowledgeRef,
+    ExternalProviderCapabilities,
+    ExternalRefGateRequest,
     ExternalRefValidationError,
     RetrievalContext,
     RetrievalSourceProvider,
@@ -16,8 +19,12 @@ from .models import (
 )
 from .registry import retrieval_source_registry
 
+register_dingtalk_retrieval_source_provider()
+
 __all__ = [
     "DocumentListingSourceProvider",
+    "ExternalProviderCapabilities",
+    "ExternalRefGateRequest",
     "ExternalKnowledgeBindingLevel",
     "ExternalKnowledgeRef",
     "ExternalKnowledgeDocument",

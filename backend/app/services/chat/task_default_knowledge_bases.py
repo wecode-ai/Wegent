@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Resolve explicit and agent-default task knowledge bases."""
+"""Resolve and materialize agent-default task knowledge bindings."""
 
 from datetime import datetime
 from typing import Any
@@ -13,6 +13,7 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Task, Team
 from app.services.adapters.task_kinds.converters import resolve_task_ref_team
+from app.services.chat.knowledge_binding_resolver import KnowledgeBindingResolver
 from app.services.kind_ref_resolver import batch_load_kinds_by_refs
 from app.services.knowledge.knowledge_visibility_query import (
     get_acl_accessible_knowledge_base_ids,
@@ -107,6 +108,18 @@ def _iter_team_member_default_knowledge_base_ids(
     return knowledge_base_ids
 
 
+def build_initial_task_knowledge_bindings(
+    db: Session,
+    user: User,
+    team,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build owner-gated internal and external defaults for a new Task."""
+    return KnowledgeBindingResolver(db).resolve_initial_task_bindings(
+        user=user,
+        team=team,
+    )
+
+
 def _resolve_task_default_knowledge_bases(
     db: Session,
     task_id: int,
@@ -180,30 +193,10 @@ def build_initial_task_knowledge_base_refs(
     db: Session,
     user: User,
     team,
-    knowledge_base_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Build task-level refs for an explicitly selected knowledge base."""
-    bound_at = datetime.now().isoformat()
-    refs_by_id: dict[int, dict[str, Any]] = {}
-
-    candidates = []
-    if knowledge_base_id is not None:
-        candidates.append((knowledge_base_id, user.id))
-
-    for candidate_id, access_user_id in candidates:
-        if candidate_id in refs_by_id:
-            continue
-
-        knowledge_base = _get_accessible_knowledge_base(
-            db, access_user_id, candidate_id
-        )
-        if not knowledge_base:
-            continue
-
-        refs_by_id[candidate_id] = _build_task_knowledge_base_ref(
-            knowledge_base=knowledge_base,
-            user_name=user.user_name,
-            bound_at=bound_at,
-        )
-
-    return list(refs_by_id.values())
+    """Compatibility projection of owner-gated internal defaults."""
+    return build_initial_task_knowledge_bindings(
+        db=db,
+        user=user,
+        team=team,
+    )["knowledge_base_refs"]
