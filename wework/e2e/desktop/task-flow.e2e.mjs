@@ -1305,10 +1305,12 @@ class DesktopE2EServer {
   }
 
   awaitReadyAfter(readyCount) {
-    if (this.readyCount > readyCount) return Promise.resolve(this.ready)
-    return new Promise(resolvePromise => {
-      this.readyWaiters.push({ readyCount, resolve: resolvePromise })
-    })
+    if (this.readyCount > readyCount) return this.guard(Promise.resolve(this.ready))
+    return this.guard(
+      new Promise(resolvePromise => {
+        this.readyWaiters.push({ readyCount, resolve: resolvePromise })
+      })
+    )
   }
 
   awaitBlockedCloudRequest(pathname) {
@@ -1441,11 +1443,11 @@ class DesktopE2EServer {
 
   releaseRequestUserInputResponse() {
     this.releaseRequestUserInput()
-    return this.requestUserInputResponseWritten
+    return this.guard(this.requestUserInputResponseWritten)
   }
 
   awaitReconnectResponseStarted() {
-    return this.reconnectResponseStarted
+    return this.guard(this.reconnectResponseStarted)
   }
 
   disconnectReconnectResponse() {
@@ -1457,7 +1459,7 @@ class DesktopE2EServer {
   }
 
   awaitWindowLifecycleResponseStarted() {
-    return this.windowLifecycleResponseStarted
+    return this.guard(this.windowLifecycleResponseStarted)
   }
 
   releaseWindowLifecycleResponse() {

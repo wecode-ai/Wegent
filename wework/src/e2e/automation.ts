@@ -665,6 +665,7 @@ async function runDesktopControlClient(url: string): Promise<void> {
         headers: desktopControlHeaders(),
       })
       if (response.status === 204) {
+        await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_RETRY_DELAY_MS))
         continue
       }
       if (!response.ok) {
