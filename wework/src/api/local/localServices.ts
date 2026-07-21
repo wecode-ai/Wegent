@@ -714,6 +714,7 @@ function localRuntimeModelConfig(
         'X-Wegent-Model-Type': modelType,
         'X-Wegent-Model-Namespace': namespace,
         'X-Wegent-Model-User-Id': resourceUserId,
+        'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }

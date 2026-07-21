@@ -62,7 +62,8 @@ Environment overrides:
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
   MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, WEWORK_BRAND_CONFIG,
-  VITE_WEGENT_BACKEND_URL, VITE_WEGENT_SOCKET_URL
+  VITE_WEGENT_BACKEND_URL, VITE_WEGENT_SOCKET_URL,
+  WEWORK_NOTARIZATION_POLL_INTERVAL_SECONDS (default: 15)
 EOF
 }
 
@@ -176,26 +177,112 @@ maybe_sign_dmg() {
   fi
 }
 
+run_notarytool() {
+  if [ -n "$APPLE_BUILD_ID" ] && [ -n "$APPLE_BUILD_TEAM_ID" ] && [ -n "$APPLE_BUILD_PASSWORD" ]; then
+    xcrun notarytool "$@" \
+      --apple-id "$APPLE_BUILD_ID" \
+      --team-id "$APPLE_BUILD_TEAM_ID" \
+      --password "$APPLE_BUILD_PASSWORD"
+    return
+  fi
+
+  xcrun notarytool "$@" --keychain-profile "$NOTARY_PROFILE"
+}
+
+wait_for_notarization() {
+  local artifact_path="$1"
+  local submission_id="$2"
+  local poll_interval="${WEWORK_NOTARIZATION_POLL_INTERVAL_SECONDS:-15}"
+  local started_at="$SECONDS"
+  local info_output
+  local status
+
+  while true; do
+    info_output="$(run_notarytool info "$submission_id" --output-format json)"
+    status="$(NOTARY_INFO="$info_output" python3 - <<'PY'
+import json
+import os
+
+print(json.loads(os.environ["NOTARY_INFO"]).get("status", "Unknown"))
+PY
+)"
+    printf '[notarization] %-11s elapsed=%dm%02ds id=%s\n' \
+      "$status" \
+      "$(((SECONDS - started_at) / 60))" \
+      "$(((SECONDS - started_at) % 60))" \
+      "$submission_id"
+
+    case "$status" in
+      Accepted)
+        return 0
+        ;;
+      Invalid|Rejected)
+        log_signing "Notarization failed for $(basename "$artifact_path")."
+        run_notarytool log "$submission_id" || true
+        return 1
+        ;;
+    esac
+
+    sleep "$poll_interval"
+  done
+}
+
 maybe_notarize_and_staple() {
   local artifact_path="$1"
+  local submit_log
+  local submission_id
 
   if [ -n "$APPLE_BUILD_ID" ] && [ -n "$APPLE_BUILD_TEAM_ID" ] && [ -n "$APPLE_BUILD_PASSWORD" ]; then
     log_signing "Submitting for notarization with Apple ID credentials"
-    xcrun notarytool submit "$artifact_path" \
-      --apple-id "$APPLE_BUILD_ID" \
-      --team-id "$APPLE_BUILD_TEAM_ID" \
-      --password "$APPLE_BUILD_PASSWORD" \
-      --wait
   elif [ -n "$NOTARY_PROFILE" ]; then
     log_signing "Submitting for notarization with profile: $NOTARY_PROFILE"
-    xcrun notarytool submit "$artifact_path" --keychain-profile "$NOTARY_PROFILE" --wait
   else
     log_signing "MACOS_NOTARY_PROFILE not set. Skipping notarization for $(basename "$artifact_path")."
     return 0
   fi
 
+  submit_log="$(mktemp)"
+  if ! run_notarytool submit "$artifact_path" --no-wait --progress | tee "$submit_log"; then
+    rm -f "$submit_log"
+    return 1
+  fi
+  submission_id="$(sed -nE 's/^[[:space:]]*id:[[:space:]]*([0-9A-Fa-f-]+)[[:space:]]*$/\1/p' "$submit_log" | tail -1)"
+  rm -f "$submit_log"
+  if [ -z "$submission_id" ]; then
+    echo "Notary service accepted the command but did not return a submission ID." >&2
+    return 1
+  fi
+
+  log_signing "Submission ID: $submission_id"
+  wait_for_notarization "$artifact_path" "$submission_id"
   log_signing "Stapling ticket to $(basename "$artifact_path")"
   xcrun stapler staple "$artifact_path"
+  xcrun stapler validate "$artifact_path"
+}
+
+run_tauri_build() {
+  local started_at="$SECONDS"
+  local build_pid
+  local exit_code
+  local next_heartbeat=30
+
+  pnpm exec tauri "$@" &
+  build_pid=$!
+  while kill -0 "$build_pid" 2>/dev/null; do
+    sleep 5
+    if [ "$((SECONDS - started_at))" -ge "$next_heartbeat" ]; then
+      printf '[tauri] build/sign/notarization still running; elapsed=%dm%02ds\n' \
+        "$(((SECONDS - started_at) / 60))" \
+        "$(((SECONDS - started_at) % 60))"
+      next_heartbeat="$((next_heartbeat + 30))"
+    fi
+  done
+
+  set +e
+  wait "$build_pid"
+  exit_code=$?
+  set -e
+  return "$exit_code"
 }
 
 next_patch_version_from_text() {
@@ -585,6 +672,7 @@ cleanup() {
 trap cleanup EXIT
 
 VERSION="$next_version" \
+MACOS_BUILD_TARGET="$MACOS_BUILD_TARGET" \
 UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
@@ -594,10 +682,23 @@ python3 - <<'PY'
 import json
 import os
 
+build_target = os.environ["MACOS_BUILD_TARGET"]
+codex_targets = (
+    ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+    if build_target == "universal-apple-darwin"
+    else [build_target]
+)
+resources = [
+    *(f"binaries/codex/{target}/**/*" for target in codex_targets),
+    "binaries/codex/legal/**/*",
+    "bundled-hooks/**/*",
+]
+
 config = {
     "version": os.environ["VERSION"],
     "bundle": {
         "createUpdaterArtifacts": True,
+        "resources": resources,
     },
     "plugins": {
         "updater": {
@@ -676,7 +777,7 @@ wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
   "$MACOS_BUILD_TARGET" \
   "$app_sign_identity"
-pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
+run_tauri_build "${TAURI_BUILD_ARGS[@]}"
 wework_verify_macos_app_executor_sidecar "$(bundle_root)"
 
 archive_path="$(find_update_archive)"
