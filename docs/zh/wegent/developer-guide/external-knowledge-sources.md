@@ -28,13 +28,22 @@ sidebar_position: 12
 
 registry 是 core 和 provider 之间的边界。Core 只依赖 registry 查找 provider，不 import 下游实现。下游部署在启动时注册 provider；如果某个 provider 不存在或不可用，core 应把该来源标记为失败或忽略，而不是让整个检索请求失败。
 
+### 钉钉 MCP 服务边界
+
+钉钉外部知识源使用两个职责不同的 MCP 服务：WikiSpace MCP 只负责知识库列表、元数据和管理；Docs MCP 负责 `list_nodes`、`search_documents` 和 `get_document_content`。WikiSpace ref 的 `source_id` 和本地同步目录仍用于权限范围校验，但正文检索必须使用 Docs MCP。
+
+Docs MCP 检索先用 `keyword`、`pageSize` 和可选的 `workspaceIds` 搜索文档元数据，再用 `nodeId` 读取正文。显式文档 ref 直接读取正文；知识库和文件夹 ref 只读取有界候选数，并限制分页、并发和超时。MCP 错误、工具缺失、参数错误或无法识别的响应必须报告为 `failed`；只有成功返回且无匹配时才是 `no_hit`。
+
 ## Task 级运行时绑定
 
-`externalKnowledgeRefs` 是 Task 级 runtime binding。它描述当前任务运行时选择了哪些外部知识源，和 Ghost、Bot 或 Team 的默认配置不同。
+`Ghost.spec.defaultExternalKnowledgeRefs` 保存每个 Bot 的默认外部知识。创建 Task 时会 union 各成员 Ghost 默认值，按 Team owner（`team.user_id`）门禁后物化到 `Task.spec.externalKnowledgeRefs`。
 
 关键约束：
 
-- 不把外部知识源作为 Ghost 默认知识配置写入。
+- 智能体默认知识按 Team owner 保存和运行；分享智能体不会改变 owner。
+- 消息级显式选择按发送者门禁，只作用于本次执行，不更新 Ghost 默认或 Task refs。
+- 复制智能体到新 owner 时，复制的默认知识必须按新的 `team.user_id` 重校验。
+- 有效外部 actor 只存在于本次执行请求中，不写入 ref，也不从 `boundBy` 推断。
 - 不把 provider 私有鉴权材料写入 Task spec。
 - 不把外部原始 URL 持久化到 source payload；如需定位来源，使用稳定、可校验、可由 provider 解释的 `source_uri`。
 - Task detail、WebSocket payload 和 Chat Shell metadata 只透传 provider-neutral 字段。
@@ -56,7 +65,7 @@ registry 是 core 和 provider 之间的边界。Core 只依赖 registry 查找 
 
 ### 管理入口和 API
 
-外部知识源会像内置知识库一样形成 Task 级绑定，影响后续消息。用户取消输入框中的本轮选择不会解除 Task 级绑定；移除绑定只影响后续执行请求，不会修改历史消息上的 context 展示。
+Task 级外部绑定是后续消息的默认快照。输入框显式选择只覆盖当前消息；下一条消息没有显式选择时恢复 Task 快照。移除 Task 绑定只影响后续默认执行，不会修改历史消息上的 context 展示。
 
 前端应复用原任务/群聊管理入口中的“知识库”页签，把内置知识库和外部知识源放在同一个列表中展示，而不是在输入框上下文选择器中单独维护一套“已绑定外部知识”管理入口。外部条目使用短 provider badge 区分，例如 `AP`。
 
@@ -65,6 +74,7 @@ Backend 提供以下 Task 级外部绑定管理接口：
 | 方法   | 路径                                                  | 说明                                       |
 | ------ | ----------------------------------------------------- | ------------------------------------------ |
 | `GET`  | `/api/tasks/{task_id}/external-knowledge-refs`        | 返回当前 Task 已绑定的外部知识引用。       |
+| `POST` | `/api/tasks/{task_id}/external-knowledge-refs`        | 按 Task 的 Team owner 门禁并持久化引用。   |
 | `POST` | `/api/tasks/{task_id}/external-knowledge-refs/remove` | 按规范化 target key 移除一个外部知识引用。 |
 
 移除接口请求体为：
@@ -88,11 +98,14 @@ Backend 提供以下 Task 级外部绑定管理接口：
 
 `internal_retrieve` 负责把内置知识库记录和外部 provider 返回的记录合并给 Chat Shell。推荐流程：
 
-1. 读取 Task spec 中的 `externalKnowledgeRefs`。
-2. 先执行内置知识库检索，保留原有权限和索引行为。
-3. 按 provider 分组调用 registry 中的 `RetrievalSourceProvider`。
-4. 将外部记录转换成统一的上下文片段和引用字段。
-5. 合并结果并返回检索摘要。
+1. 如果当前消息有显式 external knowledge context，本次执行只使用这些 refs，并跳过 Task/default external refs。
+2. 否则读取 Task spec 中的 `externalKnowledgeRefs`，并从持久化的 Team owner 解析 actor。
+3. 先执行内置知识库检索，保留原有权限和索引行为。
+4. 按 provider 分组后调用 registry 中的 `RetrievalSourceProvider`。
+5. 将外部记录转换成统一的上下文片段和引用字段。
+6. 合并结果并返回检索摘要。
+
+两条路径不得互相回退，也不得回退到 `boundBy`、服务凭证或租户凭证。owner 缺失、授权撤销、provider 未配置或 ref 失效时，应从本次执行剔除对应来源并产生脱敏 warning。
 
 外部 provider 的错误必须按来源隔离。某个来源超时、鉴权失败或返回空结果时，只应影响该来源的 status；内置知识库命中和其他 provider 结果仍应返回。
 
