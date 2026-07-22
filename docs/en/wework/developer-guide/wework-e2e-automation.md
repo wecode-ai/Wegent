@@ -50,10 +50,12 @@ The command starts a test-only Vite server through `wework/playwright.config.ts`
 pnpm exec vite --host 127.0.0.1 --port 4174 --mode e2e
 ```
 
-It also starts a Responses API mock:
+It also starts Responses API, Sites upstream, and Connector upstream mocks:
 
 ```bash
 node e2e/utils/mock-response-api-server.mjs
+node e2e/utils/mock-sites-upstream-server.mjs
+node e2e/utils/mock-connector-upstream-server.mjs
 ```
 
 Default configuration:
@@ -62,6 +64,10 @@ Default configuration:
 - `VITE_WEWORK_RUNTIME_MODE=backend`
 - `VITE_LOGIN_MODE=password`
 - `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
+- `WEWORK_SITES_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9997`
+- `WEWORK_CONNECTOR_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9996`
+
+All three mock ports can be overridden with matching `*_PORT` environment variables: `WEWORK_RESPONSE_API_MOCK_PORT`, `WEWORK_SITES_UPSTREAM_MOCK_PORT`, and `WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT`. If a port is overridden, tests can also receive the full matching URL environment variable directly.
 
 Tests do not mock backend APIs. When Backend is not running, the login-page smoke test only verifies that the frontend renders the login entrypoint. Business flows after login must start a real Backend and required services in CI.
 
@@ -112,6 +118,105 @@ The mock enables CORS, so the Wework page can call it with a real browser `fetch
 
 ```text
 http://127.0.0.1:9998/v1
+```
+
+## External Upstream Mocks
+
+Wework E2E also starts two local loopback upstream mocks. They replace only services outside Wegent; they do not replace Wegent Backend, Executor, Codex, `/api/sites`, `/api/apps/installed`, or connector runtime APIs.
+
+`wework/e2e/utils/mock-sites-upstream-server.mjs` simulates the Sites project API:
+
+- `GET /api/v1/projects/search`: returns deterministic projects and supports `username`, `limit`, `sitename`, and `cursor`.
+- `POST /api/v1/projects/deploy/network`: updates project network visibility.
+- `POST /api/v1/projects/update`: updates project name.
+- `POST /api/v1/projects/del`: deletes a project.
+- `GET /captured-requests`, `POST /clear-requests`, `POST /reset`, `GET /health`: assertion and reset helpers.
+
+To cover the Sites path through a real Backend, start Backend with the following environment variables. These variables must be passed to the Backend process; passing them to Vite or the Playwright page does not configure Backend.
+
+```text
+SITES_API_BASE_URL=http://127.0.0.1:9997
+SITES_API_TOKEN=e2e-sites-token
+```
+
+Example:
+
+```bash
+cd backend
+SITES_API_BASE_URL=http://127.0.0.1:9997 \
+SITES_API_TOKEN=e2e-sites-token \
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+`wework/e2e/utils/mock-connector-upstream-server.mjs` simulates external services that connector apps can target:
+
+- `GET /api/tickets/{id}`: acts as an HTTP connector upstream.
+- `POST /mcp`: provides minimal Streamable HTTP MCP JSON-RPC behavior for `initialize`, `tools/list`, and `tools/call`.
+- `GET /captured-requests`, `POST /clear-requests`, `GET /health`: assertion and reset helpers.
+
+Connector app test data can use:
+
+```text
+HTTP connector base URL: http://127.0.0.1:9996/api
+MCP URL: http://127.0.0.1:9996/mcp
+```
+
+An HTTP connector fixture can use:
+
+```json
+{
+  "slug": "ticket-http",
+  "name": "Ticket HTTP API",
+  "description": "E2E HTTP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "http",
+  "mcp_url": "http://127.0.0.1:9996/api",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["get_ticket"],
+  "http_tools": [
+    {
+      "name": "get_ticket",
+      "description": "Get one mock ticket",
+      "method": "GET",
+      "path": "/tickets/{id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "expand": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "argument_locations": {
+        "id": "path",
+        "expand": "query"
+      }
+    }
+  ]
+}
+```
+
+An MCP connector fixture can use:
+
+```json
+{
+  "slug": "docs-mcp",
+  "name": "Docs MCP",
+  "description": "E2E Streamable HTTP MCP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "streamable-http",
+  "mcp_url": "http://127.0.0.1:9996/mcp",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["search_docs"]
+}
 ```
 
 ## Automation Bridge

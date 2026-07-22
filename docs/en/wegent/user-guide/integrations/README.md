@@ -64,6 +64,7 @@ Support for bidirectional interaction with external systems:
 | Document | Description |
 |----------|-------------|
 | [IM Channel Integration](./im-channel-integration.md) | Configure integration with instant messaging tools |
+| [App Connections](./connector-apps.md) | Let agents call internal systems through administrator-managed Connector Apps |
 
 ---
 

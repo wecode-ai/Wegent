@@ -3188,6 +3188,8 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_E2E_SEED_LOCAL_MODELS:
+          PLUGINS_ONLY || MEMORY_ONLY || CLOUD_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -3603,6 +3605,9 @@ async function main() {
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-existing-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="cancel-device-folder-picker-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
     await control.command('click', '[data-testid="cancel-device-folder-picker-button"]')

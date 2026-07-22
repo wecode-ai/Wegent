@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createUserApi } from '@/api/users'
+import type { WegentInstalledConnectorApp } from '@/api/cloud/connectorApps'
 import type { UserRuntimeConfig, UserProxyConfig } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import { appsPageSectionExtensions } from '@extensions/apps'
@@ -19,6 +20,7 @@ interface AppsPageState {
   devices: DeviceInfo[]
   codexConfig: UserRuntimeConfig | null
   proxyConfig: UserProxyConfig | null
+  installedApps: WegentInstalledConnectorApp[]
   isLoading: boolean
   error: string | null
 }
@@ -39,6 +41,7 @@ const initialState: AppsPageState = {
   devices: [],
   codexConfig: null,
   proxyConfig: null,
+  installedApps: [],
   isLoading: true,
   error: null,
 }
@@ -75,6 +78,17 @@ function createAppsPageApis() {
   return {
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
+    connectorAppsApi: {
+      async listInstalled() {
+        const response = await client.get<{ apps?: WegentInstalledConnectorApp[] }>(
+          '/apps/installed',
+          {
+            redirectOnUnauthorized: false,
+          }
+        )
+        return Array.isArray(response.apps) ? response.apps : []
+      },
+    },
   }
 }
 
@@ -435,6 +449,86 @@ function ActivityRow({
   )
 }
 
+function InstalledAppsSection({ apps }: { apps: WegentInstalledConnectorApp[] }) {
+  if (apps.length === 0) {
+    return (
+      <section
+        data-testid="installed-apps-empty"
+        className="rounded-2xl border border-border bg-background p-8"
+      >
+        <div className="max-w-xl">
+          <h2 className="heading-base text-text-primary">已安装应用</h2>
+          <p className="mt-2 text-sm leading-6 text-text-secondary">
+            连接云端后，管理员发布的 connector app 会显示在这里，并同步到本机 Codex。
+          </p>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section data-testid="installed-apps-section">
+      <div className="mb-4 flex items-end justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold tracking-[-0.02em] text-text-primary">已安装应用</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            这些 app 已经连接到本机运行时，可在 Codex 任务中通过 connector 工具调用。
+          </p>
+        </div>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-2">
+        {apps.map(app => (
+          <article
+            key={app.id}
+            data-testid={`installed-app-${app.slug}`}
+            className="rounded-2xl border border-border bg-background p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-bold text-text-primary">
+                  {app.name || app.runtime_name || app.slug}
+                </h3>
+                <p className="mt-1 line-clamp-2 text-sm leading-6 text-text-secondary">
+                  {app.description || '由 Wegent connector runtime 管理的应用'}
+                </p>
+              </div>
+              <StatusPill
+                label={app.callable ? '可调用' : '不可调用'}
+                tone={app.callable ? 'online' : 'neutral'}
+              />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(app.tool_summaries ?? []).slice(0, 6).map(tool => (
+                <span
+                  key={tool.name}
+                  className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-text-secondary"
+                >
+                  {tool.raw_tool_name || tool.name}
+                </span>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
+              <span className="truncate text-xs text-text-muted">
+                {app.runtime_name || app.slug}
+              </span>
+              {app.slug === 'wegent-sites' && (
+                <button
+                  type="button"
+                  data-testid="installed-app-open-sites"
+                  onClick={() => navigateTo('/sites')}
+                  className="h-8 rounded-lg border border-border px-3 text-sm font-semibold text-text-primary hover:bg-muted"
+                >
+                  打开站点
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function buildRecommendedApps(state: AppsPageState): AppCardData[] {
   const proxyConfigured = state.proxyConfig?.configured ?? false
   const codexConfigured = state.codexConfig?.configured ?? false
@@ -477,16 +571,24 @@ export function AppsPage() {
 
   useEffect(() => {
     let cancelled = false
-    const { deviceApi, userApi } = createAppsPageApis()
+    const { deviceApi, userApi, connectorAppsApi } = createAppsPageApis()
 
     Promise.all([
       deviceApi.getAllDevices(),
       userApi.getRuntimeConfig('codex'),
       userApi.getProxyConfig(),
+      connectorAppsApi.listInstalled().catch(() => []),
     ])
-      .then(([devices, codexConfig, proxyConfig]) => {
+      .then(([devices, codexConfig, proxyConfig, installedApps]) => {
         if (cancelled) return
-        setState({ devices, codexConfig, proxyConfig, isLoading: false, error: null })
+        setState({
+          devices,
+          codexConfig,
+          proxyConfig,
+          installedApps,
+          isLoading: false,
+          error: null,
+        })
       })
       .catch(error => {
         if (cancelled) return
@@ -580,10 +682,7 @@ export function AppsPage() {
               detail="这里会集中展示 Claude Code、Codex 和模型代理等编码类应用。"
             />
           ) : activeSection === 'installed-apps' ? (
-            <PlaceholderSection
-              title="已安装应用"
-              detail="这里会展示用户已经安装的小程序、插件和办公工作流入口。"
-            />
+            <InstalledAppsSection apps={state.installedApps} />
           ) : (
             <>
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">

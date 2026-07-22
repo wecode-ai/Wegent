@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from utils.crypto import (
+    CryptoConfigurationError,
     decrypt_api_key,
     decrypt_git_token,
     decrypt_sensitive_data,
@@ -265,6 +266,18 @@ class TestGitTokenEncryption:
         decrypted = decrypt_git_token(encrypted)
 
         assert decrypted == token
+
+    def test_encrypt_requires_git_token_aes_iv(self, monkeypatch):
+        """Sensitive-data encryption fails closed without a configured IV."""
+        monkeypatch.delenv("GIT_TOKEN_AES_IV", raising=False)
+
+        import utils.crypto as crypto_module
+
+        crypto_module._aes_key = None
+        crypto_module._aes_iv = None
+
+        with pytest.raises(CryptoConfigurationError, match="GIT_TOKEN_AES_IV"):
+            encrypt_git_token("test_token")
 
 
 @pytest.mark.unit

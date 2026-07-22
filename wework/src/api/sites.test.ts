@@ -3,15 +3,22 @@ import { createSitesApi } from './sites'
 
 describe('createSitesApi', () => {
   const fetchMock = vi.fn()
+  const storage = new Map<string, string>()
 
   beforeEach(() => {
     fetchMock.mockReset()
-    localStorage.setItem('auth_token', 'wegent-secret')
+    storage.clear()
+    storage.set('auth_token', 'wegent-secret')
     vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+      clear: () => storage.clear(),
+    })
   })
 
   afterEach(() => {
-    localStorage.clear()
     vi.unstubAllGlobals()
   })
 
@@ -26,7 +33,7 @@ describe('createSitesApi', () => {
     await api.listSites({ q: '产品 站点', offset: 0, limit: 20 })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/sites?q=%E4%BA%A7%E5%93%81+%E7%AB%99%E7%82%B9&offset=0&limit=20',
+      '/api/sites?q=%E4%BA%A7%E5%93%81+%E7%AB%99%E7%82%B9&offset=0&limit=20',
       {
         method: 'GET',
         headers: {
@@ -51,7 +58,7 @@ describe('createSitesApi', () => {
     await api.listSites({ offset: 0, limit: 20 })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      'http://127.0.0.1:9100/api/sites?offset=0&limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
@@ -73,7 +80,7 @@ describe('createSitesApi', () => {
     const site = await api.publishSite('site/1')
 
     expect(site.external_url).toBe('https://site-1.example.com')
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/sites/site%2F1/publish', {
+    expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1/publish', {
       method: 'POST',
       body: undefined,
       headers: {
@@ -89,7 +96,7 @@ describe('createSitesApi', () => {
     const api = createSitesApi('/api/')
     await api.deleteSite('site/1')
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/sites/site%2F1', {
+    expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1', {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
