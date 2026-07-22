@@ -234,14 +234,14 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 px-3 py-2.5 text-left',
+            'grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 py-2.5 pl-3 pr-0 text-left',
             'hover:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
               <span
-                className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
+                className="min-w-0 truncate text-sm font-medium text-text-primary"
                 title={getModelDisplayName(model)}
               >
                 {getModelDisplayName(model)}
@@ -317,14 +317,14 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'grid min-h-[44px] min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 px-3 py-2.5 text-left',
+            'grid min-h-[44px] min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 py-2.5 pl-3 pr-0 text-left',
             'active:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
               <span
-                className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
+                className="min-w-0 truncate text-sm font-medium text-text-primary"
                 title={getModelDisplayName(model)}
               >
                 {getModelDisplayName(model)}
