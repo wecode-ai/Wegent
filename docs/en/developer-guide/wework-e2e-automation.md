@@ -49,6 +49,8 @@ Default configuration:
 - `WEWORK_SITES_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9997`
 - `WEWORK_CONNECTOR_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9996`
 
+All three mock ports can be overridden with matching `*_PORT` environment variables: `WEWORK_RESPONSE_API_MOCK_PORT`, `WEWORK_SITES_UPSTREAM_MOCK_PORT`, and `WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT`. If a port is overridden, tests can also receive the full matching URL environment variable directly.
+
 Tests do not mock backend APIs. When Backend is not running, the login-page smoke test only verifies that the frontend renders the login entrypoint. Business flows after login must start a real Backend and required services in CI.
 
 ## Desktop Task-Flow E2E
@@ -101,11 +103,20 @@ Wework E2E also starts two local loopback upstream mocks. They replace only serv
 - `POST /api/v1/projects/del`: deletes a project.
 - `GET /captured-requests`, `POST /clear-requests`, `POST /reset`, `GET /health`: assertion and reset helpers.
 
-To cover the Sites path through a real Backend, configure Backend with:
+To cover the Sites path through a real Backend, start Backend with the following environment variables. These variables must be passed to the Backend process; passing them to Vite or the Playwright page does not configure Backend.
 
 ```text
 SITES_API_BASE_URL=http://127.0.0.1:9997
 SITES_API_TOKEN=e2e-sites-token
+```
+
+Example:
+
+```bash
+cd backend
+SITES_API_BASE_URL=http://127.0.0.1:9997 \
+SITES_API_TOKEN=e2e-sites-token \
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 `wework/e2e/utils/mock-connector-upstream-server.mjs` simulates external services that connector apps can target:
@@ -124,6 +135,66 @@ OAuth token URL: http://127.0.0.1:9996/oauth/token
 HTTP connector base URL: http://127.0.0.1:9996/api
 MCP URL: http://127.0.0.1:9996/mcp
 ```
+
+An HTTP connector fixture can use:
+
+```json
+{
+  "slug": "ticket-http",
+  "name": "Ticket HTTP API",
+  "description": "E2E HTTP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "http",
+  "mcp_url": "http://127.0.0.1:9996/api",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["get_ticket"],
+  "http_tools": [
+    {
+      "name": "get_ticket",
+      "description": "Get one mock ticket",
+      "method": "GET",
+      "path": "/tickets/{id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "expand": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "argument_locations": {
+        "id": "path",
+        "expand": "query"
+      }
+    }
+  ]
+}
+```
+
+An MCP connector fixture can use:
+
+```json
+{
+  "slug": "docs-mcp",
+  "name": "Docs MCP",
+  "description": "E2E Streamable HTTP MCP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "streamable-http",
+  "mcp_url": "http://127.0.0.1:9996/mcp",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["search_docs"]
+}
+```
+
+An OAuth connector fixture can use the same MCP URL with `auth_type` set to `oauth2`, and with `oauth_authorization_url` and `oauth_token_url` pointing at `/oauth/authorize` and `/oauth/token`. When the test starts authorization, the mock preserves the original `state`, sends it back to the callback URL, and returns a fixed token so tests can assert connection state and encrypted token storage.
 
 ## Automation Bridge
 

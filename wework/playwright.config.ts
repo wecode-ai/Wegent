@@ -78,8 +78,6 @@ export default defineConfig({
         WEWORK_RESPONSE_API_MOCK_URL: responseApiMockURL,
         WEWORK_SITES_UPSTREAM_MOCK_URL: sitesUpstreamMockURL,
         WEWORK_CONNECTOR_UPSTREAM_MOCK_URL: connectorUpstreamMockURL,
-        SITES_API_BASE_URL: sitesUpstreamMockURL,
-        SITES_API_TOKEN: 'e2e-sites-token',
       },
     },
   ],
