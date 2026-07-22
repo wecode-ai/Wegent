@@ -13,6 +13,7 @@ import { WorkspacePanelCards } from './WorkspacePanelCards'
 interface BottomWorkspacePanelTab {
   id: string
   title: string
+  defaultOpenTool?: 'terminal'
 }
 
 interface BottomWorkspacePanelProps {
@@ -31,8 +32,11 @@ interface BottomWorkspacePanelProps {
   onTerminalTabsEmpty?: () => void
 }
 
-function createTerminalTab(index: number): BottomWorkspacePanelTab {
-  return { id: `terminal-${index}`, title: `Terminal ${index}` }
+function createTerminalTab(
+  index: number,
+  defaultOpenTool?: BottomWorkspacePanelTab['defaultOpenTool']
+): BottomWorkspacePanelTab {
+  return { id: `terminal-${index}`, title: `Terminal ${index}`, defaultOpenTool }
 }
 
 export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
@@ -71,7 +75,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   }, [open, tabs.length])
 
   const openTerminalTab = () => {
-    const tab = createTerminalTab(terminalSequenceRef.current)
+    const tab = createTerminalTab(terminalSequenceRef.current, 'terminal')
     terminalSequenceRef.current += 1
     setTabs(current => [...current, tab])
     setActiveTabId(tab.id)
@@ -190,7 +194,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
                   currentProject={currentProject}
                   devices={devices}
                   workspaceTarget={workspaceTarget}
-                  defaultOpenTool={panelActive ? 'terminal' : undefined}
+                  defaultOpenTool={tab.defaultOpenTool}
                   onRequestClose={() => closeTab(tab.id)}
                   hideTerminalChrome
                   preferLocalTerminal={preferLocalTerminal}
