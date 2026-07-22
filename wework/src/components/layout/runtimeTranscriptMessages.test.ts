@@ -55,4 +55,72 @@ describe('mergeRuntimeTranscriptMessages', () => {
 
     expect(merged.map(item => item.id)).toEqual(['user-1', 'user-2'])
   })
+
+  test('reconciles live assistants to their transcript turn when subtask ids differ', () => {
+    const merged = mergeRuntimeTranscriptMessages(
+      [
+        message({ id: 'user-1', role: 'user', content: 'Write a file', runtimeMessageIndex: 0 }),
+        message({
+          id: 'server-assistant-1',
+          subtaskId: 'turn-1',
+          content: 'File written',
+          runtimeMessageIndex: 1,
+        }),
+        message({ id: 'user-2', role: 'user', content: 'Edit a line', runtimeMessageIndex: 2 }),
+        message({
+          id: 'server-assistant-2',
+          subtaskId: 'turn-2',
+          content: 'File updated',
+          runtimeMessageIndex: 3,
+        }),
+      ],
+      [
+        message({ id: 'user-1', role: 'user', content: 'Write a file' }),
+        message({
+          id: 'live-assistant-1',
+          subtaskId: 'request-1',
+          content: 'File written',
+          blocks: [{ id: 'tool-1', type: 'tool', status: 'done', content: 'write' }],
+        }),
+        message({ id: 'user-2', role: 'user', content: 'Edit a line' }),
+        message({
+          id: 'live-assistant-2a',
+          subtaskId: 'request-2a',
+          content: 'File updated',
+          blocks: [{ id: 'tool-2', type: 'tool', status: 'done', content: 'read' }],
+        }),
+        message({
+          id: 'live-assistant-2b',
+          subtaskId: 'request-2b',
+          content: 'File updated',
+          blocks: [{ id: 'tool-3', type: 'tool', status: 'done', content: 'edit' }],
+        }),
+      ]
+    )
+
+    expect(merged.map(item => item.id)).toEqual([
+      'user-1',
+      'server-assistant-1',
+      'user-2',
+      'server-assistant-2',
+    ])
+    expect(merged[1].blocks?.map(block => block.id)).toEqual(['tool-1'])
+    expect(merged[3].blocks?.map(block => block.id)).toEqual(['tool-2', 'tool-3'])
+  })
+
+  test('keeps a new live turn that is not in the transcript yet', () => {
+    const merged = mergeRuntimeTranscriptMessages(
+      [
+        message({ id: 'user-1', role: 'user', content: 'First request', runtimeMessageIndex: 0 }),
+        message({ id: 'assistant-1', content: 'First response', runtimeMessageIndex: 1 }),
+      ],
+      [
+        message({ id: 'user-1', role: 'user', content: 'First request' }),
+        message({ id: 'user-2', role: 'user', content: 'New request' }),
+        message({ id: 'live-2', subtaskId: 'request-2', content: 'Working', status: 'streaming' }),
+      ]
+    )
+
+    expect(merged.map(item => item.id)).toEqual(['user-1', 'assistant-1', 'user-2', 'live-2'])
+  })
 })
