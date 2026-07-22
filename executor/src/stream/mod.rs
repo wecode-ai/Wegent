@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
 
 use serde_json::Value;
 
@@ -14,6 +14,8 @@ use crate::{
 };
 
 const CLAUDE_STDOUT_MAX_BUFFER_BYTES: usize = 1024 * 1024;
+const CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
+const OMITTED_IMAGE_DATA: &str = "[binary image data omitted]";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeStreamSummary {
@@ -112,11 +114,11 @@ impl ClaudeStdoutJsonBuffer {
         }
 
         self.buffer.push_str(line);
-        if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+        if self.buffer.len() > CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES {
             let error = ClaudeStdoutJsonError {
                 line_number,
                 message: format!(
-                    "JSON message exceeded maximum buffer size of {CLAUDE_STDOUT_MAX_BUFFER_BYTES} bytes"
+                    "JSON message exceeded maximum raw size of {CLAUDE_STDOUT_MAX_RAW_MESSAGE_BYTES} bytes"
                 ),
                 preview: preview_stdout_line(&self.buffer),
             };
@@ -125,12 +127,80 @@ impl ClaudeStdoutJsonBuffer {
         }
 
         match serde_json::from_str::<Value>(&self.buffer) {
-            Ok(value) => {
+            Ok(mut value) => {
+                omit_inline_image_data(&mut value);
+                let normalized_size = if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                    serde_json::to_vec(&value)
+                        .map(|serialized| serialized.len())
+                        .unwrap_or(self.buffer.len())
+                } else {
+                    self.buffer.len()
+                };
+                if normalized_size > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+                    let error = ClaudeStdoutJsonError {
+                        line_number,
+                        message: format!(
+                            "JSON message exceeded maximum buffer size of {CLAUDE_STDOUT_MAX_BUFFER_BYTES} bytes"
+                        ),
+                        preview: preview_stdout_line(&self.buffer),
+                    };
+                    self.buffer.clear();
+                    return Err(error);
+                }
                 self.buffer.clear();
                 Ok(Some(value))
             }
             Err(_) => Ok(None),
         }
+    }
+}
+
+pub fn compact_claude_stdout_line<'a>(
+    line: &'a str,
+    line_number: usize,
+) -> Result<Cow<'a, str>, ClaudeStdoutJsonError> {
+    if line.len() <= CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+        return Ok(Cow::Borrowed(line));
+    }
+
+    let mut buffer = ClaudeStdoutJsonBuffer::default();
+    let Some(value) = buffer.push_line(line, line_number)? else {
+        return Ok(Cow::Borrowed(line));
+    };
+    serde_json::to_string(&value)
+        .map(Cow::Owned)
+        .map_err(|error| ClaudeStdoutJsonError {
+            line_number,
+            message: format!("failed to serialize normalized Claude stdout JSON: {error}"),
+            preview: preview_stdout_line(line),
+        })
+}
+
+fn omit_inline_image_data(value: &mut Value) -> bool {
+    match value {
+        Value::Array(items) => items.iter_mut().fold(false, |omitted, item| {
+            omit_inline_image_data(item) || omitted
+        }),
+        Value::Object(object) => {
+            let is_image = object.get("type").and_then(Value::as_str) == Some("image");
+            let omitted_here = if is_image {
+                object
+                    .get_mut("source")
+                    .and_then(Value::as_object_mut)
+                    .filter(|source| source.get("type").and_then(Value::as_str) == Some("base64"))
+                    .and_then(|source| source.get_mut("data"))
+                    .map(|data| {
+                        *data = Value::String(OMITTED_IMAGE_DATA.to_owned());
+                    })
+                    .is_some()
+            } else {
+                false
+            };
+            object.values_mut().fold(omitted_here, |omitted, value| {
+                omit_inline_image_data(value) || omitted
+            })
+        }
+        _ => false,
     }
 }
 
