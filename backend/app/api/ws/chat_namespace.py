@@ -868,8 +868,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 params=params,
                 task=existing_task,
             )
-            if resolved_device_id:
-                params.device_id = resolved_device_id
+            params.device_id = resolved_device_id
 
             result = await create_chat_task(
                 db=db,
