@@ -5,7 +5,4 @@ export const cloudDesktopExtension: CloudDesktopExtension = {
   DeviceAction: () => null,
   WorkspaceAction: () => null,
   isInternalPageUrl: () => false,
-  open: async () => {
-    throw new Error('Cloud desktop extension is unavailable')
-  },
 }
