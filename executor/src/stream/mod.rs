@@ -178,9 +178,13 @@ pub fn compact_claude_stdout_line<'a>(
 
 fn omit_inline_image_data(value: &mut Value) -> bool {
     match value {
-        Value::Array(items) => items.iter_mut().fold(false, |omitted, item| {
-            omit_inline_image_data(item) || omitted
-        }),
+        Value::Array(items) => {
+            let mut omitted = false;
+            for item in items {
+                omitted = omit_inline_image_data(item) || omitted;
+            }
+            omitted
+        }
         Value::Object(object) => {
             let is_image = object.get("type").and_then(Value::as_str) == Some("image");
             let omitted_here = if is_image {
