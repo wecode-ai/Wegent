@@ -65,6 +65,10 @@ Backend connectivity is optional, not a required dependency for the local app. W
 
 The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
 
+Task summaries also expose Codex `threadStatus` (`notLoaded`, `idle`, `systemError`, or `active`) and `turnStatus` (`inProgress`, `completed`, `interrupted`, or `failed`) without conflating their lifecycles. The separate `continuable` field means that the conversation is not archived and can accept another message; it must not be used to infer that a turn is running. Wework renders running feedback only from the explicit `running` field and real turn state, and does not convert an `active` thread or message status into streaming.
+
+Refreshing thread metadata must not overwrite a persisted terminal task state. When a Codex thread becomes `idle`, the executor preserves local `done`, `cancelled`, or `failed`; only a genuinely active turn can move the task back to `running`. A normally completed conversation that remains available for follow-up therefore has `status=done`, `running=false`, `continuable=true`, `threadStatus=idle`, and `turnStatus=completed`.
+
 Goals have an independent lifecycle. An `active` goal means that its objective can continue in later turns; it does not mean that a model turn is currently executing. Keeping an active goal while a task is idle must not mark the task as running again. A user's next message creates a new turn directly instead of being sent as guidance to an in-progress turn.
 
 Codex guidance is sent to the active turn through the shared app-server. If that turn finishes or changes while guidance is being sent, the executor reports the race as `no_active_turn`; Wework then sends the same content as a normal follow-up message so user input is preserved without a misleading send failure.
