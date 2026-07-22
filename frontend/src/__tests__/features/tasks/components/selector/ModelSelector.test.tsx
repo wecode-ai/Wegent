@@ -416,7 +416,7 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelTitle).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(screen.getByTitle('图片理解').querySelector('.lucide-image')).toBeInTheDocument()
-    expect(screen.getByTitle('视频理解').querySelector('.lucide-square-play')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解').querySelector('.lucide-video')).toBeInTheDocument()
     expect(selectedIndicator).toHaveClass('self-start', 'mt-0.5')
     expect(informationAction).toHaveClass('self-stretch', 'items-start', 'pt-3')
   })
