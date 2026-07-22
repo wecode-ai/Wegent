@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 AuthType = Literal["none"]
 Visibility = Literal["all", "roles"]
 Transport = Literal["streamable-http", "sse", "http"]
-OAuthClientAuthMethod = Literal["client_secret_post", "client_secret_basic", "none"]
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 HttpArgumentLocation = Literal["path", "query", "body"]
 
@@ -125,19 +124,13 @@ class ConnectorAppWrite(BaseModel):
     auth_type: AuthType = "none"
     transport: Transport = "streamable-http"
     mcp_url: str = Field(min_length=1, max_length=2048)
-    oauth_authorization_url: str | None = Field(default=None, max_length=2048)
-    oauth_token_url: str | None = Field(default=None, max_length=2048)
-    oauth_client_id: str | None = Field(default=None, max_length=512)
-    oauth_client_auth_method: OAuthClientAuthMethod = "client_secret_post"
-    oauth_client_secret: str | None = Field(default=None, min_length=1, max_length=4096)
-    oauth_scopes: list[str] = Field(default_factory=list)
     provider_headers: dict[str, str] = Field(default_factory=dict)
     tool_allowlist: list[str] = Field(default_factory=list)
     http_tools: list[ConnectorHttpToolDefinition] = Field(
         default_factory=list, max_length=100
     )
 
-    @field_validator("mcp_url", "oauth_authorization_url", "oauth_token_url")
+    @field_validator("mcp_url")
     @classmethod
     def validate_http_url(cls, value: str | None) -> str | None:
         return _validate_http_url(value)
@@ -168,13 +161,6 @@ class ConnectorAppUpdate(BaseModel):
     auth_type: AuthType | None = None
     transport: Transport | None = None
     mcp_url: str | None = Field(default=None, min_length=1, max_length=2048)
-    oauth_authorization_url: str | None = Field(default=None, max_length=2048)
-    oauth_token_url: str | None = Field(default=None, max_length=2048)
-    oauth_client_id: str | None = Field(default=None, max_length=512)
-    oauth_client_auth_method: OAuthClientAuthMethod | None = None
-    oauth_client_secret: str | None = Field(default=None, min_length=1, max_length=4096)
-    clear_oauth_client_secret: bool = False
-    oauth_scopes: list[str] | None = None
     provider_headers: dict[str, str] | None = None
     clear_provider_headers: bool = False
     tool_allowlist: list[str] | None = None
@@ -182,7 +168,7 @@ class ConnectorAppUpdate(BaseModel):
         default=None, max_length=100
     )
 
-    @field_validator("mcp_url", "oauth_authorization_url", "oauth_token_url")
+    @field_validator("mcp_url")
     @classmethod
     def validate_http_url(cls, value: str | None) -> str | None:
         return _validate_http_url(value)
@@ -198,8 +184,6 @@ class ConnectorAppUpdate(BaseModel):
             "auth_type",
             "transport",
             "mcp_url",
-            "oauth_client_auth_method",
-            "oauth_scopes",
             "tool_allowlist",
             "http_tools",
         }
@@ -222,15 +206,9 @@ class ConnectorAppAdminResponse(BaseModel):
     enabled: bool
     visibility: str
     allowed_roles: list[str]
-    auth_type: str
+    auth_type: AuthType
     transport: str
     mcp_url: str
-    oauth_authorization_url: str | None
-    oauth_token_url: str | None
-    oauth_client_id: str | None
-    oauth_client_auth_method: str
-    oauth_client_secret_configured: bool
-    oauth_scopes: list[str]
     provider_header_names: list[str]
     provider_headers_configured: bool
     tool_allowlist: list[str]
@@ -253,7 +231,7 @@ class ConnectorAppResponse(BaseModel):
     name: str
     description: str
     icon_url: str | None
-    auth_type: str
+    auth_type: AuthType
     connection: ConnectorConnectionResponse
 
 
@@ -264,7 +242,7 @@ class ConnectorAppListItem(BaseModel):
     description: str
     logo_url: str | None = None
     install_url: str | None = None
-    auth_type: str
+    auth_type: AuthType
     is_accessible: bool
     is_enabled: bool
     callable: bool = False
@@ -295,7 +273,7 @@ class ConnectorAppReadItem(BaseModel):
     name: str
     description: str
     icon_url: str | None = None
-    auth_type: str
+    auth_type: AuthType
     tool_summaries: list[ConnectorToolSummary] = Field(default_factory=list)
 
 

@@ -30,9 +30,6 @@ class SitesUpstreamResponseError(RuntimeError):
         self.detail = detail
 
 
-MAX_PLATFORM_SITE_PAGE_FETCHES = 10
-
-
 class SitesService:
     """Call Sites with server-controlled configuration and user identity."""
 
@@ -170,18 +167,22 @@ class SitesService:
         items: list[SiteResponse] = []
         has_more = False
         query_value = query.lower() if query else None
-        page_fetches = 0
+        seen_cursors: set[str] = set()
 
-        while len(items) < limit and page_fetches < MAX_PLATFORM_SITE_PAGE_FETCHES:
+        while len(items) < limit:
             params: dict[str, Any] = {"username": username, "limit": 100}
             if query:
                 params["sitename"] = query
             if cursor:
+                if cursor in seen_cursors:
+                    raise SitesUpstreamUnavailableError(
+                        "Sites service returned a repeated project list cursor"
+                    )
+                seen_cursors.add(cursor)
                 params["cursor"] = cursor
             payload = await self._request(
                 "GET", "/api/v1/projects/search", params=params
             )
-            page_fetches += 1
             page_items = payload.get("items", []) if isinstance(payload, dict) else []
             if not isinstance(page_items, list):
                 raise SitesUpstreamUnavailableError(
@@ -203,15 +204,20 @@ class SitesService:
                     has_more = True
                     break
             cursor = payload.get("next_cursor") if isinstance(payload, dict) else None
+            if cursor is not None and not isinstance(cursor, str):
+                raise SitesUpstreamUnavailableError(
+                    "Sites service returned an invalid project list cursor"
+                )
             if has_more or not cursor:
                 break
+        next_offset = offset + len(items) if has_more or cursor else None
 
         return SiteListResponse(
             items=items,
             total=offset + len(items) + (1 if has_more or cursor else 0),
             offset=offset,
             limit=limit,
-            next_cursor=cursor,
+            next_cursor=str(next_offset) if next_offset is not None else None,
         )
 
     @staticmethod

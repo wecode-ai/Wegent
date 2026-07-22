@@ -115,10 +115,9 @@ export interface SystemStats {
 }
 
 // Connector App Types
-export type ConnectorAuthType = 'none' | 'bearer' | 'oauth2'
+export type ConnectorAuthType = 'none'
 export type ConnectorVisibility = 'all' | 'roles'
 export type ConnectorTransport = 'streamable-http' | 'sse' | 'http'
-export type ConnectorOAuthClientAuthMethod = 'client_secret_post' | 'client_secret_basic' | 'none'
 
 export interface ConnectorHttpToolDefinition {
   name: string
@@ -164,12 +163,6 @@ export interface AdminConnectorApp {
   auth_type: ConnectorAuthType
   transport: ConnectorTransport
   mcp_url: string
-  oauth_authorization_url: string | null
-  oauth_token_url: string | null
-  oauth_client_id: string | null
-  oauth_client_auth_method: ConnectorOAuthClientAuthMethod
-  oauth_client_secret_configured: boolean
-  oauth_scopes: string[]
   provider_header_names: string[]
   provider_headers_configured: boolean
   tool_allowlist: string[]
@@ -190,12 +183,6 @@ export interface AdminConnectorAppCreate {
   auth_type: ConnectorAuthType
   transport: ConnectorTransport
   mcp_url: string
-  oauth_authorization_url: string | null
-  oauth_token_url: string | null
-  oauth_client_id: string | null
-  oauth_client_auth_method: ConnectorOAuthClientAuthMethod
-  oauth_client_secret: string | null
-  oauth_scopes: string[]
   provider_headers: Record<string, string>
   tool_allowlist: string[]
   http_tools: ConnectorHttpToolDefinition[]
@@ -204,7 +191,6 @@ export interface AdminConnectorAppCreate {
 export type AdminConnectorAppUpdate = Partial<
   Omit<AdminConnectorAppCreate, 'slug' | 'provider_headers'>
 > & {
-  clear_oauth_client_secret?: boolean
   provider_headers?: Record<string, string>
   clear_provider_headers?: boolean
 }

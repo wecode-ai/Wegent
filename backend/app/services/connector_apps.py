@@ -47,12 +47,6 @@ class ConnectorApp:
     auth_type: str
     transport: str
     mcp_url: str
-    oauth_authorization_url: str | None
-    oauth_token_url: str | None
-    oauth_client_id: str | None
-    oauth_client_auth_method: str
-    oauth_client_secret_encrypted: str | None
-    oauth_scopes: list[str]
     provider_headers_encrypted: str | None
     tool_allowlist: list[str]
     http_tools: list[dict[str, Any]]
@@ -100,7 +94,6 @@ class ConnectorAppService:
     def create_app(
         db: Session, payload: ConnectorAppWrite, admin: User
     ) -> ConnectorApp:
-        ConnectorAppService._validate_no_user_authorization(payload.auth_type)
         if ConnectorAppService._find_row_by_slug(db, payload.slug):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Connector slug already exists"
@@ -108,7 +101,6 @@ class ConnectorAppService:
         ConnectorAppService._validate_configuration(
             visibility=payload.visibility,
             allowed_roles=payload.allowed_roles,
-            auth_type=payload.auth_type,
             transport=payload.transport,
             http_tools=payload.http_tools,
             tool_allowlist=payload.tool_allowlist,
@@ -134,29 +126,18 @@ class ConnectorAppService:
         db: Session, app: ConnectorApp, payload: ConnectorAppUpdate
     ) -> ConnectorApp:
         current = ConnectorAppService._spec(app.row)
-        next_auth_type = payload.auth_type or app.auth_type
-        ConnectorAppService._validate_no_user_authorization(next_auth_type)
 
         values = payload.model_dump(
             mode="json",
             by_alias=False,
             exclude_unset=True,
             exclude={
-                "oauth_client_secret",
-                "clear_oauth_client_secret",
                 "provider_headers",
                 "clear_provider_headers",
             },
         )
         for key, value in values.items():
             current[ConnectorAppService._spec_key(key)] = value
-
-        if payload.oauth_client_secret is not None:
-            current["oauthClientSecretEncrypted"] = encrypt_sensitive_data(
-                payload.oauth_client_secret
-            )
-        elif payload.clear_oauth_client_secret:
-            current.pop("oauthClientSecretEncrypted", None)
 
         if payload.provider_headers is not None:
             current["providerHeadersEncrypted"] = _encrypt_json(
@@ -168,7 +149,6 @@ class ConnectorAppService:
         ConnectorAppService._validate_configuration(
             visibility=str(current.get("visibility") or "all"),
             allowed_roles=list(current.get("allowedRoles") or []),
-            auth_type=str(current.get("authType") or "none"),
             transport=str(current.get("transport") or "streamable-http"),
             http_tools=list(current.get("httpTools") or []),
             tool_allowlist=list(current.get("toolAllowlist") or []),
@@ -184,26 +164,16 @@ class ConnectorAppService:
         return ConnectorAppService._row_to_app(app.row)
 
     @staticmethod
-    def _validate_no_user_authorization(auth_type: str) -> None:
-        if auth_type != "none":
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Connector user authorization is not supported",
-            )
-
-    @staticmethod
     def _validate_configuration(
         *,
         visibility: str,
         allowed_roles: list[str] | None,
-        auth_type: str,
         transport: str,
         http_tools: list[dict] | list[ConnectorHttpToolDefinition] | None,
         tool_allowlist: list[str] | None,
     ) -> None:
         if visibility == "roles" and not allowed_roles:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Roles required")
-        ConnectorAppService._validate_no_user_authorization(auth_type)
         definitions = [
             (
                 item
@@ -242,7 +212,7 @@ class ConnectorAppService:
                 Kind.id == app_id,
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -270,12 +240,6 @@ class ConnectorAppService:
             auth_type=app.auth_type,
             transport=app.transport,
             mcp_url=app.mcp_url,
-            oauth_authorization_url=app.oauth_authorization_url,
-            oauth_token_url=app.oauth_token_url,
-            oauth_client_id=app.oauth_client_id,
-            oauth_client_auth_method=app.oauth_client_auth_method,
-            oauth_client_secret_configured=bool(app.oauth_client_secret_encrypted),
-            oauth_scopes=list(app.oauth_scopes or []),
             provider_header_names=sorted(provider_headers),
             provider_headers_configured=bool(provider_headers),
             tool_allowlist=list(app.tool_allowlist or []),
@@ -292,7 +256,7 @@ class ConnectorAppService:
             .filter(
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .order_by(Kind.name, Kind.id)
             .all()
@@ -346,7 +310,7 @@ class ConnectorAppService:
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
                 Kind.name == slug,
-                Kind.is_active == True,
+                Kind.is_active,
             )
             .first()
         )
@@ -364,19 +328,9 @@ class ConnectorAppService:
                 "enabled": payload.enabled,
                 "visibility": payload.visibility,
                 "allowedRoles": payload.allowed_roles,
-                "authType": payload.auth_type,
+                "authType": "none",
                 "transport": payload.transport,
                 "mcpUrl": payload.mcp_url,
-                "oauthAuthorizationUrl": payload.oauth_authorization_url,
-                "oauthTokenUrl": payload.oauth_token_url,
-                "oauthClientId": payload.oauth_client_id,
-                "oauthClientAuthMethod": payload.oauth_client_auth_method,
-                "oauthClientSecretEncrypted": (
-                    encrypt_sensitive_data(payload.oauth_client_secret)
-                    if payload.oauth_client_secret
-                    else None
-                ),
-                "oauthScopes": payload.oauth_scopes,
                 "providerHeadersEncrypted": _encrypt_json(payload.provider_headers),
                 "toolAllowlist": payload.tool_allowlist,
                 "httpTools": [
@@ -404,17 +358,9 @@ class ConnectorAppService:
             enabled=bool(spec.get("enabled", True)),
             visibility=str(spec.get("visibility") or "all"),
             allowed_roles=list(spec.get("allowedRoles") or []),
-            auth_type=str(spec.get("authType") or "none"),
+            auth_type="none",
             transport=str(spec.get("transport") or "streamable-http"),
             mcp_url=str(spec.get("mcpUrl") or ""),
-            oauth_authorization_url=spec.get("oauthAuthorizationUrl"),
-            oauth_token_url=spec.get("oauthTokenUrl"),
-            oauth_client_id=spec.get("oauthClientId"),
-            oauth_client_auth_method=str(
-                spec.get("oauthClientAuthMethod") or "client_secret_post"
-            ),
-            oauth_client_secret_encrypted=spec.get("oauthClientSecretEncrypted"),
-            oauth_scopes=list(spec.get("oauthScopes") or []),
             provider_headers_encrypted=spec.get("providerHeadersEncrypted"),
             tool_allowlist=list(spec.get("toolAllowlist") or []),
             http_tools=list(spec.get("httpTools") or []),
@@ -431,11 +377,6 @@ class ConnectorAppService:
             "allowed_roles": "allowedRoles",
             "auth_type": "authType",
             "mcp_url": "mcpUrl",
-            "oauth_authorization_url": "oauthAuthorizationUrl",
-            "oauth_token_url": "oauthTokenUrl",
-            "oauth_client_id": "oauthClientId",
-            "oauth_client_auth_method": "oauthClientAuthMethod",
-            "oauth_scopes": "oauthScopes",
             "tool_allowlist": "toolAllowlist",
             "http_tools": "httpTools",
         }.get(field, field)

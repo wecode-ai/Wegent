@@ -84,7 +84,7 @@ describe('ConnectorAppList', () => {
     mockedAdminApis.createConnectorApp.mockResolvedValue({} as never)
   })
 
-  test('creates a public OAuth connector with policy fields', async () => {
+  test('creates a public connector with policy fields', async () => {
     render(<ConnectorAppList />)
 
     await screen.findByText('connector_apps.empty')
@@ -99,23 +99,6 @@ describe('ConnectorAppList', () => {
       target: { value: 'https://mcp.example.test/docs' },
     })
 
-    const selects = screen.getAllByRole('combobox')
-    fireEvent.change(selects[1], { target: { value: 'oauth2' } })
-    fireEvent.change(screen.getByTestId('connector-app-oauth-authorization-url'), {
-      target: { value: 'https://identity.example.test/authorize' },
-    })
-    fireEvent.change(screen.getByTestId('connector-app-oauth-token-url'), {
-      target: { value: 'https://identity.example.test/token' },
-    })
-    fireEvent.change(screen.getByTestId('connector-app-oauth-client-id'), {
-      target: { value: 'wegent-desktop' },
-    })
-    fireEvent.change(screen.getAllByRole('combobox')[3], {
-      target: { value: 'none' },
-    })
-    fireEvent.change(screen.getByTestId('connector-app-oauth-scopes'), {
-      target: { value: 'docs.read\ndocs.search' },
-    })
     fireEvent.change(screen.getByTestId('connector-app-provider-headers'), {
       target: { value: '{"X-Tenant":"internal"}' },
     })
@@ -128,9 +111,7 @@ describe('ConnectorAppList', () => {
       expect(mockedAdminApis.createConnectorApp).toHaveBeenCalledWith(
         expect.objectContaining({
           slug: 'internal-docs',
-          auth_type: 'oauth2',
-          oauth_client_auth_method: 'none',
-          oauth_scopes: ['docs.read', 'docs.search'],
+          auth_type: 'none',
           provider_headers: { 'X-Tenant': 'internal' },
           tool_allowlist: ['search', 'read'],
         })

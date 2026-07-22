@@ -35,7 +35,6 @@ def _app_payload(**overrides):
         "allowed_roles": [],
         "auth_type": "none",
         "mcp_url": "https://mcp.example.test/tickets",
-        "oauth_scopes": [],
         "provider_headers": {"X-Tenant": "internal-secret"},
         "tool_allowlist": ["search_tickets"],
     }
@@ -63,7 +62,7 @@ def _connector_kind(db: Session, slug: str) -> Kind:
             Kind.kind == CONNECTOR_APP_KIND,
             Kind.namespace == CONNECTOR_APP_NAMESPACE,
             Kind.name == slug,
-            Kind.is_active == True,
+            Kind.is_active,
         )
         .one()
     )
@@ -121,13 +120,7 @@ def test_authorization_connector_types_are_rejected(
     oauth_response = test_client.post(
         "/api/admin/connector-apps",
         headers=_admin_headers(test_admin_token),
-        json=_app_payload(
-            slug="oauth-app",
-            auth_type="oauth2",
-            oauth_authorization_url="https://id.example.test/authorize",
-            oauth_token_url="https://id.example.test/token",
-            oauth_client_id="wegent-client",
-        ),
+        json=_app_payload(slug="oauth-app", auth_type="oauth2"),
     )
 
     assert bearer_response.status_code == 422

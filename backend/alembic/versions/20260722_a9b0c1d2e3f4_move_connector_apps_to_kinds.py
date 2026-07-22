@@ -5,6 +5,7 @@ Revises: f8a9b0c1d2e3
 Create Date: 2026-07-22
 """
 
+import logging
 from typing import Any, Sequence, Union
 
 import sqlalchemy as sa
@@ -19,10 +20,15 @@ revision: str = "a9b0c1d2e3f4"
 down_revision: Union[str, Sequence[str], None] = "f8a9b0c1d2e3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+logger = logging.getLogger(__name__)
 
 CONNECTOR_APP_KIND = "ConnectorApp"
 CONNECTOR_APP_NAMESPACE = "system"
 CONNECTOR_APP_USER_ID = 0
+
+
+class EmbeddedIvReencryptError(ValueError):
+    """Raised when migration cannot re-encrypt an embedded-IV ciphertext."""
 
 
 def _table_exists(table_name: str) -> bool:
@@ -33,13 +39,21 @@ def _json_value(value: Any, default: Any) -> Any:
     return default if value is None else value
 
 
-def _reencrypt_embedded_iv(value: str | None) -> str | None:
+def _reencrypt_embedded_iv(value: str | None, *, context: str) -> str | None:
     if not value:
         return None
     try:
         decrypted = decrypt_sensitive_data_with_embedded_iv(value)
-    except Exception:
-        return value
+    except Exception as exc:
+        logger.exception(
+            "Failed to decrypt embedded-IV connector app value during migration; "
+            "context=%s value=%r",
+            context,
+            value,
+        )
+        raise EmbeddedIvReencryptError(
+            f"Cannot migrate encrypted connector app value: {context}"
+        ) from exc
     return encrypt_sensitive_data(decrypted or "") if decrypted else None
 
 
@@ -64,18 +78,12 @@ def _connector_payload(row: sa.RowMapping) -> dict[str, Any]:
             "authType": "none",
             "transport": row["transport"] or "streamable-http",
             "mcpUrl": row["mcp_url"] or "",
-            "oauthAuthorizationUrl": row["oauth_authorization_url"],
-            "oauthTokenUrl": row["oauth_token_url"],
-            "oauthClientId": row["oauth_client_id"],
-            "oauthClientAuthMethod": (
-                row["oauth_client_auth_method"] or "client_secret_post"
-            ),
-            "oauthClientSecretEncrypted": _reencrypt_embedded_iv(
-                row["oauth_client_secret_encrypted"]
-            ),
-            "oauthScopes": _json_value(row["oauth_scopes"], []),
             "providerHeadersEncrypted": _reencrypt_embedded_iv(
-                row["provider_headers_encrypted"]
+                row["provider_headers_encrypted"],
+                context=(
+                    "connector_apps.id="
+                    f"{row['id']} slug={slug} field=provider_headers_encrypted"
+                ),
             ),
             "toolAllowlist": _json_value(row["tool_allowlist"], []),
             "httpTools": _json_value(row["http_tools"], []),
@@ -98,15 +106,8 @@ def _migrate_connector_apps_to_kinds() -> None:
         sa.column("enabled", sa.Boolean()),
         sa.column("visibility", sa.String()),
         sa.column("allowed_roles", sa.JSON()),
-        sa.column("auth_type", sa.String()),
         sa.column("transport", sa.String()),
         sa.column("mcp_url", sa.String()),
-        sa.column("oauth_authorization_url", sa.String()),
-        sa.column("oauth_token_url", sa.String()),
-        sa.column("oauth_client_id", sa.String()),
-        sa.column("oauth_client_auth_method", sa.String()),
-        sa.column("oauth_client_secret_encrypted", sa.Text()),
-        sa.column("oauth_scopes", sa.JSON()),
         sa.column("provider_headers_encrypted", sa.Text()),
         sa.column("tool_allowlist", sa.JSON()),
         sa.column("http_tools", sa.JSON()),
@@ -139,13 +140,23 @@ def _migrate_connector_apps_to_kinds() -> None:
     for row in rows:
         if row["slug"] in existing:
             continue
+        try:
+            payload = _connector_payload(row)
+        except EmbeddedIvReencryptError:
+            logger.error(
+                "Aborting ConnectorApp Kind migration before writing invalid record; "
+                "connector_apps.id=%s slug=%s",
+                row["id"],
+                row["slug"],
+            )
+            raise
         bind.execute(
             kinds.insert().values(
                 user_id=CONNECTOR_APP_USER_ID,
                 kind=CONNECTOR_APP_KIND,
                 name=row["slug"],
                 namespace=CONNECTOR_APP_NAMESPACE,
-                json=_connector_payload(row),
+                json=payload,
                 is_active=True,
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],

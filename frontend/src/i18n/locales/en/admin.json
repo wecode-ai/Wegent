@@ -1072,9 +1072,7 @@
     "connections": "{{count}} user connections",
     "confirm_disable": "Disable “{{name}}”? Existing connections will be deleted and users must authorize again after re-enabling.",
     "auth": {
-      "none": "No user auth",
-      "bearer": "Bearer token",
-      "oauth2": "OAuth 2.0"
+      "none": "No user auth"
     },
     "visibility": {
       "all": "All users",
@@ -1097,13 +1095,6 @@
       "auth_type": "User authentication",
       "visibility": "Visibility",
       "allowed_roles": "Allowed roles",
-      "oauth_authorization_url": "OAuth authorization URL",
-      "oauth_token_url": "OAuth token URL",
-      "oauth_client_id": "OAuth client ID",
-      "oauth_client_auth_method": "OAuth token endpoint authentication",
-      "oauth_client_secret": "OAuth client secret",
-      "clear_oauth_secret": "Clear the saved OAuth client secret",
-      "oauth_scopes": "OAuth scopes",
       "provider_headers": "Provider headers",
       "clear_provider_headers": "Clear saved provider headers",
       "tool_allowlist": "Tool allowlist",
@@ -1115,8 +1106,7 @@
       "http_tools": "JSON array of tools. Each tool defines name, description, method, relative path, input_schema, optional argument_locations, and timeout_seconds.",
       "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"Get a ticket\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
       "headers_json": "Optional JSON object. Values are stored encrypted.",
-      "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them.",
-      "secret_configured": "A secret is configured. Leave empty to retain it."
+      "headers_configured": "Configured headers: {{names}}. Leave empty to retain them, enter a JSON object to replace them, or {} to clear them."
     },
     "success": {
       "saved": "App saved",

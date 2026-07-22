@@ -12,7 +12,6 @@ import type {
   AdminConnectorAppCreate,
   ConnectorAuthType,
   ConnectorHttpToolDefinition,
-  ConnectorOAuthClientAuthMethod,
   ConnectorTransport,
   ConnectorVisibility,
 } from '@/apis/admin'
@@ -52,13 +51,6 @@ interface ConnectorForm {
   authType: ConnectorAuthType
   transport: ConnectorTransport
   mcpUrl: string
-  oauthAuthorizationUrl: string
-  oauthTokenUrl: string
-  oauthClientId: string
-  oauthClientAuthMethod: ConnectorOAuthClientAuthMethod
-  oauthClientSecret: string
-  clearOauthClientSecret: boolean
-  oauthScopes: string
   providerHeaders: string
   clearProviderHeaders: boolean
   toolAllowlist: string
@@ -76,13 +68,6 @@ const EMPTY_FORM: ConnectorForm = {
   authType: 'none',
   transport: 'streamable-http',
   mcpUrl: '',
-  oauthAuthorizationUrl: '',
-  oauthTokenUrl: '',
-  oauthClientId: '',
-  oauthClientAuthMethod: 'client_secret_post',
-  oauthClientSecret: '',
-  clearOauthClientSecret: false,
-  oauthScopes: '',
   providerHeaders: '',
   clearProviderHeaders: false,
   toolAllowlist: '',
@@ -108,13 +93,6 @@ function formFromApp(app: AdminConnectorApp): ConnectorForm {
     authType: app.auth_type,
     transport: app.transport,
     mcpUrl: app.mcp_url,
-    oauthAuthorizationUrl: app.oauth_authorization_url ?? '',
-    oauthTokenUrl: app.oauth_token_url ?? '',
-    oauthClientId: app.oauth_client_id ?? '',
-    oauthClientAuthMethod: app.oauth_client_auth_method,
-    oauthClientSecret: '',
-    clearOauthClientSecret: false,
-    oauthScopes: app.oauth_scopes.join('\n'),
     providerHeaders: '',
     clearProviderHeaders: false,
     toolAllowlist: app.tool_allowlist.join('\n'),
@@ -155,12 +133,6 @@ function payloadFromForm(form: ConnectorForm): AdminConnectorAppCreate {
     auth_type: form.authType,
     transport: form.transport,
     mcp_url: form.mcpUrl.trim(),
-    oauth_authorization_url: form.oauthAuthorizationUrl.trim() || null,
-    oauth_token_url: form.oauthTokenUrl.trim() || null,
-    oauth_client_id: form.oauthClientId.trim() || null,
-    oauth_client_auth_method: form.oauthClientAuthMethod,
-    oauth_client_secret: form.oauthClientSecret || null,
-    oauth_scopes: lines(form.oauthScopes),
     provider_headers: parseHeaders(form.providerHeaders) ?? {},
     tool_allowlist: lines(form.toolAllowlist),
     http_tools: parseHttpTools(form.httpTools),
@@ -211,16 +183,6 @@ export default function ConnectorAppList() {
   }
 
   const save = async () => {
-    const oauthConfigurationMissing =
-      form.authType === 'oauth2' &&
-      (!form.oauthAuthorizationUrl.trim() ||
-        !form.oauthTokenUrl.trim() ||
-        !form.oauthClientId.trim())
-    const confidentialSecretMissing =
-      form.authType === 'oauth2' &&
-      form.oauthClientAuthMethod !== 'none' &&
-      !form.oauthClientSecret &&
-      (!editing?.oauth_client_secret_configured || form.clearOauthClientSecret)
     let httpToolsMissing = false
     try {
       httpToolsMissing = form.transport === 'http' && parseHttpTools(form.httpTools).length === 0
@@ -233,8 +195,6 @@ export default function ConnectorAppList() {
       !form.name.trim() ||
       !form.mcpUrl.trim() ||
       (form.visibility === 'roles' && lines(form.allowedRoles).length === 0) ||
-      oauthConfigurationMissing ||
-      confidentialSecretMissing ||
       httpToolsMissing
     ) {
       toast({ variant: 'destructive', title: t('connector_apps.errors.required') })
@@ -244,17 +204,10 @@ export default function ConnectorAppList() {
     try {
       const payload = payloadFromForm(form)
       if (editing) {
-        const {
-          slug: _slug,
-          provider_headers: _headers,
-          oauth_client_secret: _secret,
-          ...update
-        } = payload
+        const { slug: _slug, provider_headers: _headers, ...update } = payload
         const headers = parseHeaders(form.providerHeaders)
         await adminApis.updateConnectorApp(editing.id, {
           ...update,
-          ...(form.oauthClientSecret ? { oauth_client_secret: form.oauthClientSecret } : {}),
-          clear_oauth_client_secret: form.clearOauthClientSecret || form.authType !== 'oauth2',
           ...(headers !== undefined ? { provider_headers: headers } : {}),
           clear_provider_headers: form.clearProviderHeaders,
         })
@@ -562,8 +515,6 @@ function ConnectorAppDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">{t('connector_apps.auth.none')}</SelectItem>
-                <SelectItem value="bearer">{t('connector_apps.auth.bearer')}</SelectItem>
-                <SelectItem value="oauth2">{t('connector_apps.auth.oauth2')}</SelectItem>
               </SelectContent>
             </Select>
           </FormField>
@@ -594,86 +545,6 @@ function ConnectorAppDialog({
                 />
               </FormField>
             </div>
-          ) : null}
-          {form.authType === 'oauth2' ? (
-            <>
-              <FormField label={t('connector_apps.fields.oauth_authorization_url')}>
-                <Input
-                  value={form.oauthAuthorizationUrl}
-                  onChange={event => update('oauthAuthorizationUrl', event.target.value)}
-                  data-testid="connector-app-oauth-authorization-url"
-                />
-              </FormField>
-              <FormField label={t('connector_apps.fields.oauth_token_url')}>
-                <Input
-                  value={form.oauthTokenUrl}
-                  onChange={event => update('oauthTokenUrl', event.target.value)}
-                  data-testid="connector-app-oauth-token-url"
-                />
-              </FormField>
-              <FormField label={t('connector_apps.fields.oauth_client_id')}>
-                <Input
-                  value={form.oauthClientId}
-                  onChange={event => update('oauthClientId', event.target.value)}
-                  data-testid="connector-app-oauth-client-id"
-                />
-              </FormField>
-              <FormField label={t('connector_apps.fields.oauth_client_auth_method')}>
-                <Select
-                  value={form.oauthClientAuthMethod}
-                  onValueChange={value =>
-                    update('oauthClientAuthMethod', value as ConnectorOAuthClientAuthMethod)
-                  }
-                >
-                  <SelectTrigger data-testid="connector-app-oauth-client-auth-method">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="client_secret_post">client_secret_post</SelectItem>
-                    <SelectItem value="client_secret_basic">client_secret_basic</SelectItem>
-                    <SelectItem value="none">none (PKCE public client)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </FormField>
-              <FormField
-                label={t('connector_apps.fields.oauth_client_secret')}
-                hint={
-                  editing?.oauth_client_secret_configured
-                    ? t('connector_apps.hints.secret_configured')
-                    : undefined
-                }
-              >
-                <Input
-                  type="password"
-                  value={form.oauthClientSecret}
-                  onChange={event => update('oauthClientSecret', event.target.value)}
-                  autoComplete="new-password"
-                  data-testid="connector-app-oauth-client-secret"
-                />
-              </FormField>
-              {editing?.oauth_client_secret_configured ? (
-                <div className="flex items-center gap-3">
-                  <Switch
-                    checked={form.clearOauthClientSecret}
-                    onCheckedChange={value => update('clearOauthClientSecret', value)}
-                    data-testid="connector-app-clear-oauth-secret"
-                  />
-                  <Label>{t('connector_apps.fields.clear_oauth_secret')}</Label>
-                </div>
-              ) : null}
-              <div className="md:col-span-2">
-                <FormField
-                  label={t('connector_apps.fields.oauth_scopes')}
-                  hint={t('connector_apps.hints.lines')}
-                >
-                  <Textarea
-                    value={form.oauthScopes}
-                    onChange={event => update('oauthScopes', event.target.value)}
-                    data-testid="connector-app-oauth-scopes"
-                  />
-                </FormField>
-              </div>
-            </>
           ) : null}
           <div className="md:col-span-2">
             {form.transport === 'http' ? (

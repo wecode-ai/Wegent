@@ -33,7 +33,7 @@ After Wework connects to Wegent Cloud, it synchronizes Connector Apps that are v
 
 - Executor registers the local MCP server `wegent_apps`.
 - Each app gets a Wegent-managed local Skill.
-- Codex only receives tool names and schemas. It never sees administrator fixed headers.
+- Codex only receives tool names and schemas. It never sees administrator-managed fixed headers.
 
 When the cloud connection is removed, Wework removes the connector short credential, the `wegent_apps` MCP configuration, and generated Connector Skills.
 
