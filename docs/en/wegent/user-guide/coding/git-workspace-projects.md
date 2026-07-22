@@ -56,6 +56,8 @@ In the new-conversation input area for a local workspace project, you can choose
 - “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user. When the directory is a Git repository, the composer shows the current branch dropdown; selecting another branch runs `git checkout <branch>` in the project directory. If Git rejects the checkout because of uncommitted changes, untracked-file overwrite risk, or another conflict, the current branch and local changes stay unchanged, and the menu shows the error.
 - “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task. After you select “New worktree”, the composer shows a “Source branch” dropdown. It defaults to the current branch, and you can choose another branch from the same repository as the source used to create the worktree.
 
+Wework refreshes repository environment details in the background while a task is running. A refresh keeps the resolved current branch visible in the composer; the loading state appears only during the initial workspace read.
+
 New worktrees are created under the execution device workspace root:
 
 ```bash
