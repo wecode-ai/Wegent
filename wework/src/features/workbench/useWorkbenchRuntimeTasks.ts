@@ -77,12 +77,7 @@ export function useWorkbenchRuntimeTasks({
       project: ProjectWithTasks | null,
       options?: { markOpened?: boolean; navigate?: boolean }
     ) => {
-      if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) {
-        if (options?.navigate) {
-          navigateTo(buildRuntimeTaskRoute(address))
-        }
-        return
-      }
+      const reopeningCurrentTask = isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)
       currentRuntimeTaskRef.current = address
       if (options?.markOpened !== false) {
         openedRuntimeTaskKeysRef.current.add(getRuntimeTaskRouteKey(address))
@@ -91,6 +86,11 @@ export function useWorkbenchRuntimeTasks({
         type: 'runtime_task_opened',
         address,
         project,
+      })
+      console.info('[Wework] Runtime task view opened', {
+        address: runtimeAddressDebug(address),
+        reopeningCurrentTask,
+        navigate: options?.navigate === true,
       })
       if (options?.navigate) {
         navigateTo(buildRuntimeTaskRoute(address))
@@ -171,10 +171,6 @@ export function useWorkbenchRuntimeTasks({
 
   const openRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) {
-        return
-      }
-
       const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
         item.deviceWorkspaces.some(
           workspace =>
@@ -191,6 +187,7 @@ export function useWorkbenchRuntimeTasks({
       writeLastProjectId(user.id, project?.id ?? null)
       openRuntimeTaskView(address, project, {
         markOpened: !openedRuntimeTaskKeysRef.current.has(getRuntimeTaskRouteKey(address)),
+        navigate: true,
       })
     },
     [openRuntimeTaskView, state.projects, state.runtimeWork, user.id]

@@ -840,6 +840,24 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     })
   })
 
+  test('ignores a short streamed suffix mislabeled as truncated content', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-k3',
+        role: 'assistant',
+        content: '保持两边同步。',
+        content_truncated: true,
+        content_original_chars: 26,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      content: '保持两边同步。',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+    })
+  })
+
   test('keeps valid runtime content truncation markers so full content can be loaded', () => {
     const messages = runtimeMessagesToWorkbenchMessages([
       {

@@ -192,6 +192,7 @@ describe('GeneralSettingsPage', () => {
       'true'
     )
     expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
 
     await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
