@@ -2,57 +2,73 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from app.core.config import settings
 
 SITES_API_BASE_URL = "https://sites.example.test"
+SITES_API_TOKEN = "sites-platform-test-token"
+PROJECT_CURSOR = "prj_01KXN31C03C3MVD878RPP1PFX7"
 
 
-def _site(**overrides: Any) -> dict[str, Any]:
-    site = {
-        "siteid": "site-1",
-        "taskid": "task-1",
-        "username": "testuser",
-        "name": "Product site",
-        "slug": "product-site",
-        "internal_url": "http://site-1.internal.test",
-        "external_url": None,
-        "publish_status": "unpublished",
-        "last_publish_error": None,
-        "thumbnail_url": "https://sites.example.test/default-thumbnail.png",
+def _project(**overrides: Any) -> dict[str, Any]:
+    project = {
+        "id": "prj_01KXN31C03C3MVD878RPP1PFX7",
+        "network": "outer",
+        "title": "Product site",
+        "url": "https://product.example.test/",
+        "snapshot": "https://sites.example.test/snapshots/product.png",
         "created_at": "2026-07-15T08:00:00Z",
-        "updated_at": "2026-07-15T08:00:00Z",
-        "published_at": None,
     }
-    site.update(overrides)
-    return site
+    project.update(overrides)
+    return project
 
 
 def _authorization(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_list_sites_requires_authentication(
-    test_client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _configure_sites(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    monkeypatch.setattr(
+        settings,
+        "SITES_API_TOKEN",
+        SecretStr(SITES_API_TOKEN),
+    )
 
+
+def test_list_sites_requires_authentication(test_client: TestClient) -> None:
     response = test_client.get("/api/v1/sites")
 
     assert response.status_code == 401
 
 
-def test_list_sites_returns_not_available_when_upstream_is_not_configured(
+@pytest.mark.parametrize(
+    ("base_url", "platform_token"),
+    [
+        (SITES_API_BASE_URL, SecretStr("")),
+        ("", SecretStr(SITES_API_TOKEN)),
+    ],
+)
+def test_list_sites_requires_complete_upstream_configuration(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
+    base_url: str,
+    platform_token: SecretStr,
 ) -> None:
-    monkeypatch.setattr(settings, "SITES_API_BASE_URL", "")
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", base_url)
+    monkeypatch.setattr(
+        settings,
+        "SITES_API_TOKEN",
+        platform_token,
+    )
 
     response = test_client.get(
         "/api/v1/sites",
@@ -63,111 +79,472 @@ def test_list_sites_returns_not_available_when_upstream_is_not_configured(
     assert response.json()["detail"]["code"] == "sites_not_available"
 
 
-def test_list_sites_injects_authenticated_username(
+def test_list_sites_proxies_cursor_search_with_authenticated_identity(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
     httpx_mock,
 ) -> None:
-    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    _configure_sites(monkeypatch)
+    project = _project()
+    assert set(project) == {
+        "id",
+        "network",
+        "title",
+        "url",
+        "snapshot",
+        "created_at",
+    }
     httpx_mock.add_response(
         method="GET",
         url=(
-            f"{SITES_API_BASE_URL}/api/v1/sites"
-            "?username=testuser&q=product&offset=20&limit=10"
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            f"?username=testuser&sitename=product&limit=10&cursor={PROJECT_CURSOR}"
         ),
-        json={"items": [_site()], "total": 1, "offset": 20, "limit": 10},
+        json={"items": [project], "next_cursor": "prj_next"},
+    )
+
+    response = test_client.get(
+        f"/api/v1/sites?q=%20product%20&cursor={PROJECT_CURSOR}&limit=10",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [project], "next_cursor": "prj_next"}
+    request = httpx_mock.get_requests()[0]
+    assert request.method == "GET"
+    assert str(request.url.copy_with(query=None)) == (
+        f"{SITES_API_BASE_URL}/v1/projects/search"
+    )
+    assert dict(request.url.params) == {
+        "username": "testuser",
+        "sitename": "product",
+        "limit": "10",
+        "cursor": PROJECT_CURSOR,
+    }
+    assert request.headers["Authorization"] == f"Bearer {SITES_API_TOKEN}"
+
+
+def test_list_sites_uses_empty_search_and_omits_cursor_by_default(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        json={"items": [_project(network="inner")], "next_cursor": None},
     )
 
     response = test_client.get(
         "/api/v1/sites",
-        params={"q": "product", "offset": 20, "limit": 10},
         headers=_authorization(test_token),
     )
 
     assert response.status_code == 200
-    assert response.json()["items"][0]["username"] == "testuser"
     request = httpx_mock.get_requests()[0]
-    assert request.url.params["username"] == "testuser"
+    assert dict(request.url.params) == {
+        "username": "testuser",
+        "sitename": "",
+        "limit": "20",
+    }
+    assert "cursor" not in request.url.params
 
 
-def test_publish_site_checks_ownership_before_publishing(
+def test_list_sites_rejects_invalid_upstream_project(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
     httpx_mock,
 ) -> None:
-    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    _configure_sites(monkeypatch)
+    project = _project()
+    del project["snapshot"]
     httpx_mock.add_response(
         method="GET",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        json=_site(),
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        json={"items": [project], "next_cursor": None},
     )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_list_sites_redacts_platform_token_from_upstream_error(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    long_context = "x" * 3000 + SITES_API_TOKEN
     httpx_mock.add_response(
-        method="POST",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1/publish",
-        json=_site(
-            external_url="https://product-site.example.test",
-            publish_status="published",
-            published_at="2026-07-15T08:10:00Z",
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        status_code=400,
+        json={
+            "error": {
+                "message": f"invalid credential {SITES_API_TOKEN}",
+                f"key-{SITES_API_TOKEN}": [
+                    {"credential": SITES_API_TOKEN},
+                    long_context,
+                ],
+            }
+        },
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 400
+    assert SITES_API_TOKEN not in response.text
+    detail = response.json()["detail"]
+    assert detail["message"] == "invalid credential [REDACTED]"
+    assert len(detail["key-[REDACTED]"][1]) <= 2048
+
+
+def test_list_sites_maps_upstream_authentication_failure(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        status_code=401,
+        json={"detail": f"Bearer {SITES_API_TOKEN}"},
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_auth_failed"
+    assert SITES_API_TOKEN not in response.text
+
+
+def test_list_sites_maps_network_error_to_upstream_unavailable(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_exception(
+        httpx.ConnectError("connection failed"),
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
         ),
     )
 
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_list_sites_maps_invalid_json_to_upstream_unavailable(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/v1/projects/search"
+            "?username=testuser&sitename=&limit=20"
+        ),
+        content=b"not-json",
+        headers={"Content-Type": "application/json"},
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "not-a-url",
+        "ftp://sites.example.test",
+        "https://",
+        "http://localhost:notaport",
+    ],
+)
+def test_list_sites_rejects_invalid_upstream_base_url(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    base_url: str,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", base_url)
+    monkeypatch.setattr(
+        settings,
+        "SITES_API_TOKEN",
+        SecretStr(SITES_API_TOKEN),
+    )
+
+    response = test_client.get(
+        "/api/v1/sites",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "sites_not_available"
+
+
+def test_sites_api_token_repr_hides_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "SITES_API_TOKEN",
+        SecretStr(SITES_API_TOKEN),
+    )
+
+    assert SITES_API_TOKEN not in repr(settings.SITES_API_TOKEN)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("POST", "/api/v1/sites/prj_publish/publish", None),
+        ("DELETE", "/api/v1/sites/prj_delete", None),
+        (
+            "POST",
+            "/api/v1/sites/prj_rename/rename",
+            {"title": "Renamed site"},
+        ),
+    ],
+)
+def test_site_mutations_require_authentication_without_calling_upstream(
+    test_client: TestClient,
+    httpx_mock,
+    method: str,
+    path: str,
+    json_body: dict[str, str] | None,
+) -> None:
+    if json_body is None:
+        response = test_client.request(method, path)
+    else:
+        response = test_client.request(method, path, json=json_body)
+
+    assert response.status_code == 401
+    assert httpx_mock.get_requests() == []
+
+
+def test_publish_site_proxies_authenticated_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_inner"
+    project = _project(id=project_id, network="outer")
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/deploy/outer",
+        json=project,
+    )
+
     response = test_client.post(
-        "/api/v1/sites/site-1/publish",
+        f"/api/v1/sites/{project_id}/publish",
         headers=_authorization(test_token),
     )
 
     assert response.status_code == 200
-    assert response.json()["publish_status"] == "published"
-    assert [request.method for request in httpx_mock.get_requests()] == ["GET", "POST"]
+    assert response.json() == project
+    assert response.json()["network"] == "outer"
+    request = httpx_mock.get_requests()[0]
+    assert json.loads(request.content) == {
+        "username": "testuser",
+        "project_id": project_id,
+    }
 
 
-def test_delete_site_hides_a_site_owned_by_another_user(
+def test_delete_site_returns_no_content_after_upstream_confirmation(
     test_client: TestClient,
     test_token: str,
     monkeypatch: pytest.MonkeyPatch,
     httpx_mock,
 ) -> None:
-    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    _configure_sites(monkeypatch)
+    project_id = "prj_delete"
     httpx_mock.add_response(
-        method="GET",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        json=_site(username="another-user"),
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        json={"deleted": True},
     )
 
     response = test_client.delete(
-        "/api/v1/sites/site-1",
-        headers=_authorization(test_token),
-    )
-
-    assert response.status_code == 404
-    assert response.json()["detail"]["code"] == "site_not_found"
-    assert len(httpx_mock.get_requests()) == 1
-
-
-def test_delete_site_removes_owned_site(
-    test_client: TestClient,
-    test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
-    httpx_mock,
-) -> None:
-    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
-    httpx_mock.add_response(
-        method="GET",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        json=_site(),
-    )
-    httpx_mock.add_response(
-        method="DELETE",
-        url=f"{SITES_API_BASE_URL}/api/v1/sites/site-1",
-        status_code=204,
-    )
-
-    response = test_client.delete(
-        "/api/v1/sites/site-1",
+        f"/api/v1/sites/{project_id}",
         headers=_authorization(test_token),
     )
 
     assert response.status_code == 204
     assert response.content == b""
+    request = httpx_mock.get_requests()[0]
+    assert json.loads(request.content) == {
+        "username": "testuser",
+        "project_id": project_id,
+    }
+
+
+@pytest.mark.parametrize("upstream_response", [{"deleted": False}, {}])
+def test_delete_site_requires_valid_upstream_confirmation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+    upstream_response: dict[str, Any],
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_delete"
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        json=upstream_response,
+    )
+
+    response = test_client.delete(
+        f"/api/v1/sites/{project_id}",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+@pytest.mark.parametrize("deleted", [1, "true", "yes"])
+def test_delete_site_rejects_coerced_upstream_confirmation(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+    deleted: Any,
+) -> None:
+    _configure_sites(monkeypatch)
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        json={"deleted": deleted},
+    )
+
+    response = test_client.delete(
+        "/api/v1/sites/prj_delete",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_rename_site_strips_title_and_proxies_authenticated_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    project_id = "prj_rename"
+    project = _project(id=project_id, title="Renamed site")
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/update",
+        json=project,
+    )
+
+    response = test_client.post(
+        f"/api/v1/sites/{project_id}/rename",
+        headers=_authorization(test_token),
+        json={"title": "  Renamed site  "},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == project
+    request = httpx_mock.get_requests()[0]
+    assert json.loads(request.content) == {
+        "username": "testuser",
+        "project_id": project_id,
+        "sitename": "Renamed site",
+    }
+
+
+@pytest.mark.parametrize("title", ["", "   ", "x" * 256])
+def test_rename_site_rejects_invalid_title_without_calling_upstream(
+    test_client: TestClient,
+    test_token: str,
+    httpx_mock,
+    title: str,
+) -> None:
+    response = test_client.post(
+        "/api/v1/sites/prj_rename/rename",
+        headers=_authorization(test_token),
+        json={"title": title},
+    )
+
+    assert response.status_code == 422
+    assert httpx_mock.get_requests() == []
+
+
+def test_delete_site_preserves_upstream_conflict_detail(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    _configure_sites(monkeypatch)
+    error = {
+        "code": "CONFLICT",
+        "message": "Project still has associated resources",
+    }
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{SITES_API_BASE_URL}/v1/projects/del",
+        status_code=409,
+        json={"error": error},
+    )
+
+    response = test_client.delete(
+        "/api/v1/sites/prj_delete",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == error

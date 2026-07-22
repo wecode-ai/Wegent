@@ -10,15 +10,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.core import security
 from app.models.user import User
-from app.schemas.site import SiteListResponse, SiteResponse
+from app.schemas.site import SiteListResponse, SiteRenameRequest, SiteResponse
 from app.services.sites import (
     SitesNotAvailableError,
+    SitesUpstreamAuthenticationError,
     SitesUpstreamResponseError,
     SitesUpstreamUnavailableError,
     sites_service,
 )
 
 router = APIRouter()
+SITES_ERRORS = (
+    SitesNotAvailableError,
+    SitesUpstreamAuthenticationError,
+    SitesUpstreamUnavailableError,
+    SitesUpstreamResponseError,
+)
 
 
 def _raise_sites_error(error: Exception) -> NoReturn:
@@ -28,6 +35,14 @@ def _raise_sites_error(error: Exception) -> NoReturn:
             detail={
                 "code": "sites_not_available",
                 "message": "Sites is not available yet",
+            },
+        ) from error
+    if isinstance(error, SitesUpstreamAuthenticationError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "code": "sites_upstream_auth_failed",
+                "message": "Sites service authentication failed",
             },
         ) from error
     if isinstance(error, SitesUpstreamUnavailableError):
@@ -46,73 +61,68 @@ def _raise_sites_error(error: Exception) -> NoReturn:
     raise error
 
 
-def _ensure_site_owner(site: SiteResponse, current_user: User) -> None:
-    if site.username != current_user.user_name:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "site_not_found", "message": "Site not found"},
-        )
-
-
 @router.get("", response_model=SiteListResponse)
 async def list_sites(
     q: str | None = Query(default=None),
-    offset: int = Query(default=0, ge=0),
+    cursor: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: User = Depends(security.get_current_user),
 ) -> SiteListResponse:
-    """List sites owned by the authenticated user."""
+    """Search projects owned by the authenticated user."""
     try:
         return await sites_service.list_sites(
             username=current_user.user_name,
-            query=q.strip() if q and q.strip() else None,
-            offset=offset,
+            query=q.strip() if q else None,
+            cursor=cursor,
             limit=limit,
         )
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+    except SITES_ERRORS as error:
         _raise_sites_error(error)
 
 
-@router.post("/{siteid}/publish", response_model=SiteResponse)
+@router.post("/{project_id}/publish", response_model=SiteResponse)
 async def publish_site(
-    siteid: str,
+    project_id: str,
     current_user: User = Depends(security.get_current_user),
 ) -> SiteResponse:
-    """Publish an owned site to the public internet."""
+    """Publish a project owned by the authenticated user."""
     try:
-        site = await sites_service.get_site(siteid)
-        _ensure_site_owner(site, current_user)
-        return await sites_service.publish_site(siteid)
-    except HTTPException:
-        raise
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+        return await sites_service.publish_site(
+            current_user.user_name,
+            project_id,
+        )
+    except SITES_ERRORS as error:
         _raise_sites_error(error)
 
 
-@router.delete("/{siteid}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_site(
-    siteid: str,
+    project_id: str,
     current_user: User = Depends(security.get_current_user),
 ) -> Response:
-    """Delete an owned site registration and its public entry."""
+    """Delete a project owned by the authenticated user."""
     try:
-        site = await sites_service.get_site(siteid)
-        _ensure_site_owner(site, current_user)
-        await sites_service.delete_site(siteid)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-    except HTTPException:
-        raise
-    except (
-        SitesNotAvailableError,
-        SitesUpstreamUnavailableError,
-        SitesUpstreamResponseError,
-    ) as error:
+        await sites_service.delete_site(
+            current_user.user_name,
+            project_id,
+        )
+    except SITES_ERRORS as error:
+        _raise_sites_error(error)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{project_id}/rename", response_model=SiteResponse)
+async def rename_site(
+    project_id: str,
+    request: SiteRenameRequest,
+    current_user: User = Depends(security.get_current_user),
+) -> SiteResponse:
+    """Rename a project owned by the authenticated user."""
+    try:
+        return await sites_service.rename_site(
+            current_user.user_name,
+            project_id,
+            request.title,
+        )
+    except SITES_ERRORS as error:
         _raise_sites_error(error)

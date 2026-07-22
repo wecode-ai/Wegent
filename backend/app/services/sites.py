@@ -2,24 +2,31 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Gateway for the external Sites service."""
+"""Gateway for the external Sites project API."""
 
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.site import SiteListResponse, SiteResponse
+from app.schemas.site import SiteDeleteResponse, SiteListResponse, SiteResponse
+from shared.telemetry.decorators import trace_async
+
+SITES_ERROR_TEXT_MAX_LENGTH = 2048
+SITES_REDACTED_VALUE = "[REDACTED]"
 
 
 class SitesNotAvailableError(RuntimeError):
-    """Raised when the Sites integration is not configured."""
+    """Raised when the Sites integration is not fully configured."""
 
 
 class SitesUpstreamUnavailableError(RuntimeError):
     """Raised when the configured Sites service cannot return a valid response."""
+
+
+class SitesUpstreamAuthenticationError(RuntimeError):
+    """Raised when the Sites service rejects Backend authentication."""
 
 
 class SitesUpstreamResponseError(RuntimeError):
@@ -38,37 +45,63 @@ class SitesService:
         self._timeout_seconds = timeout_seconds
 
     @staticmethod
-    def _base_url() -> str:
+    def _configuration() -> tuple[str, str]:
         base_url = settings.SITES_API_BASE_URL.strip().rstrip("/")
-        if not base_url:
+        token = settings.SITES_API_TOKEN.get_secret_value().strip()
+        if not base_url or not token:
             raise SitesNotAvailableError("Sites is not configured")
-        return base_url
+        try:
+            parsed_url = httpx.URL(base_url)
+        except httpx.InvalidURL:
+            raise SitesNotAvailableError("Sites configuration is invalid") from None
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.host:
+            raise SitesNotAvailableError("Sites configuration is invalid")
+        return base_url, token
 
+    @trace_async(
+        span_name="sites.upstream.request",
+        tracer_name="backend.sites",
+        extract_attributes=lambda _self, method, path, **_kwargs: {
+            "method": method,
+            "path": path,
+        },
+    )
     async def _request(
         self,
         method: str,
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
     ) -> Any:
+        base_url, token = self._configuration()
+        request_kwargs: dict[str, Any] = {
+            "params": params,
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+        if json_body is not None:
+            request_kwargs["json"] = json_body
+
         try:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                 response = await client.request(
                     method,
-                    f"{self._base_url()}{path}",
-                    params=params,
+                    f"{base_url}{path}",
+                    **request_kwargs,
                 )
-        except SitesNotAvailableError:
-            raise
         except httpx.RequestError as exc:
             raise SitesUpstreamUnavailableError("Sites service is unavailable") from exc
 
+        if response.status_code == httpx.codes.UNAUTHORIZED:
+            raise SitesUpstreamAuthenticationError(
+                "Sites service authentication failed"
+            )
         if response.is_error:
             raise SitesUpstreamResponseError(
                 response.status_code,
-                self._response_detail(response),
+                self._response_detail(response, token),
             )
-        if response.status_code == 204:
+        if response.status_code == httpx.codes.NO_CONTENT:
             return None
 
         try:
@@ -78,56 +111,110 @@ class SitesService:
                 "Sites service returned an invalid response"
             ) from exc
 
-    @staticmethod
-    def _response_detail(response: httpx.Response) -> Any:
+    @classmethod
+    def _response_detail(cls, response: httpx.Response, token: str) -> Any:
         try:
             payload = response.json()
         except ValueError:
-            return response.text or f"Sites request failed: HTTP {response.status_code}"
+            detail = response.text or (
+                f"Sites request failed: HTTP {response.status_code}"
+            )
+            return cls._sanitize_error_detail(detail, token)
 
-        if isinstance(payload, dict) and "detail" in payload:
-            return payload["detail"]
-        return payload
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                detail = error
+            elif "detail" in payload:
+                detail = payload["detail"]
+            else:
+                detail = payload
+        else:
+            detail = payload if payload is not None else response.text
+        return cls._sanitize_error_detail(detail, token)
+
+    @classmethod
+    def _sanitize_error_detail(cls, detail: Any, token: str) -> Any:
+        if isinstance(detail, str):
+            redacted = detail.replace(token, SITES_REDACTED_VALUE)
+            return redacted[:SITES_ERROR_TEXT_MAX_LENGTH]
+        if isinstance(detail, dict):
+            return {
+                cls._sanitize_error_detail(key, token): cls._sanitize_error_detail(
+                    value, token
+                )
+                for key, value in detail.items()
+            }
+        if isinstance(detail, list):
+            return [cls._sanitize_error_detail(item, token) for item in detail]
+        if isinstance(detail, tuple):
+            return tuple(cls._sanitize_error_detail(item, token) for item in detail)
+        return detail
 
     async def list_sites(
         self,
         *,
         username: str,
         query: str | None,
-        offset: int,
+        cursor: str | None,
         limit: int,
     ) -> SiteListResponse:
         params: dict[str, Any] = {
             "username": username,
-            "offset": offset,
+            "sitename": query or "",
             "limit": limit,
         }
-        if query:
-            params["q"] = query
-        payload = await self._request("GET", "/api/v1/sites", params=params)
+        if cursor:
+            params["cursor"] = cursor
+        payload = await self._request("GET", "/v1/projects/search", params=params)
         try:
             return SiteListResponse.model_validate(payload)
         except ValidationError as exc:
             raise SitesUpstreamUnavailableError(
-                "Sites service returned an invalid site list"
+                "Sites service returned an invalid project list"
             ) from exc
 
-    async def get_site(self, siteid: str) -> SiteResponse:
-        encoded_siteid = quote(siteid, safe="")
-        payload = await self._request("GET", f"/api/v1/sites/{encoded_siteid}")
-        return self._validate_site(payload)
-
-    async def publish_site(self, siteid: str) -> SiteResponse:
-        encoded_siteid = quote(siteid, safe="")
+    async def publish_site(self, username: str, project_id: str) -> SiteResponse:
         payload = await self._request(
             "POST",
-            f"/api/v1/sites/{encoded_siteid}/publish",
+            "/v1/projects/deploy/outer",
+            json_body={"username": username, "project_id": project_id},
         )
         return self._validate_site(payload)
 
-    async def delete_site(self, siteid: str) -> None:
-        encoded_siteid = quote(siteid, safe="")
-        await self._request("DELETE", f"/api/v1/sites/{encoded_siteid}")
+    async def delete_site(self, username: str, project_id: str) -> None:
+        payload = await self._request(
+            "POST",
+            "/v1/projects/del",
+            json_body={"username": username, "project_id": project_id},
+        )
+        try:
+            response = SiteDeleteResponse.model_validate(payload, strict=True)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid delete response"
+            ) from exc
+        if not response.deleted:
+            raise SitesUpstreamUnavailableError(
+                "Sites service did not confirm project deletion"
+            )
+
+    async def rename_site(
+        self,
+        username: str,
+        project_id: str,
+        title: str,
+    ) -> SiteResponse:
+        payload = await self._request(
+            "POST",
+            "/v1/projects/update",
+            json_body={
+                "username": username,
+                "project_id": project_id,
+                "sitename": title,
+            },
+        )
+        return self._validate_site(payload)
 
     @staticmethod
     def _validate_site(payload: Any) -> SiteResponse:
@@ -135,7 +222,7 @@ class SitesService:
             return SiteResponse.model_validate(payload)
         except ValidationError as exc:
             raise SitesUpstreamUnavailableError(
-                "Sites service returned an invalid site"
+                "Sites service returned an invalid project"
             ) from exc
 
 

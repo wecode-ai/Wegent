@@ -744,17 +744,15 @@ describe('App plugins route', () => {
             Promise.resolve({
               items: [
                 {
-                  siteid: 'site-cloud-1',
-                  name: '云端站点',
-                  internal_url: 'http://sites.internal/cloud',
-                  external_url: null,
-                  publish_status: 'unpublished',
-                  thumbnail_url: null,
+                  id: 'prj-site-cloud-1',
+                  network: 'inner',
+                  title: '云端站点',
+                  url: 'https://cloud.inner.example.test',
+                  snapshot: 'https://cdn.example.test/cloud.png',
+                  created_at: '2026-07-16T09:10:03.865Z',
                 },
               ],
-              total: 1,
-              offset: 0,
-              limit: 20,
+              next_cursor: null,
             }),
         } as Response
       }
@@ -766,7 +764,7 @@ describe('App plugins route', () => {
 
     expect(await screen.findByText('云端站点')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      'http://127.0.0.1:9100/api/v1/sites?limit=20',
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
       })
@@ -782,17 +780,15 @@ describe('App plugins route', () => {
         Promise.resolve({
           items: [
             {
-              siteid: 'site-1',
-              name: '产品发布页',
-              internal_url: 'http://sites.internal/product',
-              external_url: null,
-              publish_status: 'unpublished',
-              thumbnail_url: null,
+              id: 'prj-site-1',
+              network: 'inner',
+              title: '产品发布页',
+              url: 'https://product.inner.example.test',
+              snapshot: 'https://cdn.example.test/product.png',
+              created_at: '2026-07-16T09:10:03.865Z',
             },
           ],
-          total: 1,
-          offset: 0,
-          limit: 20,
+          next_cursor: null,
         }),
     } as Response)
     localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
@@ -805,7 +801,7 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/sites?offset=0&limit=20',
+      '/api/v1/sites?limit=20',
       expect.objectContaining({
         method: 'GET',
         headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
@@ -830,7 +826,7 @@ describe('App plugins route', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      json: () => Promise.resolve({ items: [], next_cursor: null }),
     } as Response)
     vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
     window.history.pushState({}, '', '/sites')
@@ -848,7 +844,7 @@ describe('App plugins route', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      json: () => Promise.resolve({ items: [], next_cursor: null }),
     } as Response)
     localCodexPluginMocks.listSkills.mockResolvedValue([
       {
@@ -882,7 +878,7 @@ describe('App plugins route', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+      json: () => Promise.resolve({ items: [], next_cursor: null }),
     } as Response)
     localPathMocks.exists.mockImplementation(path =>
       Promise.resolve(path === '/Users/test/.codex/plugins/cache/openai-bundled/sites')
