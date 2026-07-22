@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     env, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::OnceLock,
     time::{Duration, Instant},
@@ -56,20 +57,30 @@ pub(crate) struct ModelsQuery {
 }
 
 pub(crate) async fn handle(Query(query): Query<ModelsQuery>) -> Response {
-    match upstream_catalog(query.client_version.as_deref()).await {
+    let catalog = match upstream_catalog(query.client_version.as_deref()).await {
         Ok(Some(mut catalog)) => {
             merge_capability_models(&mut catalog);
-            Json(catalog).into_response()
+            catalog
         }
-        Ok(None) => Json(catalog()).into_response(),
+        Ok(None) => catalog(),
         Err(error) => {
             log_executor_event(
                 "codex router model catalog failed",
                 &[("error", error.clone())],
             );
-            Json(catalog()).into_response()
+            catalog()
         }
-    }
+    };
+    let model_count = catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    log_executor_event(
+        "codex router model catalog served",
+        &[("model_count", model_count.to_string())],
+    );
+    Json(catalog).into_response()
 }
 
 pub(crate) fn catalog() -> Value {
@@ -97,6 +108,36 @@ pub(crate) fn custom_model_slugs() -> Vec<String> {
         .into_iter()
         .filter_map(|entry| entry.get("slug").and_then(Value::as_str).map(str::to_owned))
         .collect()
+}
+
+pub(crate) fn invalidate_models_cache() -> Result<(), String> {
+    invalidate_models_cache_at(&codex_models_cache_path())
+}
+
+fn codex_models_cache_path() -> PathBuf {
+    env::var_os("WEGENT_CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("WEGENT_EXECUTOR_HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .map(|home| home.join("codex"))
+        })
+        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor/codex")))
+        .unwrap_or_else(|| PathBuf::from(".wegent-executor/codex"))
+        .join("models_cache.json")
+}
+
+fn invalidate_models_cache_at(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "failed to invalidate Codex models cache at {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn validate_custom_model(entry: &Value) -> Result<(), String> {
@@ -451,5 +492,16 @@ mod tests {
         )
         .expect("custom model catalog should contain JSON");
         assert_eq!(stored, vec![entry]);
+    }
+
+    #[test]
+    fn invalidates_models_cache_and_accepts_missing_cache() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("models_cache.json");
+        fs::write(&path, b"cached").expect("cache fixture");
+
+        invalidate_models_cache_at(&path).expect("cache should be removed");
+        assert!(!path.exists());
+        invalidate_models_cache_at(&path).expect("missing cache should be accepted");
     }
 }

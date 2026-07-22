@@ -862,6 +862,8 @@ impl RuntimeWorkRpcHandler {
             }));
         }
         self.codex_app_server.restart().await;
+        crate::server::codex_model_catalog::invalidate_models_cache()
+            .map_err(|error| AppIpcError::new("codex_cache_invalidation_failed", error))?;
         let expected_models = crate::server::codex_model_catalog::custom_model_slugs();
         if !expected_models.is_empty() {
             let mut loaded = false;
