@@ -224,7 +224,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
         className={cn(
           'w-full items-stretch overflow-hidden',
           modelActions
-            ? 'grid grid-cols-[minmax(0,1fr)_auto_40px]'
+            ? 'grid grid-cols-[minmax(0,1fr)_auto_32px]'
             : 'grid grid-cols-[minmax(0,1fr)_auto]',
           isSelected && 'bg-primary/10 text-primary'
         )}
@@ -254,7 +254,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {renderModelMeta?.(model)}
           </span>
         </button>
-        <span className="flex shrink-0 items-center gap-1.5 pr-2 empty:hidden">
+        <span className="flex shrink-0 items-center gap-1.5 empty:hidden">
           <ModelCapabilityIcons model={model} showTooltips />
           {renderModelBadges?.(model)}
         </span>
