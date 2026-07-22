@@ -45,11 +45,10 @@ def _reencrypt_embedded_iv(value: str | None, *, context: str) -> str | None:
     try:
         decrypted = decrypt_sensitive_data_with_embedded_iv(value)
     except Exception as exc:
-        logger.exception(
+        logger.error(
             "Failed to decrypt embedded-IV connector app value during migration; "
-            "context=%s value=%r",
+            "context=%s",
             context,
-            value,
         )
         raise EmbeddedIvReencryptError(
             f"Cannot migrate encrypted connector app value: {context}"

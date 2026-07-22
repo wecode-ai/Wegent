@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-AuthType = Literal["none"]
+AuthType = Literal["none", "bearer", "oauth2"]
 Visibility = Literal["all", "roles"]
 Transport = Literal["streamable-http", "sse", "http"]
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]

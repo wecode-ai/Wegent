@@ -108,8 +108,9 @@ def test_admin_can_publish_app_without_secret_disclosure(
     assert clear_response.json()["provider_headers_configured"] is False
 
 
-def test_authorization_connector_types_are_rejected(
+def test_authorization_connector_types_are_persisted(
     test_client: TestClient,
+    test_db: Session,
     test_admin_token: str,
 ):
     bearer_response = test_client.post(
@@ -123,8 +124,17 @@ def test_authorization_connector_types_are_rejected(
         json=_app_payload(slug="oauth-app", auth_type="oauth2"),
     )
 
-    assert bearer_response.status_code == 422
-    assert oauth_response.status_code == 422
+    assert bearer_response.status_code == 201
+    assert bearer_response.json()["auth_type"] == "bearer"
+    bearer_app = ConnectorAppService.get_app_by_slug(test_db, "bearer-app")
+    assert bearer_app is not None
+    assert bearer_app.auth_type == "bearer"
+
+    assert oauth_response.status_code == 201
+    assert oauth_response.json()["auth_type"] == "oauth2"
+    oauth_app = ConnectorAppService.get_app_by_slug(test_db, "oauth-app")
+    assert oauth_app is not None
+    assert oauth_app.auth_type == "oauth2"
 
 
 def test_runtime_token_is_scoped_to_connector_invocation(

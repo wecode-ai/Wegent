@@ -1,11 +1,13 @@
 import importlib.util
 import logging
 from pathlib import Path
+from types import ModuleType
+from typing import NoReturn
 
 import pytest
 
 
-def _load_migration():
+def _load_migration() -> ModuleType:
     migration_path = (
         Path(__file__).resolve().parents[2]
         / "alembic"
@@ -23,10 +25,12 @@ def _load_migration():
     return migration
 
 
-def test_reencrypt_embedded_iv_raises_on_decryption_failure(monkeypatch, caplog):
+def test_reencrypt_embedded_iv_raises_on_decryption_failure(
+    monkeypatch, caplog
+) -> None:
     migration = _load_migration()
 
-    def fail_decrypt(value: str) -> str:
+    def fail_decrypt(value: str) -> NoReturn:
         raise ValueError(f"invalid ciphertext: {value}")
 
     monkeypatch.setattr(
@@ -41,4 +45,4 @@ def test_reencrypt_embedded_iv_raises_on_decryption_failure(monkeypatch, caplog)
             migration._reencrypt_embedded_iv("bad-ciphertext", context=context)
 
     assert context in caplog.text
-    assert "bad-ciphertext" in caplog.text
+    assert "bad-ciphertext" not in caplog.text
