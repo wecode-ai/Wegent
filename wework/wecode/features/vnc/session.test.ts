@@ -176,6 +176,7 @@ describe('buildVncPageUrl', () => {
     expect(vncHtml).toContain("invoke('get_vnc_session_config'")
     expect(vncHtml).not.toContain("params.get('wsUrl')")
     expect(vncHtml).toContain("retryButton.addEventListener('click', connect)")
+    expect(vncHtml).toContain('scheduleReconnect()')
     expect(vncHtml).toContain("document.documentElement.dataset.vncConnected = 'true'")
     expect(vncHtml).toContain('云桌面会话已过期，请关闭后重新打开桌面')
     expect(vncHtml).not.toContain('window.location.reload()')
@@ -205,6 +206,29 @@ describe('buildVncPageUrl', () => {
     expect(firstRfb.disconnect).toHaveBeenCalledTimes(1)
     expect(RfbMock.instances[1].url).toBe(firstRfb.url)
     expect(pageInvoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('automatically reconnects after a transient upstream disconnect', async () => {
+    vi.useFakeTimers()
+    const pageInvoke = vi.fn().mockResolvedValue({
+      wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
+      token: 'cloud-token',
+    })
+
+    try {
+      runVncPage(pageInvoke)
+      await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(1))
+
+      RfbMock.instances[0].emit('disconnect', { clean: false })
+      expect(document.querySelector('.error')?.textContent).toBe('连接已断开，正在重试...')
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(RfbMock.instances).toHaveLength(2)
+      expect(RfbMock.instances[1].url).toBe(RfbMock.instances[0].url)
+      expect(pageInvoke).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('loads the session from the loopback bridge outside Tauri', async () => {

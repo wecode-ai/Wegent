@@ -94,6 +94,17 @@
         const statusText = overlay.querySelector('.status-text')
         let authenticatedWsUrl = null
         let rfb = null
+        let reconnectTimer = null
+        let reconnectAttempt = 0
+
+        const reconnectDelays = [1000, 2000, 3000, 5000, 10000]
+
+        function clearReconnectTimer() {
+          if (reconnectTimer !== null) {
+            window.clearTimeout(reconnectTimer)
+            reconnectTimer = null
+          }
+        }
 
         function showConnecting() {
           delete document.documentElement.dataset.vncConnected
@@ -118,9 +129,17 @@
           const retryButton = document.createElement('button')
           retryButton.type = 'button'
           retryButton.className = 'retry-btn'
-          retryButton.textContent = '重试'
+          retryButton.textContent = '立即重试'
           retryButton.addEventListener('click', connect)
           statusText.replaceChildren(errorText, retryButton)
+        }
+
+        function scheduleReconnect() {
+          clearReconnectTimer()
+          const delay = reconnectDelays[Math.min(reconnectAttempt, reconnectDelays.length - 1)]
+          reconnectAttempt += 1
+          showError('连接已断开，正在重试...', true)
+          reconnectTimer = window.setTimeout(connect, delay)
         }
 
         function authenticatedWebSocketUrl(config) {
@@ -180,6 +199,7 @@
         }
 
         async function connect() {
+          clearReconnectTimer()
           showConnecting()
           container.replaceChildren()
 
@@ -222,6 +242,8 @@
 
             nextRfb.addEventListener('connect', function () {
               if (rfb !== nextRfb) return
+              clearReconnectTimer()
+              reconnectAttempt = 0
               overlay.classList.add('hidden')
               document.documentElement.dataset.vncConnected = 'true'
               document.title = '云桌面' + (sandboxId ? ' - ' + sandboxId : '')
@@ -231,7 +253,7 @@
               if (rfb !== nextRfb) return
               var clean = e.detail && e.detail.clean
               if (!clean) {
-                showError('连接已断开', true)
+                scheduleReconnect()
               } else {
                 showError('会话已结束', true)
               }
