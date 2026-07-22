@@ -104,10 +104,6 @@ function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
   return { ...info }
 }
 
-function isNotGitRepositoryError(error: unknown): boolean {
-  return error instanceof Error && /not a git repository/i.test(error.message)
-}
-
 function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
   let cache = environmentInfoCaches.get(api)
   if (!cache) {
@@ -305,6 +301,22 @@ async function runGitCommand(
   return outputAsString(response.stdout).trim()
 }
 
+async function probeGitRepository(
+  api: DeviceCommandApi,
+  deviceId: string,
+  path: string
+): Promise<boolean> {
+  const response = await api.executeCommand(deviceId, {
+    command_key: 'git_is_worktree',
+    path,
+    args: [path],
+    timeout_seconds: 10,
+    max_output_bytes: 4096,
+  })
+
+  return response.success && outputAsString(response.stdout).trim() === 'true'
+}
+
 async function generateCommitMessage(
   api: DeviceCommandApi,
   deviceId: string,
@@ -462,7 +474,8 @@ async function loadProjectEnvironmentUncached(
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
     }
   } catch (error) {
-    if (isNotGitRepositoryError(error)) {
+    const isGitRepository = await probeGitRepository(api, deviceId, path).catch(() => undefined)
+    if (isGitRepository === false) {
       return {
         ...environmentWorkspaceInfo,
         isGitRepository: false,

@@ -22,12 +22,12 @@ describe('parseGitShortStat', () => {
     })
   })
 
-  test('detects a non-git workspace from stderr when a generic error is present', async () => {
+  test('detects a non-git workspace without depending on localized stderr', async () => {
     const executeCommand = vi.fn().mockResolvedValue({
       success: false,
       stdout: '',
       error: 'Command failed',
-      stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+      stderr: 'fatal: 不是 git 仓库（或者任何父目录）：.git',
     })
 
     const info = await loadProjectEnvironment(
@@ -55,6 +55,13 @@ describe('parseGitShortStat', () => {
       workspacePath: '/workspace/plain-cloud-workspace',
     })
     expect(info.error).toBeUndefined()
+    expect(executeCommand).toHaveBeenCalledWith('device-456', {
+      command_key: 'git_is_worktree',
+      path: '/workspace/plain-cloud-workspace',
+      args: ['/workspace/plain-cloud-workspace'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
   })
 
   test('defaults missing additions and deletions to zero', () => {
@@ -411,6 +418,56 @@ describe('loadProjectEnvironment', () => {
       deviceId: 'device-123',
       workspacePath: '/workspace/plain-workspace',
     })
+  })
+
+  test('preserves git command errors when the workspace is a repository', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'fatal: failed to read git metadata',
+        })
+      }
+      if (data.command_key === 'git_is_worktree') {
+        return Promise.resolve({
+          success: true,
+          stdout: 'true\n',
+          stderr: '',
+        })
+      }
+      return Promise.resolve({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 5,
+        name: 'broken-repository',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/broken-repository',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      deviceId: 'device-123',
+      workspacePath: '/workspace/broken-repository',
+      error: 'fatal: failed to read git metadata',
+    })
+    expect(info.isGitRepository).toBeUndefined()
   })
 
   test('deduplicates repeated environment loads for the same project briefly', async () => {
