@@ -197,6 +197,63 @@ describe('ToolBlockItem', () => {
     expect(screen.getByText('cwd: /Users/crystal/project')).toBeInTheDocument()
   })
 
+  test('renders terminal control sequences as stable plain shell output', async () => {
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-ansi',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: { cmd: 'npm install' },
+          toolOutput:
+            '\u001b[1G\u001b[0K⠙\u001b[1G\u001b[0K⠹\u001b[1G\u001b[0Kadded 703 packages\n\u001b[32msuccess\u001b[0m',
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    expect(screen.getByText(/added 703 packages/)).toHaveTextContent('added 703 packages success')
+    expect(screen.queryByText(/⠙|⠹/)).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('\u001b')
+  })
+
+  test('keeps the latest shell output lines in terminal-style scrollback', async () => {
+    const user = userEvent.setup()
+    const toolOutput = Array.from({ length: 201 }, (_, index) => `line ${index}`).join('\n')
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400)
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-scrollback',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: { cmd: 'long-running-command' },
+          toolOutput,
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    const outputElement = screen.getByTestId('shell-tool-output')
+    const renderedOutput = outputElement.textContent
+    expect(renderedOutput).not.toContain('line 0\n')
+    expect(renderedOutput).toContain('line 1\n')
+    expect(renderedOutput).toContain('line 200')
+    expect(outputElement.scrollTop).toBe(400)
+    scrollHeight.mockRestore()
+  })
+
   test('renders unknown tool as a non-expandable activity row', () => {
     render(
       <ToolBlockItem
