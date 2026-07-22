@@ -27,6 +27,7 @@ import {
   timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
 import type { WorkbenchAction } from './workbenchReducer'
+import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
 import {
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
@@ -452,6 +453,11 @@ export function useWorkbenchDataRefresh({
       : hasCloudBackgroundApi
         ? localRuntimeWork
         : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
+    debugRuntimeSidebarState('refresh-resolved', {
+      source: runtimeWorkResult ? 'executor' : 'current-state',
+      executorTaskIds: summarizeRuntimeWorkTaskIds(runtimeWorkResult ?? null),
+      visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
+    })
     dispatch({
       type: 'lists_refreshed',
       projects: state.projects,
