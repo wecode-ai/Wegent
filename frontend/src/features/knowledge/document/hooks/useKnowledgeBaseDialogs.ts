@@ -151,6 +151,7 @@ export function useKnowledgeBaseDialogs({
           name: data.name,
           description: data.description,
           namespace,
+          direct_access_requirement: data.direct_access_requirement,
           retrieval_config: data.retrieval_config,
           rag_config_mode: data.rag_config_mode,
           summary_enabled: data.summary_enabled,

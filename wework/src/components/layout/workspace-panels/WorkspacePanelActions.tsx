@@ -167,7 +167,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       if (!session.url) {
         throw new Error('IDE session URL is missing')
       }
-      await openExternalUrl(session.url)
+      await openExternalUrl(session.url, { target: 'system' })
     } catch (error) {
       console.error('Failed to start project IDE:', error)
       setIdeError(getStartFailedMessage(error))

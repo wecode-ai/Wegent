@@ -1,4 +1,14 @@
-import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
+import {
+  ArrowUp,
+  ChevronDown,
+  ClipboardList,
+  Clock3,
+  Cloud,
+  CornerDownRight,
+  Laptop,
+  Zap,
+} from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -35,7 +45,16 @@ interface ComposerToolbarProps {
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
+  executionDevice?: {
+    kind: 'cloud' | 'local'
+    label: string
+    selectable: boolean
+    onSelect?: () => void
+  }
 }
+
+const COMPACT_TOOLBAR_WIDTH = 475
+const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
   canSend,
@@ -62,11 +81,32 @@ export function ComposerToolbar({
   onPause,
   onQuickPhraseSelect,
   onSubmit,
+  executionDevice,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const [compact, setCompact] = useState(false)
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current
+    if (!toolbar || typeof ResizeObserver === 'undefined') return
+    const updateCompact = (width: number) => setCompact(width < COMPACT_TOOLBAR_WIDTH)
+    updateCompact(toolbar.getBoundingClientRect().width)
+    const observer = new ResizeObserver(entries => {
+      const entry = entries[0]
+      if (entry) updateCompact(entry.contentRect.width)
+    })
+    observer.observe(toolbar)
+    return () => observer.disconnect()
+  }, [])
 
   return (
-    <div className="mt-auto flex min-h-8 items-center justify-between gap-3 pt-1">
+    <div
+      ref={toolbarRef}
+      data-testid="composer-toolbar"
+      data-compact={compact ? 'true' : 'false'}
+      className="mt-auto flex min-h-8 min-w-0 items-center justify-between gap-2 pt-1"
+    >
       <div className="flex min-w-0 items-center gap-2">
         <AddContextMenu
           disabled={disabled}
@@ -74,7 +114,7 @@ export function ComposerToolbar({
           onSetPlanMode={planModeActive ? undefined : onSetPlanMode}
           onSetGoal={onSetGoal}
         />
-        <QuickPhraseMenu disabled={disabled} onSelect={onQuickPhraseSelect} />
+        <QuickPhraseMenu disabled={disabled} iconOnly={compact} onSelect={onQuickPhraseSelect} />
         {goalDraftActive ? (
           <GoalDraftPill onCancel={onCancelGoalDraft} />
         ) : planModeActive ? (
@@ -90,7 +130,24 @@ export function ComposerToolbar({
           />
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5">
+        {executionDevice && (
+          <button
+            type="button"
+            data-testid="composer-execution-device-button"
+            onClick={executionDevice.onSelect}
+            aria-disabled={!executionDevice.selectable}
+            title={executionDevice.label}
+            aria-label={executionDevice.label}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 aria-disabled:cursor-default aria-disabled:hover:bg-transparent aria-disabled:hover:text-text-muted"
+          >
+            {executionDevice.kind === 'cloud' ? (
+              <Cloud className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Laptop className="h-4 w-4" aria-hidden="true" />
+            )}
+          </button>
+        )}
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}
@@ -108,6 +165,7 @@ export function ComposerToolbar({
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
             buttonClassName="opacity-90 hover:opacity-100"
+            maxClosedWidth={compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined}
           />
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />

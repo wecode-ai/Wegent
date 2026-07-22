@@ -28,11 +28,14 @@ const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
+const WEWORK_E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
 const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
+const BUNDLED_HOOKS_DIR_ENV: &str = "WEGENT_BUNDLED_HOOKS_DIR";
+const MANAGED_HOOKS_DIR_ENV: &str = "WEGENT_MANAGED_HOOKS_DIR";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
 const SESSION_GATEWAY_HOST_ENV: &str = "DEVICE_SESSION_GATEWAY_HOST";
 const SESSION_GATEWAY_PORT_ENV: &str = "DEVICE_SESSION_GATEWAY_PORT";
@@ -823,6 +826,11 @@ fn wework_codex_home_path(executor_home: &str) -> Result<PathBuf, String> {
 }
 
 fn native_codex_home_path() -> Result<PathBuf, String> {
+    if std::env::var("VITE_WEWORK_E2E").as_deref() == Ok("true") {
+        if let Some(path) = non_empty_env(WEWORK_E2E_NATIVE_CODEX_HOME_ENV) {
+            return Ok(PathBuf::from(path));
+        }
+    }
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
     Ok(home.join(".codex"))
 }
@@ -1005,6 +1013,15 @@ fn copy_codex_initialization_entry(source: &Path, destination: &Path) -> Result<
     if !source.exists() {
         return Ok(());
     }
+    if destination.exists() {
+        if let (Ok(source_path), Ok(destination_path)) =
+            (fs::canonicalize(source), fs::canonicalize(destination))
+        {
+            if source_path == destination_path {
+                return Ok(());
+            }
+        }
+    }
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
     if metadata.is_dir() {
@@ -1154,6 +1171,18 @@ fn local_executor_sidecar_env(
     app: &tauri::AppHandle,
 ) -> Vec<(String, String)> {
     let mut envs = local_executor_backend_env(inner);
+    if let Some(path) = non_empty_env(MANAGED_HOOKS_DIR_ENV) {
+        envs.push((MANAGED_HOOKS_DIR_ENV.to_string(), path));
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled_hooks = resource_dir.join("bundled-hooks");
+        if bundled_hooks.is_dir() {
+            envs.push((
+                BUNDLED_HOOKS_DIR_ENV.to_string(),
+                bundled_hooks.display().to_string(),
+            ));
+        }
+    }
     if std::env::var_os(CODEX_BINARY_PATH_ENV).is_none()
         && std::env::var_os(CODEX_BIN_ENV).is_none()
     {
@@ -1431,6 +1460,11 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
+            app.state::<crate::system_sleep::SystemSleepState>()
+                .handle_terminal_event(
+                    &event.event,
+                    event.payload.get("taskId").and_then(Value::as_str),
+                );
             if let Some((previous_runtime_instance_id, runtime_instance_id)) =
                 update_ready_event_inner(inner, &event)
             {
@@ -1592,12 +1626,15 @@ fn handle_stdio_line(
 }
 
 fn finish_stdio_reader(
+    app: &tauri::AppHandle,
     state: &SharedExecutorInner,
     generation: u64,
     sender: &mut Option<mpsc::Sender<Result<(), String>>>,
     message: String,
     terminate_child: bool,
 ) {
+    app.state::<crate::system_sleep::SystemSleepState>()
+        .clear_running_tasks();
     if let Some(sender) = sender.take() {
         let _ = sender.send(Err(message.clone()));
     }
@@ -1659,6 +1696,7 @@ fn spawn_configured_sidecar(
                 Err(error) => {
                     let message = format!("Local executor stdout read failed: {error}");
                     finish_stdio_reader(
+                        &app,
                         &state_handle,
                         generation,
                         &mut ready_sender,
@@ -1670,6 +1708,7 @@ fn spawn_configured_sidecar(
             }
         }
         finish_stdio_reader(
+            &app,
             &state_handle,
             generation,
             &mut ready_sender,
@@ -1718,6 +1757,7 @@ fn spawn_bundled_sidecar(
                 CommandEvent::Terminated(payload) => {
                     let message = format!("Local executor exited: {payload:?}");
                     finish_stdio_reader(
+                        &app,
                         &state_handle,
                         generation,
                         &mut ready_sender,
@@ -1729,6 +1769,7 @@ fn spawn_bundled_sidecar(
                 CommandEvent::Error(error) => {
                     let message = format!("Local executor stdio failed: {error}");
                     finish_stdio_reader(
+                        &app,
                         &state_handle,
                         generation,
                         &mut ready_sender,
@@ -1741,6 +1782,7 @@ fn spawn_bundled_sidecar(
             }
         }
         finish_stdio_reader(
+            &app,
             &state_handle,
             generation,
             &mut ready_sender,
@@ -2419,6 +2461,34 @@ command = "example"
             .file_type()
             .is_symlink());
         assert_eq!(fs::read_to_string(target).unwrap(), "native-auth");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrating_codex_home_preserves_linked_native_auth() {
+        let root = import_test_root("codex-auth-migration");
+        let native_home = root.join("native");
+        let wework_home = root.join("wework");
+        fs::create_dir_all(&native_home).unwrap();
+        fs::write(native_home.join("auth.json"), "native-auth").unwrap();
+        fs::write(native_home.join("config.toml"), "model = \"gpt-5\"").unwrap();
+        link_native_codex_auth(&native_home, &wework_home).unwrap();
+
+        copy_codex_initialization_files(&native_home, &wework_home).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(native_home.join("auth.json")).unwrap(),
+            "native-auth"
+        );
+        assert!(fs::symlink_metadata(wework_home.join("auth.json"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_to_string(wework_home.join("config.toml")).unwrap(),
+            "model = \"gpt-5\""
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

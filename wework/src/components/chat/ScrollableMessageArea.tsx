@@ -31,6 +31,7 @@ interface ConversationScrollSnapshot {
   anchorDocumentTop?: number
   anchorIndex?: number
   anchorKind?: 'message' | 'content'
+  anchorProgress?: number
 }
 
 interface RuntimeTranscriptGap {
@@ -285,6 +286,14 @@ function ScrollableMessagePaneContent({
     }
   }, [])
 
+  const scheduleScrollTimer = useCallback((callback: () => void, delay: number) => {
+    const timer = setTimeout(() => {
+      scrollTimersRef.current = scrollTimersRef.current.filter(current => current !== timer)
+      callback()
+    }, delay)
+    scrollTimersRef.current.push(timer)
+  }, [])
+
   const isTurnNavigationAutoScrollSuspended = useCallback(
     () => turnNavigationLoadingRef.current,
     []
@@ -451,12 +460,11 @@ function ScrollableMessagePaneContent({
       setShowScrollButton(overflow && !isAtBottom)
       setConversationScrollSnapshot(key, savedSnapshot)
 
-      const applyingTimer = setTimeout(() => {
+      scheduleScrollTimer(() => {
         applyingSavedScrollRef.current = false
       }, 0)
-      scrollTimersRef.current.push(applyingTimer)
     },
-    [clearScheduledScrolls]
+    [clearScheduledScrolls, scheduleScrollTimer]
   )
 
   const scheduleStableRestoreSavedScrollPosition = useCallback(
@@ -465,13 +473,12 @@ function ScrollableMessagePaneContent({
       restoringScrollKeyRef.current = key
 
       STABLE_SCROLL_DELAYS.forEach(delay => {
-        const timer = setTimeout(() => {
+        scheduleScrollTimer(() => {
           restoreSavedScrollPosition(key, { clearScheduled: false })
         }, delay)
-        scrollTimersRef.current.push(timer)
       })
 
-      const clearRestoreTimer = setTimeout(
+      scheduleScrollTimer(
         () => {
           if (restoringScrollKeyRef.current === key) {
             restoringScrollKeyRef.current = null
@@ -479,9 +486,8 @@ function ScrollableMessagePaneContent({
         },
         Math.max(...STABLE_SCROLL_DELAYS) + 50
       )
-      scrollTimersRef.current.push(clearRestoreTimer)
     },
-    [clearScheduledScrolls, restoreSavedScrollPosition]
+    [clearScheduledScrolls, restoreSavedScrollPosition, scheduleScrollTimer]
   )
 
   const scrollToBottom = useCallback(
@@ -506,13 +512,12 @@ function ScrollableMessagePaneContent({
       clearScheduledScrolls()
 
       STABLE_SCROLL_DELAYS.forEach(delay => {
-        const timer = setTimeout(() => {
+        scheduleScrollTimer(() => {
           scrollToBottom(behavior, options)
         }, delay)
-        scrollTimersRef.current.push(timer)
       })
     },
-    [clearScheduledScrolls, scrollToBottom]
+    [clearScheduledScrolls, scheduleScrollTimer, scrollToBottom]
   )
 
   useLayoutEffect(() => {
@@ -612,6 +617,11 @@ function ScrollableMessagePaneContent({
         return
       }
 
+      if (userScrollPausedAutoFollowRef.current && currentScrollKey) {
+        restoreSavedScrollPosition(currentScrollKey, { clearScheduled: false })
+        return
+      }
+
       if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
         scrollToBottom('auto', { saveSnapshot: false })
       }
@@ -642,6 +652,24 @@ function ScrollableMessagePaneContent({
     userScrollPausedAutoFollowRef.current = true
     clearScheduledScrolls()
   }, [clearScheduledScrolls])
+
+  const handleScroll = useCallback(() => {
+    if (applyingSavedScrollRef.current && restoringScrollKeyRef.current === currentScrollKey) {
+      updateScrollState({ skipSave: true })
+      return
+    }
+    applyingSavedScrollRef.current = false
+    restoringScrollKeyRef.current = null
+    updateScrollState({ forceSave: true })
+  }, [currentScrollKey, updateScrollState])
+
+  useEffect(() => {
+    const externalScroller = externalScrollRef?.current
+    if (!externalScroller || externalScroller === internalScrollRef.current) return
+
+    externalScroller.addEventListener('scroll', handleScroll)
+    return () => externalScroller.removeEventListener('scroll', handleScroll)
+  }, [externalScrollRef, handleScroll])
 
   const scrollToBottomButton = showScrollButton ? (
     <button
@@ -692,18 +720,7 @@ function ScrollableMessagePaneContent({
           }
         }}
         onTouchMove={pauseAutoFollowForUserScroll}
-        onScroll={() => {
-          if (
-            applyingSavedScrollRef.current &&
-            restoringScrollKeyRef.current === currentScrollKey
-          ) {
-            updateScrollState({ skipSave: true })
-            return
-          }
-          applyingSavedScrollRef.current = false
-          restoringScrollKeyRef.current = null
-          updateScrollState({ forceSave: true })
-        }}
+        onScroll={handleScroll}
       >
         <div
           ref={contentRef}
@@ -842,6 +859,12 @@ function createScrollSnapshot(
   snapshot.anchorOffsetTop = anchorRect.top - scrollerRect.top
   snapshot.anchorDocumentTop = snapshot.scrollTop + snapshot.anchorOffsetTop
   snapshot.anchorKind = anchor.matches(SCROLL_ANCHOR_SELECTOR) ? 'content' : 'message'
+  if (anchorRect.height > scrollerRect.height) {
+    snapshot.anchorProgress = Math.min(
+      1,
+      Math.max(0, (scrollerRect.top - anchorRect.top) / anchorRect.height)
+    )
+  }
   if (message && snapshot.anchorKind === 'content') {
     snapshot.anchorIndex = getMessageScrollAnchors(message).indexOf(anchor)
   }
@@ -865,6 +888,10 @@ function getRestoredScrollTop(
   const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor.getBoundingClientRect()
   const currentAnchorOffsetTop = anchorRect.top - scrollerRect.top
+  if (snapshot.anchorProgress !== undefined) {
+    const currentAnchorDocumentTop = scroller.scrollTop + currentAnchorOffsetTop
+    return Math.max(0, currentAnchorDocumentTop + anchorRect.height * snapshot.anchorProgress)
+  }
   if (snapshot.anchorDocumentTop !== undefined) {
     const currentAnchorDocumentTop = scroller.scrollTop + currentAnchorOffsetTop
     return Math.max(0, snapshot.scrollTop + currentAnchorDocumentTop - snapshot.anchorDocumentTop)

@@ -87,6 +87,7 @@ export interface SendCurrentInputOptions {
 export interface CreateTemporaryRuntimeTaskOptions {
   project?: ProjectWithTasks | null
   source?: RuntimeTaskAddress | null
+  attachments?: Attachment[]
   onError?: (error: string) => void
 }
 

@@ -42,6 +42,7 @@ import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
+import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
@@ -457,14 +458,19 @@ export function WorkbenchProvider({
     deleteAttachment: resolvedServices.attachmentApi?.deleteAttachment,
     scopeKey: projectChatScopeKey,
   })
-  const { cloudWorkStatus, refreshWorkLists, refreshDevices, getRemoteDeviceStartupCommand } =
-    useWorkbenchDataRefresh({
-      user,
-      state,
-      dispatch,
-      executorClient,
-      services: resolvedServices,
-    })
+  const {
+    cloudWorkStatus,
+    markRuntimeTasksArchived,
+    refreshWorkLists,
+    refreshDevices,
+    getRemoteDeviceStartupCommand,
+  } = useWorkbenchDataRefresh({
+    user,
+    state,
+    dispatch,
+    executorClient,
+    services: resolvedServices,
+  })
 
   const localRuntimeStateDeviceId = useMemo(
     () => getLocalRuntimeStateDeviceId(state.devices),
@@ -720,12 +726,6 @@ export function WorkbenchProvider({
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
-        type: 'project_cleared',
-        standaloneDeviceId: openedDeviceId,
-        standaloneWorkspacePath: openedWorkspacePath,
-        startFreshChat: true,
-      })
-      dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
         workspacePath: openedWorkspacePath,
@@ -917,10 +917,20 @@ export function WorkbenchProvider({
   const startNewProjectChat = useCallback(
     (projectId: number) => {
       const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
-      selectProjectWorkspace(projectId, deviceWorkspaceId)
+      const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
+      if (!project) return
+      projectSelectionStartedRef.current = true
+      writeLastProjectId(user.id, project.id)
+      dispatch({
+        type: 'project_workspace_selected',
+        project,
+        deviceWorkspaceId,
+        startFreshChat: true,
+      })
+      navigateTo('/')
       requestNewChatComposerFocus()
     },
-    [selectProjectWorkspace, state.runtimeWork]
+    [state.projects, state.runtimeWork, user.id]
   )
 
   const runtimeTasks = useWorkbenchRuntimeTasks({
@@ -929,6 +939,7 @@ export function WorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    markRuntimeTasksArchived,
     refreshWorkLists,
   })
 
@@ -1654,18 +1665,6 @@ export function WorkbenchProvider({
       </WorkbenchPaneContext.Provider>
     </WorkbenchContext.Provider>
   )
-}
-
-function useStableEvent<TArgs extends unknown[], TResult>(
-  handler: (...args: TArgs) => TResult
-): (...args: TArgs) => TResult {
-  const handlerRef = useRef(handler)
-
-  useEffect(() => {
-    handlerRef.current = handler
-  }, [handler])
-
-  return useCallback((...args: TArgs) => handlerRef.current(...args), [])
 }
 
 function getProjectChatScopeKey({

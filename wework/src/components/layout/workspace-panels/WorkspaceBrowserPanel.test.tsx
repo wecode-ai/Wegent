@@ -93,6 +93,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.goForwardEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.navigateEmbeddedBrowser.mockResolvedValue(undefined)
     embeddedBrowserMocks.reloadEmbeddedBrowser.mockResolvedValue(undefined)
+    embeddedBrowserMocks.resumeEmbeddedBrowserDownload.mockResolvedValue(undefined)
     embeddedBrowserMocks.setEmbeddedBrowserBounds.mockResolvedValue(undefined)
   })
 
@@ -128,6 +129,26 @@ describe('WorkspaceBrowserPanel', () => {
           height: 300,
         },
         true,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('hides the native browser webview before the main page reloads', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    window.dispatchEvent(new PageTransitionEvent('pagehide'))
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        { x: 0, y: 0, width: 1, height: 1 },
+        false,
         'workspace-browser'
       )
     })

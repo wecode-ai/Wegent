@@ -79,6 +79,7 @@ export function SystemDragBridge() {
       })
       if (payload.action === 'stash') {
         void getAppPreferences().then(preferences => {
+          const createdAt = Date.now()
           const title =
             payload.text?.trim().split('\n')[0].slice(0, 40) ||
             payload.paths[0]?.split('/').pop() ||
@@ -86,11 +87,12 @@ export function SystemDragBridge() {
           return updateAppPreferences({
             quickPhrases: [
               {
-                id: `stash-${Date.now()}`,
+                id: `stash-${createdAt}`,
                 title,
                 content: payload.text?.trim() ?? '',
                 mode: 'normal',
                 attachmentPaths: payload.paths,
+                createdAt,
               },
               ...preferences.quickPhrases,
             ],

@@ -26,6 +26,7 @@ import {
   Terminal,
   Trash2,
   UserRound,
+  Webhook,
   X,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
@@ -75,6 +76,7 @@ import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import { QuickPhrasesSettingsPage } from './QuickPhrasesSettingsPage'
+import { HooksSettingsPage } from '@/features/hooks/HooksSettingsPage'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
@@ -194,6 +196,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: FolderGit2,
     label: 'settings_nav_worktrees',
     fallback: '工作树',
+    category: 'coding',
+  },
+  {
+    key: 'hooks',
+    icon: Webhook,
+    label: 'settings_nav_hooks',
+    fallback: 'Hooks',
     category: 'coding',
   },
   {
@@ -1338,7 +1347,7 @@ export function ConnectionsSettingsPage({
         <DesktopTopBar
           testId="settings-sidebar-topbar"
           className={cn(
-            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] bg-transparent pr-2 pl-2',
+            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2',
             usesOverlayTitlebar && 'h-[76px] pt-6'
           )}
           left={
@@ -1354,7 +1363,10 @@ export function ConnectionsSettingsPage({
           }
         />
 
-        <nav className="space-y-1 px-1.5">
+        <nav
+          data-testid="settings-sidebar-nav"
+          className="scrollbar-soft min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5"
+        >
           {visibleSettingsNavItems.map((item, index) => {
             const showCategory =
               item.category && visibleSettingsNavItems[index - 1]?.category !== item.category
@@ -1447,6 +1459,8 @@ export function ConnectionsSettingsPage({
             onRefreshWorkLists={onRefreshWorkLists}
             onLeaveSettings={onBack}
           />
+        ) : activeNav === 'hooks' ? (
+          <HooksSettingsPage />
         ) : activeNav === 'archived-conversations' ? (
           <ArchivedConversationsSettingsPage
             api={services?.runtimeWorkApi}

@@ -7,14 +7,13 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { DragDropEvent } from '@tauri-apps/api/webview'
-import type { Event } from '@tauri-apps/api/event'
 import type { DragEventHandler } from 'react'
-import { useEffect, useRef } from 'react'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { isCloudDevice } from '@/lib/device-selection'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
+import { findProjectDeviceWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -72,82 +71,6 @@ function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes('Files')
 }
 
-interface NativeDroppedFile {
-  name: string
-  bytes: number[]
-}
-
-type NativeDropHandler = (event: Event<DragDropEvent>) => void
-
-const nativeDropHandlers = new Set<NativeDropHandler>()
-let nativeDropUnlistenPromise: Promise<() => void> | null = null
-let nativeDropUnlisten: (() => void) | null = null
-let nativeDropReleaseTimer: ReturnType<typeof setTimeout> | null = null
-
-async function readNativeDroppedFiles(paths: string[]): Promise<File[]> {
-  const droppedFiles = await invoke<NativeDroppedFile[]>('read_dropped_files', { paths })
-  return droppedFiles.map(file => new File([new Uint8Array(file.bytes)], file.name))
-}
-
-function subscribeNativeDropHandler(handler: NativeDropHandler): () => void {
-  if (nativeDropReleaseTimer !== null) {
-    clearTimeout(nativeDropReleaseTimer)
-    nativeDropReleaseTimer = null
-  }
-
-  nativeDropHandlers.add(handler)
-
-  if (!nativeDropUnlistenPromise) {
-    try {
-      nativeDropUnlistenPromise = getCurrentWindow()
-        .onDragDropEvent(event => {
-          nativeDropHandlers.forEach(currentHandler => currentHandler(event))
-        })
-        .then(unlisten => {
-          nativeDropUnlisten = unlisten
-          if (nativeDropHandlers.size === 0 && nativeDropReleaseTimer === null) {
-            nativeDropUnlisten?.()
-            nativeDropUnlisten = null
-            nativeDropUnlistenPromise = null
-          }
-          return unlisten
-        })
-        .catch(error => {
-          nativeDropUnlistenPromise = null
-          console.error('Failed to listen for native file drops:', error)
-          return () => {}
-        })
-    } catch (error) {
-      nativeDropUnlistenPromise = null
-      console.error('Failed to listen for native file drops:', error)
-    }
-  }
-
-  return () => {
-    nativeDropHandlers.delete(handler)
-    if (nativeDropHandlers.size > 0) return
-    if (nativeDropReleaseTimer !== null) return
-
-    nativeDropReleaseTimer = setTimeout(() => {
-      nativeDropReleaseTimer = null
-      if (nativeDropHandlers.size > 0) return
-
-      const currentUnlisten = nativeDropUnlisten
-      const pendingUnlisten = nativeDropUnlistenPromise
-      nativeDropUnlisten = null
-      nativeDropUnlistenPromise = null
-      if (currentUnlisten) {
-        currentUnlisten()
-        return
-      }
-
-      if (pendingUnlisten) {
-        void pendingUnlisten.then(unlisten => unlisten())
-      }
-    }, 1000)
-  }
-}
-
 export function ProjectChatComposer({
   value,
   onChange,
@@ -190,24 +113,57 @@ export function ProjectChatComposer({
   isStreaming = false,
   onPause,
 }: ProjectChatComposerProps) {
-  const formRef = useRef<HTMLFormElement>(null)
-  const disabledRef = useRef(disabled)
-  const onFileSelectRef = useRef(onFileSelect)
+  const { t } = useTranslation('common')
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const [deviceMenuOpenSignal, setDeviceMenuOpenSignal] = useState(0)
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled &&
     !submitDisabled
+  const executionDevice = useMemo(() => {
+    const selectedProjectWorkspace = findProjectDeviceWorkspace(
+      projectWork.runtimeWork,
+      projectWork.currentProject?.id,
+      projectWork.selectedDeviceWorkspaceId
+    )
+    const deviceId =
+      projectWork.currentRuntimeDeviceId ??
+      selectedProjectWorkspace?.deviceId ??
+      getProjectDeviceId(projectWork.currentProject) ??
+      projectWork.currentStandaloneDeviceId
+    const device = findWorkbenchDevice(projectWork.devices, deviceId)
+    if (!deviceId || !device) return undefined
+    const cloud = isCloudDevice(device)
+    const location = cloud
+      ? t('workbench.environment_cloud_device', '云设备')
+      : t('workbench.environment_local', '本机')
+    const deviceName = device.name?.trim() || device.device_id
+    return {
+      kind: cloud ? ('cloud' as const) : ('local' as const),
+      label: t('workbench.composer_execution_device_label', {
+        location,
+        device: deviceName,
+      }),
+      selectable: showProjectWorkBar && !projectWork.currentRuntimeDeviceId,
+      onSelect:
+        showProjectWorkBar && !projectWork.currentRuntimeDeviceId
+          ? () => setDeviceMenuOpenSignal(signal => signal + 1)
+          : undefined,
+    }
+  }, [projectWork, showProjectWorkBar, t])
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
     event.preventDefault()
     event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
+    setIsDraggingFiles(!disabled)
   }
   const handleDrop: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
     event.preventDefault()
+    setIsDraggingFiles(false)
     if (disabled) return
 
     const files = Array.from(event.dataTransfer.files)
@@ -232,40 +188,6 @@ export function ProjectChatComposer({
     }
     window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
-
-  useEffect(() => {
-    disabledRef.current = disabled
-  }, [disabled])
-
-  useEffect(() => {
-    onFileSelectRef.current = onFileSelect
-  }, [onFileSelect])
-
-  useEffect(() => {
-    if (!isTauriRuntime()) return
-
-    const unsubscribe = subscribeNativeDropHandler(event => {
-      const { payload } = event
-      if (
-        payload.type !== 'drop' ||
-        payload.paths.length === 0 ||
-        disabledRef.current ||
-        !formRef.current
-      ) {
-        return
-      }
-
-      void readNativeDroppedFiles(payload.paths)
-        .then(files => {
-          if (files.length > 0) onFileSelectRef.current(files)
-        })
-        .catch(error => {
-          console.error('Failed to read dropped files:', error)
-        })
-    })
-
-    return unsubscribe
-  }, [])
 
   return (
     <div
@@ -300,17 +222,24 @@ export function ProjectChatComposer({
           worktreeBranch={projectWork.worktreeBranch}
           onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
           projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
+          externalMenuOpenSignal={deviceMenuOpenSignal}
           projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
           className="min-h-10 rounded-t-[26px] bg-surface px-4"
           buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
         />
       )}
       <form
-        ref={formRef}
         data-testid="project-chat-composer-form"
         className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-background px-4 pb-1.5 pt-2'
+          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
+          isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
         )}
+        onDragEnter={handleDragOver}
+        onDragLeave={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setIsDraggingFiles(false)
+          }
+        }}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onSubmit={event => {
@@ -396,6 +325,7 @@ export function ProjectChatComposer({
           onPause={onPause}
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
+          executionDevice={executionDevice}
         />
       </form>
     </div>

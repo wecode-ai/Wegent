@@ -1,10 +1,13 @@
 mod appshots;
 mod desktop_capture;
 mod embedded_browser;
+#[cfg(desktop)]
+mod feedback;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
 mod system_drag;
+mod system_sleep;
 mod workbench_background;
 
 use std::collections::{HashMap, HashSet};
@@ -381,6 +384,8 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
+    #[serde(default = "default_true")]
+    prevent_sleep_while_tasks_running: bool,
     #[serde(default)]
     close_to_tray_hint_seen: bool,
     #[serde(default = "default_language_preference")]
@@ -420,6 +425,8 @@ struct QuickPhrase {
     mode: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachment_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_at: Option<u64>,
 }
 
 fn default_quick_phrases() -> Vec<QuickPhrase> {
@@ -430,6 +437,7 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             content: "总结目前完成的工作和下一步建议".into(),
             mode: "normal".into(),
             attachment_paths: Vec::new(),
+            created_at: None,
         },
         QuickPhrase {
             id: "default-create-plan".into(),
@@ -437,6 +445,7 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             content: "分析需求并制定详细的实施计划".into(),
             mode: "plan".into(),
             attachment_paths: Vec::new(),
+            created_at: None,
         },
         QuickPhrase {
             id: "default-pursue-goal".into(),
@@ -444,6 +453,7 @@ fn default_quick_phrases() -> Vec<QuickPhrase> {
             content: "持续推进这个目标，直到真正完成".into(),
             mode: "goal".into(),
             attachment_paths: Vec::new(),
+            created_at: None,
         },
     ]
 }
@@ -475,6 +485,7 @@ impl Default for AppPreferences {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             system_drag_enabled: true,
+            prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
@@ -500,6 +511,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     system_drag_enabled: Option<bool>,
+    prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -649,9 +661,17 @@ fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Ap
     let Ok(content) = std::fs::read_to_string(path) else {
         return AppPreferences::default();
     };
-    serde_json::from_str::<AppPreferences>(&content)
-        .map(normalize_app_preferences)
-        .unwrap_or_default()
+    let Ok(preferences) = serde_json::from_str::<AppPreferences>(&content) else {
+        return AppPreferences::default();
+    };
+    let stored_phrase_count = preferences.quick_phrases.len();
+    let preferences = normalize_app_preferences(preferences);
+    if preferences.quick_phrases.len() < stored_phrase_count {
+        if let Err(error) = write_app_preferences_impl(app, &preferences) {
+            log::warn!("Failed to persist expired quick phrase stash cleanup: {error}");
+        }
+    }
+    preferences
 }
 
 #[cfg(desktop)]
@@ -668,11 +688,37 @@ fn normalize_app_preferences(mut preferences: AppPreferences) -> AppPreferences 
         .browser_download_directory
         .and_then(normalized_non_empty);
     preferences
+        .quick_phrases
+        .retain(|phrase| !is_expired_quick_phrase_stash(phrase));
+    preferences
 }
 
 #[cfg(desktop)]
-fn write_app_preferences_impl(
-    app: &tauri::AppHandle,
+fn is_expired_quick_phrase_stash(phrase: &QuickPhrase) -> bool {
+    const STASH_MAX_AGE_MILLIS: u64 = 7 * 24 * 60 * 60 * 1_000;
+
+    if !phrase.id.starts_with("stash-") {
+        return false;
+    }
+    let created_at = phrase.created_at.or_else(|| {
+        phrase
+            .id
+            .strip_prefix("stash-")?
+            .split('-')
+            .next()?
+            .parse::<u64>()
+            .ok()
+    });
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default();
+    created_at.is_some_and(|timestamp| now.saturating_sub(timestamp) >= STASH_MAX_AGE_MILLIS)
+}
+
+#[cfg(desktop)]
+fn write_app_preferences_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     preferences: &AppPreferences,
 ) -> Result<(), String> {
     let path = app_preferences_path(app)?;
@@ -894,6 +940,9 @@ fn update_app_preferences(
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
     }
+    if let Some(value) = patch.prevent_sleep_while_tasks_running {
+        preferences.prevent_sleep_while_tasks_running = value;
+    }
     if let Some(value) = patch.close_to_tray_hint_seen {
         preferences.close_to_tray_hint_seen = value;
     }
@@ -938,6 +987,8 @@ fn update_app_preferences(
         preferences.quick_phrases = value;
     }
     write_app_preferences_impl(&app, &preferences)?;
+    app.state::<system_sleep::SystemSleepState>()
+        .set_enabled(preferences.prevent_sleep_while_tasks_running);
     Ok(preferences)
 }
 
@@ -948,6 +999,7 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     system_drag_enabled: bool,
+    prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
@@ -971,6 +1023,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     system_drag_enabled: Option<bool>,
+    prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -994,6 +1047,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         system_drag_enabled: true,
+        prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
@@ -1021,6 +1075,7 @@ fn update_app_preferences(
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
+        prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
         language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
         terminal_context_injection_enabled: patch
@@ -1247,11 +1302,11 @@ fn related_macos_webkit_process_ids(
 
     Ok(expected_processes
         .into_iter()
-        .filter_map(|(suffix, bundle_id)| {
+        .flat_map(|(suffix, bundle_id)| {
             let expected_name = format!("{display_name} {suffix}");
             instance_processes
                 .iter()
-                .find(|process| {
+                .filter(move |process| {
                     process.display_name == expected_name
                         && process.bundle_id.as_deref() == Some(bundle_id)
                 })
@@ -2393,6 +2448,8 @@ struct TrayMenuStatePayload {
     unread_more: Vec<TrayMenuTaskItem>,
     running_count: usize,
     #[serde(default)]
+    active_task_count: usize,
+    #[serde(default)]
     show_running_status: bool,
     #[serde(default)]
     unread_count: usize,
@@ -2438,6 +2495,7 @@ impl TrayMenuStatePayload {
             unread: Vec::new(),
             unread_more: Vec::new(),
             running_count: 0,
+            active_task_count: 0,
             show_running_status: false,
             unread_count: 0,
             pinned: Vec::new(),
@@ -3269,6 +3327,8 @@ fn update_tray_visual<R: tauri::Runtime>(
 #[cfg(desktop)]
 #[tauri::command]
 fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
+    app.state::<system_sleep::SystemSleepState>()
+        .set_running_count(state.active_task_count);
     let menu = build_system_tray_menu(&app, &state)
         .map_err(|error| format!("Failed to build tray menu: {error}"))?;
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
@@ -3594,12 +3654,15 @@ mod tests {
 8) "app Web Content" ASN:8:
     bundleID="com.apple.WebKit.WebContent"
     pid = 203 type="UIElement"
+9) "app Web Content" ASN:9:
+    bundleID="com.apple.WebKit.WebContent"
+    pid = 204 type="UIElement"
 "#,
         );
 
         assert_eq!(
             related_macos_webkit_process_ids(&processes, 200),
-            Ok(HashSet::from([201, 202, 203]))
+            Ok(HashSet::from([201, 202, 203, 204]))
         );
     }
 
@@ -3721,6 +3784,7 @@ pub fn run() {
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .manage(system_drag::SystemDragState::default())
+        .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             if hide_main_window_on_close(window, event) {
@@ -3759,6 +3823,10 @@ pub fn run() {
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
+            #[cfg(desktop)]
+            app.state::<system_sleep::SystemSleepState>().set_enabled(
+                read_app_preferences_impl(app.handle()).prevent_sleep_while_tasks_running,
+            );
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
             #[cfg(desktop)]
@@ -3803,6 +3871,8 @@ pub fn run() {
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
             desktop_capture::capture_main_webview,
+            #[cfg(desktop)]
+            feedback::export_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,

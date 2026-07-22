@@ -5,7 +5,9 @@ import type { LocalCodexHomeMigrationStatus } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
 
 const CODEX_MIGRATION_DISMISSED_STORAGE_KEY = 'wework.plugins.codexMigrationDismissed'
-const SHOULD_SKIP_CODEX_HOME_INITIALIZATION = import.meta.env.VITE_WEWORK_E2E === 'true'
+const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
+  import.meta.env.VITE_WEWORK_E2E === 'true' &&
+  import.meta.env.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION !== 'true'
 
 function CodexHomeInitializationDialog({
   status,

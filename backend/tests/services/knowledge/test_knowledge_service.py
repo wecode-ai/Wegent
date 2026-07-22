@@ -61,6 +61,7 @@ class TestKnowledgeServiceCreateKnowledgeBase:
         retrieval_config = knowledge_base.json["spec"]["retrievalConfig"]
 
         assert isinstance(retrieval_config, dict)
+        assert knowledge_base.json["spec"]["directAccessRequirement"] == "read"
         assert retrieval_config["retriever_name"] == "retriever-1"
         assert retrieval_config["embedding_config"]["model_name"] == "embedding-1"
 

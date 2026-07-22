@@ -20,7 +20,6 @@ import {
 } from '@/features/workbench/runtimeModelSelection'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
-import { findWorkbenchDevice, isLocalWorkbenchDeviceAlias } from '@/lib/workbench-device'
 import {
   applyRequestUserInputResponseToMessages,
   requestUserInputPayloadKey,
@@ -60,6 +59,8 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { useWorkbenchPaneActive } from './workbenchPaneStack'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -113,7 +114,6 @@ interface GuidanceSplitBoundary {
 const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
-const RUNNING_TRANSCRIPT_RECONCILE_INTERVAL_MS = 2_000
 const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const noopSetInput = () => undefined
@@ -165,9 +165,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [transcriptLoadingMoreBefore, setTranscriptLoadingMoreBefore] = useState(false)
   const [transcriptLoadingFullContent, setTranscriptLoadingFullContent] = useState(false)
   const [transcriptFullContent, setTranscriptFullContent] = useState(false)
-  const [runningTranscriptReconcileKey, setRunningTranscriptReconcileKey] = useState<string | null>(
-    null
-  )
   const [loadedTranscriptRanges, setLoadedTranscriptRanges] = useState<LoadedTranscriptRange[]>([])
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
   const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
@@ -198,6 +195,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
   const interruptedGuidanceIdsRef = useRef(new Set<string>())
   const interruptAndSendInFlightRef = useRef(false)
+  const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -215,14 +213,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null
     )
   const runtimeTaskLoadTarget = retainedRuntimeTaskLoadTarget
-  const shouldReconcileRunningTranscript = useMemo(() => {
-    const deviceId = runtimeTaskLoadTarget?.address.deviceId
-    if (!deviceId) return false
-    return (
-      isLocalWorkbenchDeviceAlias(deviceId) ||
-      findWorkbenchDevice(workbenchState.devices, deviceId)?.device_type === 'local'
-    )
-  }, [runtimeTaskLoadTarget?.address.deviceId, workbenchState.devices])
   const runtimeTaskStreamTargetKey = runtimeTaskLoadTarget?.identityKey ?? null
   const [messages, setMessages] = useState<WorkbenchMessage[]>([])
   const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
@@ -310,6 +300,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const runtimeTaskStatusAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskExecution = useMemo(
     () => getRuntimePaneTaskExecution(workbenchState.runtimeWork, runtimeTaskStatusAddress),
+    [runtimeTaskStatusAddress, workbenchState.runtimeWork]
+  )
+  const taskGoalStatus = useMemo(
+    () => findRuntimeTask(workbenchState.runtimeWork, runtimeTaskStatusAddress)?.goalStatus ?? null,
     [runtimeTaskStatusAddress, workbenchState.runtimeWork]
   )
   const paneStatus = useMemo(
@@ -491,7 +485,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       // to the same task should not reload and reset the transcript tree.
       setTranscriptLoading(false)
       setTranscriptLoadingMoreBefore(false)
-      setRunningTranscriptReconcileKey(null)
       return
     }
 
@@ -539,9 +532,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!cancelled) {
           if (transcript.running) {
             markRuntimeTaskStarted(address)
-            setRunningTranscriptReconcileKey(shouldReconcileRunningTranscript ? loadKey : null)
-          } else {
-            setRunningTranscriptReconcileKey(current => (current === loadKey ? null : current))
           }
           const nextMessages = transcript.messages.length > 0 ? transcript.messages : seededMessages
           loadedRuntimeTranscriptKeyRef.current = loadKey
@@ -603,96 +593,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [
-    dispatchMessages,
-    markRuntimeTaskSettled,
-    markRuntimeTaskStarted,
-    runtimeTaskLoadTarget,
-    shouldReconcileRunningTranscript,
-  ])
+  }, [dispatchMessages, markRuntimeTaskSettled, markRuntimeTaskStarted, runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
-
-  useEffect(() => {
-    if (
-      !runtimeTaskLoadTarget ||
-      !shouldReconcileRunningTranscript ||
-      runningTranscriptReconcileKey !== runtimeTaskLoadTarget.key
-    ) {
-      return
-    }
-
-    const { address, identityKey, key: loadKey } = runtimeTaskLoadTarget
-    let cancelled = false
-    let timerId: number | null = null
-
-    const schedule = () => {
-      timerId = window.setTimeout(reconcile, RUNNING_TRANSCRIPT_RECONCILE_INTERVAL_MS)
-    }
-    const reconcile = async () => {
-      try {
-        const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
-          refresh: true,
-        })
-        if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
-          return
-        }
-        if (transcript.running) {
-          schedule()
-          return
-        }
-
-        const nextMessages =
-          transcript.messages.length > 0
-            ? mergeRuntimeTranscriptMessages(transcript.messages, messagesRef.current)
-            : messagesRef.current
-        loadedRuntimeTranscriptKeyRef.current = loadKey
-        setTranscriptFullContent(transcript.fullContent === true)
-        setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
-        setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
-        setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
-        setTurnNavigation(transcript.turnNavigation ?? [])
-        dispatchMessages({ type: 'reset', messages: nextMessages })
-        if (
-          !hasSettledAssistantMessage(nextMessages) &&
-          hasUnsettledRuntimePaneState(nextMessages, 'idle')
-        ) {
-          dispatchMessages({ type: 'assistant_cancelled' })
-        }
-        setStreamSettled(true)
-        setSendPhase('idle')
-        setSubagentStatuses(markRuntimeSubagentsSettled)
-        markRuntimeTaskSettled(address)
-        setRunningTranscriptReconcileKey(current => (current === loadKey ? null : current))
-        clearRuntimePaneMessageSeed(address)
-        void refreshWorkListsRef.current().catch(() => undefined)
-        console.info('[Wework] Reconciled running runtime task from persisted transcript', {
-          address: runtimeAddressDebug(address),
-          transcriptMessageCount: transcript.messages.length,
-          restoredMessageCount: nextMessages.length,
-        })
-      } catch (error) {
-        if (cancelled) return
-        console.warn('[Wework] Running runtime transcript reconciliation failed', {
-          address: runtimeAddressDebug(address),
-          error,
-        })
-        schedule()
-      }
-    }
-
-    schedule()
-    return () => {
-      cancelled = true
-      if (timerId !== null) window.clearTimeout(timerId)
-    }
-  }, [
-    dispatchMessages,
-    markRuntimeTaskSettled,
-    runningTranscriptReconcileKey,
-    runtimeTaskLoadTarget,
-    shouldReconcileRunningTranscript,
-  ])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
   useEffect(() => {
@@ -724,7 +626,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onAssistantSettled: () => {
         setStreamSettled(true)
         setSendPhase('idle')
-        setRunningTranscriptReconcileKey(null)
         setSubagentStatuses(markRuntimeSubagentsSettled)
         const requestedGoalRevision = goalRevisionRef.current
         void getRuntimeGoalRef
@@ -1474,6 +1375,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
+      if (queuedMessageSendInFlightIdsRef.current.has(queuedMessage.id)) return
+      queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
       setQueuedMessages(messages =>
         messages.map(message =>
           message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
@@ -1504,6 +1407,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
         )
         setSendPhase('idle')
+      } finally {
+        queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
     [sendRuntimeMessage]
@@ -1525,6 +1430,22 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendQueuedMessage,
     streamSettled,
   ])
+
+  const loadFullTranscriptForExport = useCallback(async () => {
+    if (!runtimeTaskLoadTarget) return messagesRef.current
+
+    const transcript = await loadRuntimeTranscriptForPaneRef.current(
+      runtimeTaskLoadTarget.address,
+      {
+        includeFullContent: true,
+        refresh: true,
+      }
+    )
+    if (transcript.fullContent !== true) {
+      throw new Error('The complete task transcript is unavailable')
+    }
+    return transcript.messages.length > 0 ? transcript.messages : messagesRef.current
+  }, [runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const sendQueuedMessageAsGuidance = useCallback(
@@ -2168,8 +2089,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {
-      if (!goal) return false
       if (!currentRuntimeTask) {
+        if (!goal) return false
         setPendingGoalState(current =>
           current
             ? {
@@ -2222,16 +2143,17 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return
 
+    if (goal?.status === 'active' || taskGoalStatus === 'active') {
+      const paused = await updateCurrentGoalStatus('paused')
+      if (!paused) return
+    }
+
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) return
 
     setQueuedMessagesPaused(queuedMessages.some(message => message.status === 'queued'))
     setSendPhase('idle')
     void refreshWorkLists()
-
-    if (goal?.status === 'active') {
-      await updateCurrentGoalStatus('paused')
-    }
 
     if (!activeAssistantMessage) return
 
@@ -2246,6 +2168,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     goal?.status,
     queuedMessages,
     refreshWorkLists,
+    taskGoalStatus,
     updateCurrentGoalStatus,
   ])
 
@@ -2352,6 +2275,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     goalDraftActive,
     loadMoreTranscriptBefore,
     loadFullTranscript,
+    loadFullTranscriptForExport,
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,
@@ -2726,37 +2650,6 @@ function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number)
   }
 }
 
-function mergeRuntimeTranscriptMessages(
-  leadingMessages: WorkbenchMessage[],
-  trailingMessages: WorkbenchMessage[]
-): WorkbenchMessage[] {
-  const merged: WorkbenchMessage[] = []
-  const seenIds = new Set<string>()
-  for (const message of [...leadingMessages, ...trailingMessages]) {
-    if (seenIds.has(message.id)) continue
-    seenIds.add(message.id)
-    merged.push(message)
-  }
-
-  if (!merged.some(message => getRuntimeMessageIndex(message) !== null)) {
-    return merged
-  }
-
-  return merged
-    .map((message, order) => ({ message, order }))
-    .sort((left, right) => {
-      const leftIndex = getRuntimeMessageIndex(left.message)
-      const rightIndex = getRuntimeMessageIndex(right.message)
-      if (leftIndex !== null && rightIndex !== null && leftIndex !== rightIndex) {
-        return leftIndex - rightIndex
-      }
-      if (leftIndex !== null && rightIndex === null) return -1
-      if (leftIndex === null && rightIndex !== null) return 1
-      return left.order - right.order
-    })
-    .map(item => item.message)
-}
-
 function transcriptRangeFromPage(transcript: RuntimePaneTranscript): LoadedTranscriptRange[] {
   const indexedRange = transcriptRangeFromMessageIndexes(transcript.messages)
   const rangeStart =
@@ -2805,13 +2698,6 @@ function mergeTranscriptRanges(
     previous.end = Math.max(previous.end, range.end)
   }
   return merged
-}
-
-function getRuntimeMessageIndex(message: WorkbenchMessage): number | null {
-  return typeof message.runtimeMessageIndex === 'number' &&
-    Number.isFinite(message.runtimeMessageIndex)
-    ? message.runtimeMessageIndex
-    : null
 }
 
 function numericValue(value: number | null | undefined): number | null {

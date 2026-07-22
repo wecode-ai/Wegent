@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, MessageCircle } from 'lucide-react'
+import { ArrowLeftRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -104,6 +105,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -125,6 +127,7 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 20
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
+const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
@@ -350,6 +353,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -379,6 +383,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const paneActive = useWorkbenchPaneActive()
+  const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
+    return () => cancelAnimationFrame(frame)
+  }, [paneActive])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -452,6 +461,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
@@ -466,6 +476,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useLayoutEffect(() => {
     setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
   }, [])
+  useLayoutEffect(() => {
+    if (!paneActive) return
+
+    const workbenchScroll = workbenchScrollRef.current
+    if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
+      workbenchScroll.scrollLeft = 0
+    }
+  }, [paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -480,6 +498,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reloadDiff: undefined,
   })
   const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
+  const onlyTemporaryChatOpen =
+    rightPanelTabs.length === 1 &&
+    rightPanelTabs[0].startsWith('chat:') &&
+    rightPanelView === rightPanelTabs[0]
   useLayoutEffect(() => {
     const workbenchMain = workbenchMainRef.current
     if (!workbenchMain) return
@@ -502,6 +524,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useResizableRightSplitChat({
     containerRef: workbenchMainRef,
     onCollapse: closeRightPanel,
+    defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
@@ -1360,7 +1383,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
   const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
-  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
+  const canForkCurrentRuntimeTask = Boolean(
+    experimentalFeaturesEnabled && currentRuntimeTask && forkCurrentRuntimeTask
+  )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
       type="button"
@@ -1373,7 +1398,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <ArrowLeftRight />
     </button>
   ) : undefined
-  const canContinueInIm = Boolean(currentRuntimeTask)
+  const canContinueInIm = experimentalFeaturesEnabled && Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
     <button
       type="button"
@@ -1386,10 +1411,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
+  const feedbackButton =
+    currentRuntimeTask && isTauri ? (
+      <button
+        type="button"
+        data-testid="task-feedback-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.feedback_button')}
+        title={t('workbench.feedback_button')}
+        onClick={() => setFeedbackDialogOpen(true)}
+      >
+        <MessageSquareWarning />
+      </button>
+    ) : undefined
   const mainHeaderActions = (
     <>
       {forkTaskButton}
       {continueInImButton}
+      {feedbackButton}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
     </>
@@ -1560,7 +1599,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           data-testid="desktop-workbench-content"
           className={cn(
             'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
-            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
+            hasConversation ? 'overflow-x-hidden overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
@@ -1833,7 +1872,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           <aside
             data-testid="environment-info-panel-container"
-            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible"
+            className={cn(
+              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              paneActive && environmentInfoTransitionEnabled
+                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                : 'transition-none'
+            )}
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (
@@ -1952,6 +1996,36 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <ContinueInImDialog
           key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
           {...continueInIm.dialog}
+        />
+        <TaskFeedbackDialog
+          open={feedbackDialogOpen}
+          onClose={() => setFeedbackDialogOpen(false)}
+          getTaskContext={async () => {
+            const messages = await paneSession.loadFullTranscriptForExport()
+            return {
+              task: {
+                taskId: currentRuntimeTask?.taskId ?? null,
+                deviceId: currentRuntimeTask?.deviceId ?? null,
+                threadId: currentRuntimeTask?.threadId ?? null,
+                workspacePath: currentRuntimeTask?.workspacePath ?? null,
+                title:
+                  runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
+                status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
+              },
+              conversation: {
+                messages,
+                queuedMessages: paneSession.queuedMessages,
+                guidanceMessages: paneSession.guidanceMessages,
+                turnNavigation: paneSession.turnNavigation,
+              },
+              runtime: {
+                status: paneSession.status,
+                goal: paneSession.goal,
+                taskPlan: paneSession.taskPlan,
+                subagentStatuses: paneSession.subagentStatuses,
+              },
+            }
+          }}
         />
         <TransientNotice
           message={continueInIm.notice?.message ?? null}

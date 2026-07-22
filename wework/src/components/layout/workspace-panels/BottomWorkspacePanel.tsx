@@ -1,5 +1,5 @@
-import { SquareTerminal, X } from 'lucide-react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { Code2, Monitor, SquareTerminal, X } from 'lucide-react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -9,10 +9,12 @@ import type { WorkspaceTarget } from '@/types/workspace-files'
 import { useResizableBottomPanel } from './useResizableWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
+import type { WorkspacePanelMenuActions } from './workspace-panel-tools'
 
 interface BottomWorkspacePanelTab {
   id: string
   title: string
+  defaultOpenTool?: 'terminal'
 }
 
 interface BottomWorkspacePanelProps {
@@ -31,8 +33,11 @@ interface BottomWorkspacePanelProps {
   onTerminalTabsEmpty?: () => void
 }
 
-function createTerminalTab(index: number): BottomWorkspacePanelTab {
-  return { id: `terminal-${index}`, title: `Terminal ${index}` }
+function createTerminalTab(
+  index: number,
+  defaultOpenTool?: BottomWorkspacePanelTab['defaultOpenTool']
+): BottomWorkspacePanelTab {
+  return { id: `terminal-${index}`, title: `Terminal ${index}`, defaultOpenTool }
 }
 
 export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
@@ -52,51 +57,59 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { height, resizing, panelRef, handleResizeStart } = useResizableBottomPanel()
-  const terminalSequenceRef = useRef(2)
+  const [terminalSequence, setTerminalSequence] = useState(2)
   const [tabs, setTabs] = useState<BottomWorkspacePanelTab[]>(() => [createTerminalTab(1)])
   const [activeTabId, setActiveTabId] = useState('terminal-1')
+  const [menuActionsByTab, setMenuActionsByTab] = useState<
+    Record<string, WorkspacePanelMenuActions>
+  >({})
   const activeTab = tabs.find(tab => tab.id === activeTabId) ?? tabs[0] ?? null
+  const activeMenuActions = activeTab ? menuActionsByTab[activeTab.id] : undefined
   const renderContent = open || preserveContent
   const panelActive = active && open
   const contentTestIdsEnabled = testIdsEnabled && open
   const testId = (value: string) => (testIdsEnabled ? value : undefined)
 
-  useEffect(() => {
-    if (!open || tabs.length > 0) return
-
-    const tab = createTerminalTab(terminalSequenceRef.current)
-    terminalSequenceRef.current += 1
-    setTabs([tab])
-    setActiveTabId(tab.id)
-  }, [open, tabs.length])
-
-  const openTerminalTab = () => {
-    const tab = createTerminalTab(terminalSequenceRef.current)
-    terminalSequenceRef.current += 1
+  const openTerminalTab = useCallback(() => {
+    const tab = createTerminalTab(terminalSequence, 'terminal')
+    setTerminalSequence(current => current + 1)
     setTabs(current => [...current, tab])
     setActiveTabId(tab.id)
-  }
+  }, [terminalSequence])
 
-  const closeTab = (tabId: string) => {
-    const closeIndex = tabs.findIndex(tab => tab.id === tabId)
-    const nextTabs = tabs.filter(tab => tab.id !== tabId)
+  const closeTab = useCallback(
+    (tabId: string) => {
+      const closeIndex = tabs.findIndex(tab => tab.id === tabId)
+      const nextTabs = tabs.filter(tab => tab.id !== tabId)
 
-    setTabs(nextTabs)
+      setMenuActionsByTab(current => {
+        if (!current[tabId]) return current
+        const next = { ...current }
+        delete next[tabId]
+        return next
+      })
 
-    if (nextTabs.length === 0) {
-      setActiveTabId('')
-      onTerminalTabsEmpty?.()
-      onRequestClose()
-      return
-    }
+      if (nextTabs.length === 0) {
+        const replacementTab = createTerminalTab(terminalSequence)
+        setTerminalSequence(current => current + 1)
+        setTabs([replacementTab])
+        setActiveTabId(replacementTab.id)
+        onTerminalTabsEmpty?.()
+        onRequestClose()
+        return
+      }
 
-    if (activeTabId === tabId || !nextTabs.some(tab => tab.id === activeTabId)) {
-      const nextTab = nextTabs[Math.max(closeIndex - 1, 0)] ?? nextTabs[0]
-      setActiveTabId(nextTab.id)
-    }
-  }
+      setTabs(nextTabs)
 
-  const updateTabTitle = (tabId: string, title: string) => {
+      if (activeTabId === tabId || !nextTabs.some(tab => tab.id === activeTabId)) {
+        const nextTab = nextTabs[Math.max(closeIndex - 1, 0)] ?? nextTabs[0]
+        setActiveTabId(nextTab.id)
+      }
+    },
+    [activeTabId, onRequestClose, onTerminalTabsEmpty, tabs, terminalSequence]
+  )
+
+  const updateTabTitle = useCallback((tabId: string, title: string) => {
     const normalizedTitle = title.trim()
     if (!normalizedTitle) return
 
@@ -106,17 +119,60 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
 
       return current.map(item => (item.id === tabId ? { ...item, title: normalizedTitle } : item))
     })
-  }
+  }, [])
 
-  const menuItems: WorkspaceAddMenuItem[] = [
-    {
-      id: 'terminal',
-      testId: 'workspace-add-terminal-option',
-      icon: SquareTerminal,
-      label: t('workbench.terminal', '终端'),
-      onSelect: openTerminalTab,
+  const handleMenuActionsChange = useCallback(
+    (tabId: string, actions: WorkspacePanelMenuActions | null) => {
+      setMenuActionsByTab(current => {
+        if (!actions) {
+          if (!current[tabId]) return current
+          const next = { ...current }
+          delete next[tabId]
+          return next
+        }
+        if (current[tabId] === actions) return current
+        return { ...current, [tabId]: actions }
+      })
     },
-  ]
+    []
+  )
+
+  const menuItems = useMemo<WorkspaceAddMenuItem[]>(() => {
+    if (!activeMenuActions) return []
+
+    const items: WorkspaceAddMenuItem[] = []
+    if (activeMenuActions.terminal.visible) {
+      items.push({
+        id: 'terminal',
+        testId: 'workspace-add-terminal-option',
+        icon: SquareTerminal,
+        label: t('workbench.terminal', '终端'),
+        disabled: activeMenuActions.terminal.disabled,
+        onSelect: openTerminalTab,
+      })
+    }
+    if (activeMenuActions.ide.visible) {
+      items.push({
+        id: 'ide',
+        testId: 'workspace-add-ide-option',
+        icon: Code2,
+        label: t('workbench.ide', 'IDE'),
+        disabled: activeMenuActions.ide.disabled,
+        onSelect: activeMenuActions.ide.run,
+      })
+    }
+    if (activeMenuActions.desktop.visible) {
+      items.push({
+        id: 'desktop',
+        testId: 'workspace-add-desktop-option',
+        icon: Monitor,
+        label: t('workbench.desktop', '桌面'),
+        disabled: activeMenuActions.desktop.disabled,
+        onSelect: activeMenuActions.desktop.run,
+      })
+    }
+    return items
+  }, [activeMenuActions, openTerminalTab, t])
 
   return (
     <section
@@ -180,27 +236,23 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
           </header>
           <div className="relative flex min-h-0 flex-1 overflow-hidden">
             {tabs.map(tab => (
-              <div
+              <BottomWorkspaceTabContent
                 key={tab.id}
-                hidden={activeTab?.id !== tab.id}
-                className="absolute inset-0 min-h-0 w-full"
-              >
-                <WorkspacePanelCards
-                  showWorkbenchBackground={showWorkbenchBackground}
-                  currentProject={currentProject}
-                  devices={devices}
-                  workspaceTarget={workspaceTarget}
-                  defaultOpenTool={panelActive ? 'terminal' : undefined}
-                  onRequestClose={() => closeTab(tab.id)}
-                  hideTerminalChrome
-                  preferLocalTerminal={preferLocalTerminal}
-                  terminalContextTitle={terminalContextTitle}
-                  workspaceSessionApi={workspaceSessionApi}
-                  panelActive={panelActive}
-                  testIdsEnabled={contentTestIdsEnabled}
-                  onTerminalTitleChange={title => updateTabTitle(tab.id, title)}
-                />
-              </div>
+                tab={tab}
+                active={activeTab?.id === tab.id}
+                showWorkbenchBackground={showWorkbenchBackground}
+                currentProject={currentProject}
+                devices={devices}
+                workspaceTarget={workspaceTarget}
+                preferLocalTerminal={preferLocalTerminal}
+                terminalContextTitle={terminalContextTitle}
+                workspaceSessionApi={workspaceSessionApi}
+                panelActive={panelActive}
+                testIdsEnabled={contentTestIdsEnabled}
+                onCloseTab={closeTab}
+                onUpdateTabTitle={updateTabTitle}
+                onMenuActionsChange={handleMenuActionsChange}
+              />
             ))}
           </div>
         </>
@@ -208,6 +260,69 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
     </section>
   )
 })
+
+function BottomWorkspaceTabContent({
+  tab,
+  active,
+  showWorkbenchBackground,
+  currentProject,
+  devices,
+  workspaceTarget,
+  preferLocalTerminal,
+  terminalContextTitle,
+  workspaceSessionApi,
+  panelActive,
+  testIdsEnabled,
+  onCloseTab,
+  onUpdateTabTitle,
+  onMenuActionsChange,
+}: {
+  tab: BottomWorkspacePanelTab
+  active: boolean
+  showWorkbenchBackground: boolean
+  currentProject: ProjectWithTasks | null
+  devices: DeviceInfo[]
+  workspaceTarget: WorkspaceTarget | null
+  preferLocalTerminal: boolean
+  terminalContextTitle?: string | null
+  workspaceSessionApi?: WorkspaceSessionApi
+  panelActive: boolean
+  testIdsEnabled: boolean
+  onCloseTab: (tabId: string) => void
+  onUpdateTabTitle: (tabId: string, title: string) => void
+  onMenuActionsChange: (tabId: string, actions: WorkspacePanelMenuActions | null) => void
+}) {
+  const handleRequestClose = useCallback(() => onCloseTab(tab.id), [onCloseTab, tab.id])
+  const handleTitleChange = useCallback(
+    (title: string) => onUpdateTabTitle(tab.id, title),
+    [onUpdateTabTitle, tab.id]
+  )
+  const handleMenuActionsChange = useCallback(
+    (actions: WorkspacePanelMenuActions | null) => onMenuActionsChange(tab.id, actions),
+    [onMenuActionsChange, tab.id]
+  )
+
+  return (
+    <div hidden={!active} className="absolute inset-0 min-h-0 w-full">
+      <WorkspacePanelCards
+        showWorkbenchBackground={showWorkbenchBackground}
+        currentProject={currentProject}
+        devices={devices}
+        workspaceTarget={workspaceTarget}
+        defaultOpenTool={tab.defaultOpenTool}
+        onRequestClose={handleRequestClose}
+        hideTerminalChrome
+        preferLocalTerminal={preferLocalTerminal}
+        terminalContextTitle={terminalContextTitle}
+        workspaceSessionApi={workspaceSessionApi}
+        panelActive={panelActive && active}
+        testIdsEnabled={testIdsEnabled}
+        onTerminalTitleChange={handleTitleChange}
+        onMenuActionsChange={handleMenuActionsChange}
+      />
+    </div>
+  )
+}
 
 function BottomWorkspaceTitleTab({
   testIdsEnabled,

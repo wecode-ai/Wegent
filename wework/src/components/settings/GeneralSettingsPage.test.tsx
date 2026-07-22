@@ -8,6 +8,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
@@ -40,6 +41,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     systemDragEnabled: true,
+    preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
@@ -156,6 +158,22 @@ describe('GeneralSettingsPage', () => {
     })
   })
 
+  test('prevents sleep during tasks by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-prevent-sleep-while-tasks-running-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        preventSleepWhileTasksRunning: false,
+      })
+    })
+  })
+
   test('rolls back language selection when saving fails', async () => {
     getAppPreferencesMock.mockResolvedValue({ ...defaultPreferences, language: 'zh-CN' })
     updateAppPreferencesMock.mockRejectedValue(new Error('save failed'))
@@ -192,6 +210,7 @@ describe('GeneralSettingsPage', () => {
       'true'
     )
     expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('workbench.general_settings_tray_usage')).toBeInTheDocument()
 
     await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
