@@ -2,11 +2,14 @@ import {
   Check,
   ChevronDown,
   CircleDot,
+  Cloud,
   Copy,
+  FolderOpen,
   GitCommit,
   GitBranch,
   GitPullRequest,
   Info,
+  Laptop,
   LoaderCircle,
   Square,
   Upload,
@@ -102,6 +105,11 @@ export function EnvironmentInfoPopover({
   const executionTargetLabel = t('workbench.environment_execution_target')
   const deviceLabel = t('workbench.environment_device')
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
+  const executorDisplayName =
+    info.executionTarget === 'cloud'
+      ? getWorkbenchDeviceUnavailableDisplayName(device ?? null) || deviceDisplayName
+      : deviceDisplayName
+  const ExecutorIcon = info.executionTarget === 'cloud' ? Cloud : Laptop
   const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
   const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
   const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
@@ -144,7 +152,7 @@ export function EnvironmentInfoPopover({
 
     await copyTextToClipboard(info.workspacePath)
     setWorkspacePathCopied(true)
-    window.setTimeout(() => setWorkspacePathCopied(false), 1200)
+    window.setTimeout(() => setWorkspacePathCopied(false), 2000)
   }
 
   function getCommitErrorMessage(error: unknown) {
@@ -290,46 +298,23 @@ export function EnvironmentInfoPopover({
             <div className="space-y-3">
               <section
                 data-testid="environment-device-section"
-                className="flex h-8 w-full min-w-0 items-center gap-2 text-xs text-text-secondary"
+                className="flex w-full min-w-0 flex-col gap-1"
               >
-                <div
-                  data-testid="environment-execution-target-row"
-                  title={`${executionTargetLabel} · ${executionLabel}`}
-                  className="shrink-0 whitespace-nowrap"
-                >
-                  <span className="sr-only">{executionTargetLabel}</span>
-                  <span>{executionLabel}</span>
-                </div>
-                <span aria-hidden="true" className="text-text-muted">
-                  ·
-                </span>
-                <div
-                  data-testid="environment-device-button"
-                  title={deviceTitle}
-                  className="min-w-0 max-w-28 truncate"
-                >
-                  <span className="sr-only">{deviceLabel}</span>
-                  <span data-testid="environment-device-name" className="whitespace-nowrap">
-                    {deviceDisplayName}
-                  </span>
-                </div>
                 {info.workspacePath && (
-                  <>
-                    <span aria-hidden="true" className="text-text-muted">
-                      ·
-                    </span>
+                  <div className="flex h-7 min-w-0 items-center gap-2">
+                    <FolderOpen className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
                     <button
                       type="button"
                       data-testid="environment-workspace-path-button"
                       onClick={handleCopyWorkspacePath}
                       title={info.workspacePath}
                       aria-label={`${t('workbench.environment_workspace_path')} · ${info.workspacePath}`}
-                      className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left hover:bg-hover hover:text-text-primary"
+                      className="flex min-w-0 flex-1 items-center gap-1 rounded py-1 text-left hover:text-text-primary"
                     >
                       <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
                       <span
                         data-testid="environment-workspace-path"
-                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono"
+                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-text-primary"
                       >
                         {workspacePathDisplayName}
                       </span>
@@ -353,8 +338,24 @@ export function EnvironmentInfoPopover({
                         </span>
                       )}
                     </button>
-                  </>
+                  </div>
                 )}
+                <div
+                  data-testid="environment-execution-target-row"
+                  title={`${executionTargetLabel} · ${executionLabel}; ${deviceTitle}`}
+                  className="flex h-7 min-w-0 items-center gap-2 text-xs text-text-secondary"
+                >
+                  <ExecutorIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                  <span className="sr-only">
+                    {executionTargetLabel} · {executionLabel} ·{' '}
+                  </span>
+                  <div data-testid="environment-device-button" className="min-w-0 truncate">
+                    <span className="sr-only">{deviceLabel}</span>
+                    <span data-testid="environment-device-name" className="whitespace-nowrap">
+                      {executorDisplayName}
+                    </span>
+                  </div>
+                </div>
               </section>
 
               {showChangesSection && (
