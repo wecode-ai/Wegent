@@ -1,8 +1,12 @@
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
 
 describe('useBufferedStreamingText', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   test('coalesces streaming updates into the next animation frame', () => {
     vi.useFakeTimers()
     const { result, rerender } = renderHook(
@@ -16,7 +20,6 @@ describe('useBufferedStreamingText', () => {
 
     act(() => vi.advanceTimersToNextFrame())
     expect(result.current).toBe('Hello world again')
-    vi.useRealTimers()
   })
 
   test('drains a quickly completed stream over multiple frames', () => {
@@ -36,7 +39,6 @@ describe('useBufferedStreamingText', () => {
 
     act(() => vi.runAllTimers())
     expect(result.current).toBe(complete)
-    vi.useRealTimers()
   })
 
   test('does not split a surrogate pair while draining completed content', () => {
@@ -53,7 +55,6 @@ describe('useBufferedStreamingText', () => {
 
     act(() => vi.runAllTimers())
     expect(result.current).toBe(complete)
-    vi.useRealTimers()
   })
 
   test('replaces non-append content immediately', () => {
