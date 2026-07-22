@@ -82,4 +82,32 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(localStorage.getItem('wework.desktop.environmentInfo.open')).toBeNull()
   })
+
+  test('hides git controls and diff stats for a non-git workspace', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+0',
+          deletions: '-0',
+          executionTarget: 'local',
+          isGitRepository: false,
+          workspacePath: '/workspace/plain-project',
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+        onListBranches={vi.fn().mockResolvedValue([])}
+        onCheckoutBranch={vi.fn().mockResolvedValue(undefined)}
+        onOpenChangesReview={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('environment-git-section')).not.toBeInTheDocument()
+    expect(screen.queryByText('+0')).not.toBeInTheDocument()
+    expect(screen.queryByText('-0')).not.toBeInTheDocument()
+  })
 })
