@@ -83,6 +83,9 @@ const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
+const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
+const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
+const SIDE_CHAT_FILENAME = 'side-chat-only.png'
 const CLOUD_TASK_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
 const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
@@ -102,6 +105,7 @@ const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY ===
 const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
+const SIDE_CHAT_ATTACHMENT_ONLY = process.argv.includes('--side-chat-attachment-only')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
@@ -986,6 +990,124 @@ async function verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSel
   }
 }
 
+async function verifySideChatAttachmentIsolation({ control }) {
+  const sideChatSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-chat-panel"]`
+  const rightPanelShellSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
+  const mainComposerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
+  const sideComposerSelector = `${sideChatSelector} [data-testid="chat-message-input"]`
+
+  control.setScenario('initial')
+  await sendPrompt(control, ACTIVE_COMPOSER_SELECTOR, TASK_PROMPT)
+  await control.awaitScenarioRequestCount('initial', 1)
+  control.releaseInitialToolExecution()
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  const taskSnapshot = await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+    'The completed main conversation did not appear in the task sidebar'
+  )
+  const taskRowTestId = taskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  assert.ok(taskRowTestId, 'The completed main conversation did not expose a task row')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-empty-composer-frame"]`,
+    { timeoutMs: UI_TIMEOUT_MS }
+  )
+  await control.command('click', `[data-testid="${taskRowTestId}"]`)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  control.setScenario('side_chat_attachment')
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  await control.command('click', '[data-testid="right-workspace-chat-option"]')
+  await control.command('waitFor', sideComposerSelector, { timeoutMs: UI_TIMEOUT_MS })
+
+  const workbenchWidth = Number.parseFloat(
+    await control.command('getStyle', ACTIVE_WORKBENCH_SELECTOR, { value: 'width' })
+  )
+  const panelWidthStyle = await control.command('getInlineStyle', rightPanelShellSelector, {
+    value: 'width',
+  })
+  const chatWidthMatch = panelWidthStyle.match(/^calc\(100% - ([\d.]+)px\)$/)
+  assert.ok(chatWidthMatch, `Unexpected right-panel width style: ${panelWidthStyle}`)
+  const panelWidth = workbenchWidth - Number.parseFloat(chatWidthMatch[1])
+  assert.ok(
+    panelWidth >= 400 && panelWidth <= 440,
+    `The temporary-chat-only right panel was ${panelWidth}px wide instead of about 420px`
+  )
+  await captureVerificationScreenshot(control, '01-side-chat-compact-width.png')
+
+  await control.command('dropFile', sideComposerSelector, {
+    filename: SIDE_CHAT_FILENAME,
+    mimeType: 'image/png',
+    value: IMAGE_ARTIFACT_BASE64,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('attachment-badge') &&
+      !snapshot.testIds.includes('uploading-attachment-badge'),
+    'The side-chat attachment did not finish uploading',
+    UI_TIMEOUT_MS,
+    sideChatSelector
+  )
+  const mainBeforeSend = JSON.parse(await control.command('snapshot', mainComposerSelector))
+  assert.equal(
+    mainBeforeSend.testIds.includes('attachment-badge'),
+    false,
+    'Uploading in the side chat leaked an attachment into the main composer'
+  )
+  await captureVerificationScreenshot(control, '02-side-chat-attachment-isolated.png')
+
+  await control.command('fill', sideComposerSelector, { value: SIDE_CHAT_PROMPT })
+  assert.equal(
+    await control.command('getValue', sideComposerSelector),
+    SIDE_CHAT_PROMPT,
+    'The side-chat prompt did not reach the isolated composer'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, COMPOSER_READY_STABILITY_MS))
+  await control.command('click', `${sideChatSelector} [data-testid="send-message-button"]`)
+  await control.awaitScenarioRequestCount('side_chat_attachment', 1)
+  await control.command('waitFor', `${sideChatSelector} [data-testid="message-assistant"]`, {
+    text: SIDE_CHAT_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const sideAfterSend = JSON.parse(await control.command('snapshot', sideChatSelector))
+  assert.equal(
+    sideAfterSend.testIds.includes('attachment-badge'),
+    false,
+    'The sent side-chat attachment was not cleared from its composer'
+  )
+  const mainAfterSend = JSON.parse(await control.command('snapshot', mainComposerSelector))
+  assert.equal(
+    mainAfterSend.testIds.includes('attachment-badge'),
+    false,
+    'Sending the side chat leaked an attachment into the main composer'
+  )
+  await captureVerificationScreenshot(control, '03-side-chat-sent-main-clean.png')
+
+  const requests = control.scenarioRequests.get('side_chat_attachment') ?? []
+  assert.equal(requests.length, 1, 'The side chat did not send exactly one model request')
+  const requestText = JSON.stringify(requests[0].body)
+  assert.ok(requestText.includes(SIDE_CHAT_PROMPT), 'The side-chat prompt was not forwarded')
+  assert.ok(requestText.includes(SIDE_CHAT_FILENAME), 'The side-chat attachment was not forwarded')
+}
+
 async function verifyReconnectRecovery({ composerSelector, control }) {
   control.setScenario('reconnect')
   await sendPromptUntilScenarioRequest(control, composerSelector, RECONNECT_PROMPT, 'reconnect')
@@ -1736,6 +1858,7 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'memory',
+        'side_chat_attachment',
         'cloud_initial',
         'cloud_follow_up',
       ].includes(scenario),
@@ -2293,6 +2416,22 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(`${ATTACHMENT_ONLY_COMPLETION_TEXT}_${requestNumber}`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'side_chat_attachment') {
+      this.recordScenarioRequest('side_chat_attachment', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(requestText.includes(SIDE_CHAT_PROMPT), 'The side-chat request lost its prompt')
+      assert.ok(
+        requestText.includes(SIDE_CHAT_FILENAME),
+        'The side-chat request lost its isolated attachment'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(SIDE_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -3548,6 +3687,18 @@ async function main() {
       await selectE2EModel(control)
       await verifyMemoryGrowth({ composerSelector, control })
       console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (SIDE_CHAT_ATTACHMENT_ONLY) {
+      phase = 'side-chat-attachment-isolation'
+      await verifySideChatAttachmentIsolation({ control })
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework side-chat attachment E2E passed. Evidence: ${resultDir}`)
       return
     }
 

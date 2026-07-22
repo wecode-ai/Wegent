@@ -620,63 +620,66 @@ describe('workbenchReducer', () => {
     expect(refreshed.devices).toEqual([device])
   })
 
-  test('reconciles legacy local-device current task to the refreshed ready task address', () => {
-    const state = {
-      ...initialWorkbenchState,
-      currentRuntimeTask: {
-        deviceId: 'local-device',
-        taskId: 'task-1',
-      },
-    }
-
-    const refreshed = workbenchReducer(state, {
-      type: 'lists_refreshed',
-      projects: [],
-      devices: [
-        {
-          id: 1,
-          device_id: 'device-uuid',
-          name: 'Local Executor',
-          status: 'online' as const,
-          is_default: true,
+  test.each(['local-device', 'device-uuid'])(
+    'reconciles %s current task to the hydrated ready task address',
+    currentDeviceId => {
+      const state = {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: currentDeviceId,
+          taskId: 'task-1',
         },
-      ],
-      runtimeWork: {
+      }
+
+      const refreshed = workbenchReducer(state, {
+        type: 'lists_refreshed',
         projects: [],
-        chats: [
+        devices: [
           {
-            deviceId: 'device-uuid',
-            workspacePath: '/Users/me/chat',
-            available: true,
-            mapped: true,
-            tasks: [
-              {
-                taskId: 'task-1',
-                threadId: 'direct-thread-id',
-                workspacePath: '/Users/me/chat',
-                title: 'Chat',
-                runtime: 'codex',
-                runtimeHandle: {
-                  threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
-                },
-              },
-            ],
+            id: 1,
+            device_id: 'device-uuid',
+            name: 'Local Executor',
+            status: 'online' as const,
+            is_default: true,
           },
         ],
-        totalTasks: 1,
-      },
-    })
+        runtimeWork: {
+          projects: [],
+          chats: [
+            {
+              deviceId: 'device-uuid',
+              workspacePath: '/Users/me/chat',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'task-1',
+                  threadId: 'direct-thread-id',
+                  workspacePath: '/Users/me/chat',
+                  title: 'Chat',
+                  runtime: 'codex',
+                  runtimeHandle: {
+                    threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                  },
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      })
 
-    expect(refreshed.currentRuntimeTask).toEqual({
-      deviceId: 'device-uuid',
-      taskId: 'task-1',
-      threadId: 'direct-thread-id',
-      workspacePath: '/Users/me/chat',
-      runtimeHandle: {
-        threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
-      },
-    })
-  })
+      expect(refreshed.currentRuntimeTask).toEqual({
+        deviceId: 'device-uuid',
+        taskId: 'task-1',
+        threadId: 'direct-thread-id',
+        ...(currentDeviceId === 'local-device' ? { workspacePath: '/Users/me/chat' } : {}),
+        runtimeHandle: {
+          threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+        },
+      })
+    }
+  )
 
   test('updates cached device and runtime workspace status from websocket events', () => {
     const state = workbenchReducer(initialWorkbenchState, {

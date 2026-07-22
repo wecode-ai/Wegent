@@ -557,6 +557,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getStyle': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const property = command.value?.trim()
+      if (!property) throw new Error('getStyle requires a CSS property name')
+      return window.getComputedStyle(element).getPropertyValue(property)
+    }
+    case 'getInlineStyle': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const property = command.value?.trim()
+      if (!property) throw new Error('getInlineStyle requires a CSS property name')
+      return element.style.getPropertyValue(property)
+    }
     case 'getValue': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
