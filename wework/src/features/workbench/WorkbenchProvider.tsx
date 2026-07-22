@@ -726,12 +726,6 @@ export function WorkbenchProvider({
       writeLastProjectId(user.id, null)
       rememberExecutionDevice(openedDeviceId)
       dispatch({
-        type: 'project_cleared',
-        standaloneDeviceId: openedDeviceId,
-        standaloneWorkspacePath: openedWorkspacePath,
-        startFreshChat: true,
-      })
-      dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
         workspacePath: openedWorkspacePath,
@@ -923,10 +917,20 @@ export function WorkbenchProvider({
   const startNewProjectChat = useCallback(
     (projectId: number) => {
       const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
-      selectProjectWorkspace(projectId, deviceWorkspaceId)
+      const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
+      if (!project) return
+      projectSelectionStartedRef.current = true
+      writeLastProjectId(user.id, project.id)
+      dispatch({
+        type: 'project_workspace_selected',
+        project,
+        deviceWorkspaceId,
+        startFreshChat: true,
+      })
+      navigateTo('/')
       requestNewChatComposerFocus()
     },
-    [selectProjectWorkspace, state.runtimeWork]
+    [state.projects, state.runtimeWork, user.id]
   )
 
   const runtimeTasks = useWorkbenchRuntimeTasks({

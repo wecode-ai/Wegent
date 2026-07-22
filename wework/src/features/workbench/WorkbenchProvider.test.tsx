@@ -800,6 +800,9 @@ function RuntimePaneSendProbe() {
       <span data-testid="runtime-local-task-titles">
         {runtimeTasks.map(task => task.title).join('|')}
       </span>
+      <span data-testid="runtime-pane-standalone-chat-key">
+        {workbench.state.standaloneChatKey}
+      </span>
       <CachedWorkbenchPaneStack
         activePane={{
           currentRuntimeTask: workbench.state.currentRuntimeTask,
@@ -3797,6 +3800,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     const focusRequest = vi.fn()
     window.addEventListener('wework:focus-new-chat-composer', focusRequest, { once: true })
+    const previousBlankChatKey = Number(
+      screen.getByTestId('runtime-pane-standalone-chat-key').textContent
+    )
     await userEvent.click(screen.getByText('start new project task'))
 
     await waitFor(() =>
@@ -3806,6 +3812,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('active-pane-key')).toHaveTextContent('project:7')
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
     expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
+    expect(screen.getByTestId('runtime-pane-standalone-chat-key')).toHaveTextContent(
+      String(previousBlankChatKey + 1)
+    )
   })
 
   test('sends through the selected project immediately after the project pane commits', async () => {
@@ -4288,6 +4297,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
       '/workspace/direct-codex'
     )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1')
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 

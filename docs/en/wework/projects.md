@@ -12,6 +12,12 @@ Choose **Use existing folder** for code already on the device. Adding the same f
 
 To create a Git project, select a device, repository, default branch, and destination. If repositories are unavailable, check the Git connection and token permissions in Settings.
 
+## Create a project from the composer
+
+Open the project selector above a new-conversation composer to create a blank project or add an existing folder. After creation, the project appears in both the sidebar and the composer and immediately becomes the workspace for the current new conversation.
+
+If you switch to a standalone conversation, use **New conversation** on the project row to create a fresh project conversation and select that project again. Wework does not reuse the standalone conversation's input or session state.
+
 ## Regular workspaces and worktrees
 
 - A regular workspace runs tasks directly in the project folder.

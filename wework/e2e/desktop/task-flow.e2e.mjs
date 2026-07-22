@@ -71,6 +71,7 @@ const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
 const CLOUD_TASK_PROMPT =
@@ -3736,6 +3737,59 @@ async function main() {
       true,
       'The created worktree was not marked permanent'
     )
+
+    phase = 'composer-project-create-and-new-chat'
+    const projectRowsBeforeComposerCreate = new Set(
+      (
+        await waitForSnapshot(
+          control,
+          snapshot => snapshot.testIds.includes('project-work-button'),
+          'The project selector was not ready for composer project creation'
+        )
+      ).testIds.filter(testId => testId.startsWith('project-row-'))
+    )
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('click', '[data-testid="add-local-project-option"]')
+    await control.command('click', '[data-testid="add-local-blank-project-option"]')
+    await control.command('fill', '[data-testid="standalone-blank-project-name-input"]', {
+      value: COMPOSER_PROJECT_NAME,
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="save-standalone-blank-project-button"]'
+    )
+    const createdComposerProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(COMPOSER_PROJECT_NAME) &&
+        snapshot.testIds.includes('project-work-button'),
+      'The composer-created project was not selected after creation'
+    )
+    const createdComposerProjectRow = createdComposerProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-row-') && !projectRowsBeforeComposerCreate.has(testId)
+    )
+    assert.ok(
+      createdComposerProjectRow,
+      'The composer-created project was not added to the sidebar'
+    )
+
+    await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('project-work-button') &&
+        (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
+      'The standalone new task did not clear the composer-created project'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `[data-testid="${createdComposerProjectRow}"] [data-testid="project-new-conversation-button"]`
+    )
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: COMPOSER_PROJECT_NAME,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),
