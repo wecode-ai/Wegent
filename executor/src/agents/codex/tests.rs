@@ -118,6 +118,21 @@ fn wework_codex_home_defaults_to_executor_home_codex() {
 }
 
 #[test]
+fn wework_codex_home_ignores_empty_executor_home() {
+    let _lock = crate::test_env::lock();
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+
+    env::set_var("WEGENT_EXECUTOR_HOME", "");
+    env::remove_var(WEGENT_CODEX_HOME_ENV);
+
+    let expected = dirs::home_dir()
+        .map(|home| home.join(".wegent-executor").join("codex"))
+        .unwrap_or_else(|| PathBuf::from(".wegent-executor/codex"));
+    assert_eq!(wework_codex_home(), expected);
+}
+
+#[test]
 fn wework_codex_home_prefers_explicit_wework_home() {
     let _lock = crate::test_env::lock();
     let executor_home = unique_test_path("wework-codex-home-executor");

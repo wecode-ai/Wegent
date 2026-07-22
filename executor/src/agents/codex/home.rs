@@ -12,6 +12,7 @@ use super::{combined_codex_developer_instructions, strip_wework_browser_instruct
 pub(super) const CODEX_HOME_ENV: &str = "CODEX_HOME";
 pub(super) const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 
+/// Resolves the isolated Codex home owned by the Wework executor.
 pub(super) fn wework_codex_home() -> PathBuf {
     env::var_os(WEGENT_CODEX_HOME_ENV)
         .filter(|value| !value.is_empty())
@@ -19,6 +20,7 @@ pub(super) fn wework_codex_home() -> PathBuf {
         .unwrap_or_else(|| executor_home().join("codex"))
 }
 
+/// Creates and normalizes the isolated Codex home before app-server startup.
 pub(super) fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
     fs::create_dir_all(codex_home).map_err(|error| {
         format!(
@@ -159,6 +161,7 @@ fn user_codex_auth_path() -> Option<PathBuf> {
 
 fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
         .unwrap_or_else(|| PathBuf::from(".wegent-executor"))

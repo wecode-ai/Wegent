@@ -25,12 +25,14 @@ impl Write for ByteCounter {
     }
 }
 
+/// Measures serialized JSON without allocating the serialized payload.
 pub(super) fn serialized_json_len(value: &Value) -> serde_json::Result<usize> {
     let mut counter = ByteCounter { length: 0 };
     serde_json::to_writer(&mut counter, value)?;
     Ok(counter.length)
 }
 
+/// Builds a bounded diagnostic preview with sensitive fields redacted.
 pub(super) fn raw_log_preview(value: &Value) -> String {
     let sanitized = sanitize_raw_log_value(value, None);
     let preview = serde_json::to_string(&sanitized)
@@ -39,6 +41,9 @@ pub(super) fn raw_log_preview(value: &Value) -> String {
 }
 
 fn sanitize_raw_log_value(value: &Value, key: Option<&str>) -> Value {
+    if key.is_some_and(is_sensitive_key) {
+        return Value::String("[redacted]".to_owned());
+    }
     match value {
         Value::Object(object) => Value::Object(
             object
@@ -68,6 +73,28 @@ fn sanitize_raw_log_value(value: &Value, key: Option<&str>) -> Value {
     }
 }
 
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    [
+        "apikey",
+        "authorization",
+        "authtoken",
+        "bearertoken",
+        "content",
+        "cookie",
+        "credential",
+        "password",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|fragment| normalized.contains(fragment))
+}
+
 fn should_summarize_raw_log_string(key: Option<&str>, text: &str) -> bool {
     matches!(
         key,
@@ -82,6 +109,7 @@ fn should_summarize_raw_log_string(key: Option<&str>, text: &str) -> bool {
     ) || text.len() > RAW_LOG_LARGE_STRING_CHARS
 }
 
+/// Reads a string field for structured diagnostic metadata.
 pub(super) fn json_string_field(value: &Value, key: &str) -> String {
     value
         .get(key)
@@ -90,6 +118,7 @@ pub(super) fn json_string_field(value: &Value, key: &str) -> String {
         .to_owned()
 }
 
+/// Formats a scalar JSON field for structured diagnostic metadata.
 pub(super) fn json_scalar_field(value: &Value, key: &str) -> String {
     value
         .get(key)
@@ -102,6 +131,7 @@ pub(super) fn json_scalar_field(value: &Value, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Lists object keys without exposing their values.
 pub(super) fn json_object_keys(value: &Value) -> String {
     value
         .as_object()
@@ -109,6 +139,7 @@ pub(super) fn json_object_keys(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// Reads a nested string field for structured diagnostic metadata.
 pub(super) fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
     value
         .get(object_key)
@@ -118,6 +149,7 @@ pub(super) fn nested_json_string_field(value: &Value, object_key: &str, key: &st
         .to_owned()
 }
 
+/// Truncates text on character boundaries and marks truncated output.
 pub(super) fn truncate_text(text: &str, max_chars: usize) -> String {
     let mut result = String::new();
     for (index, ch) in text.chars().enumerate() {
@@ -144,5 +176,29 @@ mod tests {
 
         assert!(preview.contains("4096 chars omitted"));
         assert!(preview.len() < serialized_json_len(&message).unwrap());
+    }
+
+    #[test]
+    fn raw_log_preview_redacts_secrets_and_content() {
+        let message = json!({
+            "api_key": "sk-secret-api-key",
+            "authorization": "Bearer secret-token",
+            "auth": {"token": "nested-secret"},
+            "fileContent": "contents-from-auth-json",
+            "metadata": {"requestId": "request-123"},
+        });
+
+        let preview = raw_log_preview(&message);
+
+        for secret in [
+            "sk-secret-api-key",
+            "secret-token",
+            "nested-secret",
+            "contents-from-auth-json",
+        ] {
+            assert!(!preview.contains(secret));
+        }
+        assert!(preview.contains("request-123"));
+        assert!(preview.contains("[redacted]"));
     }
 }

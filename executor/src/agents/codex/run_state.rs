@@ -16,6 +16,7 @@ use crate::{
     runtime_work::codex_stream_debug_enabled,
 };
 
+/// Reduces Codex app-server notifications into the visible root-turn outcome.
 #[derive(Default)]
 pub(super) struct CodexRunState {
     final_text: String,
@@ -349,19 +350,26 @@ fn log_codex_run_state_text(
 
 fn log_codex_run_state_error(params: &Value) {
     let message = codex_error_message(params);
-    let params_json = serde_json::to_string(params)
-        .unwrap_or_else(|error| format!("failed to serialize codex error params: {error}"));
+    let params_preview = raw_log_preview(params);
     log_executor_event(
         "codex run state error",
         &[
             ("message", message),
             ("code", json_string_field(params, "code")),
-            ("params_len", params_json.len().to_string()),
-            ("params_preview", truncate_text(&params_json, 500)),
+            (
+                "params_len",
+                serialized_json_len(params)
+                    .map(|length| length.to_string())
+                    .unwrap_or_else(|error| {
+                        format!("failed to measure codex error params: {error}")
+                    }),
+            ),
+            ("params_preview", truncate_text(&params_preview, 500)),
         ],
     );
 }
 
+/// Records a sanitized diagnostic summary for selected turn notifications.
 pub(super) fn log_codex_raw_turn_message(message: &Value) {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     if matches!(
