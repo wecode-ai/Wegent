@@ -2987,6 +2987,14 @@ fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     }
     let tool_profile = non_empty_config(&request.model_config, "tool_profile")
         .unwrap_or_else(|| "custom".to_owned());
+    if !tool_profile.eq_ignore_ascii_case("shell") {
+        if let Some(catalog_model_id) =
+            non_empty_config(&request.model_config, "codex_catalog_model_id")
+                .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"))
+        {
+            return Some(catalog_model_id);
+        }
+    }
     Some(
         if tool_profile.eq_ignore_ascii_case("shell") {
             codex_model_catalog::SHELL_MODEL
@@ -5305,6 +5313,41 @@ mod tests {
         assert_eq!(
             codex_request_model(&request).as_deref(),
             Some(codex_model_catalog::APPLY_PATCH_MODEL)
+        );
+    }
+
+    #[test]
+    fn cloud_model_uses_provider_model_id_for_catalog_capabilities() {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "openai-gpt-5.6-luna(海外)",
+                "codex_catalog_model_id": "gpt-5.6-luna",
+                "codex_responses_compat_proxy": true
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some("gpt-5.6-luna")
+        );
+    }
+
+    #[test]
+    fn shell_profile_ignores_catalog_model_capabilities() {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "openai-gpt-5.6-luna(海外)",
+                "codex_catalog_model_id": "gpt-5.6-luna",
+                "tool_profile": "shell",
+                "codex_responses_compat_proxy": true
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some(codex_model_catalog::SHELL_MODEL)
         );
     }
 

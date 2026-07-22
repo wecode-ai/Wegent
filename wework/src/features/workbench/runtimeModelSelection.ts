@@ -14,6 +14,7 @@ const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
+export const CLOUD_MODEL_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCatalogModelId'
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -136,6 +137,9 @@ export function selectedModelExecutionFields(
     }
     if (typeof executionModel.resourceUserId === 'number') {
       modelOptions[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(executionModel.resourceUserId)
+    }
+    if (selectedModel.modelId?.trim()) {
+      modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = selectedModel.modelId.trim()
     }
     const contextWindow =
       selectedModel.config?.model_context_window ??
