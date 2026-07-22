@@ -11,6 +11,16 @@ sidebar_position: 10
 - Restart Codex when prompted after changing a proxy.
 - For task or terminal failures, check whether the device is online, busy, or requires an update.
 
+### A new task is missing from the sidebar
+
+For development diagnostics, run the following command in the Wework Web Inspector console, then reproduce the issue:
+
+```js
+localStorage.setItem("wework:debug-runtime", "1");
+```
+
+`[Wework] Runtime sidebar state` entries in the frontend log record the executor list result, the merged state, and the task IDs left visible or hidden by sidebar sorting and truncation. If the selected task belongs to the project task list but is outside the visible region, Wework also records `[Wework] Runtime sidebar selected task is hidden`. Run `localStorage.removeItem('wework:debug-runtime')` after diagnosis to disable detailed logging.
+
 ## Projects and Git
 
 - Confirm that a local folder exists and is writable.

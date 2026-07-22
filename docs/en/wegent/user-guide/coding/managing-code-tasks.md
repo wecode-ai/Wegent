@@ -93,8 +93,9 @@ If the agent supports skills:
 ### Step 5: Enter Task Description and Send
 
 1. **Type your task description in the input box** - Clearly describe your requirements
-2. **Press Enter to send** - Or click the send button
-3. **Wait for response** - Agent starts processing and streams results
+2. **Add attachments (optional)** - Use the attachment button, or drag files from Finder directly into the Wework input box
+3. **Press Enter to send** - Or click the send button
+4. **Wait for response** - Agent starts processing and streams results
 
 ---
 

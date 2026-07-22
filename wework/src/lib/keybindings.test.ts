@@ -17,6 +17,7 @@ import {
   MODEL_SELECTOR_BUTTON_TEST_ID,
   INCREASE_FONT_SIZE_COMMAND,
   DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
 } from './keybindings'
 
 describe('keybindings', () => {
@@ -33,6 +34,7 @@ describe('keybindings', () => {
     expect(mergeKeybindings([])[TOGGLE_MODEL_SELECTOR_COMMAND]).toBe('Control+Shift+M')
     expect(mergeKeybindings([])[INCREASE_FONT_SIZE_COMMAND]).toBe('Command+Plus')
     expect(mergeKeybindings([])[DECREASE_FONT_SIZE_COMMAND]).toBe('Command+Minus')
+    expect(mergeKeybindings([])[RESET_FONT_SIZE_COMMAND]).toBe('Command+0')
     expect(
       mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: 'Control+J' }])[
         OPEN_TERMINAL_COMMAND
@@ -68,6 +70,9 @@ describe('keybindings', () => {
       keybindingFromKeyboardEvent(
         new KeyboardEvent('keydown', { key: '+', metaKey: true, shiftKey: true })
       )
+    ).toBe('Command+Plus')
+    expect(
+      keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '=', metaKey: true }))
     ).toBe('Command+Plus')
     expect(
       keybindingFromKeyboardEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }))

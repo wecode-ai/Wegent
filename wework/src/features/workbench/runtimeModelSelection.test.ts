@@ -138,6 +138,7 @@ describe('runtimeModelSelection', () => {
     const cloudModel: UnifiedModel = {
       name: 'cloud:user:shared-model',
       type: 'user',
+      modelId: 'gpt-5.6-luna',
       namespace: 'default',
       resourceUserId: 42,
       provider: 'cloud',
@@ -161,6 +162,7 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '128000',
+        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
       },
     })
   })

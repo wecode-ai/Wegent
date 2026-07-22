@@ -414,7 +414,9 @@ describe('WorkspacePanelActions', () => {
     await userEvent.click(screen.getByTestId('open-code-server-titlebar-button'))
 
     await waitFor(() => expect(startProjectCodeServerMock).toHaveBeenCalledWith(7))
-    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide', {
+      target: 'system',
+    })
   })
 
   test('opens remote runtime workspaces through the device IDE session and exact path', async () => {
@@ -465,6 +467,8 @@ describe('WorkspacePanelActions', () => {
     )
     expect(startProjectCodeServerMock).not.toHaveBeenCalled()
     expect(openLocalWorkspaceMock).not.toHaveBeenCalled()
-    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/device-ide')
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/device-ide', {
+      target: 'system',
+    })
   })
 })

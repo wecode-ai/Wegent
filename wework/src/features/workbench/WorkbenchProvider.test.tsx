@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createContext, StrictMode, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, StrictMode, useContext, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -17,6 +17,7 @@ import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSes
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask, readLastProjectId, writeLastProjectId } from './workbenchRuntimeHelpers'
+import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
@@ -468,34 +469,9 @@ const WorkbenchProbeSessionContext = createContext<WorkbenchProbeSessionValue | 
 
 function WorkbenchProbeSessionProvider({ children }: { children: React.ReactNode }) {
   const workbench = useWorkbench()
-  const { state: workbenchState, openRuntimeTask } = workbench
-  const routeRuntimeTask = useMemo(() => {
-    if (workbenchState.isBootstrapping || workbenchState.currentRuntimeTask) return null
-    const route = parseRuntimeTaskRoute(window.location.pathname, window.location.search)
-    if (!route) return null
-    const localTask = findRuntimeTask(workbenchState.runtimeWork, route)
-    return {
-      ...route,
-      ...(localTask?.workspacePath ? { workspacePath: localTask.workspacePath } : {}),
-    }
-  }, [
-    workbenchState.currentRuntimeTask,
-    workbenchState.isBootstrapping,
-    workbenchState.runtimeWork,
-  ])
+  const { state: workbenchState } = workbench
+  const routeRuntimeTask = useRuntimeTaskRouteRestoration()
   const currentRuntimeTask = workbenchState.currentRuntimeTask ?? routeRuntimeTask
-
-  useEffect(() => {
-    if (workbenchState.isBootstrapping || workbenchState.currentRuntimeTask || !routeRuntimeTask) {
-      return
-    }
-    void openRuntimeTask(routeRuntimeTask)
-  }, [
-    routeRuntimeTask,
-    openRuntimeTask,
-    workbenchState.currentRuntimeTask,
-    workbenchState.isBootstrapping,
-  ])
 
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
@@ -824,6 +800,9 @@ function RuntimePaneSendProbe() {
       <span data-testid="runtime-local-task-titles">
         {runtimeTasks.map(task => task.title).join('|')}
       </span>
+      <span data-testid="runtime-pane-standalone-chat-key">
+        {workbench.state.standaloneChatKey}
+      </span>
       <CachedWorkbenchPaneStack
         activePane={{
           currentRuntimeTask: workbench.state.currentRuntimeTask,
@@ -1086,7 +1065,7 @@ function ArchiveProjectConversationsProbe() {
         type="button"
         onClick={() =>
           void workbench
-            .archiveProjectsConversations(['project:7'])
+            .archiveProjectsConversations(['project:7', 'remote-project-key'])
             .then(result => setLastArchiveResult(result?.status ?? 'none'))
         }
       >
@@ -1096,11 +1075,36 @@ function ArchiveProjectConversationsProbe() {
         type="button"
         onClick={() =>
           void workbench
-            .archiveProjectsConversations(['project:7'], { force: true })
+            .archiveProjectsConversations(['project:7', 'remote-project-key'], { force: true })
             .then(result => setLastArchiveResult(result?.status ?? 'none'))
         }
       >
         force archive project conversations
+      </button>
+    </div>
+  )
+}
+
+function ArchiveRemoteRuntimeTaskProbe() {
+  const workbench = useWorkbench()
+  const taskTitles =
+    workbench.state.runtimeWork?.projects.flatMap(project =>
+      project.deviceWorkspaces.flatMap(workspace => workspace.tasks.map(task => task.title))
+    ) ?? []
+  return (
+    <div>
+      <span data-testid="archive-remote-task-titles">{taskTitles.join('|')}</span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.archiveRuntimeTask({
+            deviceId: 'remote-device',
+            workspacePath: '/srv/Wegent',
+            taskId: 'remote-task',
+          })
+        }
+      >
+        archive remote task
       </button>
     </div>
   )
@@ -3796,6 +3800,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     const focusRequest = vi.fn()
     window.addEventListener('wework:focus-new-chat-composer', focusRequest, { once: true })
+    const previousBlankChatKey = Number(
+      screen.getByTestId('runtime-pane-standalone-chat-key').textContent
+    )
     await userEvent.click(screen.getByText('start new project task'))
 
     await waitFor(() =>
@@ -3805,6 +3812,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('active-pane-key')).toHaveTextContent('project:7')
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
     expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
+    expect(screen.getByTestId('runtime-pane-standalone-chat-key')).toHaveTextContent(
+      String(previousBlankChatKey + 1)
+    )
   })
 
   test('sends through the selected project immediately after the project pane commits', async () => {
@@ -4287,6 +4297,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
       '/workspace/direct-codex'
     )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1')
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
   })
 
@@ -4900,8 +4911,29 @@ describe('WorkbenchProvider runtime tasks', () => {
               ],
               totalTasks: 1,
             },
+            {
+              project: { key: 'remote-project-key', name: 'Remote project' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'remote-device',
+                  deviceName: 'Remote device',
+                  deviceStatus: 'online',
+                  workspacePath: '/srv/remote-project',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'remote-project-task',
+                      workspacePath: '/srv/remote-project',
+                      title: 'Remote project task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+              totalTasks: 1,
+            },
           ],
-          totalTasks: 1,
+          totalTasks: 2,
         })
       ),
     })
@@ -4916,13 +4948,97 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await userEvent.click(screen.getByText('archive project conversations'))
 
-    await waitFor(() => expect(runtimeWorkApi.archiveProjectConversations).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(2))
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      taskId: 'runtime-worktree',
+    })
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledWith({
+      deviceId: 'remote-device',
+      workspacePath: '/srv/remote-project',
+      taskId: 'remote-project-task',
+    })
+    expect(runtimeWorkApi.archiveProjectConversations).not.toHaveBeenCalled()
     expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
       deviceId: 'device-1',
       path: '/workspace/worktrees/9/project-alpha',
       preserveSnapshot: true,
     })
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
+  })
+
+  test('does not restore an archived remote task from the previous cloud snapshot', async () => {
+    const remoteRuntimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'remote-project', name: 'Remote Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: '10.201.3.200',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/srv/Wegent',
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+              tasks: [
+                {
+                  taskId: 'remote-task',
+                  workspacePath: '/srv/Wegent',
+                  title: 'Remote task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const postArchiveCloudWork = deferred<RuntimeWorkListResponse>()
+    const cloudListRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(remoteRuntimeWork)
+      .mockReturnValue(postArchiveCloudWork.promise)
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi.fn().mockResolvedValue([
+          createDevice({
+            id: 2,
+            device_id: 'remote-device',
+            name: '10.201.3.200',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+          }),
+        ]),
+        listRuntimeWork: cloudListRuntimeWork,
+      },
+    })
+
+    renderWorkbench(<ArchiveRemoteRuntimeTaskProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('Remote task')
+    )
+    await userEvent.click(screen.getByText('archive remote task'))
+
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(cloudListRuntimeWork).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+
+    postArchiveCloudWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    await waitFor(() =>
+      expect(screen.getByTestId('archive-remote-task-titles')).toHaveTextContent('')
+    )
   })
 
   test('renders streaming runtime task chunks when the socket connects after chat start', async () => {
@@ -6825,7 +6941,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('reconciles a running task from its transcript when the renderer missed terminal events', async () => {
+  test('does not poll transcript history while the live stream owns a running task', async () => {
     const runningWork = createRuntimeWork({
       projects: [
         {
@@ -6897,16 +7013,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
-    await waitFor(() => expect(screen.getByText('后台任务已完成')).toBeInTheDocument(), {
-      timeout: 5_000,
-    })
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+    await new Promise(resolve => window.setTimeout(resolve, 2_100))
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+    expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       taskId: 'runtime-a',
       workspacePath: '/workspace/project-alpha',
       limit: 50,
-      refresh: true,
     })
+    expect(screen.queryByText('后台任务已完成')).not.toBeInTheDocument()
+    expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
   })
 
   test('restores partial output only after the local runtime transport is replaced', async () => {

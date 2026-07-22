@@ -11,6 +11,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "executor/**"
       - "packages/chat-core/**"
       - "wework/**"
   pull_request:
@@ -23,6 +24,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "executor/**"
       - "packages/chat-core/**"
       - "wework/**"
   workflow_dispatch:
@@ -167,6 +169,7 @@ jobs:
           CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
         run: |
           test -x "$CODEX_BIN"
+          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop:plugins
           xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop
           xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop:cloud
 
@@ -175,6 +178,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-e2e-diagnostics
-          path: wework/test-results/desktop-e2e/
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/executor-home/**
           if-no-files-found: ignore
           retention-days: 7

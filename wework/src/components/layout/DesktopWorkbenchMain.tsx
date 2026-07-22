@@ -126,6 +126,7 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 20
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
+const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
@@ -381,6 +382,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const paneActive = useWorkbenchPaneActive()
+  const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
+    return () => cancelAnimationFrame(frame)
+  }, [paneActive])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -468,6 +474,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useLayoutEffect(() => {
     setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
   }, [])
+  useLayoutEffect(() => {
+    if (!paneActive) return
+
+    const workbenchScroll = workbenchScrollRef.current
+    if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
+      workbenchScroll.scrollLeft = 0
+    }
+  }, [paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -482,6 +496,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reloadDiff: undefined,
   })
   const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
+  const onlyTemporaryChatOpen =
+    rightPanelTabs.length === 1 &&
+    rightPanelTabs[0].startsWith('chat:') &&
+    rightPanelView === rightPanelTabs[0]
   useLayoutEffect(() => {
     const workbenchMain = workbenchMainRef.current
     if (!workbenchMain) return
@@ -504,6 +522,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useResizableRightSplitChat({
     containerRef: workbenchMainRef,
     onCollapse: closeRightPanel,
+    defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
@@ -1564,7 +1583,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           data-testid="desktop-workbench-content"
           className={cn(
             'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
-            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
+            hasConversation ? 'overflow-x-hidden overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
@@ -1837,7 +1856,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           <aside
             data-testid="environment-info-panel-container"
-            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible"
+            className={cn(
+              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              paneActive && environmentInfoTransitionEnabled
+                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                : 'transition-none'
+            )}
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (
