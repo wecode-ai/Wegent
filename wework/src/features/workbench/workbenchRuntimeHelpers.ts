@@ -154,6 +154,64 @@ export function projectTaskAddresses(
   )
 }
 
+export function removeRuntimeTasks(
+  runtimeWork: RuntimeWorkListResponse,
+  addresses: RuntimeTaskAddress[]
+): RuntimeWorkListResponse {
+  if (addresses.length === 0) return runtimeWork
+
+  const removeFromWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => ({
+    ...workspace,
+    tasks: workspace.tasks.filter(task => {
+      const taskAddress = runtimeTaskAddressFromWorkspace(workspace, task)
+      return !addresses.some(address => runtimeTaskMatchesArchivedAddress(taskAddress, address))
+    }),
+  })
+  const projects = runtimeWork.projects.map(project => {
+    const deviceWorkspaces = project.deviceWorkspaces.map(removeFromWorkspace)
+    return {
+      ...project,
+      deviceWorkspaces,
+      totalTasks: deviceWorkspaces.reduce((total, workspace) => total + workspace.tasks.length, 0),
+    }
+  })
+  const chats = runtimeWork.chats.map(removeFromWorkspace)
+
+  return {
+    ...runtimeWork,
+    projects,
+    chats,
+    totalTasks:
+      projects.reduce((total, project) => total + (project.totalTasks ?? 0), 0) +
+      chats.reduce((total, workspace) => total + workspace.tasks.length, 0),
+  }
+}
+
+export function runtimeWorkContainsTask(
+  runtimeWork: RuntimeWorkListResponse,
+  address: RuntimeTaskAddress
+): boolean {
+  const workspaces = [
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ...runtimeWork.chats,
+  ]
+  return workspaces.some(workspace =>
+    workspace.tasks.some(task =>
+      runtimeTaskMatchesArchivedAddress(runtimeTaskAddressFromWorkspace(workspace, task), address)
+    )
+  )
+}
+
+function runtimeTaskMatchesArchivedAddress(
+  taskAddress: RuntimeTaskAddress,
+  archivedAddress: RuntimeTaskAddress
+): boolean {
+  if (taskAddress.taskId !== archivedAddress.taskId) return false
+  const archivedPath = archivedAddress.workspacePath?.trim()
+  if (!archivedPath) return taskAddress.deviceId === archivedAddress.deviceId
+  return taskAddress.workspacePath?.trim() === archivedPath
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }

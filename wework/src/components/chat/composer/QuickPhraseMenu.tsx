@@ -9,6 +9,7 @@ import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 interface QuickPhraseMenuProps {
   disabled?: boolean
   compact?: boolean
+  iconOnly?: boolean
   onSelect: (phrase: QuickPhrase) => void
 }
 
@@ -148,7 +149,7 @@ function StashPreview({ phrase }: { phrase: QuickPhrase }) {
   )
 }
 
-export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenuProps) {
+export function QuickPhraseMenu({ disabled, compact, iconOnly, onSelect }: QuickPhraseMenuProps) {
   const { t } = useTranslation('common')
   const phrases = useQuickPhrases()
   const [open, setOpen] = useState(false)
@@ -200,6 +201,18 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
     }
   }
 
+  const clearStash = async () => {
+    try {
+      const preferences = await getAppPreferences()
+      await updateAppPreferences({
+        quickPhrases: preferences.quickPhrases.filter(item => !item.id.startsWith('stash-')),
+      })
+      setPreviewedStash(null)
+    } catch (error) {
+      console.error('[quick-phrases] failed to clear stash', error)
+    }
+  }
+
   return (
     <div ref={rootRef} className="relative shrink-0">
       <button
@@ -210,13 +223,15 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
         className={
           compact
             ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted disabled:opacity-40'
-            : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40'
+            : iconOnly
+              ? 'flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted disabled:opacity-40'
+              : 'flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm text-text-secondary hover:bg-muted disabled:opacity-40'
         }
         aria-label={t('workbench.quick_phrases', '快捷短语')}
         aria-expanded={open}
       >
         <MessageSquareText className="h-4 w-4" />
-        {!compact && <span>{t('workbench.quick_phrases', '快捷短语')}</span>}
+        {!compact && !iconOnly && <span>{t('workbench.quick_phrases', '快捷短语')}</span>}
       </button>
       {open && (
         <div
@@ -255,8 +270,18 @@ export function QuickPhraseMenu({ disabled, compact, onSelect }: QuickPhraseMenu
           {stashed.length > 0 && (
             <div className="relative mt-1 px-1 pt-2">
               {previewedStash && <StashPreview phrase={previewedStash} />}
-              <div className="mb-1.5 px-1 text-xs font-medium text-text-muted">
-                {t('workbench.quick_phrases_stash', '暂存区')}
+              <div className="mb-1.5 flex items-center justify-between px-1">
+                <span className="text-xs font-medium text-text-muted">
+                  {t('workbench.quick_phrases_stash', '暂存区')}
+                </span>
+                <button
+                  type="button"
+                  data-testid="quick-phrase-stash-clear-button"
+                  onClick={() => void clearStash()}
+                  className="min-h-11 min-w-11 rounded-md px-1.5 py-0.5 text-xs text-text-muted hover:bg-muted hover:text-text-primary md:min-h-0 md:min-w-0"
+                >
+                  {t('workbench.quick_phrase_stash_clear', '清空')}
+                </button>
               </div>
               <div
                 data-testid="quick-phrase-stash-tray"

@@ -13,4 +13,5 @@ export interface ModelSelectorProps {
   menuPlacement?: 'above' | 'below'
   buttonClassName?: string
   menuClassName?: string
+  maxClosedWidth?: number
 }

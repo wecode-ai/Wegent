@@ -858,7 +858,7 @@ function UserMessage({
         ) : displayContent ? (
           <div
             className={[
-              'overflow-hidden rounded-2xl bg-muted text-sm leading-5 text-text-primary',
+              'overflow-hidden rounded-2xl bg-muted text-base leading-5 text-text-primary',
               hasImagePreviews ? 'max-w-[80%]' : 'max-w-full',
             ].join(' ')}
           >
@@ -979,7 +979,7 @@ function UserMessageEditForm({
   return (
     <div
       data-testid="edit-user-message-form"
-      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-sm leading-5 text-text-primary"
+      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-base leading-5 text-text-primary"
     >
       <textarea
         ref={textareaRef}
@@ -1000,7 +1000,7 @@ function UserMessageEditForm({
             onCancel?.()
           }
         }}
-        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-sm leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -1008,7 +1008,7 @@ function UserMessageEditForm({
           data-testid="cancel-edit-user-message-button"
           disabled={submitting}
           onClick={onCancel}
-          className="flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md px-3 text-base font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
         >
           取消
         </button>
@@ -1017,7 +1017,7 @@ function UserMessageEditForm({
           data-testid="submit-edit-user-message-button"
           disabled={submitDisabled}
           onClick={submit}
-          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-base font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           发送
         </button>
@@ -1623,7 +1623,10 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
+  const displayBlocks = useMemo(
+    () => getDisplayProcessingBlocks(message.blocks, isCancelled),
+    [isCancelled, message.blocks]
+  )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
@@ -1654,7 +1657,7 @@ function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
-  const generatedImages = getGeneratedImages(displayBlocks)
+  const generatedImages = useMemo(() => getGeneratedImages(displayBlocks), [displayBlocks])
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
   const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
@@ -1823,6 +1826,19 @@ interface GeneratedImageArtifact {
   alt: string
 }
 
+function generatedImageAttachment(image: GeneratedImageArtifact, index: number): Attachment {
+  return {
+    id: index + 1,
+    filename: image.alt,
+    file_size: 0,
+    mime_type: 'image/png',
+    status: 'ready',
+    file_extension: '.png',
+    created_at: '',
+    local_preview_url: image.src,
+  }
+}
+
 function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
   return blocks.flatMap(block => {
     if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
@@ -1845,21 +1861,42 @@ function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[]
 }
 
 function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  const attachments = useMemo(() => images.map(generatedImageAttachment), [images])
+
   return (
     <div
       className="mb-3 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2"
       data-testid="generated-image-gallery"
     >
-      {images.map(image => (
-        <img
-          key={image.id}
-          src={image.src}
-          alt={image.alt}
-          className="h-auto w-full rounded-lg border border-border bg-surface object-contain"
-          data-testid="generated-image"
-        />
+      {images.map((image, index) => (
+        <GeneratedImagePreview key={image.id} index={index} galleryAttachments={attachments} />
       ))}
     </div>
+  )
+}
+
+function GeneratedImagePreview({
+  index,
+  galleryAttachments,
+}: {
+  index: number
+  galleryAttachments: Attachment[]
+}) {
+  const attachment = galleryAttachments[index]
+
+  return (
+    <AttachmentImagePreview
+      attachment={attachment}
+      galleryAttachments={galleryAttachments}
+      galleryIndex={index}
+      buttonTestId="generated-image-preview-button"
+      imageTestId="generated-image"
+      loadingTestId="generated-image-loading"
+      errorTestId="generated-image-error"
+      imageClassName="h-auto w-full rounded-lg border border-border bg-surface object-contain"
+      placeholderClassName="flex min-h-40 w-full items-center justify-center rounded-lg border border-border bg-surface text-text-muted"
+      buttonClassName="block w-full cursor-zoom-in p-0 text-left"
+    />
   )
 }
 

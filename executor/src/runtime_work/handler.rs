@@ -28,6 +28,11 @@ use crate::{
         CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
         CODEX_APP_SERVER_TURN_CANCELLED,
     },
+    hooks::{
+        codex::{post_tool_use_from_notification, CodexHookContext},
+        host::HookService,
+        model::{HookPluginManifest, HooksConfig},
+    },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
     protocol::ExecutionRequest,
@@ -165,7 +170,11 @@ fn current_codex_model_provider_from_config(config_response: &Value) -> CodexMod
         .unwrap_or_default();
     let current_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
-        .unwrap_or_else(|| CODEX_OFFICIAL_PROVIDER_ID.to_owned());
+        .filter(|provider| {
+            provider != crate::server::codex_model_catalog::PROVIDER_ID
+                && provider != "wework-catalog"
+        })
+        .unwrap_or_else(crate::agents::configured_inference_model_provider);
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -235,6 +244,22 @@ fn non_empty_string(value: &str) -> Option<String> {
     }
 }
 
+fn hook_payload<T: serde::de::DeserializeOwned>(
+    payload: &Value,
+    key: &str,
+) -> Result<T, AppIpcError> {
+    let value = payload
+        .get(key)
+        .cloned()
+        .ok_or_else(|| AppIpcError::new("bad_request", format!("{key} is required")))?;
+    serde_json::from_value(value)
+        .map_err(|error| AppIpcError::new("bad_request", format!("invalid {key}: {error}")))
+}
+
+fn hook_rpc_error(error: String) -> AppIpcError {
+    AppIpcError::new("hook_error", error)
+}
+
 #[derive(Clone)]
 pub struct RuntimeWorkRpcHandler {
     device_id: String,
@@ -251,6 +276,7 @@ pub struct RuntimeWorkRpcHandler {
     worktrees: WorktreeManager,
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
+    hook_service: HookService,
     connectors: ConnectorRuntime,
 }
 
@@ -309,6 +335,7 @@ impl RuntimeWorkRpcHandler {
             worktrees: WorktreeManager::from_env(),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
             opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
+            hook_service: HookService::from_env(),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -319,10 +346,14 @@ impl RuntimeWorkRpcHandler {
         codex_binary: impl Into<String>,
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
-        Self {
+        let handler = Self {
             event_tx: Some(event_tx),
             ..Self::new(device_id, codex_binary)
+        };
+        if let Some(sender) = handler.event_tx.clone() {
+            handler.hook_service.set_event_sender(sender);
         }
+        handler
     }
 
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
@@ -346,6 +377,16 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.goal.clear" => self.clear_task_goal(payload).await,
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
+            "runtime.hooks.list" | "runtime.hooks.reload" => {
+                Ok(json!({"plugins": self.hook_service.list()}))
+            }
+            "runtime.hooks.create" => self.create_hook(payload).await,
+            "runtime.hooks.install" => self.install_hook(payload).await,
+            "runtime.hooks.update" => self.update_hook(payload).await,
+            "runtime.hooks.set_enabled" => self.set_hook_enabled(payload).await,
+            "runtime.hooks.delete" => self.delete_hook(payload).await,
+            "runtime.hooks.reveal" => self.reveal_hook(payload).await,
+            "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
@@ -405,6 +446,110 @@ impl RuntimeWorkRpcHandler {
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
+        }
+    }
+
+    async fn create_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let manifest = hook_payload::<HookPluginManifest>(&payload, "manifest")?;
+        let config = hook_payload::<HooksConfig>(&payload, "hooks")?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .create(manifest, config)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&plugin.manifest.id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn install_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .install(Path::new(&path))
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&plugin.manifest.id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn update_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        let manifest = hook_payload::<HookPluginManifest>(&payload, "manifest")?;
+        let config = hook_payload::<HooksConfig>(&payload, "hooks")?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .update(&id, manifest, config)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn set_hook_enabled(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        let enabled = payload
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| AppIpcError::new("bad_request", "enabled is required"))?;
+        let plugin = self
+            .hook_service
+            .registry()
+            .set_enabled(&id, enabled)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&id);
+        Ok(json!({"plugin": plugin}))
+    }
+
+    async fn delete_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        self.hook_service
+            .registry()
+            .delete(&id)
+            .map_err(hook_rpc_error)?;
+        self.emit_hooks_changed(&id);
+        Ok(json!({"success": true, "pluginId": id}))
+    }
+
+    async fn reveal_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        self.hook_service
+            .list()
+            .into_iter()
+            .find(|plugin| plugin.manifest.id == id)
+            .map(|plugin| json!({"path": plugin.install_path}))
+            .ok_or_else(|| AppIpcError::new("not_found", "hook plugin not found"))
+    }
+
+    async fn test_hook(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let plugin_id = string_field(&payload, "pluginId")
+            .or_else(|| string_field(&payload, "plugin_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "pluginId is required"))?;
+        let handler_id = string_field(&payload, "handlerId")
+            .or_else(|| string_field(&payload, "handler_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "handlerId is required"))?;
+        let cwd = string_field(&payload, "cwd")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        self.hook_service
+            .test(&plugin_id, &handler_id, cwd)
+            .await
+            .map(|run| json!({"run": run}))
+            .map_err(hook_rpc_error)
+    }
+
+    fn emit_hooks_changed(&self, plugin_id: &str) {
+        if let Some(sender) = &self.event_tx {
+            let _ = sender
+                .send(json!({"event":"runtime.hooks.changed","payload":{"pluginId":plugin_id}}));
         }
     }
 
@@ -2628,11 +2773,34 @@ impl RuntimeWorkRpcHandler {
             let mapper_handler = handler.clone();
             let mapper_local_task_id = turn_local_task_id.clone();
             let mapper_request = request.clone();
+            let hook_turn = Arc::new(Mutex::new(None::<ActiveCodexTurn>));
+            let mapper_hook_turn = Arc::clone(&hook_turn);
             let mapper_handle = tokio::spawn(async move {
                 let mut event_mapper = CodexNotificationEventMapper::default();
                 while let Some(message) = notification_rx.recv().await {
                     mapper_handler
                         .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
+                    let active_turn = mapper_hook_turn
+                        .lock()
+                        .expect("hook turn context lock should not be poisoned")
+                        .clone();
+                    if let (Some(active_turn), Some(cwd)) = (active_turn, mapper_request.cwd()) {
+                        let context = CodexHookContext {
+                            session_id: active_turn.thread_id,
+                            turn_id: active_turn.turn_id,
+                            cwd: PathBuf::from(cwd),
+                            model: string_field(&mapper_request.model_config, "model_id"),
+                            permission_mode: "workspace-write".to_owned(),
+                        };
+                        match post_tool_use_from_notification(&context, &message) {
+                            Ok(Some(input)) => mapper_handler.hook_service.dispatch(input).await,
+                            Ok(None) => {}
+                            Err(error) => log_executor_event(
+                                "runtime work hook notification mapping failed",
+                                &[("error", error.to_string())],
+                            ),
+                        }
+                    }
                     event_mapper.map(
                         &mapper_handler.event_tx,
                         &mapper_handler.device_id,
@@ -2649,8 +2817,16 @@ impl RuntimeWorkRpcHandler {
             });
             let active_turn_handler = handler.clone();
             let active_turn_local_task_id = turn_local_task_id.clone();
+            let callback_hook_turn = Arc::clone(&hook_turn);
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    *callback_hook_turn
+                        .lock()
+                        .expect("hook turn context lock should not be poisoned") =
+                        Some(ActiveCodexTurn {
+                            thread_id: thread_id.clone(),
+                            turn_id: turn_id.clone(),
+                        });
                     active_turn_handler.record_active_codex_turn(
                         &active_turn_local_task_id,
                         thread_id,
@@ -3128,7 +3304,6 @@ impl RuntimeWorkRpcHandler {
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
-        let mut discovered_codex_task_signatures = HashSet::new();
 
         let threads = self.codex_threads(archived).await;
         let stage_started_at = Instant::now();
@@ -3172,9 +3347,6 @@ impl RuntimeWorkRpcHandler {
                     discovered_thread_ids.insert(thread_id.clone());
                 }
                 discovered_local_task_ids.insert(link.local_task_id.clone());
-                if let Some(signature) = codex_task_signature(&link) {
-                    discovered_codex_task_signatures.insert(signature);
-                }
                 links.push(link);
             } else {
                 log_slow_runtime_collect_thread_missing(
@@ -3219,9 +3391,6 @@ impl RuntimeWorkRpcHandler {
                 .as_ref()
                 .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
             {
-                continue;
-            }
-            if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
             if !self.is_active_local_task(&link.local_task_id)
@@ -3897,16 +4066,6 @@ impl RuntimeWorkRpcHandler {
     }
 }
 
-fn is_unmapped_pending_codex_shadow(
-    link: &RuntimeTaskLink,
-    discovered_codex_task_signatures: &HashSet<String>,
-) -> bool {
-    is_unmapped_pending_codex_task(link)
-        && codex_task_signature(link)
-            .as_ref()
-            .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
-}
-
 fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
     if !is_inactive_running_codex_task(link) {
         return false;
@@ -3926,28 +4085,6 @@ fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
         status.as_str(),
         "running" | "inprogress" | "busy" | "pending"
     )
-}
-
-fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
-    if !is_inactive_running_codex_task(link) {
-        return false;
-    }
-    link.thread_id.is_none()
-}
-
-fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
-    if !is_codex_runtime(&link.runtime) {
-        return None;
-    }
-    let title = link.title.trim().to_ascii_lowercase();
-    if title.is_empty() || link.workspace_path.trim().is_empty() {
-        return None;
-    }
-    Some(format!(
-        "{}\0{}",
-        workspace_group_path(&link.workspace_path),
-        title
-    ))
 }
 
 fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
@@ -5584,6 +5721,22 @@ mod tests {
         assert_eq!(provider.display_name, "CodeX");
         assert_eq!(provider.kind, "official");
         assert!(provider.current);
+    }
+
+    #[test]
+    fn current_codex_model_provider_hides_internal_catalog_provider() {
+        let provider = current_codex_model_provider_from_config(&json!({
+            "config": {
+                "model_provider": "wework-catalog",
+                "model_providers": {
+                    "wework-catalog": {"name": "Wework model catalog"}
+                }
+            }
+        }));
+
+        assert_eq!(provider.id, "openai");
+        assert_eq!(provider.display_name, "CodeX");
+        assert_eq!(provider.kind, "official");
     }
 
     #[test]

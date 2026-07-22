@@ -9,4 +9,19 @@ describe('browser URL helpers', () => {
     )
     expect(normalizeBrowserUrl('ftp://example.com')).toBeNull()
   })
+
+  test('allows application assets only from the current Tauri origin', () => {
+    expect(
+      normalizeBrowserUrl(
+        'tauri://localhost/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000',
+        'tauri://localhost/'
+      )
+    ).toBe('tauri://localhost/extension-page.html?sessionId=123e4567-e89b-42d3-a456-426614174000')
+    expect(
+      normalizeBrowserUrl('tauri://other-host/extension-page.html', 'tauri://localhost/')
+    ).toBe(null)
+    expect(
+      normalizeBrowserUrl('custom://localhost/extension-page.html', 'tauri://localhost/')
+    ).toBe(null)
+  })
 })

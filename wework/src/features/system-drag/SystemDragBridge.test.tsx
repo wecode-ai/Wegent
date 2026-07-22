@@ -1,5 +1,5 @@
 import { act, render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { SystemDragBridge } from './SystemDragBridge'
 
 const mocks = vi.hoisted(() => ({
@@ -53,6 +53,10 @@ function emitDrop(payload: { action: string; text: string | null; paths: string[
 }
 
 describe('SystemDragBridge', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   beforeEach(() => {
     mocks.eventHandlers.clear()
     mocks.invoke.mockReset()
@@ -102,5 +106,33 @@ describe('SystemDragBridge', () => {
 
     await waitFor(() => expect(mocks.setInput).toHaveBeenCalledWith('已有追问\n补充内容'))
     expect(mocks.startNewChat).not.toHaveBeenCalled()
+  })
+
+  test('records when system-drag content is stashed', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_784_619_672_000)
+    mocks.getAppPreferences.mockResolvedValue({
+      quickPhrases: [{ id: 'summary', title: '总结进展', content: '总结当前进展', mode: 'normal' }],
+    })
+    mocks.updateAppPreferences.mockResolvedValue(undefined)
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+
+    emitDrop({ action: 'stash', text: '暂存的文本', paths: ['/tmp/image.png'] })
+
+    await waitFor(() =>
+      expect(mocks.updateAppPreferences).toHaveBeenCalledWith({
+        quickPhrases: [
+          {
+            id: 'stash-1784619672000',
+            title: '暂存的文本',
+            content: '暂存的文本',
+            mode: 'normal',
+            attachmentPaths: ['/tmp/image.png'],
+            createdAt: 1_784_619_672_000,
+          },
+          { id: 'summary', title: '总结进展', content: '总结当前进展', mode: 'normal' },
+        ],
+      })
+    )
   })
 })

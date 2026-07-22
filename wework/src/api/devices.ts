@@ -20,7 +20,6 @@ import type {
   MetricsHistoryResponse,
   UpgradeDeviceOptions,
   UpgradeDeviceResponse,
-  VncConfigResponse,
 } from '@/types/devices'
 import { filterClaudeCodeDevices } from '@/lib/device-capabilities'
 import type { HttpClient } from './http'
@@ -554,12 +553,6 @@ export function createDeviceApi(client: HttpClient) {
     getMetricsHistory(deviceId: string): Promise<MetricsHistoryResponse> {
       return client.post<MetricsHistoryResponse>(
         `/cloud-devices/${encodeURIComponent(deviceId)}/metrics/history`
-      )
-    },
-
-    getVncConfig(deviceId: string): Promise<VncConfigResponse> {
-      return client.get<VncConfigResponse>(
-        `/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`
       )
     },
 

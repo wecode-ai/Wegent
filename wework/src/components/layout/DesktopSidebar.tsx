@@ -480,7 +480,7 @@ function SidebarButton({
       aria-current={selected ? 'page' : undefined}
       onClick={onClick}
       className={[
-        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-sm font-normal leading-5',
+        'flex h-[30px] w-full items-center gap-2 rounded-[10px] px-2 text-left text-base font-normal leading-5',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -1469,6 +1469,7 @@ function RuntimeTaskRow({
   ) => Promise<void> | void
 }) {
   const { t } = useTranslation('common')
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [optimisticMarked, setOptimisticMarked] = useState<{
     base: boolean
     value: boolean
@@ -1653,7 +1654,7 @@ function RuntimeTaskRow({
           }}
           onKeyDown={event => handleSidebarRowKeyDown(event, handleOpen)}
           className={cn(
-            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-sm leading-5',
+            'group/task relative flex h-[30px] min-w-0 items-center rounded-[10px] pr-2 text-base leading-5',
             indentClassName,
             disabled ? 'cursor-not-allowed opacity-55' : 'cursor-default',
             selected
@@ -1678,7 +1679,8 @@ function RuntimeTaskRow({
                   aria-label="Worktree"
                 />
               )}
-              {notificationsSubscribed &&
+              {experimentalFeaturesEnabled &&
+                notificationsSubscribed &&
                 renderNotificationButton(
                   `runtime-local-task-notify-${task.taskId}`,
                   `runtime-local-task-notify-icon-${task.taskId}`
@@ -1719,14 +1721,15 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
               className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[72px] -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
             >
-              {renderNotificationButton(
-                notificationsSubscribed
-                  ? `runtime-local-task-notify-hover-${task.taskId}`
-                  : `runtime-local-task-notify-${task.taskId}`,
-                notificationsSubscribed
-                  ? `runtime-local-task-notify-hover-icon-${task.taskId}`
-                  : `runtime-local-task-notify-icon-${task.taskId}`
-              )}
+              {experimentalFeaturesEnabled &&
+                renderNotificationButton(
+                  notificationsSubscribed
+                    ? `runtime-local-task-notify-hover-${task.taskId}`
+                    : `runtime-local-task-notify-${task.taskId}`,
+                  notificationsSubscribed
+                    ? `runtime-local-task-notify-hover-icon-${task.taskId}`
+                    : `runtime-local-task-notify-icon-${task.taskId}`
+                )}
               <button
                 type="button"
                 data-testid={`runtime-local-task-mark-${task.taskId}`}
@@ -1791,13 +1794,18 @@ function RuntimeTaskRow({
             disabled: !workspace.available || !onRenameRuntimeTask,
             onSelect: () => setRenameOpen(true),
           },
-          {
-            label: notificationActionLabel,
-            icon: NotificationIcon,
-            testId: `runtime-local-task-menu-notify-${task.taskId}`,
-            disabled: notificationsDisabled,
-            onSelect: () => onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed),
-          },
+          ...(experimentalFeaturesEnabled
+            ? [
+                {
+                  label: notificationActionLabel,
+                  icon: NotificationIcon,
+                  testId: `runtime-local-task-menu-notify-${task.taskId}`,
+                  disabled: notificationsDisabled,
+                  onSelect: () =>
+                    onToggleRuntimeTaskNotification?.(taskAddress, notificationsSubscribed),
+                },
+              ]
+            : []),
           {
             label: t('workbench.archive_runtime_task', '归档'),
             icon: Archive,
@@ -2143,7 +2151,7 @@ function ProjectItem({
             event.stopPropagation()
             setProjectMenuPosition({ left: event.clientX, top: event.clientY })
           }}
-          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-sm leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="group/project relative flex h-[30px] min-w-0 items-center gap-1 rounded-[10px] pl-2.5 pr-1 text-base leading-5 text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
           <button
             type="button"
@@ -3594,27 +3602,29 @@ export function DesktopSidebar({
                     />
                   </div>
                 )}
-                <GlobalImNotificationBell
-                  devices={devices}
-                  imNotificationSettings={imNotificationSettings}
-                  menuOpen={imNotificationMenuOpen}
-                  menuContainerRef={settingsMenuRef}
-                  onMenuOpenChange={open => {
-                    if (open) setSettingsMenuOpen(false)
-                    setImNotificationMenuOpen(open)
-                  }}
-                  onToggleGlobalImNotification={onToggleGlobalImNotification}
-                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                  onOpenSettings={() => onOpenSettings()}
-                  onAddCloudDevice={() => {
-                    if (onOpenStandaloneFolderProject) {
-                      onOpenStandaloneFolderProject('remote', 'add-device')
-                    } else {
-                      setStandaloneRemoteDialogIntent('add-device')
-                      setStandaloneWorkspaceDialogMode('remote')
-                    }
-                  }}
-                />
+                {experimentalFeaturesEnabled && (
+                  <GlobalImNotificationBell
+                    devices={devices}
+                    imNotificationSettings={imNotificationSettings}
+                    menuOpen={imNotificationMenuOpen}
+                    menuContainerRef={settingsMenuRef}
+                    onMenuOpenChange={open => {
+                      if (open) setSettingsMenuOpen(false)
+                      setImNotificationMenuOpen(open)
+                    }}
+                    onToggleGlobalImNotification={onToggleGlobalImNotification}
+                    onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                    onOpenSettings={() => onOpenSettings()}
+                    onAddCloudDevice={() => {
+                      if (onOpenStandaloneFolderProject) {
+                        onOpenStandaloneFolderProject('remote', 'add-device')
+                      } else {
+                        setStandaloneRemoteDialogIntent('add-device')
+                        setStandaloneWorkspaceDialogMode('remote')
+                      }
+                    }}
+                  />
+                )}
               </div>
               {settingsMenuOpen && (
                 <DesktopSettingsMenu

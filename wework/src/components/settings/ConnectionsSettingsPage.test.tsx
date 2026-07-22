@@ -28,6 +28,16 @@ const localCodexPluginApiMock = vi.hoisted(() => ({
   readCodexLocalConfig: vi.fn(),
   updateCodexLocalConfig: vi.fn(),
 }))
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
 
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => runtimeConfigMock.value,
@@ -163,7 +173,6 @@ describe('ConnectionsSettingsPage', () => {
     deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
-    getVncConfig: vi.fn(),
   }
   const userApi = {
     updateCurrentUser: vi.fn(),
@@ -194,6 +203,19 @@ describe('ConnectionsSettingsPage', () => {
     }
     window.history.pushState({}, '', '/settings/connections')
     openExternalUrlMock.mockResolvedValue(true)
+    cloudDesktopExtensionMock.available = true
+    cloudDesktopExtensionMock.DeviceAction.mockImplementation(
+      ({ deviceId, disabled, onOpened }) => (
+        <button
+          type="button"
+          data-testid={`connection-cloud-desktop-button-${deviceId}`}
+          disabled={disabled}
+          onClick={onOpened}
+        >
+          桌面
+        </button>
+      )
+    )
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -203,11 +225,6 @@ describe('ConnectionsSettingsPage', () => {
       cpu: [],
       memory: [],
       disk: [],
-    })
-    api.getVncConfig.mockResolvedValue({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
     })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
       codexHome: '/Users/crystal/.wegent-executor/codex',
@@ -492,10 +509,16 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'resp_1' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          id: 'resp_1',
+          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', {
       configurable: true,
@@ -545,10 +568,21 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [{ function: { name: 'wework_capability_probe', arguments: '{}' } }],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
 
@@ -576,7 +610,7 @@ describe('ConnectionsSettingsPage', () => {
         expect.any(Object)
       )
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
         stream: false,
       })
     } finally {
@@ -591,10 +625,15 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          content: [{ type: 'tool_use', name: 'wework_capability_probe', id: 'tool_1', input: {} }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
 
@@ -628,7 +667,7 @@ describe('ConnectionsSettingsPage', () => {
         })
       )
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
         stream: false,
       })
     } finally {
@@ -868,6 +907,44 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
+  })
+
+  test('renders the cloud desktop extension action and forwards its opened callback', async () => {
+    const onBack = vi.fn()
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={onBack} />)
+
+    const button = await screen.findByTestId('connection-cloud-desktop-button-device-1')
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: false }),
+      undefined
+    )
+    await userEvent.click(button)
+
+    expect(onBack).toHaveBeenCalledOnce()
+  })
+
+  test('does not render a cloud desktop action when the extension is unavailable', async () => {
+    cloudDesktopExtensionMock.available = false
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    expect(screen.queryByTestId('connection-cloud-desktop-button-device-1')).not.toBeInTheDocument()
+  })
+
+  test('passes an offline device as disabled to the cloud desktop action', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice({ status: 'offline' })])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-cloud-desktop-button-device-1')).toBeDisabled()
+    expect(cloudDesktopExtensionMock.DeviceAction).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'device-1', disabled: true }),
+      undefined
+    )
   })
 
   test('shows cloud device connection info from the compact more menu and copies values', async () => {

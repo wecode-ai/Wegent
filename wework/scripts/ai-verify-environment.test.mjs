@@ -17,6 +17,8 @@ describe('buildAiVerifyEnvironment', () => {
         controlUrl: 'http://127.0.0.1:9999',
         token: 'control-token',
         codexHome: '/tmp/session/executor-home/codex',
+        nativeCodexHome: '/tmp/session/native-codex',
+        verifyCodexHomeInitialization: true,
         deviceId: 'device-1',
         appIdentifier: 'io.wecode.wework.ai-verify.test',
         executorHome: '/tmp/session/executor-home',
@@ -26,6 +28,8 @@ describe('buildAiVerifyEnvironment', () => {
 
     expect(environment.CODEX_HOME).toBe('/tmp/session/executor-home/codex')
     expect(environment.WEGENT_CODEX_HOME).toBe('/tmp/session/executor-home/codex')
+    expect(environment.WEWORK_E2E_NATIVE_CODEX_HOME).toBe('/tmp/session/native-codex')
+    expect(environment.VITE_WEWORK_E2E_CODEX_HOME_INITIALIZATION).toBe('true')
     expect(environment.WEWORK_APP_IDENTIFIER).toBe('io.wecode.wework.ai-verify.test')
     expect(environment.DEVICE_SESSION_GATEWAY_HOST).toBe('127.0.0.1')
     expect(environment.DEVICE_SESSION_GATEWAY_PORT).toBe('0')

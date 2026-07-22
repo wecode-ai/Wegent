@@ -995,6 +995,65 @@ describe('workbenchReducer', () => {
     expect(refreshed.runtimeWork?.totalTasks).toBe(1)
   })
 
+  test('preserves a fresh optimistic task when another task has the same title', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'runtime_task_optimistic_upserted',
+      project: { id: 7, name: 'Repo', tasks: [] },
+      workspace: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/repo',
+        projectId: 7,
+        available: true,
+        mapped: true,
+        tasks: [],
+      },
+      task: {
+        taskId: 'attachment-only-new',
+        workspacePath: '/workspace/repo',
+        title: '新对话',
+        runtime: 'codex',
+        status: 'creating',
+        updatedAt: new Date().toISOString(),
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'attachment-only-existing',
+                    workspacePath: '/workspace/repo',
+                    title: '新对话',
+                    runtime: 'codex',
+                    status: 'done',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    expect(
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)
+    ).toEqual(['attachment-only-new', 'attachment-only-existing'])
+    expect(refreshed.runtimeWork?.totalTasks).toBe(2)
+  })
+
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

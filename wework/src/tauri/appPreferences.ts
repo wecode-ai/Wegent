@@ -29,6 +29,24 @@ export interface QuickPhrase {
   content: string
   mode: QuickPhraseMode
   attachmentPaths?: string[]
+  createdAt?: number
+}
+
+export const QUICK_PHRASE_STASH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+function stashCreatedAt(phrase: Pick<QuickPhrase, 'id' | 'createdAt'>): number | null {
+  if (typeof phrase.createdAt === 'number' && Number.isFinite(phrase.createdAt)) {
+    return phrase.createdAt
+  }
+  if (!phrase.id.startsWith('stash-')) return null
+  const timestamp = Number(phrase.id.slice('stash-'.length).split('-')[0])
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+export function isExpiredQuickPhraseStash(phrase: QuickPhrase, now = Date.now()): boolean {
+  if (!phrase.id.startsWith('stash-')) return false
+  const createdAt = stashCreatedAt(phrase)
+  return createdAt !== null && now - createdAt >= QUICK_PHRASE_STASH_MAX_AGE_MS
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
@@ -189,7 +207,9 @@ function mergeAppPreferences(value: unknown): AppPreferences {
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
     quickPhrases: Array.isArray(record.quickPhrases)
-      ? record.quickPhrases.flatMap(item => normalizeQuickPhrase(item))
+      ? record.quickPhrases
+          .flatMap(item => normalizeQuickPhrase(item))
+          .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
   }
 }
@@ -206,6 +226,10 @@ function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
       )
     : []
   const mode = record.mode
+  const createdAt =
+    typeof record.createdAt === 'number' && Number.isFinite(record.createdAt)
+      ? record.createdAt
+      : undefined
   if (
     !id ||
     !title ||
@@ -221,6 +245,7 @@ function normalizeQuickPhrase(value: unknown): QuickPhrase[] {
       content,
       mode: mode as QuickPhraseMode,
       ...(attachmentPaths.length > 0 && { attachmentPaths }),
+      ...(createdAt !== undefined && { createdAt }),
     },
   ]
 }

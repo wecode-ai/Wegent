@@ -4,6 +4,7 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -350,6 +351,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -379,6 +381,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const paneActive = useWorkbenchPaneActive()
+  const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
+    return () => cancelAnimationFrame(frame)
+  }, [paneActive])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -813,10 +820,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     !activeDeviceId &&
     !devices.some(device => device.status === 'online' && isWeWorkCompatibleDevice(device))
   const composerDisabled =
-    paneSession.status.isSubmitting ||
-    activeDeviceUnavailable ||
-    activeDeviceVersionUnsupported ||
-    noStandaloneCompatibleDevice
+    activeDeviceUnavailable || activeDeviceVersionUnsupported || noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
         device:
@@ -1363,7 +1367,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
   const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
-  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
+  const canForkCurrentRuntimeTask = Boolean(
+    experimentalFeaturesEnabled && currentRuntimeTask && forkCurrentRuntimeTask
+  )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
       type="button"
@@ -1376,7 +1382,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <ArrowLeftRight />
     </button>
   ) : undefined
-  const canContinueInIm = Boolean(currentRuntimeTask)
+  const canContinueInIm = experimentalFeaturesEnabled && Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
     <button
       type="button"
@@ -1674,6 +1680,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             onChange={paneSession.setInput}
                             onSubmit={paneSession.send}
                             disabled={composerDisabled}
+                            submitDisabled={paneSession.status.isSubmitting}
                             error={paneSession.error}
                             disabledReason={inlineComposerDisabledReason}
                             placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
@@ -1791,6 +1798,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}
+                    submitDisabled={paneSession.status.isSubmitting}
                     error={paneSession.error}
                     disabledReason={inlineComposerDisabledReason}
                     placeholder={t('workbench.input_placeholder', '随心输入')}
@@ -1834,7 +1842,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           <aside
             data-testid="environment-info-panel-container"
-            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible"
+            className={cn(
+              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              paneActive && environmentInfoTransitionEnabled
+                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                : 'transition-none'
+            )}
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (

@@ -159,8 +159,12 @@ def test_external_knowledge_mcp_docs_cover_metadata_tools_and_file_endpoint():
     metadata = client.get("/").json()
     repo_root = Path(__file__).resolve().parents[3]
     docs = [
-        (repo_root / "docs/zh/developer-guide/external-knowledge-mcp.md").read_text(),
-        (repo_root / "docs/en/developer-guide/external-knowledge-mcp.md").read_text(),
+        (
+            repo_root / "docs/zh/wegent/developer-guide/external-knowledge-mcp.md"
+        ).read_text(),
+        (
+            repo_root / "docs/en/wegent/developer-guide/external-knowledge-mcp.md"
+        ).read_text(),
     ]
 
     for doc in docs:

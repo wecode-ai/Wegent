@@ -14,6 +14,27 @@ import {
 import { WorkspacePanelCards as ActualWorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: true,
+  DeviceAction: vi.fn(),
+  WorkspaceAction: vi.fn(({ disabled, onOpened }: { disabled: boolean; onOpened: () => void }) => (
+    <button
+      type="button"
+      data-testid="workspace-desktop-card"
+      disabled={disabled}
+      onClick={onOpened}
+    >
+      桌面
+    </button>
+  )),
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
+
 const runtimeConfigMocks = vi.hoisted(() => ({
   getRuntimeConfig: vi.fn(() => ({ appBasePath: '', apiBaseUrl: '/api' })),
 }))
@@ -99,14 +120,12 @@ const startProjectTerminalMock = vi.fn()
 const startProjectCodeServerMock = vi.fn()
 const startDeviceTerminalMock = vi.fn()
 const startDeviceCodeServerMock = vi.fn()
-const getDeviceVncConfigMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 const workspaceSessionApi: WorkspaceSessionApi = {
   startProjectTerminal: startProjectTerminalMock,
   startProjectCodeServer: startProjectCodeServerMock,
   startDeviceTerminal: startDeviceTerminalMock,
   startDeviceCodeServer: startDeviceCodeServerMock,
-  getDeviceVncConfig: getDeviceVncConfigMock,
   createRemoteTerminalClient: createRemoteTerminalClientMock,
 }
 const fetchMock = vi.fn()
@@ -199,6 +218,7 @@ describe('WorkspacePanelCards', () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
+    cloudDesktopExtensionMock.available = true
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
@@ -241,11 +261,6 @@ describe('WorkspacePanelCards', () => {
       type: 'code_server',
       path: '/workspace/worktrees/9/project38',
     })
-    getDeviceVncConfigMock.mockResolvedValue({
-      wss_url: 'wss://example.com/vnc',
-      signature: 'signature',
-      sandbox_id: 'sandbox-1',
-    })
   })
 
   test('renders terminal, IDE, and desktop project tools', () => {
@@ -262,7 +277,6 @@ describe('WorkspacePanelCards', () => {
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
 
     await waitFor(() => expect(startProjectTerminalMock).toHaveBeenCalledWith(7))
-    expect(runtimeConfigMocks.getRuntimeConfig).not.toHaveBeenCalled()
     expect(remoteTerminalMocks.render).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'terminal-1',
@@ -375,7 +389,7 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('opens the project desktop using the cloud device VNC page', async () => {
+  test('renders the project desktop through the cloud desktop workspace extension', async () => {
     const onRequestClose = vi.fn()
     render(
       <WorkspacePanelCards
@@ -385,20 +399,39 @@ describe('WorkspacePanelCards', () => {
       />
     )
 
+    expect(cloudDesktopExtensionMock.WorkspaceAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextKey: expect.stringContaining('7:device-1'),
+        deviceId: 'device-1',
+        disabled: false,
+      }),
+      undefined
+    )
+
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
-    await waitFor(() => expect(getDeviceVncConfigMock).toHaveBeenCalledWith('device-1'))
-    expect(window.open).toHaveBeenCalledWith(
-      expect.stringContaining('/vnc.html?wsUrl='),
-      '_blank',
-      'noopener,noreferrer'
-    )
-    expect(window.open).toHaveBeenCalledWith(
-      expect.stringContaining('sandboxId=sandbox-1'),
-      '_blank',
-      'noopener,noreferrer'
-    )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
+    expect(cloudDesktopExtensionMock.open).not.toHaveBeenCalled()
+  })
+
+  test('hides the desktop card when the cloud desktop extension is unavailable', () => {
+    cloudDesktopExtensionMock.available = false
+
+    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
+
+    expect(screen.getByTestId('workspace-ide-card')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+  })
+
+  test('disables the desktop card while its cloud device is offline', () => {
+    render(
+      <WorkspacePanelCards
+        currentProject={cloudProject}
+        devices={cloudDevices.map(device => ({ ...device, status: 'offline' }))}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled()
   })
 
   test('launches the native terminal for local project devices without cloud-only tools', async () => {
@@ -806,23 +839,6 @@ describe('WorkspacePanelCards', () => {
     expect(window.open).not.toHaveBeenCalled()
     expect(startProjectCodeServerMock).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert')).toHaveTextContent('启动失败')
-  })
-
-  test('marks desktop as unavailable when VNC probing fails', async () => {
-    getDeviceVncConfigMock.mockRejectedValueOnce(new Error('vnc unavailable'))
-    render(<WorkspacePanelCards currentProject={cloudProject} devices={cloudDevices} />)
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-
-    await waitFor(() => expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled())
-    expect(screen.getByTestId('workspace-desktop-card')).toHaveTextContent('暂不可用')
-    expect(window.open).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
-
-    expect(getDeviceVncConfigMock).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
-    expect(screen.getByTestId('workspace-ide-card')).not.toBeDisabled()
   })
 
   test('resets unavailable tools when the project changes', async () => {
