@@ -385,12 +385,13 @@ impl RuntimeWorkRpcHandler {
             "runtime.hooks.reveal" => self.reveal_hook(payload).await,
             "runtime.hooks.test" => self.test_hook(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
-            "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
+            "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
@@ -835,9 +836,72 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({ "enabled": codex_stream_debug_enabled() }))
     }
 
-    async fn restart_codex_app_server(&self) -> Result<Value, AppIpcError> {
+    async fn write_custom_codex_catalog(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let entries = payload
+            .get("models")
+            .and_then(Value::as_array)
+            .ok_or_else(|| AppIpcError::new("invalid_request", "models must be an array"))?;
+        let count = crate::server::codex_model_catalog::write_custom_models(entries)
+            .map_err(|error| AppIpcError::new("invalid_model_catalog", error))?;
+        Ok(json!({"saved": true, "modelCount": count}))
+    }
+
+    async fn restart_codex_app_server(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let active_task_count = self
+            .active_codex_turns
+            .lock()
+            .expect("active Codex turn registry should not be poisoned")
+            .len();
+        let force = bool_field(&payload, "force").unwrap_or(false);
+        let if_idle = bool_field(&payload, "ifIdle").unwrap_or(false);
+        if active_task_count > 0 && if_idle && !force {
+            return Ok(json!({
+                "restarted": false,
+                "requiresConfirmation": true,
+                "activeTaskCount": active_task_count,
+            }));
+        }
         self.codex_app_server.restart().await;
-        Ok(json!({ "restarted": true }))
+        crate::server::codex_model_catalog::invalidate_models_cache()
+            .map_err(|error| AppIpcError::new("codex_cache_invalidation_failed", error))?;
+        let expected_models = crate::server::codex_model_catalog::custom_model_slugs();
+        if !expected_models.is_empty() {
+            let mut loaded = false;
+            for _ in 0..20 {
+                let response = self
+                    .codex_app_server
+                    .request("model/list", json!({"includeHidden": true}))
+                    .await
+                    .map_err(|error| AppIpcError::new("codex_restart_failed", error))?;
+                let available = response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .map(|models| {
+                        expected_models.iter().all(|expected| {
+                            models.iter().any(|model| {
+                                model.get("id").and_then(Value::as_str) == Some(expected.as_str())
+                            })
+                        })
+                    })
+                    .unwrap_or(false);
+                if available {
+                    loaded = true;
+                    break;
+                }
+                sleep(Duration::from_millis(100)).await;
+            }
+            if !loaded {
+                return Err(AppIpcError::new(
+                    "codex_catalog_not_loaded",
+                    "Codex restarted but did not load the custom model catalog",
+                ));
+            }
+        }
+        Ok(json!({
+            "restarted": true,
+            "requiresConfirmation": false,
+            "activeTaskCount": active_task_count,
+        }))
     }
 
     async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -5910,12 +5974,42 @@ mod tests {
         let result = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.codex.app_server.restart",
-                "payload": {}
+                "payload": {"ifIdle": true}
             }))
             .await
             .expect("restart should return success");
 
         assert_eq!(result["restarted"], true);
+        assert_eq!(result["requiresConfirmation"], false);
+        assert_eq!(result["activeTaskCount"], 0);
+    }
+
+    #[tokio::test]
+    async fn codex_app_server_restart_requires_confirmation_for_active_turns() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler
+            .active_codex_turns
+            .lock()
+            .expect("active Codex turn registry should not be poisoned")
+            .insert(
+                "thread-1".to_owned(),
+                ActiveCodexTurn {
+                    thread_id: "thread-1".to_owned(),
+                    turn_id: "turn-1".to_owned(),
+                },
+            );
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.app_server.restart",
+                "payload": {"ifIdle": true}
+            }))
+            .await
+            .expect("active restart check should return success");
+
+        assert_eq!(result["restarted"], false);
+        assert_eq!(result["requiresConfirmation"], true);
+        assert_eq!(result["activeTaskCount"], 1);
     }
 
     #[tokio::test]
