@@ -13,7 +13,7 @@ pub fn setup(app: &mut tauri::App) {
 }
 
 macro_rules! invoke_handler {
-    ($($host_command:path),* $(,)?) => {
+    ($($(#[$host_command_attr:meta])* $host_command:path),* $(,)?) => {
         tauri::generate_handler![
             $crate::wecode::local_executor::detect_wecode_cli,
             $crate::wecode::local_executor::get_executor_process_diagnostics,
@@ -28,7 +28,7 @@ macro_rules! invoke_handler {
             $crate::wecode::local_executor::run_executor_command,
             $crate::wecode::local_executor::save_local_executor_auth_token,
             $crate::wecode::local_executor::save_startup_env,
-            $($host_command),*
+            $($(#[$host_command_attr])* $host_command),*
         ]
     };
 }
