@@ -61,8 +61,8 @@ class ModelAdapter:
                         model_category_type = model_crd.spec.modelType.value
                     model_group = model_crd.spec.modelGroup
                     model_sub_group = model_crd.spec.modelSubGroup
-                    context_window = model_crd.spec.contextWindow
-                    max_output_tokens = model_crd.spec.maxOutputTokens
+                    context_window = model_crd.spec.context_window
+                    max_output_tokens = model_crd.spec.max_output_tokens
                     cost_index = model_crd.spec.costIndex
                     if model_crd.spec.protocol:
                         config = {**config, "protocol": model_crd.spec.protocol}
@@ -100,8 +100,6 @@ class ModelAdapter:
                 if isinstance(spec, dict):
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
-                    context_window = spec.get("contextWindow")
-                    max_output_tokens = spec.get("maxOutputTokens")
                     cost_index = spec.get("costIndex")
                     capabilities = normalize_model_capabilities(
                         spec.get("modelCapabilities")

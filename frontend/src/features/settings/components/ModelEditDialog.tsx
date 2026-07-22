@@ -303,8 +303,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             baseUrl: model.spec.modelConfig?.env?.base_url,
             customHeaders: model.spec.modelConfig?.env?.custom_headers,
             protocol: model.spec.protocol,
-            contextWindow: model.spec.contextWindow,
-            maxOutputTokens: model.spec.maxOutputTokens,
+            contextWindow: model.spec.modelConfig?.context_window,
+            maxOutputTokens: model.spec.modelConfig?.max_output_tokens,
             costIndex: model.spec.costIndex,
             ttsConfig: model.spec.ttsConfig,
             sttConfig: model.spec.sttConfig,
@@ -1138,6 +1138,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                   thinking_config: parsedThinkingConfig,
                 }),
             },
+            ...(modelCategoryType === 'llm' &&
+              contextWindow && {
+                context_window: contextWindow,
+              }),
+            ...(modelCategoryType === 'llm' &&
+              maxOutputTokens && {
+                max_output_tokens: maxOutputTokens,
+              }),
           },
           modelType: modelCategoryType,
           // Save protocol for openai-responses and gemini-deep-research to distinguish from regular variants
@@ -1148,8 +1156,6 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           // Save protocol for image models to specify the provider (openai, doubao, stability, etc.)
           ...(modelCategoryType === 'image' && { protocol: providerType }),
           // LLM-specific fields
-          ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
-          ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
           ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
           ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
           ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),

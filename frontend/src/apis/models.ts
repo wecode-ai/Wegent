@@ -98,12 +98,11 @@ export interface ModelCRD {
         thinking_config?: Record<string, unknown> // Provider-native thinking/reasoning config
         thinkingConfig?: Record<string, unknown> // Legacy camelCase alias
       }
+      context_window?: number // Maximum context window size in tokens
+      max_output_tokens?: number // Maximum output tokens the model can generate per response
     }
     protocol?: string
     isCustomConfig?: boolean
-    // Context window and output token limits for LLM models
-    contextWindow?: number // Maximum context window size in tokens
-    maxOutputTokens?: number // Maximum output tokens the model can generate per response
     costIndex?: number // Relative usage cost compared with the baseline model
     // New fields for multi-type model support
     modelType?: ModelCategoryType

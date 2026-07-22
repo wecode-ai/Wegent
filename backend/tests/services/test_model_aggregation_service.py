@@ -165,11 +165,11 @@ class TestModelAggregationService:
                         "model_id": "generic-model-id",
                         "api_key": "secret",
                     },
+                    "context_window": 1048576,
+                    "max_output_tokens": 131072,
                 },
                 "modelGroup": "Primary Group",
                 "modelSubGroup": "Secondary Group",
-                "contextWindow": 1048576,
-                "maxOutputTokens": 131072,
                 "costIndex": 50,
                 "modelCapabilities": {
                     "supportsImage": True,
@@ -192,6 +192,63 @@ class TestModelAggregationService:
             "supportsVideo": True,
         }
         assert "modelCapabilities" not in info["config"]
+
+    def test_model_limits_come_from_runtime_config(self):
+        """Runtime limits should be exposed as display metadata."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "claude-opus", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "claude",
+                        "model_id": "claude-opus-4-8",
+                    },
+                    "context_window": 1000000,
+                    "max_output_tokens": 128000,
+                }
+            },
+            "status": {"state": "Available"},
+        }
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="claude-opus",
+            namespace="default",
+            json=model_crd,
+            is_active=True,
+        )
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert info["context_window"] == 1000000
+        assert info["max_output_tokens"] == 128000
+        assert model_dict["contextWindow"] == 1000000
+        assert model_dict["maxOutputTokens"] == 128000
+
+    def test_top_level_model_limits_are_ignored(self):
+        """Removed top-level limit fields must not override modelConfig."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "claude-opus", "namespace": "default"},
+            "spec": {
+                "contextWindow": 200000,
+                "maxOutputTokens": 32000,
+                "modelConfig": {
+                    "context_window": 1000000,
+                    "max_output_tokens": 128000,
+                },
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["context_window"] == 1000000
+        assert info["max_output_tokens"] == 128000
 
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""
@@ -324,8 +381,6 @@ class TestModelAggregationService:
             "spec": {
                 "protocol": "openai-responses",
                 "apiFormat": "responses",
-                "contextWindow": 1048576,
-                "maxOutputTokens": 131072,
                 "costIndex": 50,
                 "modelCapabilities": {
                     "supportsImage": True,
@@ -341,6 +396,8 @@ class TestModelAggregationService:
                         "model_id": "gpt-5.4",
                         "api_key": "secret",
                     },
+                    "context_window": 1048576,
+                    "max_output_tokens": 131072,
                 },
             },
             "status": {"state": "Available"},

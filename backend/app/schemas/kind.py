@@ -249,20 +249,28 @@ class ModelSpec(BaseModel):
         "Only applies when protocol is 'openai'.",
     )
 
-    # Context window and output token limits for LLM models
-    contextWindow: Optional[int] = Field(
-        None,
-        description="Maximum context window size in tokens. Used for message compression.",
-    )
-    maxOutputTokens: Optional[int] = Field(
-        None,
-        description="Maximum output tokens the model can generate per response.",
-    )
     costIndex: Optional[float] = Field(
         None,
         gt=0,
         description="Relative model usage cost. A value of 1 represents the baseline cost.",
     )
+
+    @staticmethod
+    def _model_config_token_limit(value: Any) -> Optional[int]:
+        """Return a numeric token limit from the runtime model config."""
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value
+
+    @property
+    def context_window(self) -> Optional[int]:
+        """Return the context window from the runtime model config."""
+        return self._model_config_token_limit(self.modelConfig.get("context_window"))
+
+    @property
+    def max_output_tokens(self) -> Optional[int]:
+        """Return the output limit from the runtime model config."""
+        return self._model_config_token_limit(self.modelConfig.get("max_output_tokens"))
 
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(

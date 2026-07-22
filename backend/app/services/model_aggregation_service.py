@@ -301,8 +301,8 @@ class ModelAggregationService:
                 ),
                 "model_group": model_crd.spec.modelGroup,
                 "model_sub_group": model_crd.spec.modelSubGroup,
-                "context_window": model_crd.spec.contextWindow,
-                "max_output_tokens": model_crd.spec.maxOutputTokens,
+                "context_window": model_crd.spec.context_window,
+                "max_output_tokens": model_crd.spec.max_output_tokens,
                 "cost_index": model_crd.spec.costIndex,
                 "model_capabilities": model_capabilities,
             }
