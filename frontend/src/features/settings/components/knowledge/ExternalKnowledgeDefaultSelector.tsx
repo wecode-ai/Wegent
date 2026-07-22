@@ -58,6 +58,7 @@ interface ProviderDefaultOption {
   level: number
   type: 'knowledge_base' | 'document'
   disabled: boolean
+  contentUnavailable?: boolean
 }
 
 interface ProviderDefaultGroup {
@@ -171,7 +172,8 @@ async function buildProviderOptions(
         fullLabel: documentPath,
         level,
         type: 'document',
-        disabled,
+        disabled: disabled || node.content_readable === false,
+        contentUnavailable: node.content_readable === false,
       })
     })
   }
@@ -200,6 +202,7 @@ function ProviderKnowledgeOptionRow({
   disabled: boolean
   onToggle: (option: ProviderDefaultOption) => void
 }) {
+  const { t } = useTranslation('knowledge')
   const Icon = option.type === 'document' ? FileText : Folder
   return (
     <LongTextTooltip content={option.fullLabel}>
@@ -213,7 +216,11 @@ function ProviderKnowledgeOptionRow({
         onClick={() => onToggle(option)}
         data-testid={`default-external-knowledge-option-${option.key}`}
         style={{ paddingLeft: `${12 + option.level * 16}px` }}
-        aria-label={option.fullLabel}
+        aria-label={
+          option.contentUnavailable
+            ? `${option.fullLabel}: ${t('picker.contentUnavailable')}`
+            : option.fullLabel
+        }
       >
         <Icon className="h-4 w-4 shrink-0 text-primary" />
         <span className="min-w-0 flex-1">
@@ -228,6 +235,9 @@ function ProviderKnowledgeOptionRow({
             className="text-text-primary"
           />
         </span>
+        {option.contentUnavailable ? (
+          <span className="shrink-0 text-xs text-text-muted">{t('picker.contentUnavailable')}</span>
+        ) : null}
         {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
       </button>
     </LongTextTooltip>

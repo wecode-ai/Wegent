@@ -48,6 +48,7 @@
     "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
     "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
     "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
+    "contentUnavailable": "暂不支持内容检索",
     "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
     "previewUnavailable": "预览地址不可用"
   },

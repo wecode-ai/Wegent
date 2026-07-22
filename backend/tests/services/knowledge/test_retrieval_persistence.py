@@ -548,6 +548,56 @@ class TestRetrievalPersistenceService:
             for context in contexts
         )
 
+    def test_persist_external_retrieval_status_keeps_safe_provider_reason(
+        self,
+        test_db,
+    ) -> None:
+        """A provider may distinguish resync-required scope failures safely."""
+        ref = {
+            "provider": "dingtalk",
+            "mode": "explicit",
+            "id": "docs",
+            "target_type": "knowledge_base",
+        }
+        self.service.persist_external_retrieval_result(
+            db=test_db,
+            user_subtask_id=46,
+            user_id=7,
+            query="missing scope",
+            mode="rag_retrieval",
+            records=[],
+            refs=[ref],
+            source_summaries=[
+                {
+                    "provider": "dingtalk",
+                    "searched_source_ids": [],
+                    "ignored_source_ids": [],
+                    "source_statuses": [
+                        {
+                            "source_id": "docs",
+                            "canonical_ref_key": external_ref_canonical_key(ref),
+                            "status": "failed",
+                            "reason": "scope_sync_required",
+                        }
+                    ],
+                }
+            ],
+        )
+
+        context = (
+            test_db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.subtask_id == 46,
+                SubtaskContext.context_type == ContextType.EXTERNAL_KNOWLEDGE.value,
+            )
+            .one()
+        )
+        assert context.type_data["retrieval_status"] == {
+            "searched": False,
+            "ignored": False,
+            "warning_reason": "scope_sync_required",
+        }
+
     def test_persist_external_retrieval_result_records_ignored_without_records(
         self,
         test_db,

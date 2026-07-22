@@ -34,6 +34,7 @@ class RetrievalSourceStatus:
     citation_count: int = 0
     mode: Optional[str] = None
     canonical_ref_key: Optional[str] = None
+    reason: Optional[str] = None
 
 
 @dataclass(frozen=True)

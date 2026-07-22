@@ -2068,6 +2068,7 @@ function ExternalDocumentNode({
   selectedNodeIds: Set<string>
   onToggleDocument: (node: ExternalKbNode) => void
 }) {
+  const { t } = useTranslation('knowledge')
   const isFolder = node.node_type === 'folder'
   const containsSelected = hasSelectedExternalDocument(node, selectedNodeIds)
   const [open, setOpen] = useState(depth < 1 || containsSelected)
@@ -2079,7 +2080,8 @@ function ExternalDocumentNode({
   const selected = selectedNodeIds.has(node.node_id)
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
   const documentCount = isFolder ? countExternalDocuments(node) : 1
-  const documentDisabled = disabled && !isFolder
+  const contentUnavailable = !isFolder && node.content_readable === false
+  const documentDisabled = (disabled || contentUnavailable) && !isFolder
   const fullPath = formatKnowledgePath(path, node.name)
 
   return (
@@ -2102,7 +2104,9 @@ function ExternalDocumentNode({
             }
           }}
           data-testid={`knowledge-picker-external-node-${node.node_id}`}
-          aria-label={fullPath}
+          aria-label={
+            contentUnavailable ? `${fullPath}: ${t('picker.contentUnavailable')}` : fullPath
+          }
         >
           <span className="flex min-w-0 items-start gap-2">
             {isFolder ? (
@@ -2123,6 +2127,9 @@ function ExternalDocumentNode({
                 focusable={false}
                 className="text-text-primary"
               />
+              {contentUnavailable ? (
+                <span className="text-xs text-text-muted">{t('picker.contentUnavailable')}</span>
+              ) : null}
             </span>
           </span>
           {isFolder ? (

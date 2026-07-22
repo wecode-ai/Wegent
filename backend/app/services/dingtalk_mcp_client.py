@@ -102,6 +102,7 @@ class DingTalkDocsMcpClient:
         *,
         keyword: str,
         workspace_ids: list[str] | None,
+        extensions: list[str] | None = None,
         page_token: str | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> DingTalkSearchPage:
@@ -112,6 +113,8 @@ class DingTalkDocsMcpClient:
         }
         if workspace_ids:
             arguments["workspaceIds"] = workspace_ids
+        if extensions:
+            arguments["extensions"] = extensions
         if page_token:
             arguments["pageToken"] = page_token
         payload = await self._call_tool(MCP_TOOL_SEARCH_DOCUMENTS, arguments)

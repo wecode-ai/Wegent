@@ -16,6 +16,8 @@ import { registerExternalKnowledgeSource } from './externalKnowledgeSourceRegist
 
 const DINGTALK_PROVIDER_ID = 'dingtalk'
 const DINGTALK_DOCS_CONTAINER_ID = 'docs'
+const READABLE_CONTENT_TYPES = new Set(['adoc'])
+const CONTENT_TYPE_ALIASES: Record<string, string> = { alidoc: 'adoc' }
 
 let registered = false
 
@@ -67,6 +69,9 @@ function toWikispaceKnowledgeBase(node: DingtalkDocNode): ExternalKnowledgeBase 
 }
 
 function toExternalNode(node: DingtalkDocNode): ExternalKbNode {
+  const rawContentType = node.content_type.trim().toLowerCase()
+  const contentType = CONTENT_TYPE_ALIASES[rawContentType] ?? rawContentType
+  const contentReadable = node.node_type === 'folder' || READABLE_CONTENT_TYPES.has(contentType)
   return {
     node_id: node.dingtalk_node_id,
     raw_id: node.dingtalk_node_id,
@@ -76,6 +81,8 @@ function toExternalNode(node: DingtalkDocNode): ExternalKbNode {
     has_children: (node.children ?? []).length > 0,
     children: (node.children ?? []).map(toExternalNode),
     source_type: node.source,
+    file_extension: contentType || null,
+    content_readable: contentReadable,
     browser_open_url: node.doc_url || null,
   }
 }

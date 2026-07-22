@@ -47,7 +47,7 @@ class _FakeHttpClient(AbstractAsyncContextManager):
 
 
 class _FakeMcpSession(AbstractAsyncContextManager):
-    def __init__(self, responses: dict[str, _ToolResult | Exception]) -> None:
+    def __init__(self, responses: dict[str, _ToolResult | Exception | object]) -> None:
         self.responses = responses
         self.calls: list[tuple[str, dict]] = []
 
@@ -63,6 +63,8 @@ class _FakeMcpSession(AbstractAsyncContextManager):
     async def call_tool(self, tool_name: str, arguments: dict):
         self.calls.append((tool_name, arguments))
         response = self.responses[tool_name]
+        if callable(response):
+            response = response(arguments)
         if isinstance(response, Exception):
             raise response
         return response
@@ -77,7 +79,8 @@ def _create_synced_node(
     node_type: str = "doc",
     parent_node_id: str = "",
     source: str = "docs",
-    workspace_id: str = "",
+    workspace_id: str = "personal-ws",
+    content_type: str = "ALIDOC",
 ) -> DingtalkSyncedNode:
     node = DingtalkSyncedNode(
         user_id=user_id,
@@ -90,6 +93,7 @@ def _create_synced_node(
         is_active=True,
         last_synced_at=datetime.now(timezone.utc),
         source=source,
+        content_type=content_type,
     )
     db.add(node)
     db.commit()
@@ -126,12 +130,139 @@ def _run_with_fake_mcp(test_db, test_user, ref, session, *, query="launch"):
         ):
             result = await provider.retrieve(
                 query=query,
-                refs=[ref],
+                refs=ref if isinstance(ref, list) else [ref],
                 ctx=RetrievalContext(user_id=test_user.id),
             )
         return result, requested_urls
 
     return run
+
+
+@pytest.mark.asyncio
+async def test_complete_wikispaces_share_search_and_map_local_results(
+    test_db: Session, test_user: User
+) -> None:
+    _create_synced_node(
+        test_db,
+        test_user.id,
+        node_id="wiki-a-doc",
+        name="A",
+        source="wikispace",
+        workspace_id="wiki-a",
+    )
+    _create_synced_node(
+        test_db,
+        test_user.id,
+        node_id="wiki-b-doc",
+        name="B",
+        source="wikispace",
+        workspace_id="wiki-b",
+    )
+
+    def content(arguments: dict) -> _ToolResult:
+        node_id = arguments["nodeId"]
+        return _ToolResult({"nodeId": node_id, "title": node_id, "markdown": node_id})
+
+    refs = [
+        _provider_ref(id="wiki-a", target_type="knowledge_base", name="Wiki A"),
+        _provider_ref(id="wiki-b", target_type="knowledge_base", name="Wiki B"),
+    ]
+    session = _FakeMcpSession(
+        {
+            "search_documents": _ToolResult(
+                {
+                    "documents": [
+                        {"nodeId": "wiki-a-doc", "extension": "adoc"},
+                        {"nodeId": "wiki-b-doc", "extension": "adoc"},
+                        {"nodeId": "outside", "extension": "adoc"},
+                    ],
+                    "hasMore": False,
+                }
+            ),
+            "get_document_content": content,
+        }
+    )
+
+    result, _ = await _run_with_fake_mcp(test_db, test_user, refs, session)()
+
+    search_calls = [call for call in session.calls if call[0] == "search_documents"]
+    assert search_calls == [
+        (
+            "search_documents",
+            {
+                "keyword": "launch",
+                "pageSize": 10,
+                "workspaceIds": ["wiki-a", "wiki-b"],
+                "extensions": ["adoc"],
+            },
+        )
+    ]
+    assert {record.source_id for record in result.records} == {"wiki-a", "wiki-b"}
+    assert {record.metadata["canonical_ref_key"] for record in result.records} == {
+        "external:dingtalk:explicit:wiki-a:knowledge_base:::",
+        "external:dingtalk:explicit:wiki-b:knowledge_base:::",
+    }
+    assert {
+        status.source_id: status.status for status in result.summary.source_statuses
+    } == {
+        "wiki-a": "hit",
+        "wiki-b": "hit",
+    }
+
+
+@pytest.mark.asyncio
+async def test_batch_search_failure_falls_back_to_each_wikispace(
+    test_db: Session, test_user: User
+) -> None:
+    for workspace_id in ("wiki-a", "wiki-b"):
+        _create_synced_node(
+            test_db,
+            test_user.id,
+            node_id=f"{workspace_id}-doc",
+            name=workspace_id,
+            source="wikispace",
+            workspace_id=workspace_id,
+        )
+
+    def search(arguments: dict) -> _ToolResult | Exception:
+        workspace_ids = arguments["workspaceIds"]
+        if len(workspace_ids) > 1:
+            return RuntimeError("batch request rejected")
+        workspace_id = workspace_ids[0]
+        return _ToolResult(
+            {"documents": [{"nodeId": f"{workspace_id}-doc", "extension": "adoc"}]}
+        )
+
+    session = _FakeMcpSession(
+        {
+            "search_documents": search,
+            "get_document_content": lambda arguments: _ToolResult(
+                {
+                    "nodeId": arguments["nodeId"],
+                    "title": arguments["nodeId"],
+                    "markdown": "Body",
+                }
+            ),
+        }
+    )
+    refs = [
+        _provider_ref(id="wiki-a", target_type="knowledge_base"),
+        _provider_ref(id="wiki-b", target_type="knowledge_base"),
+    ]
+
+    result, _ = await _run_with_fake_mcp(test_db, test_user, refs, session)()
+
+    assert [
+        call[1]["workspaceIds"]
+        for call in session.calls
+        if call[0] == "search_documents"
+    ] == [["wiki-a", "wiki-b"], ["wiki-a"], ["wiki-b"]]
+    assert {
+        status.source_id: status.status for status in result.summary.source_statuses
+    } == {
+        "wiki-a": "hit",
+        "wiki-b": "hit",
+    }
 
 
 def test_allowlist_expands_deep_directory_without_loading_unrelated_tree(
@@ -191,7 +322,11 @@ async def test_wikispace_ref_uses_docs_mcp_and_current_search_arguments(
     session = _FakeMcpSession(
         {
             "search_documents": _ToolResult(
-                {"documents": [{"nodeId": "wiki-doc-1", "score": 0.87}]}
+                {
+                    "documents": [
+                        {"nodeId": "wiki-doc-1", "extension": "adoc", "score": 0.87}
+                    ]
+                }
             ),
             "get_document_content": _ToolResult(
                 {
@@ -224,6 +359,7 @@ async def test_wikispace_ref_uses_docs_mcp_and_current_search_arguments(
                 "keyword": "launch",
                 "pageSize": 10,
                 "workspaceIds": ["wiki-space-1"],
+                "extensions": ["adoc"],
             },
         ),
         ("get_document_content", {"nodeId": "wiki-doc-1"}),
@@ -241,7 +377,15 @@ async def test_docs_ref_searches_metadata_then_reads_document_content(
     session = _FakeMcpSession(
         {
             "search_documents": _ToolResult(
-                {"documents": [{"nodeId": "doc-1", "title": "Metadata only"}]}
+                {
+                    "documents": [
+                        {
+                            "nodeId": "doc-1",
+                            "extension": "adoc",
+                            "title": "Metadata only",
+                        }
+                    ]
+                }
             ),
             "get_document_content": _ToolResult(
                 {"nodeId": "doc-1", "title": "Launch Plan", "markdown": "Body"}
@@ -258,7 +402,13 @@ async def test_docs_ref_searches_metadata_then_reads_document_content(
 
     assert result.records[0].content == "Body"
     assert result.records[0].title == "Launch Plan"
-    assert session.calls[0][1] == {"keyword": "launch", "pageSize": 10}
+    assert session.calls[0][1] == {
+        "keyword": "launch",
+        "pageSize": 10,
+        "workspaceIds": ["personal-ws"],
+        "extensions": ["adoc"],
+    }
+    assert session.calls[0][1]["workspaceIds"] != ["docs"]
 
 
 @pytest.mark.asyncio
@@ -284,7 +434,7 @@ async def test_search_skips_folder_candidates_before_reading_content(
                 {
                     "documents": [
                         {"nodeId": "folder-1", "nodeType": "folder"},
-                        {"nodeId": "doc-1", "nodeType": "file"},
+                        {"nodeId": "doc-1", "nodeType": "file", "extension": "adoc"},
                     ]
                 }
             ),
@@ -310,6 +460,144 @@ async def test_search_skips_folder_candidates_before_reading_content(
     assert [call for call in session.calls if call[0] == "get_document_content"] == [
         ("get_document_content", {"nodeId": "doc-1"})
     ]
+
+
+@pytest.mark.asyncio
+async def test_search_skips_unsupported_documents_and_keeps_readable_results(
+    test_db: Session, test_user: User
+) -> None:
+    _create_synced_node(test_db, test_user.id, node_id="doc-adoc", name="Readable")
+    _create_synced_node(
+        test_db,
+        test_user.id,
+        node_id="doc-pptx",
+        name="Presentation",
+        content_type="pptx",
+    )
+    session = _FakeMcpSession(
+        {
+            "search_documents": _ToolResult(
+                {
+                    "documents": [
+                        {"nodeId": "doc-adoc", "extension": "adoc"},
+                        {"nodeId": "doc-pptx", "extension": "pptx"},
+                    ]
+                }
+            ),
+            "get_document_content": _ToolResult(
+                {"nodeId": "doc-adoc", "title": "Readable", "markdown": "Body"}
+            ),
+        }
+    )
+
+    result, _ = await _run_with_fake_mcp(
+        test_db,
+        test_user,
+        _provider_ref(id="docs", target_type="knowledge_base"),
+        session,
+    )()
+
+    assert [record.metadata["node_id"] for record in result.records] == ["doc-adoc"]
+    assert [call for call in session.calls if call[0] == "get_document_content"] == [
+        ("get_document_content", {"nodeId": "doc-adoc"})
+    ]
+    assert result.summary.source_statuses[0].status == "hit"
+
+
+@pytest.mark.asyncio
+async def test_search_with_only_unsupported_documents_is_no_hit(
+    test_db: Session, test_user: User
+) -> None:
+    _create_synced_node(
+        test_db,
+        test_user.id,
+        node_id="doc-pptx",
+        name="Presentation",
+        content_type="pptx",
+    )
+    session = _FakeMcpSession(
+        {
+            "search_documents": _ToolResult(
+                {"documents": [{"nodeId": "doc-pptx", "extension": "pptx"}]}
+            )
+        }
+    )
+
+    result, _ = await _run_with_fake_mcp(
+        test_db,
+        test_user,
+        _provider_ref(id="docs", target_type="knowledge_base"),
+        session,
+    )()
+
+    assert result.records == []
+    assert result.summary.source_statuses[0].status == "no_hit"
+    assert [call for call in session.calls if call[0] == "get_document_content"] == []
+
+
+@pytest.mark.asyncio
+async def test_all_readable_content_failures_are_safe_failed_status(
+    test_db: Session, test_user: User
+) -> None:
+    _create_synced_node(test_db, test_user.id, node_id="doc-1", name="Readable")
+    session = _FakeMcpSession(
+        {
+            "search_documents": _ToolResult(
+                {"documents": [{"nodeId": "doc-1", "extension": "adoc"}]}
+            ),
+            "get_document_content": RuntimeError("token=secret nodeId=doc-1"),
+        }
+    )
+
+    result, _ = await _run_with_fake_mcp(
+        test_db,
+        test_user,
+        _provider_ref(id="docs", target_type="knowledge_base"),
+        session,
+    )()
+
+    assert result.records == []
+    assert result.summary.source_statuses[0].status == "failed"
+    assert "secret" not in " ".join(result.warnings)
+    assert "doc-1" not in " ".join(result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_partial_content_failure_keeps_successful_records(
+    test_db: Session, test_user: User
+) -> None:
+    _create_synced_node(test_db, test_user.id, node_id="doc-1", name="First")
+    _create_synced_node(test_db, test_user.id, node_id="doc-2", name="Second")
+
+    def content_response(arguments: dict) -> _ToolResult | Exception:
+        if arguments["nodeId"] == "doc-1":
+            return RuntimeError("MCP error token=secret")
+        return _ToolResult({"nodeId": "doc-2", "title": "Second", "markdown": "Body"})
+
+    session = _FakeMcpSession(
+        {
+            "search_documents": _ToolResult(
+                {
+                    "documents": [
+                        {"nodeId": "doc-1", "extension": "adoc"},
+                        {"nodeId": "doc-2", "extension": "adoc"},
+                    ]
+                }
+            ),
+            "get_document_content": content_response,
+        }
+    )
+
+    result, _ = await _run_with_fake_mcp(
+        test_db,
+        test_user,
+        _provider_ref(id="docs", target_type="knowledge_base"),
+        session,
+    )()
+
+    assert [record.metadata["node_id"] for record in result.records] == ["doc-2"]
+    assert result.summary.source_statuses[0].status == "hit"
+    assert result.warnings == ["Some DingTalk documents could not be retrieved"]
 
 
 @pytest.mark.asyncio
@@ -411,6 +699,18 @@ async def test_empty_successful_search_is_no_hit(
 
     assert result.records == []
     assert result.summary.source_statuses[0].status == "no_hit"
+    assert result.summary.searched_source_ids == ["docs"]
+    assert session.calls == [
+        (
+            "search_documents",
+            {
+                "keyword": "launch",
+                "pageSize": 10,
+                "workspaceIds": ["personal-ws"],
+                "extensions": ["adoc"],
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -457,7 +757,7 @@ async def test_search_candidates_are_limited_to_maximum(
         _create_synced_node(
             test_db, test_user.id, node_id=f"doc-{index}", name=f"Doc {index}"
         )
-    documents = [{"nodeId": f"doc-{index}"} for index in range(12)]
+    documents = [{"nodeId": f"doc-{index}", "extension": "adoc"} for index in range(12)]
     session = _FakeMcpSession(
         {
             "search_documents": _ToolResult({"documents": documents}),
@@ -498,7 +798,12 @@ async def test_folder_scope_only_reads_descendants(
     session = _FakeMcpSession(
         {
             "search_documents": _ToolResult(
-                {"documents": [{"nodeId": "doc-1"}, {"nodeId": "doc-2"}]}
+                {
+                    "documents": [
+                        {"nodeId": "doc-1", "extension": "adoc"},
+                        {"nodeId": "doc-2", "extension": "adoc"},
+                    ]
+                }
             ),
             "get_document_content": _ToolResult(
                 {"nodeId": "doc-1", "title": "Inside", "markdown": "Body"}
@@ -514,6 +819,44 @@ async def test_folder_scope_only_reads_descendants(
     )()
 
     assert [record.metadata["node_id"] for record in result.records] == ["doc-1"]
+    assert [
+        call[1]["workspaceIds"]
+        for call in session.calls
+        if call[0] == "search_documents"
+    ] == [["personal-ws"]]
+
+
+@pytest.mark.asyncio
+async def test_docs_scope_without_workspace_id_requires_resync(
+    test_db: Session, test_user: User
+) -> None:
+    _create_synced_node(
+        test_db,
+        test_user.id,
+        node_id="doc-1",
+        name="Legacy document",
+        workspace_id="",
+    )
+    session = _FakeMcpSession({})
+
+    result, requested_urls = await _run_with_fake_mcp(
+        test_db,
+        test_user,
+        _provider_ref(id="docs", target_type="knowledge_base"),
+        session,
+    )()
+
+    assert requested_urls == []
+    assert session.calls == []
+    assert result.records == []
+    assert result.summary.searched_source_ids == []
+    status = result.summary.source_statuses[0]
+    assert status.status == "failed"
+    assert status.reason == "scope_sync_required"
+    assert result.warnings == [
+        "DingTalk personal document scope is missing; please resync DingTalk Docs"
+    ]
+    assert "https://" not in " ".join(result.warnings)
 
 
 def test_validate_wikispace_requires_docs_mcp(

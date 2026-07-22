@@ -422,10 +422,12 @@ class RetrievalPersistenceService:
                 status_source_id = getattr(source_status, "source_id", None)
                 status_value = getattr(source_status, "status", None)
                 status_canonical_key = getattr(source_status, "canonical_ref_key", None)
+                status_reason = getattr(source_status, "reason", None)
                 if isinstance(source_status, dict):
                     status_source_id = source_status.get("source_id")
                     status_value = source_status.get("status")
                     status_canonical_key = source_status.get("canonical_ref_key")
+                    status_reason = source_status.get("reason")
                 if status_canonical_key:
                     if status_canonical_key != external_ref_canonical_key(external_ref):
                         continue
@@ -447,7 +449,7 @@ class RetrievalPersistenceService:
                     return {
                         "searched": False,
                         "ignored": False,
-                        "warning_reason": "provider_failed",
+                        "warning_reason": status_reason or "provider_failed",
                     }
                 if status_value == "no_hit":
                     return {
