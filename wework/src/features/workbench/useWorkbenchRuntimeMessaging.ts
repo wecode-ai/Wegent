@@ -1012,7 +1012,7 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      const prepared = buildSendPayload(message, undefined, options?.project)
+      const prepared = buildSendPayload(message, options?.attachments, options?.project)
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',

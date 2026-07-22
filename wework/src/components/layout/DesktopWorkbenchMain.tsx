@@ -126,6 +126,7 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 20
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
+const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
@@ -495,6 +496,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reloadDiff: undefined,
   })
   const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
+  const onlyTemporaryChatOpen =
+    rightPanelTabs.length === 1 &&
+    rightPanelTabs[0].startsWith('chat:') &&
+    rightPanelView === rightPanelTabs[0]
   useLayoutEffect(() => {
     const workbenchMain = workbenchMainRef.current
     if (!workbenchMain) return
@@ -517,6 +522,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useResizableRightSplitChat({
     containerRef: workbenchMainRef,
     onCollapse: closeRightPanel,
+    defaultPanelWidth: onlyTemporaryChatOpen ? TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH : undefined,
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
   const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
