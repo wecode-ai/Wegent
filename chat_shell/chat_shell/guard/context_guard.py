@@ -35,6 +35,7 @@ material changed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from copy import deepcopy
@@ -752,6 +753,16 @@ class UnifiedContextGuard:
                 [_dict_to_state_message(message_dict) for message_dict in view],
                 preserve_initial_context=True,
             )
+        except asyncio.CancelledError:
+            # CancelledError is a BaseException; the ``except Exception`` below
+            # would miss it and the compaction would vanish without a trace.
+            logger.warning(
+                "[UnifiedContextGuard] Summary compact cancelled after %.1fms "
+                "(before_tokens=%d)",
+                (time.perf_counter() - compact_started) * 1000,
+                before_tokens,
+            )
+            raise
         except Exception as exc:
             failure_reason = (
                 "summary_compact_not_applicable"
