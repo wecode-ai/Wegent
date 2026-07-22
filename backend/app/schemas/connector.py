@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from jsonschema import Draft202012Validator, SchemaError
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-AuthType = Literal["none", "bearer", "oauth2"]
+AuthType = Literal["none"]
 Visibility = Literal["all", "roles"]
 Transport = Literal["streamable-http", "sse", "http"]
 OAuthClientAuthMethod = Literal["client_secret_post", "client_secret_basic", "none"]
@@ -333,16 +333,6 @@ class ConnectorInstalledApp(BaseModel):
 
 class ConnectorInstalledResponse(BaseModel):
     apps: list[ConnectorInstalledApp]
-
-
-class ConnectorAuthorizeResponse(BaseModel):
-    authorization_url: str | None = None
-    status: Literal["connected", "pending"]
-
-
-class ConnectorBearerCredentialRequest(BaseModel):
-    token: str = Field(min_length=1, max_length=16384)
-    account_name: str | None = Field(default=None, max_length=512)
 
 
 class ConnectorTokenResponse(BaseModel):

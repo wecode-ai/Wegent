@@ -11,10 +11,54 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.connector import ConnectorApp, ConnectorConnection
 from app.models.user import User
-from app.services.connector_apps import _encrypt_json, _token_expiry
+from app.schemas.connector import ConnectorAppWrite
+from app.services.connector_apps import _encrypt_json, connector_app_service
 from app.services.connector_runtime import ConnectorRuntimeService
+
+
+def _app(**overrides):
+    defaults = {
+        "id": 1,
+        "slug": "app",
+        "name": "App",
+        "description": "",
+        "enabled": True,
+        "visibility": "all",
+        "allowed_roles": [],
+        "auth_type": "none",
+        "transport": "streamable-http",
+        "mcp_url": "https://mcp.example.test/app",
+        "provider_headers_encrypted": None,
+        "tool_allowlist": [],
+        "http_tools": [],
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _create_app(
+    db: Session,
+    admin: User,
+    *,
+    slug: str,
+    name: str,
+    transport: str = "streamable-http",
+    tool_allowlist: list[str] | None = None,
+    http_tools: list[dict] | None = None,
+):
+    return connector_app_service.create_app(
+        db,
+        ConnectorAppWrite(
+            slug=slug,
+            name=name,
+            transport=transport,
+            mcp_url=f"https://mcp.example.test/{slug}",
+            tool_allowlist=tool_allowlist or [],
+            http_tools=http_tools or [],
+        ),
+        admin,
+    )
 
 
 def test_json_safe_serializes_model_values() -> None:
@@ -28,12 +72,6 @@ def test_json_safe_serializes_model_values() -> None:
     assert ConnectorRuntimeService._json_safe(Result()) == {"items": [1, "two"]}
 
 
-def test_oauth_expiry_accepts_numeric_string() -> None:
-    expiry = _token_expiry("3600")
-
-    assert expiry is not None
-
-
 @pytest.mark.asyncio
 async def test_lists_only_allowlisted_tools_with_connector_namespace(
     test_db: Session,
@@ -41,22 +79,13 @@ async def test_lists_only_allowlisted_tools_with_connector_namespace(
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app = ConnectorApp(
+    _create_app(
+        test_db,
+        test_admin_user,
         slug="crm",
         name="CRM",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
-        transport="streamable-http",
-        mcp_url="https://mcp.example.test/crm",
-        oauth_scopes=[],
         tool_allowlist=["search"],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.commit()
 
     class Tool:
         name = "search"
@@ -72,16 +101,17 @@ async def test_lists_only_allowlisted_tools_with_connector_namespace(
 
     assert [tool.name for tool in tools] == ["crm__search"]
     assert tools[0].annotations == {"readOnlyHint": True}
-    upstream_tools.assert_awaited_once_with(test_db, app, None, test_user)
+    assert upstream_tools.await_args.args[0] is test_db
+    assert upstream_tools.await_args.args[1].slug == "crm"
+    assert upstream_tools.await_args.args[2] is test_user
 
 
 @pytest.mark.asyncio
 async def test_tool_discovery_isolates_an_unavailable_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    unavailable = ConnectorApp(id=1, slug="offline", name="Offline", tool_allowlist=[])
-    healthy = ConnectorApp(id=2, slug="docs", name="Docs", tool_allowlist=[])
-    connection = ConnectorConnection(status="connected")
+    unavailable = _app(id=1, slug="offline", name="Offline")
+    healthy = _app(id=2, slug="docs", name="Docs")
     user = SimpleNamespace(id=7)
 
     class Tool:
@@ -91,7 +121,7 @@ async def test_tool_discovery_isolates_an_unavailable_app(
         inputSchema = {"type": "object", "properties": {}}
         annotations = None
 
-    async def upstream_tools(_db, app, _connection, _user):
+    async def upstream_tools(_db, app, _user):
         if app.slug == "offline":
             raise HTTPException(502, "upstream unavailable")
         return [Tool()]
@@ -99,7 +129,7 @@ async def test_tool_discovery_isolates_an_unavailable_app(
     monkeypatch.setattr(
         ConnectorRuntimeService,
         "_connected_apps",
-        lambda _db, _user: [(unavailable, connection), (healthy, connection)],
+        lambda _db, _user: [unavailable, healthy],
     )
     monkeypatch.setattr(
         ConnectorRuntimeService,
@@ -201,28 +231,14 @@ async def test_mcp_session_initializes_streamable_http_transport(
 
 
 @pytest.mark.asyncio
-async def test_server_config_sends_trusted_user_headers(
-    test_db: Session,
-    test_admin_user: User,
-    test_user: User,
-) -> None:
-    app = ConnectorApp(
+async def test_server_config_sends_trusted_user_headers(test_user: User) -> None:
+    app = _app(
         slug="sites",
         name="Sites",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
-        transport="streamable-http",
-        mcp_url="https://mcp.example.test/sites",
-        oauth_scopes=[],
-        tool_allowlist=[],
         provider_headers_encrypted=_encrypt_json({"X-Provider": "configured"}),
-        created_by=test_admin_user.id,
     )
 
-    config = await ConnectorRuntimeService._server_config(test_db, app, None, test_user)
+    config = await ConnectorRuntimeService._server_config(app, test_user)
 
     assert config["headers"] == {
         "X-Provider": "configured",
@@ -238,23 +254,13 @@ async def test_call_preserves_mcp_content_and_error_state(
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app = ConnectorApp(
+    _create_app(
+        test_db,
+        test_admin_user,
         slug="tickets",
         name="Tickets",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
-        transport="streamable-http",
-        mcp_url="https://mcp.example.test/tickets",
-        oauth_scopes=[],
         tool_allowlist=["search"],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.commit()
-
     tool = SimpleNamespace(name="search")
 
     class ContentBlock:
@@ -299,30 +305,13 @@ async def test_rejects_direct_calls_outside_tool_allowlist(
     test_admin_user: User,
     test_user: User,
 ) -> None:
-    app = ConnectorApp(
+    _create_app(
+        test_db,
+        test_admin_user,
         slug="tickets",
         name="Tickets",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
-        transport="streamable-http",
-        mcp_url="https://mcp.example.test/tickets",
-        oauth_scopes=[],
         tool_allowlist=["search"],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.flush()
-    test_db.add(
-        ConnectorConnection(
-            user_id=test_user.id,
-            app_id=app.id,
-            status="connected",
-        )
-    )
-    test_db.commit()
 
     with pytest.raises(HTTPException) as exc_info:
         await ConnectorRuntimeService.call_tool(
@@ -339,17 +328,12 @@ async def test_http_connector_lists_and_calls_configured_tool(
     test_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    app = ConnectorApp(
+    _create_app(
+        test_db,
+        test_admin_user,
         slug="ticket-api",
         name="Ticket API",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
         transport="http",
-        mcp_url="https://tickets.example.test/api",
-        oauth_scopes=[],
         tool_allowlist=["get_ticket"],
         http_tools=[
             {
@@ -380,10 +364,7 @@ async def test_http_connector_lists_and_calls_configured_tool(
                 "argument_locations": {"id": "path"},
             },
         ],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.commit()
 
     async def send(
         _client: httpx.AsyncClient,
@@ -394,7 +375,7 @@ async def test_http_connector_lists_and_calls_configured_tool(
         assert stream is True
         assert request.method == "GET"
         assert str(request.url) == (
-            "https://tickets.example.test/api/tickets/T%2F42?expand=true"
+            "https://mcp.example.test/ticket-api/tickets/T%2F42?expand=true"
         )
         assert request.content == b""
         return httpx.Response(
@@ -427,7 +408,7 @@ async def test_http_connector_validates_arguments_before_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     definition = ConnectorRuntimeService._http_tool_definition(
-        ConnectorApp(
+        _app(
             http_tools=[
                 {
                     "name": "lookup",

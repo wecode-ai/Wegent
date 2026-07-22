@@ -2,28 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Connector app catalog, authorization, and credential services."""
+"""Connector app catalog services backed by the generic kinds table."""
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
-import secrets
-from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
-import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.connector import (
-    ConnectorApp,
-    ConnectorConnection,
-    ConnectorOAuthSession,
-)
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.connector import (
     ConnectorAppAdminResponse,
@@ -33,24 +25,55 @@ from app.schemas.connector import (
     ConnectorConnectionResponse,
     ConnectorHttpToolDefinition,
 )
-from shared.telemetry.decorators import trace_async
-from shared.utils.crypto import (
-    decrypt_sensitive_data_with_embedded_iv,
-    encrypt_sensitive_data_with_embedded_iv,
-)
+from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
-OAUTH_SESSION_TTL_MINUTES = 10
+CONNECTOR_APP_KIND = "ConnectorApp"
+CONNECTOR_APP_NAMESPACE = "system"
+CONNECTOR_APP_USER_ID = 0
+
+
+@dataclass
+class ConnectorApp:
+    """Runtime view of a connector app stored as a Kind resource."""
+
+    id: int
+    slug: str
+    name: str
+    description: str
+    icon_url: str | None
+    enabled: bool
+    visibility: str
+    allowed_roles: list[str]
+    auth_type: str
+    transport: str
+    mcp_url: str
+    oauth_authorization_url: str | None
+    oauth_token_url: str | None
+    oauth_client_id: str | None
+    oauth_client_auth_method: str
+    oauth_client_secret_encrypted: str | None
+    oauth_scopes: list[str]
+    provider_headers_encrypted: str | None
+    tool_allowlist: list[str]
+    http_tools: list[dict[str, Any]]
+    created_by: int | None
+    created_at: datetime
+    updated_at: datetime
+    row: Kind
 
 
 def _encrypt_json(value: dict[str, str]) -> str | None:
-    return encrypt_sensitive_data_with_embedded_iv(json.dumps(value)) if value else None
+    return encrypt_sensitive_data(json.dumps(value)) if value else None
 
 
 def _decrypt_json(value: str | None) -> dict[str, str]:
     if not value:
         return {}
-    decrypted = decrypt_sensitive_data_with_embedded_iv(value)
-    parsed = json.loads(decrypted or "{}")
+    decrypted = decrypt_sensitive_data(value)
+    try:
+        parsed = json.loads(decrypted or "{}")
+    except ValueError:
+        return {}
     if not isinstance(parsed, dict):
         return {}
     return {
@@ -60,81 +83,63 @@ def _decrypt_json(value: str | None) -> dict[str, str]:
     }
 
 
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _token_expiry(expires_in: object) -> datetime | None:
-    try:
-        seconds = int(expires_in) if expires_in is not None else 0
-    except (TypeError, ValueError):
-        return None
-    if seconds <= 0:
-        return None
-    return _utcnow() + timedelta(seconds=seconds)
+def _metadata(slug: str, display_name: str | None = None) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "name": slug,
+        "namespace": CONNECTOR_APP_NAMESPACE,
+    }
+    if display_name:
+        data["displayName"] = display_name
+    return data
 
 
 class ConnectorAppService:
-    """Own connector definitions and user-specific connection state."""
+    """Own administrator-managed connector definitions."""
 
     @staticmethod
     def create_app(
         db: Session, payload: ConnectorAppWrite, admin: User
     ) -> ConnectorApp:
-        if db.query(ConnectorApp).filter(ConnectorApp.slug == payload.slug).first():
+        ConnectorAppService._validate_no_user_authorization(payload.auth_type)
+        if ConnectorAppService._find_row_by_slug(db, payload.slug):
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Connector slug already exists"
             )
-        values = payload.model_dump(exclude={"oauth_client_secret", "provider_headers"})
-        app = ConnectorApp(
-            **values,
-            oauth_client_secret_encrypted=(
-                encrypt_sensitive_data_with_embedded_iv(payload.oauth_client_secret)
-                if payload.auth_type == "oauth2"
-                and payload.oauth_client_auth_method != "none"
-                and payload.oauth_client_secret
-                else None
-            ),
-            provider_headers_encrypted=_encrypt_json(payload.provider_headers),
-            created_by=admin.id,
+        ConnectorAppService._validate_configuration(
+            visibility=payload.visibility,
+            allowed_roles=payload.allowed_roles,
+            auth_type=payload.auth_type,
+            transport=payload.transport,
+            http_tools=payload.http_tools,
+            tool_allowlist=payload.tool_allowlist,
         )
-        db.add(app)
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Connector slug already exists"
-            ) from exc
-        db.refresh(app)
-        return app
+        row = Kind(
+            user_id=CONNECTOR_APP_USER_ID,
+            kind=CONNECTOR_APP_KIND,
+            name=payload.slug,
+            namespace=CONNECTOR_APP_NAMESPACE,
+            json=ConnectorAppService._payload(
+                payload=payload,
+                created_by=admin.id,
+            ),
+            is_active=True,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return ConnectorAppService._row_to_app(row)
 
     @staticmethod
     def update_app(
         db: Session, app: ConnectorApp, payload: ConnectorAppUpdate
     ) -> ConnectorApp:
-        security_fields = {
-            "enabled",
-            "visibility",
-            "allowed_roles",
-            "auth_type",
-            "mcp_url",
-            "oauth_authorization_url",
-            "oauth_token_url",
-            "oauth_client_id",
-            "oauth_client_auth_method",
-            "oauth_scopes",
-        }
-        invalidate_connections = any(
-            field in payload.model_fields_set
-            and getattr(payload, field) != getattr(app, field)
-            for field in security_fields
-        )
-        invalidate_connections = invalidate_connections or bool(
-            payload.oauth_client_secret
-            or (payload.clear_oauth_client_secret and app.oauth_client_secret_encrypted)
-        )
+        current = ConnectorAppService._spec(app.row)
+        next_auth_type = payload.auth_type or app.auth_type
+        ConnectorAppService._validate_no_user_authorization(next_auth_type)
+
         values = payload.model_dump(
+            mode="json",
+            by_alias=False,
             exclude_unset=True,
             exclude={
                 "oauth_client_secret",
@@ -143,53 +148,48 @@ class ConnectorAppService:
                 "clear_provider_headers",
             },
         )
-        secret_configured = bool(app.oauth_client_secret_encrypted)
-        if payload.oauth_client_secret is not None:
-            secret_configured = True
-        elif payload.clear_oauth_client_secret:
-            secret_configured = False
-        ConnectorAppService._validate_configuration(
-            visibility=values.get("visibility", app.visibility),
-            allowed_roles=values.get("allowed_roles", app.allowed_roles),
-            auth_type=values.get("auth_type", app.auth_type),
-            oauth_authorization_url=values.get(
-                "oauth_authorization_url", app.oauth_authorization_url
-            ),
-            oauth_token_url=values.get("oauth_token_url", app.oauth_token_url),
-            oauth_client_id=values.get("oauth_client_id", app.oauth_client_id),
-            oauth_client_auth_method=values.get(
-                "oauth_client_auth_method", app.oauth_client_auth_method
-            ),
-            oauth_client_secret_configured=secret_configured,
-            transport=values.get("transport", app.transport),
-            http_tools=values.get("http_tools", app.http_tools),
-            tool_allowlist=values.get("tool_allowlist", app.tool_allowlist),
-        )
         for key, value in values.items():
-            setattr(app, key, value)
+            current[ConnectorAppService._spec_key(key)] = value
+
         if payload.oauth_client_secret is not None:
-            app.oauth_client_secret_encrypted = encrypt_sensitive_data_with_embedded_iv(
+            current["oauthClientSecretEncrypted"] = encrypt_sensitive_data(
                 payload.oauth_client_secret
             )
         elif payload.clear_oauth_client_secret:
-            app.oauth_client_secret_encrypted = None
-        if app.auth_type != "oauth2" or app.oauth_client_auth_method == "none":
-            app.oauth_client_secret_encrypted = None
+            current.pop("oauthClientSecretEncrypted", None)
+
         if payload.provider_headers is not None:
-            app.provider_headers_encrypted = _encrypt_json(payload.provider_headers)
+            current["providerHeadersEncrypted"] = _encrypt_json(
+                payload.provider_headers
+            )
         elif payload.clear_provider_headers:
-            app.provider_headers_encrypted = None
-        if invalidate_connections:
-            db.query(ConnectorConnection).filter(
-                ConnectorConnection.app_id == app.id
-            ).delete(synchronize_session=False)
-            db.query(ConnectorOAuthSession).filter(
-                ConnectorOAuthSession.app_id == app.id,
-                ConnectorOAuthSession.consumed_at.is_(None),
-            ).delete(synchronize_session=False)
+            current.pop("providerHeadersEncrypted", None)
+
+        ConnectorAppService._validate_configuration(
+            visibility=str(current.get("visibility") or "all"),
+            allowed_roles=list(current.get("allowedRoles") or []),
+            auth_type=str(current.get("authType") or "none"),
+            transport=str(current.get("transport") or "streamable-http"),
+            http_tools=list(current.get("httpTools") or []),
+            tool_allowlist=list(current.get("toolAllowlist") or []),
+        )
+        data = dict(app.row.json or {})
+        data["spec"] = current
+        display_name = str(current.get("name") or app.slug)
+        data["metadata"] = _metadata(app.slug, display_name)
+        app.row.json = data
+        flag_modified(app.row, "json")
         db.commit()
-        db.refresh(app)
-        return app
+        db.refresh(app.row)
+        return ConnectorAppService._row_to_app(app.row)
+
+    @staticmethod
+    def _validate_no_user_authorization(auth_type: str) -> None:
+        if auth_type != "none":
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Connector user authorization is not supported",
+            )
 
     @staticmethod
     def _validate_configuration(
@@ -197,33 +197,13 @@ class ConnectorAppService:
         visibility: str,
         allowed_roles: list[str] | None,
         auth_type: str,
-        oauth_authorization_url: str | None,
-        oauth_token_url: str | None,
-        oauth_client_id: str | None,
-        oauth_client_auth_method: str,
-        oauth_client_secret_configured: bool,
         transport: str,
         http_tools: list[dict] | list[ConnectorHttpToolDefinition] | None,
         tool_allowlist: list[str] | None,
     ) -> None:
         if visibility == "roles" and not allowed_roles:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Roles required")
-        if auth_type == "oauth2" and not all(
-            (oauth_authorization_url, oauth_token_url, oauth_client_id)
-        ):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "OAuth URLs and client ID are required",
-            )
-        if (
-            auth_type == "oauth2"
-            and oauth_client_auth_method != "none"
-            and not oauth_client_secret_configured
-        ):
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "OAuth client secret is required for confidential clients",
-            )
+        ConnectorAppService._validate_no_user_authorization(auth_type)
         definitions = [
             (
                 item
@@ -256,19 +236,27 @@ class ConnectorAppService:
 
     @staticmethod
     def get_app(db: Session, app_id: int) -> ConnectorApp:
-        app = db.query(ConnectorApp).filter(ConnectorApp.id == app_id).first()
-        if not app:
+        row = (
+            db.query(Kind)
+            .filter(
+                Kind.id == app_id,
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not row:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
-        return app
+        return ConnectorAppService._row_to_app(row)
+
+    @staticmethod
+    def get_app_by_slug(db: Session, slug: str) -> ConnectorApp | None:
+        row = ConnectorAppService._find_row_by_slug(db, slug)
+        return ConnectorAppService._row_to_app(row) if row else None
 
     @staticmethod
     def admin_response(db: Session, app: ConnectorApp) -> ConnectorAppAdminResponse:
-        count = (
-            db.query(func.count(ConnectorConnection.id))
-            .filter(ConnectorConnection.app_id == app.id)
-            .scalar()
-            or 0
-        )
         provider_headers = _decrypt_json(app.provider_headers_encrypted)
         return ConnectorAppAdminResponse(
             id=app.id,
@@ -292,19 +280,28 @@ class ConnectorAppService:
             provider_headers_configured=bool(provider_headers),
             tool_allowlist=list(app.tool_allowlist or []),
             http_tools=list(app.http_tools or []),
-            connection_count=count,
+            connection_count=0,
             created_at=app.created_at,
             updated_at=app.updated_at,
         )
 
     @staticmethod
-    def list_visible_apps(db: Session, user: User) -> list[ConnectorApp]:
-        apps = (
-            db.query(ConnectorApp)
-            .filter(ConnectorApp.enabled.is_(True))
-            .order_by(ConnectorApp.name, ConnectorApp.id)
+    def list_all_apps(db: Session) -> list[ConnectorApp]:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.is_active == True,
+            )
+            .order_by(Kind.name, Kind.id)
             .all()
         )
+        return [ConnectorAppService._row_to_app(row) for row in rows]
+
+    @staticmethod
+    def list_visible_apps(db: Session, user: User) -> list[ConnectorApp]:
+        apps = [app for app in ConnectorAppService.list_all_apps(db) if app.enabled]
         return [
             app
             for app in apps
@@ -312,35 +309,9 @@ class ConnectorAppService:
         ]
 
     @staticmethod
-    def connection(
-        db: Session, user_id: int, app_id: int
-    ) -> ConnectorConnection | None:
-        return (
-            db.query(ConnectorConnection)
-            .filter(
-                ConnectorConnection.user_id == user_id,
-                ConnectorConnection.app_id == app_id,
-            )
-            .first()
-        )
-
-    @staticmethod
     def user_response(
         db: Session, app: ConnectorApp, user: User
     ) -> ConnectorAppResponse:
-        connection = ConnectorAppService.connection(db, user.id, app.id)
-        connection_status = (
-            connection.status
-            if connection
-            else "connected" if app.auth_type == "none" else "disconnected"
-        )
-        if (
-            connection
-            and connection.expires_at
-            and connection.expires_at <= _utcnow()
-            and not connection.refresh_token_encrypted
-        ):
-            connection_status = "expired"
         return ConnectorAppResponse(
             id=app.id,
             slug=app.slug,
@@ -349,268 +320,125 @@ class ConnectorAppService:
             icon_url=app.icon_url,
             auth_type=app.auth_type,
             connection=ConnectorConnectionResponse(
-                status=connection_status,
-                external_account_name=(
-                    connection.external_account_name if connection else None
-                ),
-                granted_scopes=(
-                    list(connection.granted_scopes or []) if connection else []
-                ),
-                expires_at=connection.expires_at if connection else None,
+                status="connected",
+                external_account_name=None,
+                granted_scopes=[],
+                expires_at=None,
             ),
         )
 
     @staticmethod
-    def connect_without_oauth(
-        db: Session,
-        app: ConnectorApp,
-        user: User,
-        *,
-        bearer_token: str | None = None,
-        account_name: str | None = None,
-    ) -> ConnectorConnection:
-        if app.auth_type == "bearer" and not bearer_token:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Token required")
-        connection = ConnectorAppService.connection(db, user.id, app.id)
-        if not connection:
-            connection = ConnectorConnection(user_id=user.id, app_id=app.id)
-            db.add(connection)
-        connection.status = "connected"
-        connection.external_account_name = account_name
-        connection.access_token_encrypted = (
-            encrypt_sensitive_data_with_embedded_iv(bearer_token)
-            if bearer_token
-            else None
-        )
-        connection.refresh_token_encrypted = None
-        connection.token_type = "Bearer" if bearer_token else None
-        connection.granted_scopes = []
-        connection.expires_at = None
-        db.commit()
-        db.refresh(connection)
-        return connection
-
-    @staticmethod
-    def disconnect(db: Session, app: ConnectorApp, user: User) -> None:
-        connection = ConnectorAppService.connection(db, user.id, app.id)
-        if connection:
-            db.delete(connection)
-        deleted_sessions = (
-            db.query(ConnectorOAuthSession)
-            .filter(
-                ConnectorOAuthSession.user_id == user.id,
-                ConnectorOAuthSession.app_id == app.id,
-                ConnectorOAuthSession.consumed_at.is_(None),
-            )
-            .delete(synchronize_session=False)
-        )
-        if connection or deleted_sessions:
-            db.commit()
-
-    @staticmethod
     def disable_app(db: Session, app: ConnectorApp) -> None:
-        """Disable an app and revoke every stored user authorization."""
-        app.enabled = False
-        db.query(ConnectorConnection).filter(
-            ConnectorConnection.app_id == app.id
-        ).delete(synchronize_session=False)
-        db.query(ConnectorOAuthSession).filter(
-            ConnectorOAuthSession.app_id == app.id
-        ).delete(synchronize_session=False)
+        app.row.is_active = False
+        spec = ConnectorAppService._spec(app.row)
+        spec["enabled"] = False
+        data = dict(app.row.json or {})
+        data["spec"] = spec
+        app.row.json = data
+        flag_modified(app.row, "json")
         db.commit()
 
     @staticmethod
-    def begin_oauth(
-        db: Session, app: ConnectorApp, user: User, callback_url: str
-    ) -> str:
-        if app.auth_type != "oauth2":
-            raise HTTPException(status.HTTP_409_CONFLICT, "App does not use OAuth")
-        state = secrets.token_urlsafe(32)
-        verifier = secrets.token_urlsafe(64)
-        challenge = (
-            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-            .decode()
-            .rstrip("=")
+    def _find_row_by_slug(db: Session, slug: str) -> Kind | None:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
+                Kind.name == slug,
+                Kind.is_active == True,
+            )
+            .first()
         )
-        connection = ConnectorAppService.connection(db, user.id, app.id)
-        if not connection:
-            connection = ConnectorConnection(user_id=user.id, app_id=app.id)
-            db.add(connection)
-        connection.status = "pending"
-        db.query(ConnectorOAuthSession).filter(
-            ConnectorOAuthSession.expires_at <= _utcnow()
-        ).delete(synchronize_session=False)
-        db.query(ConnectorOAuthSession).filter(
-            ConnectorOAuthSession.user_id == user.id,
-            ConnectorOAuthSession.app_id == app.id,
-            ConnectorOAuthSession.consumed_at.is_(None),
-        ).delete(synchronize_session=False)
-        db.add(
-            ConnectorOAuthSession(
-                state_hash=hashlib.sha256(state.encode()).hexdigest(),
-                user_id=user.id,
-                app_id=app.id,
-                redirect_uri=callback_url,
-                code_verifier_encrypted=encrypt_sensitive_data_with_embedded_iv(
-                    verifier
+
+    @staticmethod
+    def _payload(payload: ConnectorAppWrite, created_by: int) -> dict[str, Any]:
+        return {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": CONNECTOR_APP_KIND,
+            "metadata": _metadata(payload.slug, payload.name),
+            "spec": {
+                "name": payload.name,
+                "description": payload.description,
+                "iconUrl": payload.icon_url,
+                "enabled": payload.enabled,
+                "visibility": payload.visibility,
+                "allowedRoles": payload.allowed_roles,
+                "authType": payload.auth_type,
+                "transport": payload.transport,
+                "mcpUrl": payload.mcp_url,
+                "oauthAuthorizationUrl": payload.oauth_authorization_url,
+                "oauthTokenUrl": payload.oauth_token_url,
+                "oauthClientId": payload.oauth_client_id,
+                "oauthClientAuthMethod": payload.oauth_client_auth_method,
+                "oauthClientSecretEncrypted": (
+                    encrypt_sensitive_data(payload.oauth_client_secret)
+                    if payload.oauth_client_secret
+                    else None
                 ),
-                expires_at=_utcnow() + timedelta(minutes=OAUTH_SESSION_TTL_MINUTES),
-            )
-        )
-        db.commit()
-        authorization_url = urlsplit(app.oauth_authorization_url)
-        query = urlencode(
-            {
-                **dict(parse_qsl(authorization_url.query, keep_blank_values=True)),
-                "response_type": "code",
-                "client_id": app.oauth_client_id,
-                "redirect_uri": callback_url,
-                "scope": " ".join(app.oauth_scopes or []),
-                "state": state,
-                "code_challenge": challenge,
-                "code_challenge_method": "S256",
-            }
-        )
-        return urlunsplit(authorization_url._replace(query=query))
-
-    @staticmethod
-    def fail_oauth(db: Session, *, state: str) -> None:
-        state_hash = hashlib.sha256(state.encode()).hexdigest()
-        session = (
-            db.query(ConnectorOAuthSession)
-            .filter(ConnectorOAuthSession.state_hash == state_hash)
-            .with_for_update()
-            .first()
-        )
-        if not session or session.consumed_at or session.expires_at <= _utcnow():
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth session is invalid")
-        connection = ConnectorAppService.connection(db, session.user_id, session.app_id)
-        if connection:
-            connection.status = "error"
-        session.consumed_at = _utcnow()
-        db.commit()
-
-    @staticmethod
-    @trace_async("connector.oauth.complete", "backend.connector")
-    async def complete_oauth(
-        db: Session, *, state: str, code: str
-    ) -> ConnectorConnection:
-        state_hash = hashlib.sha256(state.encode()).hexdigest()
-        session = (
-            db.query(ConnectorOAuthSession)
-            .filter(ConnectorOAuthSession.state_hash == state_hash)
-            .with_for_update()
-            .first()
-        )
-        if not session or session.consumed_at or session.expires_at <= _utcnow():
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth session is invalid")
-        app = ConnectorAppService.get_app(db, session.app_id)
-        user = (
-            db.query(User)
-            .filter(User.id == session.user_id, User.is_active.is_(True))
-            .first()
-        )
-        visible_app_ids = (
-            {item.id for item in ConnectorAppService.list_visible_apps(db, user)}
-            if user
-            else set()
-        )
-        if app.id not in visible_app_ids:
-            session.consumed_at = _utcnow()
-            db.commit()
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "Connector authorization is no longer allowed",
-            )
-        secret = (
-            decrypt_sensitive_data_with_embedded_iv(
-                app.oauth_client_secret_encrypted or ""
-            )
-            or ""
-        )
-        verifier = (
-            decrypt_sensitive_data_with_embedded_iv(session.code_verifier_encrypted)
-            or ""
-        )
-        data = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": session.redirect_uri,
-            "client_id": app.oauth_client_id,
-            "code_verifier": verifier,
+                "oauthScopes": payload.oauth_scopes,
+                "providerHeadersEncrypted": _encrypt_json(payload.provider_headers),
+                "toolAllowlist": payload.tool_allowlist,
+                "httpTools": [
+                    item.model_dump(mode="json") for item in payload.http_tools
+                ],
+                "createdBy": created_by,
+            },
         }
-        request_auth = None
-        if secret and app.oauth_client_auth_method == "client_secret_basic":
-            request_auth = (app.oauth_client_id, secret)
-        elif secret and app.oauth_client_auth_method == "client_secret_post":
-            data["client_secret"] = secret
-        session.consumed_at = _utcnow()
-        db.commit()
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    app.oauth_token_url, data=data, auth=request_auth
-                )
-        except httpx.HTTPError as exc:
-            ConnectorAppService._set_oauth_connection_error(db, session)
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed"
-            ) from exc
-        if response.is_error:
-            ConnectorAppService._set_oauth_connection_error(db, session)
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, "OAuth token exchange failed"
-            )
-        try:
-            token = response.json()
-        except ValueError as exc:
-            ConnectorAppService._set_oauth_connection_error(db, session)
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, "OAuth token response is invalid"
-            ) from exc
-        if not isinstance(token, dict):
-            ConnectorAppService._set_oauth_connection_error(db, session)
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY, "OAuth token response is invalid"
-            )
-        access_token = token.get("access_token")
-        if not isinstance(access_token, str) or not access_token:
-            ConnectorAppService._set_oauth_connection_error(db, session)
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth token is missing")
-        connection = ConnectorAppService.connection(db, session.user_id, app.id)
-        if not connection:
-            connection = ConnectorConnection(user_id=session.user_id, app_id=app.id)
-            db.add(connection)
-        connection.status = "connected"
-        connection.access_token_encrypted = encrypt_sensitive_data_with_embedded_iv(
-            access_token
-        )
-        refresh_token = token.get("refresh_token")
-        connection.refresh_token_encrypted = (
-            encrypt_sensitive_data_with_embedded_iv(refresh_token)
-            if isinstance(refresh_token, str) and refresh_token
-            else None
-        )
-        connection.token_type = str(token.get("token_type") or "Bearer")
-        raw_scope = token.get("scope")
-        connection.granted_scopes = (
-            raw_scope.split()
-            if isinstance(raw_scope, str)
-            else list(app.oauth_scopes or [])
-        )
-        connection.expires_at = _token_expiry(token.get("expires_in"))
-        db.commit()
-        db.refresh(connection)
-        return connection
 
     @staticmethod
-    def _set_oauth_connection_error(
-        db: Session, session: ConnectorOAuthSession
-    ) -> None:
-        connection = ConnectorAppService.connection(db, session.user_id, session.app_id)
-        if connection:
-            connection.status = "error"
-        db.commit()
+    def _spec(row: Kind) -> dict[str, Any]:
+        data = row.json or {}
+        spec = data.get("spec") if isinstance(data, dict) else {}
+        return dict(spec or {})
+
+    @staticmethod
+    def _row_to_app(row: Kind) -> ConnectorApp:
+        spec = ConnectorAppService._spec(row)
+        return ConnectorApp(
+            id=row.id,
+            slug=row.name,
+            name=str(spec.get("name") or row.name),
+            description=str(spec.get("description") or ""),
+            icon_url=spec.get("iconUrl"),
+            enabled=bool(spec.get("enabled", True)),
+            visibility=str(spec.get("visibility") or "all"),
+            allowed_roles=list(spec.get("allowedRoles") or []),
+            auth_type=str(spec.get("authType") or "none"),
+            transport=str(spec.get("transport") or "streamable-http"),
+            mcp_url=str(spec.get("mcpUrl") or ""),
+            oauth_authorization_url=spec.get("oauthAuthorizationUrl"),
+            oauth_token_url=spec.get("oauthTokenUrl"),
+            oauth_client_id=spec.get("oauthClientId"),
+            oauth_client_auth_method=str(
+                spec.get("oauthClientAuthMethod") or "client_secret_post"
+            ),
+            oauth_client_secret_encrypted=spec.get("oauthClientSecretEncrypted"),
+            oauth_scopes=list(spec.get("oauthScopes") or []),
+            provider_headers_encrypted=spec.get("providerHeadersEncrypted"),
+            tool_allowlist=list(spec.get("toolAllowlist") or []),
+            http_tools=list(spec.get("httpTools") or []),
+            created_by=spec.get("createdBy"),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            row=row,
+        )
+
+    @staticmethod
+    def _spec_key(field: str) -> str:
+        return {
+            "icon_url": "iconUrl",
+            "allowed_roles": "allowedRoles",
+            "auth_type": "authType",
+            "mcp_url": "mcpUrl",
+            "oauth_authorization_url": "oauthAuthorizationUrl",
+            "oauth_token_url": "oauthTokenUrl",
+            "oauth_client_id": "oauthClientId",
+            "oauth_client_auth_method": "oauthClientAuthMethod",
+            "oauth_scopes": "oauthScopes",
+            "tool_allowlist": "toolAllowlist",
+            "http_tools": "httpTools",
+        }.get(field, field)
 
 
 connector_app_service = ConnectorAppService()

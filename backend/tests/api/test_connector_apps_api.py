@@ -4,22 +4,21 @@
 
 """API coverage for administrator-managed connector apps."""
 
-from urllib.parse import parse_qs, urlsplit
-
-import httpx
-import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.connector import (
-    ConnectorApp,
-    ConnectorConnection,
-    ConnectorOAuthSession,
-)
+from app.models.kind import Kind
 from app.models.user import User
-from shared.utils.crypto import decrypt_sensitive_data_with_embedded_iv
+from app.schemas.connector import ConnectorAppWrite
+from app.services.connector_apps import (
+    CONNECTOR_APP_KIND,
+    CONNECTOR_APP_NAMESPACE,
+    ConnectorAppService,
+    connector_app_service,
+)
+from shared.utils.crypto import decrypt_sensitive_data
 
 
 def _admin_headers(token: str) -> dict[str, str]:
@@ -34,7 +33,7 @@ def _app_payload(**overrides):
         "enabled": True,
         "visibility": "all",
         "allowed_roles": [],
-        "auth_type": "bearer",
+        "auth_type": "none",
         "mcp_url": "https://mcp.example.test/tickets",
         "oauth_scopes": [],
         "provider_headers": {"X-Tenant": "internal-secret"},
@@ -42,6 +41,32 @@ def _app_payload(**overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _create_app(
+    db: Session,
+    admin: User,
+    **overrides,
+):
+    payload = _app_payload(**overrides)
+    return connector_app_service.create_app(
+        db,
+        ConnectorAppWrite.model_validate(payload),
+        admin,
+    )
+
+
+def _connector_kind(db: Session, slug: str) -> Kind:
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.kind == CONNECTOR_APP_KIND,
+            Kind.namespace == CONNECTOR_APP_NAMESPACE,
+            Kind.name == slug,
+            Kind.is_active == True,
+        )
+        .one()
+    )
 
 
 def test_admin_can_publish_app_without_secret_disclosure(
@@ -62,11 +87,10 @@ def test_admin_can_publish_app_without_secret_disclosure(
     assert body["provider_header_names"] == ["X-Tenant"]
     assert "provider_headers" not in body
 
-    stored = test_db.query(ConnectorApp).filter_by(slug="tickets").one()
-    assert stored.provider_headers_encrypted != '{"X-Tenant":"internal-secret"}'
-    assert "internal-secret" in decrypt_sensitive_data_with_embedded_iv(
-        stored.provider_headers_encrypted
-    )
+    stored = _connector_kind(test_db, "tickets")
+    encrypted_headers = stored.json["spec"]["providerHeadersEncrypted"]
+    assert encrypted_headers != '{"X-Tenant":"internal-secret"}'
+    assert "internal-secret" in decrypt_sensitive_data(encrypted_headers)
 
     preserve_response = test_client.patch(
         f"/api/admin/connector-apps/{stored.id}",
@@ -85,76 +109,40 @@ def test_admin_can_publish_app_without_secret_disclosure(
     assert clear_response.json()["provider_headers_configured"] is False
 
 
-def test_oauth_confidential_client_requires_secret(
+def test_authorization_connector_types_are_rejected(
     test_client: TestClient,
     test_admin_token: str,
 ):
-    oauth_payload = _app_payload(
-        slug="oauth-confidential",
-        name="OAuth confidential",
-        auth_type="oauth2",
-        oauth_authorization_url="https://id.example.test/authorize",
-        oauth_token_url="https://id.example.test/token",
-        oauth_client_id="wegent-client",
-        oauth_client_auth_method="client_secret_basic",
-        provider_headers={},
-    )
-
-    missing_secret = test_client.post(
+    bearer_response = test_client.post(
         "/api/admin/connector-apps",
         headers=_admin_headers(test_admin_token),
-        json=oauth_payload,
+        json=_app_payload(slug="bearer-app", auth_type="bearer"),
     )
-    public_client = test_client.post(
+    oauth_response = test_client.post(
         "/api/admin/connector-apps",
         headers=_admin_headers(test_admin_token),
-        json={
-            **oauth_payload,
-            "slug": "oauth-public",
-            "oauth_client_auth_method": "none",
-        },
+        json=_app_payload(
+            slug="oauth-app",
+            auth_type="oauth2",
+            oauth_authorization_url="https://id.example.test/authorize",
+            oauth_token_url="https://id.example.test/token",
+            oauth_client_id="wegent-client",
+        ),
     )
 
-    assert missing_secret.status_code == 422
-    assert public_client.status_code == 201
-    assert public_client.json()["oauth_client_secret_configured"] is False
+    assert bearer_response.status_code == 422
+    assert oauth_response.status_code == 422
 
 
-def test_user_connects_bearer_app_and_receives_scoped_runtime_token(
+def test_runtime_token_is_scoped_to_connector_invocation(
     test_client: TestClient,
-    test_db: Session,
-    test_admin_user: User,
     test_user: User,
     test_token: str,
 ):
-    app = ConnectorApp(
-        slug="knowledge",
-        name="Knowledge",
-        description="Internal knowledge",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="bearer",
-        mcp_url="https://mcp.example.test/knowledge",
-        oauth_scopes=[],
-        tool_allowlist=[],
-        created_by=test_admin_user.id,
-    )
-    test_db.add(app)
-    test_db.commit()
-    test_db.refresh(app)
-
-    connect_response = test_client.put(
-        f"/api/connector-apps/{app.id}/credential",
-        headers=_admin_headers(test_token),
-        json={"token": "user-secret", "account_name": "alice@example.test"},
-    )
     token_response = test_client.post(
         "/api/connector-runtime/token", headers=_admin_headers(test_token)
     )
 
-    assert connect_response.status_code == 200
-    assert connect_response.json()["connection"]["status"] == "connected"
     assert token_response.status_code == 200
     assert token_response.json()["expires_in"] == 900
     claims = jwt.decode(
@@ -167,16 +155,6 @@ def test_user_connects_bearer_app_and_receives_scoped_runtime_token(
     assert claims["user_id"] == test_user.id
     assert claims["token_type"] == "connector"
     assert claims["scope"] == "connectors:invoke"
-    connection = (
-        test_db.query(ConnectorConnection)
-        .filter_by(user_id=test_user.id, app_id=app.id)
-        .one()
-    )
-    assert connection.access_token_encrypted != "user-secret"
-    assert (
-        decrypt_sensitive_data_with_embedded_iv(connection.access_token_encrypted)
-        == "user-secret"
-    )
 
     invalid_runtime_response = test_client.get(
         "/api/connector-runtime/tools", headers=_admin_headers(test_token)
@@ -191,37 +169,16 @@ def test_role_visibility_is_enforced_for_user_catalog(
     test_user: User,
     test_token: str,
 ):
-    test_db.add_all(
-        [
-            ConnectorApp(
-                slug="public-app",
-                name="Public",
-                description="",
-                enabled=True,
-                visibility="all",
-                allowed_roles=[],
-                auth_type="none",
-                mcp_url="https://mcp.example.test/public",
-                oauth_scopes=[],
-                tool_allowlist=[],
-                created_by=test_admin_user.id,
-            ),
-            ConnectorApp(
-                slug="admin-app",
-                name="Admin only",
-                description="",
-                enabled=True,
-                visibility="roles",
-                allowed_roles=["admin"],
-                auth_type="none",
-                mcp_url="https://mcp.example.test/admin",
-                oauth_scopes=[],
-                tool_allowlist=[],
-                created_by=test_admin_user.id,
-            ),
-        ]
+    _create_app(test_db, test_admin_user, slug="public-app", name="Public")
+    _create_app(
+        test_db,
+        test_admin_user,
+        slug="admin-app",
+        name="Admin only",
+        visibility="roles",
+        allowed_roles=["admin"],
+        tool_allowlist=[],
     )
-    test_db.commit()
 
     response = test_client.get(
         "/api/connector-apps", headers=_admin_headers(test_token)
@@ -233,78 +190,19 @@ def test_role_visibility_is_enforced_for_user_catalog(
     assert test_user.role != "admin"
 
 
-def test_changing_security_boundary_revokes_existing_connections(
+def test_disabling_app_soft_deletes_connector_kind(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
     test_admin_token: str,
-    test_user: User,
 ):
-    app = ConnectorApp(
-        slug="revoke-on-change",
-        name="Revoked on change",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="bearer",
-        mcp_url="https://mcp.example.test/revoke",
-        oauth_scopes=[],
-        tool_allowlist=[],
-        created_by=test_admin_user.id,
-    )
-    test_db.add(app)
-    test_db.flush()
-    test_db.add(
-        ConnectorConnection(
-            user_id=test_user.id,
-            app_id=app.id,
-            status="connected",
-            access_token_encrypted="encrypted",
-        )
-    )
-    test_db.commit()
-
-    response = test_client.patch(
-        f"/api/admin/connector-apps/{app.id}",
-        headers=_admin_headers(test_admin_token),
-        json={"mcp_url": "https://mcp.example.test/replacement"},
-    )
-
-    assert response.status_code == 200
-    assert test_db.query(ConnectorConnection).filter_by(app_id=app.id).count() == 0
-
-
-def test_disabling_app_revokes_existing_connections(
-    test_client: TestClient,
-    test_db: Session,
-    test_admin_user: User,
-    test_admin_token: str,
-    test_user: User,
-):
-    app = ConnectorApp(
+    app = _create_app(
+        test_db,
+        test_admin_user,
         slug="disabled-app",
         name="Disabled app",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
-        mcp_url="https://mcp.example.test/disabled",
-        oauth_scopes=[],
         tool_allowlist=[],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.flush()
-    test_db.add(
-        ConnectorConnection(
-            user_id=test_user.id,
-            app_id=app.id,
-            status="connected",
-        )
-    )
-    test_db.commit()
 
     response = test_client.delete(
         f"/api/admin/connector-apps/{app.id}",
@@ -312,111 +210,42 @@ def test_disabling_app_revokes_existing_connections(
     )
 
     assert response.status_code == 204
-    assert test_db.query(ConnectorConnection).filter_by(app_id=app.id).count() == 0
-    test_db.refresh(app)
-    assert app.enabled is False
+    row = test_db.query(Kind).filter(Kind.id == app.id).one()
+    assert row.is_active is False
+    assert row.json["spec"]["enabled"] is False
 
 
-def test_oauth_authorization_uses_server_callback_state_and_pkce(
+def test_removed_authorization_endpoints_return_not_found(
     test_client: TestClient,
     test_db: Session,
     test_admin_user: User,
-    test_user: User,
     test_token: str,
-    monkeypatch: pytest.MonkeyPatch,
 ):
-    app = ConnectorApp(
-        slug="oauth-docs",
-        name="OAuth Docs",
-        description="",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="oauth2",
-        mcp_url="https://mcp.example.test/docs",
-        oauth_authorization_url="https://id.example.test/authorize?tenant=internal",
-        oauth_token_url="https://id.example.test/token",
-        oauth_client_id="wegent-client",
-        oauth_scopes=["docs.read"],
+    app = _create_app(
+        test_db,
+        test_admin_user,
+        slug="catalog-only",
+        name="Catalog only",
         tool_allowlist=[],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.commit()
 
-    response = test_client.post(
+    authorize_response = test_client.post(
         f"/api/connector-apps/{app.id}/authorize",
         headers=_admin_headers(test_token),
     )
-
-    assert response.status_code == 200
-    authorization_url = response.json()["authorization_url"]
-    query = parse_qs(urlsplit(authorization_url).query)
-    assert query["tenant"] == ["internal"]
-    assert query["client_id"] == ["wegent-client"]
-    assert query["scope"] == ["docs.read"]
-    assert query["code_challenge_method"] == ["S256"]
-    assert query["redirect_uri"][0].endswith("/api/connector-apps/oauth/callback")
-    assert "client_secret" not in query
-    session = test_db.query(ConnectorOAuthSession).filter_by(app_id=app.id).one()
-    assert session.state_hash != query["state"][0]
-    connection = (
-        test_db.query(ConnectorConnection)
-        .filter_by(user_id=test_user.id, app_id=app.id)
-        .one()
+    credential_response = test_client.put(
+        f"/api/connector-apps/{app.id}/credential",
+        headers=_admin_headers(test_token),
+        json={"token": "user-secret"},
     )
-    assert connection.status == "pending"
-
-    async def exchange_token(
-        _: httpx.AsyncClient,
-        url: str,
-        *,
-        data: dict[str, str],
-        auth: object,
-    ) -> httpx.Response:
-        assert url == "https://id.example.test/token"
-        assert data["code"] == "provider-code"
-        assert data["code_verifier"]
-        assert auth is None
-        return httpx.Response(
-            200,
-            json={
-                "access_token": "oauth-access-token",
-                "refresh_token": "oauth-refresh-token",
-                "token_type": "Bearer",
-                "scope": "docs.read",
-                "expires_in": "3600",
-            },
-        )
-
-    monkeypatch.setattr(httpx.AsyncClient, "post", exchange_token)
     callback_response = test_client.get(
         "/api/connector-apps/oauth/callback",
-        params={"state": query["state"][0], "code": "provider-code"},
+        params={"state": "state", "code": "provider-code"},
     )
 
-    assert callback_response.status_code == 200
-    test_db.refresh(connection)
-    assert connection.status == "connected"
-    assert (
-        decrypt_sensitive_data_with_embedded_iv(connection.access_token_encrypted)
-        == "oauth-access-token"
-    )
-    assert (
-        decrypt_sensitive_data_with_embedded_iv(connection.refresh_token_encrypted)
-        == "oauth-refresh-token"
-    )
-    test_db.refresh(session)
-    assert session.consumed_at is not None
-
-
-def test_oauth_callback_rejects_oversized_parameters(test_client: TestClient):
-    response = test_client.get(
-        "/api/connector-apps/oauth/callback",
-        params={"state": "s" * 513, "code": "provider-code"},
-    )
-
-    assert response.status_code == 422
+    assert authorize_response.status_code == 404
+    assert credential_response.status_code == 404
+    assert callback_response.status_code == 404
 
 
 def test_admin_can_publish_http_api_as_connector_tools(
@@ -431,7 +260,6 @@ def test_admin_can_publish_http_api_as_connector_tools(
             name="Ticket HTTP API",
             transport="http",
             mcp_url="https://tickets.example.test/api",
-            auth_type="none",
             provider_headers={},
             http_tools=[
                 {
@@ -467,7 +295,6 @@ def test_http_connector_requires_valid_tool_definitions(
         json=_app_payload(
             slug="http-empty",
             transport="http",
-            auth_type="none",
             provider_headers={},
         ),
     )
@@ -477,7 +304,6 @@ def test_http_connector_requires_valid_tool_definitions(
         json=_app_payload(
             slug="http-unsafe",
             transport="http",
-            auth_type="none",
             provider_headers={},
             http_tools=[
                 {
@@ -495,7 +321,6 @@ def test_http_connector_requires_valid_tool_definitions(
         json=_app_payload(
             slug="http-unknown-tool",
             transport="http",
-            auth_type="none",
             provider_headers={},
             http_tools=[
                 {
@@ -520,17 +345,15 @@ def test_apps_projection_lists_reads_and_installs_callable_connector(
     test_admin_user: User,
     test_token: str,
 ):
-    app = ConnectorApp(
+    _create_app(
+        test_db,
+        test_admin_user,
         slug="projection-api",
         name="Projection API",
         description="Projection coverage",
-        enabled=True,
-        visibility="all",
-        allowed_roles=[],
-        auth_type="none",
         transport="http",
         mcp_url="https://projection.example.test/api",
-        oauth_scopes=[],
+        provider_headers={},
         tool_allowlist=["lookup"],
         http_tools=[
             {
@@ -541,10 +364,7 @@ def test_apps_projection_lists_reads_and_installs_callable_connector(
                 "input_schema": {"type": "object", "properties": {}},
             }
         ],
-        created_by=test_admin_user.id,
     )
-    test_db.add(app)
-    test_db.commit()
 
     list_response = test_client.get(
         "/api/apps/list", headers=_admin_headers(test_token)
@@ -606,7 +426,6 @@ def test_admin_can_register_wegent_sites_mcp_connector(
             slug="wegent-sites",
             name="Wegent Sites",
             description="Create, version, deploy, inspect, and roll back Wegent Sites projects.",
-            auth_type="none",
             transport="streamable-http",
             mcp_url="https://sites.example.test/mcp",
             provider_headers={"Authorization": "Bearer mcp-token"},
@@ -620,7 +439,8 @@ def test_admin_can_register_wegent_sites_mcp_connector(
     assert body["provider_headers_configured"] is True
     assert body["provider_header_names"] == ["Authorization"]
 
-    app = test_db.query(ConnectorApp).filter_by(slug="wegent-sites").one()
+    app = ConnectorAppService.get_app_by_slug(test_db, "wegent-sites")
+    assert app is not None
     assert app.name == "Wegent Sites"
     assert app.transport == "streamable-http"
     assert app.auth_type == "none"

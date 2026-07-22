@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_admin_user
-from app.models.connector import ConnectorApp
 from app.models.user import User
 from app.schemas.connector import (
     ConnectorAppAdminResponse,
@@ -29,7 +28,7 @@ router = APIRouter(prefix="/connector-apps")
 def list_connector_apps(
     db: Session = Depends(get_db), _: User = Depends(get_admin_user)
 ) -> list[ConnectorAppAdminResponse]:
-    apps = db.query(ConnectorApp).order_by(ConnectorApp.name, ConnectorApp.id).all()
+    apps = connector_app_service.list_all_apps(db)
     return [connector_app_service.admin_response(db, app) for app in apps]
 
 
@@ -61,13 +60,10 @@ async def discover_connector_tools(
     admin: User = Depends(get_admin_user),
 ) -> ConnectorToolListResponse:
     app = connector_app_service.get_app(db, app_id)
-    connection = connector_app_service.connection(db, admin.id, app.id)
     if app.transport == "http":
         tools = connector_runtime_service._http_tools(app)
     else:
-        upstream_tools = await connector_runtime_service._upstream_tools(
-            db, app, connection, admin
-        )
+        upstream_tools = await connector_runtime_service._upstream_tools(db, app, admin)
         tools = []
         for tool in upstream_tools:
             tools.append(connector_runtime_service._tool_from_upstream(app, tool))
