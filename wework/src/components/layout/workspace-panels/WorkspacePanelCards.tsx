@@ -24,6 +24,7 @@ import {
   openLocalWorkspace,
   startLocalTerminal,
 } from '@/lib/local-terminal'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { DeviceInfo, ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 import type { DeviceSessionResponse } from '@/types/devices'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -138,12 +139,28 @@ export function WorkspacePanelCards({
   const activeWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? getProjectLocalPath(currentProject) : undefined)
   const projectDevice = activeWorkspaceDeviceId
-    ? devices.find(device => device.device_id === activeWorkspaceDeviceId)
+    ? (findWorkbenchDevice(devices, activeWorkspaceDeviceId) ?? undefined)
     : undefined
+  const cloudToolsAvailable = Boolean(
+    projectDevice && supportsCloudSessions(projectDevice, activeWorkspaceDeviceId)
+  )
+  const remoteTerminalAvailable = Boolean(
+    projectDevice && supportsRemoteTerminalSessions(projectDevice, activeWorkspaceDeviceId)
+  )
+  const remoteIdeAvailable = Boolean(
+    projectDevice &&
+    (supportsCloudSessions(projectDevice, activeWorkspaceDeviceId) ||
+      supportsRemoteSessions(projectDevice, activeWorkspaceDeviceId) ||
+      remoteTerminalAvailable)
+  )
+  const remoteWorkspaceSession = Boolean(
+    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
+  )
   const localProjectConfigTerminal =
     workspaceSource !== 'runtime' && (preferLocalTerminal || usesLocalProjectConfig(currentProject))
   const localTerminalSupported = Boolean(
-    localProjectConfigTerminal || (projectDevice && supportsLocalTerminalLaunch(projectDevice))
+    !remoteWorkspaceSession &&
+    (localProjectConfigTerminal || (projectDevice && supportsLocalTerminalLaunch(projectDevice)))
   )
   const localTerminalRuntimeAvailable = isLocalTerminalAvailable()
   const localTerminalCheckKey = [
@@ -159,13 +176,6 @@ export function WorkspacePanelCards({
     pathExists: false,
   })
   const localTerminalCheckReady = localTerminalCheck.key === localTerminalCheckKey
-  const cloudToolsAvailable = Boolean(projectDevice && supportsCloudSessions(projectDevice))
-  const remoteIdeAvailable = Boolean(
-    projectDevice && (supportsCloudSessions(projectDevice) || supportsRemoteSessions(projectDevice))
-  )
-  const remoteTerminalAvailable = Boolean(
-    projectDevice && supportsRemoteTerminalSessions(projectDevice)
-  )
   const hasWorkspaceContext = Boolean(currentProject || workspaceTarget)
   const canUseLocalTerminalCheck = useCallback(
     (check: LocalTerminalCheckState) => {
@@ -194,9 +204,7 @@ export function WorkspacePanelCards({
     localTerminalSupported && localTerminalRuntimeAvailable && !localTerminalCheckReady
   )
   const localTerminalLaunchable = Boolean(localTerminalSupported && localTerminalRuntimeAvailable)
-  const remoteWorkspaceSession = Boolean(
-    workspaceTarget?.workspaceSource === 'remote' || remoteIdeAvailable
-  )
+  const useDeviceTerminalSession = Boolean(remoteWorkspaceSession && workspaceTarget)
   const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
   const localIdeLaunchable = Boolean(
     !remoteWorkspaceSession &&
@@ -413,7 +421,10 @@ export function WorkspacePanelCards({
         return
       }
 
-      if (workspaceSource === 'runtime' && activeWorkspaceDeviceId && activeWorkspacePath) {
+      if (useDeviceTerminalSession) {
+        if (!activeWorkspaceDeviceId || !activeWorkspacePath) {
+          throw new Error('Remote workspace target is missing')
+        }
         if (!workspaceSessionApi) {
           throw new Error('Remote workspace session service is unavailable')
         }
@@ -488,8 +499,8 @@ export function WorkspacePanelCards({
     setLocalTerminalCheck,
     setProjectError,
     terminalContextTitle,
+    useDeviceTerminalSession,
     workspaceSessionApi,
-    workspaceSource,
   ])
 
   useEffect(() => {
@@ -618,7 +629,7 @@ export function WorkspacePanelCards({
         if (!session.url) {
           throw new Error('IDE session URL is missing')
         }
-        await openExternalUrl(session.url)
+        await openExternalUrl(session.url, { target: 'system' })
         opened = true
       } catch (e) {
         console.error('Failed to start project IDE:', e)

@@ -2727,8 +2727,28 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
   await openBottomWorkspaceLauncher(control, 'The new cloud task')
-  await captureVerificationScreenshot(control, 'cloud-04b-new-task-workspace-launcher.png')
-  await closeBottomWorkspacePanel(control)
+  await control.command('click', '[data-testid="workspace-terminal-card"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes('workspace-terminal-window') &&
+      value.testIds.includes('remote-terminal') &&
+      !value.testIds.includes('workspace-tool-launcher'),
+    'The new cloud task did not start its terminal after Terminal was selected',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
+  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The new cloud task terminal and bottom panel did not close cleanly',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)

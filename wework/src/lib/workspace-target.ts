@@ -112,6 +112,11 @@ function selectProjectDeviceWorkspace(
   return workspaces.length === 1 ? workspaces[0] : null
 }
 
+function workspaceTargetDeviceId(workspace: RuntimeDeviceWorkspace): string {
+  const remoteHostId = workspace.remoteHostId?.trim()
+  return workspace.workspaceSource === 'remote' && remoteHostId ? remoteHostId : workspace.deviceId
+}
+
 export function resolveProjectRuntimeWorkspaceTarget({
   currentProject,
   runtimeWork,
@@ -125,7 +130,7 @@ export function resolveProjectRuntimeWorkspaceTarget({
   if (!workspace || !workspacePath) return null
 
   return {
-    deviceId: workspace.deviceId,
+    deviceId: workspaceTargetDeviceId(workspace),
     path: workspacePath,
     source: 'project',
     ...(workspace.workspaceSource !== undefined
@@ -144,7 +149,7 @@ function workspaceTargetFromRuntimeTask(
       : task.workspacePath || workspace.workspacePath
 
   return {
-    deviceId: workspace.deviceId,
+    deviceId: workspaceTargetDeviceId(workspace),
     path: workspacePath,
     source: 'runtime',
     taskId: task.taskId,

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import { openExternalUrl } from '@/lib/external-links'
 import {
   closeLocalTerminal,
   getLocalExecutorDeviceId,
@@ -60,6 +61,10 @@ vi.mock('@/lib/local-terminal', () => ({
   startLocalTerminal: vi.fn(),
 }))
 
+vi.mock('@/lib/external-links', () => ({
+  openExternalUrl: vi.fn(),
+}))
+
 vi.mock('./EmbeddedLocalTerminal', () => ({
   EmbeddedLocalTerminal: ({
     active,
@@ -111,6 +116,7 @@ vi.mock('./RemoteTerminal', () => ({
 }))
 
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
+const openExternalUrlMock = vi.mocked(openExternalUrl)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
@@ -224,6 +230,7 @@ describe('WorkspacePanelCards', () => {
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
+    openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
     let terminalSessionCount = 0
@@ -382,11 +389,9 @@ describe('WorkspacePanelCards', () => {
 
     await waitFor(() => expect(startProjectCodeServerMock).toHaveBeenCalledWith(7))
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost/ide',
-      '_blank',
-      'noopener,noreferrer'
-    )
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide', {
+      target: 'system',
+    })
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
@@ -443,11 +448,9 @@ describe('WorkspacePanelCards', () => {
     await act(async () => actions.ide.run())
 
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost/ide',
-      '_blank',
-      'noopener,noreferrer'
-    )
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide', {
+      target: 'system',
+    })
     expect(onRequestClose).not.toHaveBeenCalled()
 
     await act(async () => actions.desktop.run())
@@ -759,6 +762,86 @@ describe('WorkspacePanelCards', () => {
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
 
+  test('starts remote terminal on a new project workspace device and path', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+
+    render(
+      <WorkspacePanelCards
+        currentProject={cloudProject}
+        devices={cloudDevices}
+        workspaceTarget={{
+          deviceId: 'device-1',
+          path: '/workspace/projects/project38',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startDeviceTerminalMock).toHaveBeenCalledWith(
+        'device-1',
+        '/workspace/projects/project38'
+      )
+    )
+    expect(startProjectTerminalMock).not.toHaveBeenCalled()
+  })
+
+  test('uses the cloud route for a remote workspace merged into the local device', async () => {
+    getLocalExecutorDeviceIdMock.mockResolvedValue('local-device')
+    localPathExistsMock.mockResolvedValue(false)
+
+    render(
+      <WorkspacePanelCards
+        currentProject={cloudProject}
+        devices={[
+          {
+            id: 31,
+            device_id: 'local-device',
+            name: 'Local Executor',
+            status: 'online',
+            is_default: true,
+            device_type: 'local',
+            bind_shell: 'claudecode',
+            runtime_routes: [
+              {
+                kind: 'local-ipc',
+                device_id: 'local-device',
+                runtime_device_id: 'local-device',
+                device_type: 'local',
+                status: 'online',
+              },
+              {
+                kind: 'cloud-relay',
+                device_id: 'cloud-device',
+                runtime_device_id: 'cloud-device',
+                device_type: 'cloud',
+                status: 'online',
+              },
+            ],
+          },
+        ]}
+        workspaceTarget={{
+          deviceId: 'cloud-device',
+          path: '/home/ubuntu/project38',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('workspace-desktop-card')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(startDeviceTerminalMock).toHaveBeenCalledWith('cloud-device', '/home/ubuntu/project38')
+    )
+    expect(startLocalTerminalMock).not.toHaveBeenCalled()
+    expect(startProjectTerminalMock).not.toHaveBeenCalled()
+  })
+
   test('starts remote IDE on the active runtime workspace device and path', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
 
@@ -796,11 +879,9 @@ describe('WorkspacePanelCards', () => {
     )
     expect(startProjectCodeServerMock).not.toHaveBeenCalled()
     expect(openLocalWorkspaceMock).not.toHaveBeenCalled()
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost/device-ide',
-      '_blank',
-      'noopener,noreferrer'
-    )
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/device-ide', {
+      target: 'system',
+    })
   })
 
   test('launches the native terminal when the executor id differs but the local path exists', async () => {
@@ -881,11 +962,9 @@ describe('WorkspacePanelCards', () => {
     await waitFor(() => expect(startProjectCodeServerMock).toHaveBeenCalledWith(7))
     expect(fetchMock).not.toHaveBeenCalled()
     expect(startProjectCodeServerMock).toHaveBeenCalledTimes(1)
-    expect(window.open).toHaveBeenCalledWith(
-      'http://localhost/ide',
-      '_blank',
-      'noopener,noreferrer'
-    )
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide', {
+      target: 'system',
+    })
   })
 
   test('marks IDE as unavailable when the returned session URL is missing', async () => {
