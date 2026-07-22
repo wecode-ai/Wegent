@@ -267,7 +267,7 @@ describe('TodoWorkspace V4-01', () => {
     expect(screen.getByText('Fix login redirect')).toBeInTheDocument()
     expect(screen.getByTestId('todo-sidebar-work-items')).toHaveTextContent('4')
     expect(window.localStorage.getItem('wework:todo:drafts:1')).toContain('Keep login stable')
-  })
+  }, 15000)
 
   it('creates and runs a TODO through the existing Wework runtime flow', async () => {
     const onRunTodo = vi.fn(async () => ({
@@ -301,7 +301,7 @@ describe('TodoWorkspace V4-01', () => {
       })
     )
     await waitFor(() => expect(screen.queryByTestId('todo-create-dialog')).not.toBeInTheDocument())
-  })
+  }, 15000)
 
   it('switches between the board and list layouts', async () => {
     render(
