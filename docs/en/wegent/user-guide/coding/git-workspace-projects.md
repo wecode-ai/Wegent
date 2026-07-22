@@ -90,7 +90,7 @@ The macOS desktop app enables the system drag panel by default. When you start d
 
 A drop occurs only after you drag content and release the pointer over the panel. Clicking the panel area does not create a chat, add a follow-up, or stash content.
 
-The stash presents content as horizontal attachment cards. Multiple files appear as a stack, and images use thumbnails. You can scroll horizontally, hover to preview, remove an item, or select a stashed item to append its text and attachments to any conversation. Web links retain both the page title and URL. Turn the feature off or back on under **Settings > General > System drag panel**.
+The stash presents content as horizontal attachment cards. Multiple files appear as a stack, and images use thumbnails. You can scroll horizontally, hover to preview, remove an item, or select a stashed item to append its text and attachments to any conversation. Stashed content is retained for at most seven days and is removed automatically after it expires. Select **Clear** in the upper-right corner of the stash to remove every stashed item at once without affecting regular quick phrases. Web links retain both the page title and URL. Turn the feature off or back on under **Settings > General > System drag panel**.
 
 ## Commit and Push Changes
 

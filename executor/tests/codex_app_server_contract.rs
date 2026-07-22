@@ -129,7 +129,7 @@ async fn codex_app_server_engine_maps_vision_prompt_blocks_to_user_input() {
 }
 
 #[tokio::test]
-async fn codex_app_server_engine_passes_provider_overrides_as_cli_config() {
+async fn codex_app_server_engine_routes_provider_overrides_through_local_proxy() {
     let _lock = env_lock().await;
     let _api_key = EnvGuard::set("WECODE_USER_API_KEY", "sk-from-executor-env");
     let log_path = std::env::temp_dir().join(format!(
@@ -170,38 +170,24 @@ async fn codex_app_server_engine_passes_provider_overrides_as_cli_config() {
     let args = messages[0]["args"].as_array().unwrap();
     assert_config_arg(args, "forced_login_method=api");
     assert_config_arg(args, "model=gpt-5.5");
-    assert_config_arg(args, "model_provider=wecode-openai");
-    assert_config_arg(args, "model_providers.wecode-openai.name=\"wecode openai\"");
+    assert_config_arg(args, "model_provider=wework-router");
     assert_config_arg(
         args,
-        "model_providers.wecode-openai.base_url=\"http://127.0.0.1:3456/v1\"",
+        "model_providers.wework-router.name=\"Wework model router\"",
     );
-    assert_config_arg(args, "model_providers.wecode-openai.wire_api=\"responses\"");
-    assert_config_arg(
-        args,
-        "model_providers.wecode-openai.experimental_bearer_token=\"sk-from-executor-env\"",
-    );
-    assert_config_arg(
-        args,
-        "model_providers.wecode-openai.http_headers.wecode-action=\"wecode-cli\"",
-    );
-    assert_config_arg(
-        args,
-        "model_providers.wecode-openai.http_headers.wecode-source=\"wegent-local\"",
-    );
-    assert_config_arg(
-        args,
-        "model_providers.wecode-openai.http_headers.wecode-project=\"42\"",
-    );
-    assert_config_arg(
-        args,
-        "model_providers.wecode-openai.http_headers.wecode-executor=\"codex\"",
-    );
-    assert_config_arg(
-        args,
-        "model_providers.wecode-openai.http_headers.x-weibo-downstream=\"shanghai-intranet\"",
-    );
-    assert_eq!(messages[3]["params"]["modelProvider"], "wecode-openai");
+    assert_config_arg(args, "model_providers.wework-router.wire_api=\"responses\"");
+    assert!(args.iter().any(|value| {
+        value.as_str().is_some_and(|value| {
+            value.starts_with("model_providers.wework-router.base_url=\"http://127.0.0.1:")
+                && value.contains("/v1/codex-router/model-")
+        })
+    }));
+    assert!(!args.iter().any(|value| {
+        value
+            .as_str()
+            .is_some_and(|value| value.contains("sk-from-executor-env"))
+    }));
+    assert_eq!(messages[3]["params"]["modelProvider"], "wework-router");
     assert_eq!(
         messages[3]["params"]["config"]["model_reasoning_effort"],
         "ultra"

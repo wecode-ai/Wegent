@@ -8,6 +8,38 @@ import {
 } from './localModelSettings'
 
 describe('localModelSettings', () => {
+  test('defaults tool profiles by API format and rejects incompatible combinations', () => {
+    const responses = saveLocalModelConfig({
+      modelId: 'responses-model',
+      baseUrl: 'https://responses.example/v1',
+      apiFormat: 'openai-responses',
+    })
+    const chat = saveLocalModelConfig({
+      modelId: 'chat-model',
+      baseUrl: 'https://chat.example/v1',
+      apiFormat: 'openai-chat-completions',
+    })
+
+    expect(responses.toolProfile).toBe('custom')
+    expect(chat.toolProfile).toBe('function')
+    expect(() =>
+      saveLocalModelConfig({
+        modelId: 'invalid-custom',
+        baseUrl: 'https://chat.example/v1',
+        apiFormat: 'openai-chat-completions',
+        toolProfile: 'custom',
+      })
+    ).toThrow('Native custom tools require')
+    expect(() =>
+      saveLocalModelConfig({
+        modelId: 'invalid-function',
+        baseUrl: 'https://responses.example/v1',
+        apiFormat: 'openai-responses',
+        toolProfile: 'function',
+      })
+    ).toThrow('Function tool conversion requires')
+  })
+
   beforeEach(() => {
     localStorage.clear()
   })
@@ -82,6 +114,7 @@ describe('localModelSettings', () => {
   test('stores Chat Completions format and applies its default endpoint', () => {
     const saved = saveLocalModelConfig({
       id: 'kimi-chat',
+      providerProfileId: 'kimi-coding',
       displayName: 'Kimi Chat',
       modelId: 'kimi-for-coding',
       baseUrl: 'https://api.kimi.com/coding/v1',
@@ -89,6 +122,7 @@ describe('localModelSettings', () => {
     })
 
     expect(saved).toMatchObject({
+      providerProfileId: 'kimi-coding',
       apiFormat: 'openai-chat-completions',
       baseUrl: 'https://api.kimi.com/coding/v1',
       requestPath: '/chat/completions',

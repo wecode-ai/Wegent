@@ -66,7 +66,8 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request, id_field,
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
+        prompt_text, runtime_task_id, string_field, timestamp_ms_field, workspace_group_path,
+        workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -169,7 +170,11 @@ fn current_codex_model_provider_from_config(config_response: &Value) -> CodexMod
         .unwrap_or_default();
     let current_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
-        .unwrap_or_else(|| CODEX_OFFICIAL_PROVIDER_ID.to_owned());
+        .filter(|provider| {
+            provider != crate::server::codex_model_catalog::PROVIDER_ID
+                && provider != "wework-catalog"
+        })
+        .unwrap_or_else(crate::agents::configured_inference_model_provider);
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -1322,6 +1327,7 @@ impl RuntimeWorkRpcHandler {
             .await
             .map_err(|error| AppIpcError::new("codex_error", error))?;
         let thread = response.get("thread").unwrap_or(&response).clone();
+        self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
             .or_else(|| string_field(&payload, "workspace_path"))
@@ -3113,8 +3119,9 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(&local_task_id, |link| {
-            link.thread_id = Some(thread_id.to_owned());
-            link.updated_at = now_ms();
+            if link.thread_id.as_deref() != Some(thread_id) {
+                link.thread_id = Some(thread_id.to_owned());
+            }
         });
         let pending_id = pending_thread_event_route_id(&local_task_id);
         let mut routes = self
@@ -3134,6 +3141,21 @@ impl RuntimeWorkRpcHandler {
         route.request = request;
         route.active = route.active || active;
         routes.insert(thread_id.to_owned(), route);
+    }
+
+    fn repair_legacy_task_activity_time(&self, local_task_id: &str, thread: &Value) {
+        if self.is_active_local_task(local_task_id) {
+            return;
+        }
+        let Some(thread_updated_at) = timestamp_ms_field(thread, "updatedAt") else {
+            return;
+        };
+        self.store.update_task(local_task_id, |link| {
+            if !link.running && link.completed_at.is_none() && link.updated_at > thread_updated_at {
+                link.updated_at = thread_updated_at;
+                link.completed_at = Some(thread_updated_at);
+            }
+        });
     }
 
     #[cfg(test)]
@@ -5710,6 +5732,22 @@ mod tests {
     }
 
     #[test]
+    fn current_codex_model_provider_hides_internal_catalog_provider() {
+        let provider = current_codex_model_provider_from_config(&json!({
+            "config": {
+                "model_provider": "wework-catalog",
+                "model_providers": {
+                    "wework-catalog": {"name": "Wework model catalog"}
+                }
+            }
+        }));
+
+        assert_eq!(provider.id, "openai");
+        assert_eq!(provider.display_name, "CodeX");
+        assert_eq!(provider.kind, "official");
+    }
+
+    #[test]
     fn runtime_session_ids_only_accept_codex_uuid_thread_ids() {
         assert!(is_codex_thread_id("019f4c0d-b036-78f3-b879-7e5ed203ad61"));
         assert!(is_codex_thread_id(
@@ -6121,9 +6159,19 @@ mod tests {
             "Task".to_owned(),
         );
         link.thread_id = Some("thread-1".to_owned());
+        link.updated_at = 1_780_000_000_000;
         handler.upsert_local_task(link);
         handler.mark_active_local_task(local_task_id);
         handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+
+        assert_eq!(
+            handler
+                .store
+                .get_task(local_task_id)
+                .expect("registered task should remain stored")
+                .updated_at,
+            1_780_000_000_000
+        );
 
         handler.route_codex_notification(json!({
             "method": "item/agentMessage/delta",
@@ -6156,6 +6204,35 @@ mod tests {
         assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
         assert_eq!(event["payload"]["data"]["delta"], "Hi");
 
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn thread_read_repairs_legacy_activity_time_pollution() {
+        let index_path = temp_runtime_work_index_path("repair-legacy-activity-time");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-task-1";
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        link.updated_at = 1_790_000_000_000;
+        link.completed_at = None;
+        handler.upsert_local_task(link);
+
+        handler
+            .repair_legacy_task_activity_time(local_task_id, &json!({"updatedAt": 1_780_000_000}));
+
+        let repaired = handler
+            .store
+            .get_task(local_task_id)
+            .expect("repaired task should remain stored");
+        assert_eq!(repaired.updated_at, 1_780_000_000_000);
+        assert_eq!(repaired.completed_at, Some(1_780_000_000_000));
         let _ = fs::remove_file(index_path);
     }
 

@@ -12,7 +12,7 @@ function corsHeaders(extra = {}) {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-api-key,anthropic-version',
     ...extra,
   }
 }
@@ -41,7 +41,10 @@ function extractText(value) {
   }
 
   if (Array.isArray(value)) {
-    return value.map(item => extractText(item)).filter(Boolean).join(' ')
+    return value
+      .map(item => extractText(item))
+      .filter(Boolean)
+      .join(' ')
   }
 
   if (value && typeof value === 'object') {
@@ -92,6 +95,155 @@ function responseBody(request, content) {
       output_tokens: Math.max(1, content.split(/\s+/).length),
       total_tokens: 12 + Math.max(1, content.split(/\s+/).length),
     },
+  }
+}
+
+function capabilityProbeName(request) {
+  const tools = Array.isArray(request?.tools) ? request.tools : []
+  return tools
+    .map(tool => tool?.name || tool?.function?.name)
+    .find(name => name === 'wework_capability_probe')
+}
+
+function capabilityRequestError(req, request, apiFormat) {
+  const tools = Array.isArray(request?.tools) ? request.tools : []
+  const tool = tools.find(
+    candidate => (candidate?.name || candidate?.function?.name) === 'wework_capability_probe'
+  )
+  if (!tool) return 'Missing wework_capability_probe tool'
+  if (!String(req.headers.authorization || '').startsWith('Bearer ')) {
+    return 'Missing bearer authorization'
+  }
+  if (request?.stream !== false) return 'Capability probe must be non-streaming'
+
+  if (apiFormat === 'responses') {
+    if (request?.store !== false || request?.max_output_tokens !== 64) {
+      return 'Responses probe options are incorrect'
+    }
+    if (!String(request?.input || '').includes('PING')) return 'Responses probe prompt is missing'
+    if (request?.tool_choice !== undefined) return 'Responses probe must not force a tool'
+    if (tool.type === 'custom') {
+      if (
+        tool.format?.type !== 'grammar' ||
+        tool.format?.syntax !== 'lark' ||
+        tool.format?.definition !== 'start: "PING"'
+      ) {
+        return 'Responses custom tool grammar is incorrect'
+      }
+      return null
+    }
+    if (
+      tool.type !== 'function' ||
+      tool.parameters?.properties?.input?.type !== 'string' ||
+      !tool.parameters?.required?.includes('input')
+    ) {
+      return 'Responses function tool schema is incorrect'
+    }
+    return null
+  }
+
+  if (
+    request?.max_tokens !== 64 ||
+    request?.messages?.[0]?.role !== 'user' ||
+    !String(request?.messages?.[0]?.content || '').includes('PING')
+  ) {
+    return `${apiFormat} probe prompt or token limit is incorrect`
+  }
+  if (apiFormat === 'chat') {
+    if (
+      tool.type !== 'function' ||
+      tool.function?.parameters?.properties?.input?.type !== 'string' ||
+      request?.tool_choice !== undefined
+    ) {
+      return 'Chat function tool schema is incorrect or the probe forced a tool'
+    }
+    return null
+  }
+  if (
+    req.headers['x-api-key'] !== 'test-token' ||
+    req.headers['anthropic-version'] !== '2023-06-01' ||
+    tool.input_schema?.properties?.input?.type !== 'string' ||
+    request?.tool_choice !== undefined
+  ) {
+    return 'Anthropic headers or tool schema is incorrect, or the probe forced a tool'
+  }
+  return null
+}
+
+function responsesCapabilityBody(request) {
+  const createdAt = Math.floor(Date.now() / 1000)
+  const custom = request?.tools?.[0]?.type === 'custom'
+  return {
+    id: `resp_probe_${createdAt}`,
+    object: 'response',
+    created_at: createdAt,
+    status: 'completed',
+    model: request?.model || 'mock-response-model',
+    output: [
+      custom
+        ? {
+            id: `tool_probe_${createdAt}`,
+            type: 'custom_tool_call',
+            call_id: `call_probe_${createdAt}`,
+            name: 'wework_capability_probe',
+            input: 'PING',
+          }
+        : {
+            id: `tool_probe_${createdAt}`,
+            type: 'function_call',
+            call_id: `call_probe_${createdAt}`,
+            name: 'wework_capability_probe',
+            arguments: JSON.stringify({ input: 'PING' }),
+          },
+    ],
+    usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+  }
+}
+
+function chatCapabilityBody(request) {
+  return {
+    id: 'chatcmpl_probe',
+    object: 'chat.completion',
+    model: request?.model || 'mock-chat-model',
+    choices: [
+      {
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_probe',
+              type: 'function',
+              function: {
+                name: 'wework_capability_probe',
+                arguments: JSON.stringify({ input: 'PING' }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  }
+}
+
+function anthropicCapabilityBody(request) {
+  return {
+    id: 'msg_probe',
+    type: 'message',
+    role: 'assistant',
+    model: request?.model || 'mock-anthropic-model',
+    stop_reason: 'tool_use',
+    content: [
+      {
+        type: 'tool_use',
+        id: 'toolu_probe',
+        name: 'wework_capability_probe',
+        input: { input: 'PING' },
+      },
+    ],
+    usage: { input_tokens: 1, output_tokens: 1 },
   }
 }
 
@@ -179,12 +331,71 @@ function handleResponses(req, res, body) {
   })
 
   const content = responseContent(parsedBody)
+  if (capabilityProbeName(parsedBody)) {
+    const error = capabilityRequestError(req, parsedBody, 'responses')
+    if (error) {
+      writeJson(res, 422, { error: { message: error } })
+      return
+    }
+    writeJson(res, 200, responsesCapabilityBody(parsedBody))
+    return
+  }
   if (parsedBody?.stream === true) {
     writeStreamingResponsesApi(res, parsedBody, content)
     return
   }
 
   writeJson(res, 200, responseBody(parsedBody, content))
+}
+
+function handleChat(req, res, body) {
+  const parsedBody = parseJsonBody(body)
+  if (body && !parsedBody) {
+    writeJson(res, 400, { error: { message: 'Invalid JSON request body' } })
+    return
+  }
+  capturedRequests.push({
+    timestamp: new Date().toISOString(),
+    method: req.method || 'GET',
+    url: req.url || '/',
+    headers: req.headers,
+    body: parsedBody,
+  })
+  if (!capabilityProbeName(parsedBody)) {
+    writeJson(res, 400, { error: { message: 'Capability probe tool is required' } })
+    return
+  }
+  const error = capabilityRequestError(req, parsedBody, 'chat')
+  if (error) {
+    writeJson(res, 422, { error: { message: error } })
+    return
+  }
+  writeJson(res, 200, chatCapabilityBody(parsedBody))
+}
+
+function handleAnthropic(req, res, body) {
+  const parsedBody = parseJsonBody(body)
+  if (body && !parsedBody) {
+    writeJson(res, 400, { error: { message: 'Invalid JSON request body' } })
+    return
+  }
+  capturedRequests.push({
+    timestamp: new Date().toISOString(),
+    method: req.method || 'GET',
+    url: req.url || '/',
+    headers: req.headers,
+    body: parsedBody,
+  })
+  if (!capabilityProbeName(parsedBody)) {
+    writeJson(res, 400, { error: { message: 'Capability probe tool is required' } })
+    return
+  }
+  const error = capabilityRequestError(req, parsedBody, 'anthropic')
+  if (error) {
+    writeJson(res, 422, { error: { message: error } })
+    return
+  }
+  writeJson(res, 200, anthropicCapabilityBody(parsedBody))
 }
 
 const server = http.createServer((req, res) => {
@@ -220,6 +431,16 @@ const server = http.createServer((req, res) => {
 
     if (req.url?.includes('/responses') && req.method === 'POST') {
       handleResponses(req, res, body)
+      return
+    }
+
+    if (req.url?.includes('/chat/completions') && req.method === 'POST') {
+      handleChat(req, res, body)
+      return
+    }
+
+    if (req.url?.includes('/messages') && req.method === 'POST') {
+      handleAnthropic(req, res, body)
       return
     }
 

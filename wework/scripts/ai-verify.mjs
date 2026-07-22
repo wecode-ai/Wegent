@@ -9,7 +9,7 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
 
@@ -26,7 +26,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|drag|drop-file|fill|hover|navigate|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
@@ -35,9 +35,12 @@ Options:
   --value TEXT              Replacement value for fill
   --target SELECTOR         Event target selector for pointer-move (default: body)
                             Required destination selector for drag
+  --file PATH               File to dispatch for drop-file
   --key KEY                 Keyboard key for press
   --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
+  --visible true            Require a visible element for wait-for
+  --stable MS               Require the wait-for condition to remain stable
   --timeout MS              Command timeout (default: ${defaultTimeoutMs})`)
 }
 
@@ -325,6 +328,7 @@ async function main() {
     click: 'click',
     'close-to-tray': 'closeMainWindowToTray',
     drag: 'drag',
+    'drop-file': 'dropFile',
     fill: 'fill',
     hover: 'hover',
     navigate: 'navigate',
@@ -350,13 +354,28 @@ async function main() {
       ? 'body'
       : null)
   if (!selector) throw new Error('--selector is required')
+  const dropFilePath = command === 'drop-file' ? options.file : undefined
+  if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
+  const dropFileExtension = dropFilePath ? extname(dropFilePath).toLowerCase() : ''
+  const dropFileMimeType =
+    dropFileExtension === '.png'
+      ? 'image/png'
+      : dropFileExtension === '.jpg' || dropFileExtension === '.jpeg'
+        ? 'image/jpeg'
+        : dropFileExtension === '.txt'
+          ? 'text/plain'
+          : 'application/octet-stream'
   const value = await request(session, session.token, '/command', 'POST', {
     action,
     selector,
     target: options.target,
-    value: options.value,
+    value: dropFilePath ? (await readFile(dropFilePath)).toString('base64') : options.value,
+    filename: dropFilePath ? basename(dropFilePath) : undefined,
+    mimeType: dropFilePath ? dropFileMimeType : undefined,
     key: options.key,
     text: options.text,
+    visible: options.visible === 'true',
+    stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: options.timeout ? Number(options.timeout) : undefined,
   })
   if (command === 'capture') {

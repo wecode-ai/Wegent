@@ -39,6 +39,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 
 ## Engineering rules
 
+- Analyze concrete problems using logs and the actual code, and complete tasks based on evidence rather than speculation.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
