@@ -215,12 +215,6 @@ describe('ComposerTextarea', () => {
     fireEvent.click(screen.getByTestId('mention-goal-action'))
     expect(onSetGoal).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.queryByTestId('mention-plan-action')).not.toBeInTheDocument())
-    await act(
-      () =>
-        new Promise<void>(resolve => {
-          window.requestAnimationFrame(() => resolve())
-        })
-    )
 
     act(() => {
       editor.blur()

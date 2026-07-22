@@ -1,8 +1,8 @@
-import type { OpenCloudDesktopOptions } from '@/extensions/cloud-desktop-contract'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
-import { openExternalUrl } from '@/lib/external-links'
 import { getVncConfig } from './api'
 import { buildExternalVncPageUrl, buildVncPageUrl, prepareVncSession } from './session'
+import type { OpenCloudDesktopOptions } from './types'
+import { openSystemBrowserIfCurrent } from './systemBrowser'
 
 export async function openCloudDesktop({
   connection,
@@ -33,10 +33,7 @@ export async function openCloudDesktop({
       sessionId,
     })
     if (!isCurrent()) return false
-    const opened = await openExternalUrl(pageUrl, {
-      shouldOpen: isCurrent,
-      target: 'system',
-    })
+    const opened = await openSystemBrowserIfCurrent(pageUrl, isCurrent)
     if (!isCurrent()) return false
     if (!opened) throw new Error('VNC external bridge URL is invalid')
     return true

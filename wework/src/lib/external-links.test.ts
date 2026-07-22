@@ -121,24 +121,6 @@ describe('external link helpers', () => {
     expect(requestEmbeddedBrowserOpenMock).not.toHaveBeenCalled()
   })
 
-  test('does not invoke the system opener after a request becomes stale', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    const shouldOpen = vi.fn().mockReturnValue(false)
-
-    await expect(
-      openExternalUrl('https://desktop.example.com/vnc', {
-        shouldOpen,
-        target: 'system',
-      })
-    ).resolves.toBe(false)
-
-    expect(shouldOpen).toHaveBeenCalledOnce()
-    expect(openUrl).not.toHaveBeenCalled()
-  })
-
   test('intercepts clicked http anchors through the shared opener', async () => {
     vi.stubGlobal('open', openWindowMock)
     const cleanup = installExternalLinkHandler()

@@ -6,15 +6,12 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useCloudDesktopLaunch } from './useCloudDesktopLaunch'
 
 export function VncDesktopButton({ deviceId, disabled, onOpened }: CloudDesktopActionProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('vnc')
   const launch = useCloudDesktopLaunch({
     contextKey: `connection:${deviceId}`,
     deviceId,
     disabled,
-    failureMessage: t(
-      'workbench.connection_device_desktop_open_failed',
-      '无法使用系统默认浏览器打开云桌面，请重试'
-    ),
+    failureMessage: t('open_system_desktop_failed', '无法使用系统默认浏览器打开云桌面，请重试'),
     onOpened,
     target: 'system',
   })
@@ -24,7 +21,7 @@ export function VncDesktopButton({ deviceId, disabled, onOpened }: CloudDesktopA
       <DeviceActionButton
         testId={`connection-vnc-button-${deviceId}`}
         icon={Monitor}
-        label={t('workbench.connection_device_desktop', '桌面')}
+        label={t('desktop', '桌面')}
         onClick={() => void launch.open()}
         disabled={launch.disabled}
       />

@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { getVncConfig } from './api'
 import { openCloudDesktop } from './openCloudDesktop'
 import { buildExternalVncPageUrl, buildVncPageUrl, prepareVncSession } from './session'
+import { openSystemBrowserIfCurrent } from './systemBrowser'
 
 vi.mock('@/lib/embedded-browser', () => ({ requestEmbeddedBrowserOpen: vi.fn() }))
-vi.mock('@/lib/external-links', () => ({ openExternalUrl: vi.fn() }))
 vi.mock('./api', () => ({ getVncConfig: vi.fn() }))
 vi.mock('./session', () => ({
   buildExternalVncPageUrl: vi.fn(),
   buildVncPageUrl: vi.fn(),
   prepareVncSession: vi.fn(),
 }))
+vi.mock('./systemBrowser', () => ({ openSystemBrowserIfCurrent: vi.fn() }))
 
 const connection = {
   apiBaseUrl: 'https://cloud.example.com/api',
@@ -37,7 +37,7 @@ describe('openCloudDesktop', () => {
     vi.mocked(buildVncPageUrl).mockReturnValue(
       'tauri://localhost/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
     )
-    vi.mocked(openExternalUrl).mockResolvedValue(true)
+    vi.mocked(openSystemBrowserIfCurrent).mockResolvedValue(true)
     vi.mocked(requestEmbeddedBrowserOpen).mockReturnValue(true)
   })
 
@@ -61,9 +61,9 @@ describe('openCloudDesktop', () => {
       sandboxId: 'sandbox-1',
       sessionId: 'session-1',
     })
-    expect(openExternalUrl).toHaveBeenCalledWith(
+    expect(openSystemBrowserIfCurrent).toHaveBeenCalledWith(
       'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1',
-      { shouldOpen: expect.any(Function), target: 'system' }
+      expect.any(Function)
     )
     expect(requestEmbeddedBrowserOpen).not.toHaveBeenCalled()
   })
@@ -75,8 +75,8 @@ describe('openCloudDesktop', () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValue(false)
-    vi.mocked(openExternalUrl).mockImplementationOnce(async (_value, options) => {
-      expect(options?.shouldOpen?.()).toBe(false)
+    vi.mocked(openSystemBrowserIfCurrent).mockImplementationOnce(async (_value, current) => {
+      expect(current()).toBe(false)
       return false
     })
 
@@ -89,9 +89,9 @@ describe('openCloudDesktop', () => {
       })
     ).resolves.toBe(false)
 
-    expect(openExternalUrl).toHaveBeenCalledWith(
+    expect(openSystemBrowserIfCurrent).toHaveBeenCalledWith(
       'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1',
-      { shouldOpen: isCurrent, target: 'system' }
+      isCurrent
     )
   })
 

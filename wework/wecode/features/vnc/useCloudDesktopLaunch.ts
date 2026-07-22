@@ -1,8 +1,8 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import type { CloudDesktopOpenTarget } from '@/extensions/cloud-desktop-contract'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { openCloudDesktop } from './openCloudDesktop'
+import type { CloudDesktopOpenTarget } from './types'
 
 interface UseCloudDesktopLaunchOptions {
   contextKey: string

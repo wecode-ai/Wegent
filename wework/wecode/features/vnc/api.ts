@@ -1,5 +1,5 @@
 import { createHttpClient } from '@/api/http'
-import type { CloudDesktopConnection } from '@/extensions/cloud-desktop-contract'
+import type { CloudDesktopConnection } from './types'
 
 export interface VncConfigResponse {
   sandbox_id: string

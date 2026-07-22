@@ -3,7 +3,6 @@ import { requestEmbeddedBrowserOpen } from './embedded-browser'
 import { getAppPreferences, type BrowserLinkTarget } from '@/tauri/appPreferences'
 
 interface OpenExternalUrlOptions {
-  shouldOpen?: () => boolean
   target?: BrowserLinkTarget
 }
 
@@ -39,11 +38,9 @@ async function preferredLinkTarget(value: string): Promise<BrowserLinkTarget> {
     : preferences.browserExternalLinkTarget
 }
 
-async function openWithSystemBrowser(value: string, shouldOpen?: () => boolean): Promise<boolean> {
+async function openWithSystemBrowser(value: string): Promise<void> {
   const { openUrl } = await import('@tauri-apps/plugin-opener')
-  if (shouldOpen && !shouldOpen()) return false
   await openUrl(value)
-  return true
 }
 
 export async function openExternalUrl(
@@ -59,10 +56,10 @@ export async function openExternalUrl(
     if (target === 'wework' && requestEmbeddedBrowserOpen(value)) {
       return true
     }
-    return openWithSystemBrowser(value, options.shouldOpen)
+    await openWithSystemBrowser(value)
+    return true
   }
 
-  if (options.shouldOpen && !options.shouldOpen()) return false
   window.open(value, '_blank', 'noopener,noreferrer')
   return true
 }
