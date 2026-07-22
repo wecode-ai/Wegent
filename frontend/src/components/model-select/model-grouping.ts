@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ModelCapabilities } from '@/apis/models'
+
 export interface GroupableModel {
   name: string
   displayName?: string | null
@@ -11,10 +13,7 @@ export interface GroupableModel {
   namespace?: string | null
   modelGroup?: string | null
   modelSubGroup?: string | null
-  modelCapabilities?: {
-    supportsImage?: boolean
-    supportsVideo?: boolean
-  } | null
+  modelCapabilities?: ModelCapabilities | null
   config?: Record<string, unknown> | null
 }
 

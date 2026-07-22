@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { modelApis, UnifiedModel, ModelTypeEnum, ModelCategoryType } from '@/apis/models'
+import type { ModelCapabilities } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   isPredefinedModel,
@@ -59,10 +60,7 @@ export interface Model {
   contextWindow?: number | null
   maxOutputTokens?: number | null
   costIndex?: number | null
-  modelCapabilities?: {
-    supportsImage?: boolean
-    supportsVideo?: boolean
-  } | null
+  modelCapabilities?: ModelCapabilities | null
   config?: Record<string, unknown>
 }
 

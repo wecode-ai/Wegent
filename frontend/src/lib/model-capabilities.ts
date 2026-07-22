@@ -2,10 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export interface ModelCapabilities {
-  supportsImage?: boolean
-  supportsVideo?: boolean
-}
+import type { ModelCapabilities } from '@/apis/models'
 
 export interface ModelCapabilitySource {
   modelCapabilities?: ModelCapabilities | null

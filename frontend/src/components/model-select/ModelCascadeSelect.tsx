@@ -192,6 +192,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
         key={option.key}
         type="button"
         data-testid={`model-special-option-${sanitizeTestId(option.key)}`}
+        aria-pressed={isSelected}
         onClick={() => onSelectSpecialOption?.(option.key)}
         className={cn(
           'flex w-full items-center px-3 py-2.5 text-left',
@@ -222,7 +223,9 @@ export function ModelCascadeContent<T extends GroupableModel>({
         key={modelKey}
         className={cn(
           'w-full items-stretch overflow-hidden',
-          modelActions ? 'grid grid-cols-[minmax(0,1fr)_40px]' : 'flex',
+          modelActions
+            ? 'grid grid-cols-[minmax(0,1fr)_auto_40px]'
+            : 'grid grid-cols-[minmax(0,1fr)_auto]',
           isSelected && 'bg-primary/10 text-primary'
         )}
       >
@@ -231,9 +234,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
           type="button"
           data-model-key={modelKey}
           data-testid={`model-option-${sanitizeTestId(model.name)}`}
+          aria-pressed={isSelected}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 pr-0 text-left',
+            'flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left',
             'hover:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
@@ -249,11 +253,11 @@ export function ModelCascadeContent<T extends GroupableModel>({
             )}
             {renderModelMeta?.(model)}
           </span>
-          <span className="flex shrink-0 items-center gap-1.5">
-            <ModelCapabilityIcons model={model} />
-            {renderModelBadges?.(model)}
-          </span>
         </button>
+        <span className="flex shrink-0 items-center gap-1.5 pr-2 empty:hidden">
+          <ModelCapabilityIcons model={model} showTooltips />
+          {renderModelBadges?.(model)}
+        </span>
         {modelActions}
       </div>
     )
@@ -267,6 +271,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
         key={option.key}
         type="button"
         data-testid={`model-mobile-special-option-${sanitizeTestId(option.key)}`}
+        aria-pressed={isSelected}
         onClick={() => onSelectSpecialOption?.(option.key)}
         className={cn(
           'flex min-h-[44px] w-full items-center justify-between gap-3 px-3 py-2.5 text-left',
@@ -308,6 +313,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           type="button"
           data-model-key={modelKey}
           data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
+          aria-pressed={isSelected}
           onClick={() => onSelectModel(model)}
           className={cn(
             'flex min-h-[44px] min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 text-left',

@@ -17,6 +17,11 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 }
 
+Object.defineProperty(Element.prototype, 'scrollIntoView', {
+  configurable: true,
+  value: jest.fn(),
+})
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (_key: string, fallback?: string) => fallback ?? _key,
@@ -157,7 +162,28 @@ describe('ModelCascadeContent', () => {
     expect(footer).toHaveClass('shrink-0')
   })
 
-  it('shows declared image and video capabilities in model rows', () => {
+  it('exposes model selection state to assistive technology', () => {
+    render(
+      <ModelCascadeContent
+        models={models}
+        selectedModel={models[0]}
+        selectedSpecialKey="default"
+        specialOptions={[{ key: 'default', label: 'Default model' }]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('model-special-option-default')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('model-option-model-a')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('shows keyboard-accessible image and video capability tooltips in model rows', async () => {
     const capableModel: GroupableModel = {
       ...models[0],
       modelCapabilities: { supportsImage: true, supportsVideo: true },
@@ -173,8 +199,12 @@ describe('ModelCascadeContent', () => {
       />
     )
 
-    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
-    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
+    const imageCapability = screen.getByRole('button', { name: '图片理解' })
+    const videoCapability = screen.getByRole('button', { name: '视频理解' })
+
+    fireEvent.focus(imageCapability)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('图片理解')
+    expect(videoCapability).toBeInTheDocument()
   })
 
   it('falls back to model capabilities from config', () => {
@@ -195,8 +225,8 @@ describe('ModelCascadeContent', () => {
       />
     )
 
-    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
-    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '图片理解' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '视频理解' })).toBeInTheDocument()
   })
 
   it('shows declared capabilities in the selected-model trigger', () => {
@@ -305,5 +335,9 @@ describe('ModelCascadeContent', () => {
     expect(
       screen.getByTestId('model-mobile-option-model-a').querySelector('.lucide-check')
     ).toBeInTheDocument()
+    expect(screen.getByTestId('model-mobile-option-model-a')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 })
