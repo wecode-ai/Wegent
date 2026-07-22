@@ -246,6 +246,14 @@ export function GeneralSettingsPage() {
               : t('workbench.general_settings_background_disabled_description'),
           })}
           {renderSwitchRow({
+            preferenceKey: 'preventSleepWhileTasksRunning',
+            testId: 'general-prevent-sleep-while-tasks-running-toggle',
+            label: t('workbench.general_settings_prevent_sleep_while_tasks_running'),
+            description: t(
+              'workbench.general_settings_prevent_sleep_while_tasks_running_description'
+            ),
+          })}
+          {renderSwitchRow({
             preferenceKey: 'taskCompletionNotificationsEnabled',
             testId: 'general-task-completion-notifications-toggle',
             label: t('workbench.general_settings_task_completion_notifications'),

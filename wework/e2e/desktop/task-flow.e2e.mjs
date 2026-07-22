@@ -613,6 +613,30 @@ function processIsAlive(processId) {
   }
 }
 
+function macosSleepInhibitorProcessIds(appProcessId) {
+  if (process.platform !== 'darwin') return []
+  const output = commandOutput('/bin/ps', ['-axo', 'pid=,ppid=,command='])
+  return output.split('\n').flatMap(line => {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
+    if (!match || Number(match[2]) !== appProcessId || match[3] !== '/usr/bin/caffeinate -i') {
+      return []
+    }
+    return [Number(match[1])]
+  })
+}
+
+async function waitForMacosSleepInhibitor(appProcessId, expectedRunning) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const processIds = macosSleepInhibitorProcessIds(appProcessId)
+    if (processIds.length > 0 === expectedRunning) return processIds
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(
+    `Timed out waiting for the macOS sleep inhibitor to be ${expectedRunning ? 'running' : 'stopped'}`
+  )
+}
+
 async function waitForExecutorReadyEvidence(logPath, timeoutMs = UI_TIMEOUT_MS) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -749,6 +773,11 @@ async function verifyBackgroundTaskWindowLifecycle({
     UI_TIMEOUT_MS,
     'Timed out waiting for the streaming response to start'
   )
+  const sleepInhibitorEvidence = []
+  if (process.platform === 'darwin') {
+    const processIds = await waitForMacosSleepInhibitor(app.pid, true)
+    sleepInhibitorEvidence.push({ stage: 'task-running', processIds })
+  }
   const runningTaskSnapshot = await waitForSnapshot(
     control,
     snapshot => snapshot.testIds.some(testId => testId.startsWith('runtime-local-task-running-')),
@@ -794,6 +823,11 @@ async function verifyBackgroundTaskWindowLifecycle({
       true,
       'Closing to tray terminated the executor process'
     )
+    const backgroundProcessIds = await waitForMacosSleepInhibitor(app.pid, true)
+    sleepInhibitorEvidence.push({
+      stage: 'window-closed-to-tray',
+      processIds: backgroundProcessIds,
+    })
 
     await reactivateMacApplication(appIdentifier)
     await withTimeout(
@@ -893,6 +927,14 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-task-completed-after-reopen.png')
   )
+  if (process.platform === 'darwin') {
+    const processIds = await waitForMacosSleepInhibitor(app.pid, false)
+    sleepInhibitorEvidence.push({ stage: 'task-completed', processIds })
+    await writeFile(
+      join(resultDir, 'sleep-inhibitor-lifecycle-verification.json'),
+      `${JSON.stringify({ appProcessId: app.pid, stages: sleepInhibitorEvidence }, null, 2)}\n`
+    )
+  }
 }
 
 async function attachAndSendOnlyFile(control, composerSelector) {

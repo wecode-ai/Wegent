@@ -55,6 +55,14 @@ When Wework moves to the background, it destroys the main window WebView to rele
 
 When no conversation is open, the newly created main window keeps the task launcher within the window bounds. The message area scrolls as needed only after a conversation is opened.
 
+## Prevent Sleep While Tasks Are Running
+
+**Prevent sleep while tasks are running** is enabled by default. While at least one task is running, Wework prevents the computer from entering idle system sleep. This inhibition remains active when the main window is closed and Wework continues from the system tray.
+
+After every task completes, fails, or is interrupted, Wework immediately releases the inhibition and restores the operating system's normal sleep policy. Wework does not force the computer to sleep and does not change the configured system sleep timeout.
+
+To keep Wework from controlling sleep, disable this option under **Settings → General**. Disabling it immediately releases any current sleep inhibition. If it is enabled again while a task is still running, Wework resumes preventing idle sleep.
+
 ## Appshots
 
 On macOS desktop, **Settings → Integrations → Appshots** shows the Appshots status and sound preference. The default shortcut is `⌘⇧2`. When pressed, Wework captures the frontmost application window and uses macOS Accessibility to read text exposed by that window, which can include text outside the visible scroll area. It then adds both the PNG and text context to the current composer attachments.
