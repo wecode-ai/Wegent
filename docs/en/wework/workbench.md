@@ -8,6 +8,10 @@ The right workspace displays project files, previews, and change reviews. Local 
 
 Press `Command+J` to open the terminal. A project terminal starts in the active project or the task's Git worktree and is preserved when switching tasks.
 
+## Use selected response text
+
+Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
+
 ## Review and undo changes
 
 Supported Git tasks show a per-turn change card with file and line counts. Select **Review** to inspect the full diff, filter files, change wrapping, or copy a `git apply` command. The original execution device must be online.

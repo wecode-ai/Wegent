@@ -111,6 +111,57 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
   })
 
+  test('keeps captured selection actions when streaming replaces the selected text node', async () => {
+    const onAddSelectionToConversation = vi.fn()
+    const { rerender } = render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'streaming',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(content), 0)
+    range.setEnd(firstTextNode(content), 6)
+    document.getSelection()?.removeAllRanges()
+    document.getSelection()?.addRange(range)
+    fireEvent.pointerUp(content)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+
+    rerender(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-streaming-selection',
+            role: 'assistant',
+            content: 'Select this response while it grows',
+            status: 'streaming',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+    document.getSelection()?.removeAllRanges()
+    fireEvent(document, new Event('selectionchange'))
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('Select')
+  })
+
   test('offers selection actions when the whole message body is selected', async () => {
     render(
       <MessageList
