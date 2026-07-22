@@ -222,6 +222,7 @@ function seedDesktopE2ECloudConnection() {
       ...model,
       baseUrl: backendUrl,
       apiKey: 'wework-e2e-test-key',
+      catalogReady: false,
       enabled: true,
     })
   }
