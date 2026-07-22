@@ -5,6 +5,7 @@ export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
   systemDragEnabled: boolean
+  preventSleepWhileTasksRunning: boolean
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
   terminalContextInjectionEnabled: boolean
@@ -56,6 +57,7 @@ export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   systemDragEnabled?: boolean
+  preventSleepWhileTasksRunning?: boolean
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
   terminalContextInjectionEnabled?: boolean
@@ -97,6 +99,7 @@ export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
@@ -151,6 +154,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.systemDragEnabled === 'boolean'
         ? record.systemDragEnabled
         : defaultAppPreferences.systemDragEnabled,
+    preventSleepWhileTasksRunning:
+      typeof record.preventSleepWhileTasksRunning === 'boolean'
+        ? record.preventSleepWhileTasksRunning
+        : defaultAppPreferences.preventSleepWhileTasksRunning,
     closeToTrayHintSeen:
       typeof record.closeToTrayHintSeen === 'boolean'
         ? record.closeToTrayHintSeen

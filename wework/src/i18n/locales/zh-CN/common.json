@@ -910,6 +910,8 @@
     "general_settings_close_to_tray": "关闭主窗口后后台运行",
     "general_settings_background_description": "关闭主窗口不会停止正在运行的任务。任务会在后台继续执行，你可以双击系统托盘图标回到主界面。",
     "general_settings_background_disabled_description": "关闭主窗口会退出应用，并中断正在运行的任务。",
+    "general_settings_prevent_sleep_while_tasks_running": "任务运行时阻止电脑休眠",
+    "general_settings_prevent_sleep_while_tasks_running_description": "有任务运行时阻止电脑因空闲自动休眠；所有任务结束后恢复系统原本的休眠策略。",
     "general_settings_system_tray_title": "系统托盘",
     "general_settings_task_completion_notifications": "任务完成时发送系统通知",
     "general_settings_task_completion_notifications_description": "后台任务完成后，通过系统通知插件发送操作系统通知。",
