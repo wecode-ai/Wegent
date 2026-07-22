@@ -16,8 +16,8 @@
       {
         "title": "WeWork",
         "create": false,
-        "width": 1100,
-        "height": 680,
+        "width": 1280,
+        "height": 720,
         "visible": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,

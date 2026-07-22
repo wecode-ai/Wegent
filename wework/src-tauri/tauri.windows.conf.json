@@ -13,8 +13,8 @@
       {
         "title": "WeWork",
         "create": false,
-        "width": 1100,
-        "height": 680,
+        "width": 640,
+        "height": 360,
         "visible": false,
         "decorations": false,
         "dragDropEnabled": true,
