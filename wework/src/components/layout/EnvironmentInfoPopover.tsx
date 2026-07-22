@@ -3,14 +3,11 @@ import {
   ChevronDown,
   CircleDot,
   Copy,
-  FolderOpen,
   GitCommit,
   GitBranch,
   GitPullRequest,
   Info,
-  Laptop,
   LoaderCircle,
-  MapPin,
   Square,
   Upload,
   CornerDownLeft,
@@ -61,6 +58,11 @@ type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
 const FLOATING_POPOVER_WIDTH = 300
 const FLOATING_POPOVER_GAP = 8
 const FLOATING_POPOVER_MARGIN = 16
+
+function getWorkspacePathDisplayName(path: string): string {
+  const normalizedPath = path.replace(/[\\/]+$/, '')
+  return normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) || path
+}
 
 export function EnvironmentInfoPopover({
   info,
@@ -118,6 +120,9 @@ export function EnvironmentInfoPopover({
   const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
+  const workspacePathDisplayName = info.workspacePath
+    ? getWorkspacePathDisplayName(info.workspacePath)
+    : ''
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
@@ -285,67 +290,70 @@ export function EnvironmentInfoPopover({
             <div className="space-y-3">
               <section
                 data-testid="environment-device-section"
-                className="flex h-9 w-full items-center gap-2 text-sm text-text-primary"
+                className="flex h-8 w-full min-w-0 items-center gap-2 text-xs text-text-secondary"
               >
                 <div
                   data-testid="environment-execution-target-row"
                   title={`${executionTargetLabel} · ${executionLabel}`}
-                  className="flex min-w-0 shrink-0 items-center gap-1.5"
+                  className="shrink-0 whitespace-nowrap"
                 >
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
-                    <MapPin className="h-4 w-4" />
-                  </span>
                   <span className="sr-only">{executionTargetLabel}</span>
-                  <span className="whitespace-nowrap text-text-secondary">{executionLabel}</span>
+                  <span>{executionLabel}</span>
                 </div>
+                <span aria-hidden="true" className="text-text-muted">
+                  ·
+                </span>
                 <div
                   data-testid="environment-device-button"
                   title={deviceTitle}
-                  className="flex min-w-0 items-center gap-1.5 border-l border-border pl-2"
+                  className="min-w-0 max-w-28 truncate"
                 >
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
-                    <Laptop className="h-4 w-4" />
-                  </span>
                   <span className="sr-only">{deviceLabel}</span>
-                  <span
-                    data-testid="environment-device-name"
-                    className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary"
-                  >
+                  <span data-testid="environment-device-name" className="whitespace-nowrap">
                     {deviceDisplayName}
                   </span>
                 </div>
                 {info.workspacePath && (
-                  <button
-                    type="button"
-                    data-testid="environment-workspace-path-button"
-                    onClick={handleCopyWorkspacePath}
-                    title={info.workspacePath}
-                    aria-label={`${t('workbench.environment_workspace_path')} · ${info.workspacePath}`}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 border-l border-border pl-2 text-left hover:text-text-primary"
-                  >
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
-                      <FolderOpen className="h-4 w-4" />
+                  <>
+                    <span aria-hidden="true" className="text-text-muted">
+                      ·
                     </span>
-                    <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
-                    <span
-                      data-testid="environment-workspace-path"
-                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-text-secondary"
+                    <button
+                      type="button"
+                      data-testid="environment-workspace-path-button"
+                      onClick={handleCopyWorkspacePath}
+                      title={info.workspacePath}
+                      aria-label={`${t('workbench.environment_workspace_path')} · ${info.workspacePath}`}
+                      className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-1 text-left hover:bg-hover hover:text-text-primary"
                     >
-                      {info.workspacePath}
-                    </span>
-                    <span
-                      data-testid="environment-workspace-path-copy-icon"
-                      className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary"
-                      aria-hidden="true"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                    </span>
-                    {workspacePathCopied && (
-                      <span className="shrink-0 text-xs text-green-500">
-                        {t('workbench.environment_copied')}
+                      <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
+                      <span
+                        data-testid="environment-workspace-path"
+                        className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono"
+                      >
+                        {workspacePathDisplayName}
                       </span>
-                    )}
-                  </button>
+                      <span
+                        data-testid="environment-workspace-path-copy-icon"
+                        className={cn(
+                          'flex h-3.5 w-3.5 shrink-0 items-center justify-center',
+                          workspacePathCopied ? 'text-green-500' : 'text-text-muted'
+                        )}
+                        aria-hidden="true"
+                      >
+                        {workspacePathCopied ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </span>
+                      {workspacePathCopied && (
+                        <span role="status" className="sr-only">
+                          {t('workbench.environment_copied')}
+                        </span>
+                      )}
+                    </button>
+                  </>
                 )}
               </section>
 

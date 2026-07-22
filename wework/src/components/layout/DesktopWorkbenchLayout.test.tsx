@@ -6038,7 +6038,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(screen.getByText('+173')).toBeInTheDocument())
     const deviceSection = screen.getByTestId('environment-device-section')
     const gitSection = screen.getByTestId('environment-git-section')
-    expect(deviceSection).toHaveClass('flex', 'h-9', 'items-center')
+    expect(deviceSection).toHaveClass('flex', 'h-8', 'items-center')
     expect(deviceSection).not.toContainElement(gitSection)
     expect(gitSection).not.toContainElement(deviceSection)
     const executionTargetRow = screen.getByTestId('environment-execution-target-row')
@@ -6056,7 +6056,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(deviceButton).toHaveAttribute('title', '设备 · yunpeng7-executor-0bb4')
     const workspacePathButton = screen.getByTestId('environment-workspace-path-button')
     expect(deviceSection).toContainElement(workspacePathButton)
-    expect(workspacePathButton).toHaveTextContent('/workspace/projects/github_wegent')
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('github_wegent')
+    expect(workspacePathButton).toHaveAccessibleName('路径 · /workspace/projects/github_wegent')
     expect(workspacePathButton).toContainElement(
       screen.getByTestId('environment-workspace-path-copy-icon')
     )
@@ -6077,6 +6078,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(
       '/workspace/projects/github_wegent'
     )
+    expect(screen.getByText('已复制')).toHaveAttribute('role', 'status')
 
     await userEvent.click(document.body)
 
@@ -6573,8 +6575,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() => expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument())
-    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent(
-      '/workspace/plain-folder'
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('plain-folder')
+    expect(screen.getByTestId('environment-workspace-path-button')).toHaveAccessibleName(
+      '路径 · /workspace/plain-folder'
     )
     const gitSection = screen.getByTestId('environment-git-section')
     expect(gitSection).toHaveTextContent('变更')
