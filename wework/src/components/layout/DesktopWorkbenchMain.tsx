@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeftRight, MessageCircle } from 'lucide-react'
+import { ArrowLeftRight, MessageCircle, MessageSquareWarning } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
@@ -105,6 +105,7 @@ import type { RuntimeTaskAddress } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import { TaskFeedbackDialog } from '@/features/feedback/TaskFeedbackDialog'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -460,6 +461,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
@@ -1409,10 +1411,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
+  const feedbackButton =
+    currentRuntimeTask && isTauri ? (
+      <button
+        type="button"
+        data-testid="task-feedback-button"
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={t('workbench.feedback_button')}
+        title={t('workbench.feedback_button')}
+        onClick={() => setFeedbackDialogOpen(true)}
+      >
+        <MessageSquareWarning />
+      </button>
+    ) : undefined
   const mainHeaderActions = (
     <>
       {forkTaskButton}
       {continueInImButton}
+      {feedbackButton}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
     </>
@@ -1980,6 +1996,36 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <ContinueInImDialog
           key={continueInIm.dialog.open ? 'continue-im-open' : 'continue-im-closed'}
           {...continueInIm.dialog}
+        />
+        <TaskFeedbackDialog
+          open={feedbackDialogOpen}
+          onClose={() => setFeedbackDialogOpen(false)}
+          getTaskContext={async () => {
+            const messages = await paneSession.loadFullTranscriptForExport()
+            return {
+              task: {
+                taskId: currentRuntimeTask?.taskId ?? null,
+                deviceId: currentRuntimeTask?.deviceId ?? null,
+                threadId: currentRuntimeTask?.threadId ?? null,
+                workspacePath: currentRuntimeTask?.workspacePath ?? null,
+                title:
+                  runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
+                status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
+              },
+              conversation: {
+                messages,
+                queuedMessages: paneSession.queuedMessages,
+                guidanceMessages: paneSession.guidanceMessages,
+                turnNavigation: paneSession.turnNavigation,
+              },
+              runtime: {
+                status: paneSession.status,
+                goal: paneSession.goal,
+                taskPlan: paneSession.taskPlan,
+                subagentStatuses: paneSession.subagentStatuses,
+              },
+            }
+          }}
         />
         <TransientNotice
           message={continueInIm.notice?.message ?? null}

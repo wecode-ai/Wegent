@@ -1,30 +1,69 @@
-import { describe, expect, test } from 'vitest'
-import { getNextBufferedStreamingText } from './useBufferedStreamingText'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
 
-describe('getNextBufferedStreamingText', () => {
-  test('reveals a bounded prefix while preserving the current content', () => {
-    const target = `Hello ${'world '.repeat(30)}`
-    const next = getNextBufferedStreamingText('Hello ', target)
-
-    expect(target.startsWith(next)).toBe(true)
-    expect(next.length).toBeGreaterThan('Hello '.length)
-    expect(next).not.toBe(target)
+describe('useBufferedStreamingText', () => {
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
-  test('does not split Unicode code points', () => {
-    expect(getNextBufferedStreamingText('', '😀你好')).toBe('😀')
+  test('coalesces streaming updates into the next animation frame', () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'Hello' } }
+    )
+
+    rerender({ content: 'Hello world' })
+    rerender({ content: 'Hello world again' })
+    expect(result.current).toBe('Hello')
+
+    act(() => vi.advanceTimersToNextFrame())
+    expect(result.current).toBe('Hello world again')
   })
 
-  test('drains a small reserve on alternating frames', () => {
-    expect(getNextBufferedStreamingText('', '一二三四', false)).toBe('')
-    expect(getNextBufferedStreamingText('', '一二三四', true)).toBe('一')
+  test('drains a quickly completed stream over multiple frames', () => {
+    vi.useFakeTimers()
+    const complete = `A${'b'.repeat(80)}`
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'A', streaming: true } }
+    )
+
+    rerender({ content: complete, streaming: false })
+    expect(result.current).toBe('A')
+
+    act(() => vi.advanceTimersToNextFrame())
+    expect(result.current.length).toBeGreaterThan(1)
+    expect(result.current.length).toBeLessThan(complete.length)
+
+    act(() => vi.runAllTimers())
+    expect(result.current).toBe(complete)
   })
 
-  test('immediately adopts non-append updates', () => {
-    expect(getNextBufferedStreamingText('old content', 'replacement')).toBe('replacement')
+  test('does not split a surrogate pair while draining completed content', () => {
+    vi.useFakeTimers()
+    const complete = `A${'b'.repeat(9)}😀${'c'.repeat(68)}`
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'A', streaming: true } }
+    )
+
+    rerender({ content: complete, streaming: false })
+    act(() => vi.advanceTimersToNextFrame())
+    expect(result.current).toBe(`A${'b'.repeat(9)}`)
+
+    act(() => vi.runAllTimers())
+    expect(result.current).toBe(complete)
   })
 
-  test('returns completed content unchanged', () => {
-    expect(getNextBufferedStreamingText('done', 'done')).toBe('done')
+  test('replaces non-append content immediately', () => {
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'partial', streaming: true } }
+    )
+
+    rerender({ content: 'replacement', streaming: false })
+    expect(result.current).toBe('replacement')
   })
 })

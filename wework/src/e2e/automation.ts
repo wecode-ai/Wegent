@@ -536,6 +536,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'dispatchLocalModelSettingsChanged':
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
+    case 'performanceSnapshot': {
+      const processMemory = await invoke('get_wework_process_snapshot')
+      return JSON.stringify({
+        timestamp: Date.now(),
+        domNodeCount: document.getElementsByTagName('*').length,
+        processMemory,
+      })
+    }
     case 'focusMainWindow':
       await getCurrentWindow().show()
       await getCurrentWindow().unminimize()
