@@ -901,6 +901,18 @@ describe('DesktopWorkbenchLayout', () => {
     }
     const workbenchValue = {
       services: {
+        attachmentApi: {
+          uploadAttachment: vi.fn().mockImplementation(async (file: File) => ({
+            id: 91,
+            filename: file.name,
+            file_size: file.size,
+            mime_type: file.type,
+            status: 'ready',
+            file_extension: file.name.split('.').pop() ?? '',
+            created_at: '2026-07-22T00:00:00Z',
+          })),
+          deleteAttachment: vi.fn().mockResolvedValue(undefined),
+        },
         workspaceSessionApi: {
           startProjectTerminal: startTerminalSessionMock,
           startProjectCodeServer: startCodeServerSessionMock,
@@ -1562,7 +1574,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('overflow-y-auto', 'pt-11')
+    expect(desktopContent).toHaveClass('overflow-x-hidden', 'overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
@@ -4538,14 +4550,34 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('right workspace can open multiple temporary chat tabs', async () => {
-    renderWorkspacePanelLayout()
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
-    expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
+    const sideChat = screen.getByTestId('right-workspace-chat-panel')
+    expect(sideChat).toBeInTheDocument()
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
+    await waitFor(() => {
+      expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
+      expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
+        width: 'calc(100% - 580px)',
+      })
+    })
+
+    await userEvent.upload(
+      within(sideChat).getByTestId('attachment-file-input'),
+      new File(['side chat'], 'side-chat.txt', { type: 'text/plain' })
+    )
+
+    expect(await within(sideChat).findByTestId('attachment-badge')).toBeInTheDocument()
+    expect(within(sideChat).getByTestId('attachment-text-preview')).toHaveAttribute(
+      'title',
+      'side chat'
+    )
+    expect(baseProps.projectChat.handleFileSelect).not.toHaveBeenCalled()
+    expect(screen.getAllByTestId('attachment-badge')).toHaveLength(1)
 
     await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
     await userEvent.click(
@@ -7258,6 +7290,19 @@ describe('DesktopWorkbenchLayout', () => {
       expect(terminals).toHaveLength(1)
       expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
     })
+  })
+
+  test('resets cached conversation horizontal scroll when the task becomes active', () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    const activeContent = () =>
+      within(screen.getByTestId('desktop-workbench-main')).getByTestId('desktop-workbench-content')
+
+    activeContent().scrollLeft = 180
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activeContent().scrollLeft).toBe(0)
   })
 
   test('keeps runtime task terminals past the pane cache limit until the task is archived', async () => {

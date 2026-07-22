@@ -6941,7 +6941,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('reconciles a running task from its transcript when the renderer missed terminal events', async () => {
+  test('does not poll transcript history while the live stream owns a running task', async () => {
     const runningWork = createRuntimeWork({
       projects: [
         {
@@ -7013,16 +7013,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
-    await waitFor(() => expect(screen.getByText('后台任务已完成')).toBeInTheDocument(), {
-      timeout: 5_000,
-    })
-    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+    await new Promise(resolve => window.setTimeout(resolve, 2_100))
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+    expect(getRuntimeTranscript).toHaveBeenCalledWith({
       deviceId: 'device-1',
       taskId: 'runtime-a',
       workspacePath: '/workspace/project-alpha',
       limit: 50,
-      refresh: true,
     })
+    expect(screen.queryByText('后台任务已完成')).not.toBeInTheDocument()
+    expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
   })
 
   test('restores partial output only after the local runtime transport is replaced', async () => {

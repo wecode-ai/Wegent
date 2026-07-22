@@ -63,6 +63,7 @@ describe('workbenchRuntimeHelpers', () => {
               tasks: [
                 {
                   taskId: 'local-visible-task',
+                  threadId: 'direct-thread-id',
                   workspacePath: '/workspace/project-alpha',
                   title: 'Fix guidance',
                   runtime: 'codex',
@@ -84,6 +85,7 @@ describe('workbenchRuntimeHelpers', () => {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
         taskId: 'local-visible-task',
+        threadId: 'direct-thread-id',
         runtimeHandle: {
           threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
         },
