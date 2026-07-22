@@ -414,10 +414,11 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('overflow-hidden')
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_40px]')
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
+    expect(modelOption).toHaveClass('grid-cols-[minmax(0,1fr)_20px]', 'gap-1')
     expect(modelTitle).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(screen.getByTitle('图片理解').querySelector('.lucide-image')).toBeInTheDocument()
     expect(screen.getByTitle('视频理解').querySelector('.lucide-video')).toBeInTheDocument()
-    expect(selectedIndicator).toHaveClass('self-start', 'mt-0.5')
+    expect(selectedIndicator).toHaveClass('self-start', 'justify-self-center', 'mt-0.5')
     expect(informationAction).toHaveClass('self-stretch', 'items-start', 'pt-3')
   })
 

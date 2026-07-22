@@ -234,7 +234,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'flex min-w-0 flex-1 items-start justify-between gap-3 px-3 py-2.5 text-left',
+            'grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 px-3 py-2.5 text-left',
             'hover:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
@@ -256,7 +256,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           </span>
           <Check
             className={cn(
-              'mt-0.5 h-4 w-4 shrink-0 self-start',
+              'mt-0.5 h-4 w-4 shrink-0 self-start justify-self-center',
               isSelected ? 'opacity-100' : 'opacity-0'
             )}
           />
@@ -317,7 +317,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'flex min-h-[44px] min-w-0 flex-1 items-start justify-between gap-3 px-3 py-2.5 text-left',
+            'grid min-h-[44px] min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 px-3 py-2.5 text-left',
             'active:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
@@ -339,7 +339,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           </span>
           <Check
             className={cn(
-              'mt-0.5 h-4 w-4 shrink-0 self-start',
+              'mt-0.5 h-4 w-4 shrink-0 self-start justify-self-center',
               isSelected ? 'opacity-100' : 'opacity-0'
             )}
           />
