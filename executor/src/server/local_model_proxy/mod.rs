@@ -23,9 +23,10 @@ use std::{
 
 use axum::{
     body::{Body, Bytes},
-    extract::Path,
+    extract::{DefaultBodyLimit, Path},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
+    routing::{post, MethodRouter},
 };
 use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
@@ -35,6 +36,14 @@ use crate::logging::log_executor_event;
 use super::{codex_responses_proxy_transform, HttpError};
 
 pub(crate) const ROUTE: &str = "/v1/codex-router/{token}/responses";
+const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) fn route<S>() -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    post(handle_routed).layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalModelProxyUpstream {

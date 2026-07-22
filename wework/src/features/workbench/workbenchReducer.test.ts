@@ -247,6 +247,25 @@ describe('workbenchReducer', () => {
     expect(opened.selectedDeviceWorkspaceId).toBeNull()
     expect(opened.pendingProjectWorkspaceProjectId).toBeNull()
     expect(opened.currentRuntimeTask).toBeNull()
+    expect(opened.standaloneDeviceId).toBe('device-1')
+    expect(opened.standaloneWorkspacePath).toBe('/workspace/direct-codex')
+    expect(opened.standaloneChatKey).toBe(state.standaloneChatKey + 1)
+  })
+
+  test('starts a fresh blank pane when creating a new project conversation', () => {
+    const selected = workbenchReducer(
+      { ...initialWorkbenchState, standaloneChatKey: 4 },
+      {
+        type: 'project_workspace_selected',
+        project: { id: 7, name: 'Repo', tasks: [] },
+        deviceWorkspaceId: 22,
+        startFreshChat: true,
+      }
+    )
+
+    expect(selected.currentProject?.id).toBe(7)
+    expect(selected.selectedDeviceWorkspaceId).toBe(22)
+    expect(selected.standaloneChatKey).toBe(5)
   })
 
   test('clears selected project when opening a standalone runtime task', () => {
