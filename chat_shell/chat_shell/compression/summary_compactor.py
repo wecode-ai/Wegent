@@ -207,6 +207,13 @@ class SummaryCompactor:
                 ):
                     raise
                 removed += 1
+                logger.info(
+                    "[SummaryCompact] retry-trim after context-length failure: "
+                    "attempt=%d removed_total=%d remaining_messages=%d",
+                    attempt,
+                    removed,
+                    len(working_messages),
+                )
 
         replacement_history = self._build_replacement_history(
             working_messages,

@@ -203,9 +203,8 @@ class ChatService(ChatInterface):
         except Exception as e:
             add_span_event("chat_error", {"error": str(e)})
             logger.exception(
-                "[CHAT_SERVICE] Exception in chat(): type=%s repr=%r",
+                "[CHAT_SERVICE] Exception in chat(): type=%s",
                 type(e).__name__,
-                e,
             )
             await core.handle_error(e)
         finally:
