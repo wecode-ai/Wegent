@@ -13,10 +13,12 @@ import {
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
@@ -260,6 +262,7 @@ export function TodoWorkspace({
   const [createDialogState, setCreateDialogState] = useState<TodoState | null>(null)
   const [drafts, setDrafts] = useState<TodoDraft[]>(() => loadTodoDrafts(user?.id))
   const usesOverlayTitlebar = isTauriRuntime()
+  const platform = getPlatform()
   const selectedProject =
     projectEntries.find(entry => entry.project.id === selectedProjectId) ??
     projectEntries[0] ??
@@ -525,7 +528,7 @@ export function TodoWorkspace({
                 data-testid="todo-main-header-left-controls"
                 className={cn(
                   'flex h-full shrink-0 items-center gap-1 pr-2',
-                  usesOverlayTitlebar && 'pl-[92px]'
+                  usesOverlayTitlebar && platform === 'mac' && 'pl-[92px]'
                 )}
               >
                 <DesktopWindowControls
@@ -641,6 +644,11 @@ export function TodoWorkspace({
               <Plus className="h-3.5 w-3.5" />
               {t('todo.create_action', '新建 TODO')}
             </button>
+            {platform === 'win' && (
+              <div className="relative z-chrome h-8" data-tauri-drag-region={false}>
+                <WindowFrameControls className="h-full" />
+              </div>
+            )}
           </div>
         </header>
 
