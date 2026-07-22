@@ -217,7 +217,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
     const groupPath = `${getModelGroupName(model, labels)} / ${getModelSubGroupName(model, labels)}`
 
     return (
-      <div key={modelKey} className="flex w-full items-start">
+      <div
+        key={modelKey}
+        className={cn('flex w-full items-stretch', isSelected && 'bg-primary/10 text-primary')}
+      >
         <button
           ref={isSelected ? selectedModelOptionRef : undefined}
           type="button"
@@ -226,8 +229,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           onClick={() => onSelectModel(model)}
           className={cn(
             'flex min-w-0 flex-1 items-start justify-between gap-3 px-3 py-2.5 text-left',
-            'hover:bg-hover focus:bg-hover focus:outline-none',
-            isSelected && 'bg-primary/10 text-primary'
+            'hover:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">
@@ -291,7 +293,11 @@ export function ModelCascadeContent<T extends GroupableModel>({
     return (
       <div
         key={modelKey}
-        className={cn('flex w-full items-start', withBorder && 'border-b border-border')}
+        className={cn(
+          'flex w-full items-stretch',
+          isSelected && 'bg-primary/10 text-primary',
+          withBorder && 'border-b border-border'
+        )}
       >
         <button
           type="button"
@@ -300,8 +306,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           onClick={() => onSelectModel(model)}
           className={cn(
             'flex min-h-[44px] min-w-0 flex-1 items-start justify-between gap-3 px-3 py-2.5 text-left',
-            'active:bg-hover focus:bg-hover focus:outline-none',
-            isSelected && 'bg-primary/10 text-primary'
+            'active:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">

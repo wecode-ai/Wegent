@@ -143,11 +143,8 @@ function ModelInformationAction({
       data-testid={`model-info-${model.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
       aria-label={label}
       title={label}
-      onClick={() => {
-        setIsPreviewOpen(false)
-        onOpenDetails(model)
-      }}
-      className="flex min-h-[44px] w-10 shrink-0 items-center justify-center text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:min-h-0 sm:h-10"
+      onClick={isMobile ? () => onOpenDetails(model) : undefined}
+      className="flex min-h-[44px] w-10 shrink-0 self-stretch items-center justify-center text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:min-h-0"
     >
       <Info className="h-4 w-4" aria-hidden="true" />
     </button>

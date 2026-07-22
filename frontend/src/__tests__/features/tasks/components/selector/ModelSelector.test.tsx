@@ -23,6 +23,7 @@ const mockSelectDefaultModel = jest.fn()
 const mockRefreshModels = jest.fn()
 const mockSetShowAdvancedModels = jest.fn()
 let mockModelSelectionOverrides: Record<string, unknown> = {}
+let mockIsMobile = false
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -54,7 +55,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 jest.mock('@/hooks/useMediaQuery', () => ({
-  useMediaQuery: () => false,
+  useMediaQuery: () => mockIsMobile,
 }))
 
 jest.mock('@/features/tasks/hooks/useModelSelection', () => {
@@ -142,6 +143,7 @@ describe('ModelSelector', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockModelSelectionOverrides = {}
+    mockIsMobile = false
   })
 
   it('syncs an externally selected model into the selector display', async () => {
@@ -376,9 +378,37 @@ describe('ModelSelector', () => {
 
     const modelOption = await screen.findByTestId('model-option-claude-opus-4-advanced')
 
-    expect(modelOption).toHaveClass('bg-primary/10')
-    expect(modelOption).toHaveClass('text-primary')
+    expect(modelOption.parentElement).toHaveClass('bg-primary/10')
+    expect(modelOption.parentElement).toHaveClass('text-primary')
     expect(screen.getByTestId('model-special-option-__default__')).toHaveClass('bg-primary/10')
+  })
+
+  it('covers the information action with the selected row background', async () => {
+    mockModelSelectionOverrides = {
+      selectedModel: mockModel,
+      filteredModels: [mockModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={mockModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    const modelOption = await screen.findByTestId('model-option-claude-3-5-sonnet')
+    const informationAction = screen.getByTestId('model-info-claude-3-5-sonnet')
+
+    expect(modelOption.parentElement).toBe(informationAction.parentElement)
+    expect(modelOption.parentElement).toHaveClass('items-stretch')
+    expect(modelOption.parentElement).toHaveClass('bg-primary/10')
+    expect(informationAction).toHaveClass('self-stretch')
   })
 
   it('does not show an information action when a model has no detail metadata', async () => {
@@ -403,8 +433,9 @@ describe('ModelSelector', () => {
     expect(screen.queryByTestId('model-info-claude-opus-4-advanced')).not.toBeInTheDocument()
   })
 
-  it('opens model details without selecting the model', async () => {
+  it('opens model details on mobile without selecting the model', async () => {
     const externalSetSelectedModel = jest.fn()
+    mockIsMobile = true
     mockModelSelectionOverrides = {
       filteredModels: [mockModel],
     }
@@ -431,6 +462,28 @@ describe('ModelSelector', () => {
     expect(screen.getByTestId('model-details-max-output')).toHaveTextContent('131.1K Tokens')
     expect(screen.getByText('文本、图片、视频')).toBeInTheDocument()
     expect(externalSetSelectedModel).not.toHaveBeenCalled()
+  })
+
+  it('does not open a dialog when clicking model information on desktop', async () => {
+    mockModelSelectionOverrides = {
+      filteredModels: [mockModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+    fireEvent.click(await screen.findByTestId('model-info-claude-3-5-sonnet'))
+
+    expect(screen.queryByTestId('model-details-dialog')).not.toBeInTheDocument()
   })
 
   it('shows full model details in a non-modal layer when hovering', async () => {
