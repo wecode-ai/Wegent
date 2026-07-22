@@ -45,6 +45,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'models.modality_text': '文本',
         'models.modality_image': '图片',
         'models.modality_video': '视频',
+        'models.image_understanding': '图片理解',
+        'models.video_understanding': '视频理解',
         'models.model_limits': '模型限制',
         'models.context_window': '上下文窗口',
         'models.max_output_tokens': '最大输出 Token',
@@ -404,7 +406,7 @@ describe('ModelSelector', () => {
 
     const modelOption = await screen.findByTestId('model-option-claude-3-5-sonnet')
     const informationAction = screen.getByTestId('model-info-claude-3-5-sonnet')
-    const selectedIndicator = modelOption.querySelector('svg')
+    const selectedIndicator = modelOption.querySelector('.lucide-check')
     const modelTitle = screen.getByTitle('Claude 3.5 Sonnet')
 
     expect(modelOption.parentElement).toBe(informationAction.parentElement)
@@ -413,6 +415,8 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_40px]')
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelTitle).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(screen.getByLabelText('图片理解')).toBeInTheDocument()
+    expect(screen.getByLabelText('视频理解')).toBeInTheDocument()
     expect(selectedIndicator).toHaveClass('self-center')
     expect(informationAction).toHaveClass('self-stretch')
   })

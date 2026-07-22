@@ -30,10 +30,7 @@ interface ModelDetailsBodyProps {
 }
 
 function getCapabilities(model: Model): ModelCapabilities {
-  if (model.modelCapabilities) return model.modelCapabilities
-
-  const capabilities = model.config?.modelCapabilities
-  return capabilities && typeof capabilities === 'object' ? (capabilities as ModelCapabilities) : {}
+  return model.modelCapabilities ?? {}
 }
 
 function formatTokenCount(value: number | null | undefined, unavailable: string): string {

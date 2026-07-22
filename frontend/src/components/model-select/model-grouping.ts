@@ -11,6 +11,10 @@ export interface GroupableModel {
   namespace?: string | null
   modelGroup?: string | null
   modelSubGroup?: string | null
+  modelCapabilities?: {
+    supportsImage?: boolean
+    supportsVideo?: boolean
+  } | null
 }
 
 export interface ModelSubGroup<T extends GroupableModel = GroupableModel> {

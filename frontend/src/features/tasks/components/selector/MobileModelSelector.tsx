@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { Tag } from '@/components/ui/tag'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
+import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import {
   buildModelCascadeGroups,
   getModelDisplayName,
@@ -249,6 +250,7 @@ export default function MobileModelSelector({
                 {t('common:settings.personal', '个人')}
               </Tag>
             )}
+            <ModelCapabilityIcons model={model} />
           </div>
           {showPath ? (
             <div className="mt-0.5 truncate text-[13px] text-[#8e8e93]">{path}</div>

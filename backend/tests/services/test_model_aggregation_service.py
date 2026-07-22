@@ -156,11 +156,15 @@ class TestModelAggregationService:
             "metadata": {"name": "generic-model", "namespace": "default"},
             "spec": {
                 "modelConfig": {
+                    "modelCapabilities": {
+                        "supportsImage": False,
+                        "supportsVideo": False,
+                    },
                     "env": {
                         "model": "openai",
                         "model_id": "generic-model-id",
                         "api_key": "secret",
-                    }
+                    },
                 },
                 "modelGroup": "Primary Group",
                 "modelSubGroup": "Secondary Group",
@@ -187,6 +191,7 @@ class TestModelAggregationService:
             "supportsImage": True,
             "supportsVideo": True,
         }
+        assert "modelCapabilities" not in info["config"]
 
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""
@@ -207,6 +212,10 @@ class TestModelAggregationService:
                     "api_key": "secret",
                 },
                 "protocol": "openai-responses",
+                "modelCapabilities": {
+                    "supportsImage": False,
+                    "supportsVideo": False,
+                },
             },
         )
 
@@ -227,6 +236,7 @@ class TestModelAggregationService:
             "supportsImage": True,
             "supportsVideo": True,
         }
+        assert "modelCapabilities" not in model_dict["config"]
         assert full_model_dict["resourceUserId"] == 0
         assert full_model_dict["runtime"] == {
             "family": "openai.openai-responses",
@@ -267,11 +277,15 @@ class TestModelAggregationService:
                     "supportsVideo": True,
                 },
                 "modelConfig": {
+                    "modelCapabilities": {
+                        "supportsImage": False,
+                        "supportsVideo": False,
+                    },
                     "env": {
                         "model": "openai",
                         "model_id": "gpt-5.4",
                         "api_key": "secret",
-                    }
+                    },
                 },
             },
             "status": {"state": "Available"},
@@ -297,6 +311,7 @@ class TestModelAggregationService:
             "supportsImage": True,
             "supportsVideo": True,
         }
+        assert "modelCapabilities" not in model_dict["config"]
         assert model_dict["config"]["apiFormat"] == "responses"
         assert model_dict["config"]["env"] == {}
 

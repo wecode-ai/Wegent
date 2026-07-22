@@ -1154,6 +1154,8 @@
     "public_models": "公共模型",
     "my_models": "我的模型",
     "manage": "模型设置",
+    "image_understanding": "图片理解",
+    "video_understanding": "视频理解",
     "create": "创建模型",
     "create_title": "创建模型",
     "edit": "编辑模型",

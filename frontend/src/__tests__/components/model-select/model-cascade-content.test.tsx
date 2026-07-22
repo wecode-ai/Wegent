@@ -5,6 +5,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
+  GroupedModelSelect,
   ModelCascadeContent,
   type ModelCascadeLabels,
 } from '@/components/model-select/ModelCascadeSelect'
@@ -15,6 +16,12 @@ global.ResizeObserver = class ResizeObserver {
   unobserve() {}
   disconnect() {}
 }
+
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({
+    t: (_key: string, fallback?: string) => fallback ?? _key,
+  }),
+}))
 
 const labels: ModelCascadeLabels = {
   ungrouped: 'Ungrouped',
@@ -150,6 +157,69 @@ describe('ModelCascadeContent', () => {
     expect(footer).toHaveClass('shrink-0')
   })
 
+  it('shows declared image and video capabilities in model rows', () => {
+    const capableModel: GroupableModel = {
+      ...models[0],
+      modelCapabilities: { supportsImage: true, supportsVideo: true },
+    }
+
+    render(
+      <ModelCascadeContent
+        models={[capableModel]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
+  })
+
+  it('does not read model capabilities from config', () => {
+    const legacyModel = {
+      ...models[0],
+      config: {
+        modelCapabilities: { supportsImage: true, supportsVideo: true },
+      },
+    } as unknown as GroupableModel
+
+    render(
+      <ModelCascadeContent
+        models={[legacyModel]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByTitle('图片理解')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('视频理解')).not.toBeInTheDocument()
+  })
+
+  it('shows declared capabilities in the selected-model trigger', () => {
+    const capableModel: GroupableModel = {
+      ...models[0],
+      modelCapabilities: { supportsImage: true, supportsVideo: true },
+    }
+
+    render(
+      <GroupedModelSelect
+        models={[capableModel]}
+        selectedModel={capableModel}
+        labels={labels}
+        onSelectModel={jest.fn()}
+        placeholder="Select model"
+      />
+    )
+
+    expect(screen.getByTestId('grouped-model-select')).toHaveTextContent('Model A')
+    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
+  })
+
   it('scrolls the selected model into view when the active subgroup contains many models', async () => {
     const scrollIntoView = jest.fn()
     Object.defineProperty(Element.prototype, 'scrollIntoView', {
@@ -207,5 +277,29 @@ describe('ModelCascadeContent', () => {
 
     fireEvent.click(screen.getByTestId('model-mobile-option-model-a'))
     expect(onSelectModel).toHaveBeenCalledWith(models[0])
+  })
+
+  it('shows declared capabilities in mobile model rows', () => {
+    const capableModel: GroupableModel = {
+      ...models[0],
+      modelCapabilities: { supportsImage: true, supportsVideo: true },
+    }
+
+    render(
+      <ModelCascadeContent
+        models={[capableModel]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        variant="mobile"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-mobile-primary-group-Primary-One'))
+    fireEvent.click(screen.getByTestId('model-mobile-secondary-group-Secondary-One'))
+
+    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
   })
 })

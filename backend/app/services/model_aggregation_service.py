@@ -150,7 +150,13 @@ class UnifiedModel:
         """
         # Strip sensitive env data from config
         safe_config = (
-            {k: v for k, v in self.config.items() if k != "env"} if self.config else {}
+            {
+                k: v
+                for k, v in self.config.items()
+                if k not in {"env", "modelCapabilities"}
+            }
+            if self.config
+            else {}
         )
         result = {
             "name": self.name,
@@ -232,7 +238,11 @@ class ModelAggregationService:
             if model_crd.spec.modelType:
                 model_category_type = model_crd.spec.modelType.value
 
-            config = model_crd.spec.modelConfig
+            config = {
+                key: value
+                for key, value in model_crd.spec.modelConfig.items()
+                if key != "modelCapabilities"
+            }
             if model_crd.spec.protocol:
                 config = {**config, "protocol": model_crd.spec.protocol}
             if model_crd.spec.apiFormat:
@@ -242,10 +252,6 @@ class ModelAggregationService:
                 model_capabilities = model_crd.spec.modelCapabilities.model_dump(
                     exclude_none=True
                 )
-                config = {
-                    **config,
-                    "modelCapabilities": model_capabilities,
-                }
             else:
                 model_capabilities = None
 

@@ -1154,6 +1154,8 @@
     "public_models": "Public Models",
     "my_models": "My Models",
     "manage": "Model settings",
+    "image_understanding": "Image Understanding",
+    "video_understanding": "Video Understanding",
     "create": "Create Model",
     "create_title": "Create Model",
     "edit": "Edit Model",

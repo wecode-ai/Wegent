@@ -42,7 +42,11 @@ class ModelAdapter:
             if "metadata" in kind.json and "spec" in kind.json:
                 try:
                     model_crd = Model.model_validate(kind.json)
-                    config = model_crd.spec.modelConfig
+                    config = {
+                        key: value
+                        for key, value in model_crd.spec.modelConfig.items()
+                        if key != "modelCapabilities"
+                    }
                     display_name = model_crd.metadata.displayName
                     is_advanced = (
                         bool(model_crd.spec.isAdvanced)
@@ -69,10 +73,6 @@ class ModelAdapter:
                                 exclude_none=True
                             )
                         )
-                        config = {
-                            **config,
-                            "modelCapabilities": model_capabilities,
-                        }
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -107,6 +107,8 @@ class ModelAdapter:
         # Strip sensitive env from public model config
         if isinstance(config, dict) and "env" in config:
             config = {**config, "env": {}}
+        if isinstance(config, dict) and "modelCapabilities" in config:
+            config = {k: v for k, v in config.items() if k != "modelCapabilities"}
 
         return {
             "id": kind.id,
