@@ -251,12 +251,14 @@ export const MessageList = memo(function MessageList({
   useEffect(() => {
     if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
 
-    const updateSelectionState = () => {
+    const updateSelectionState = (preserveCapturedSelection = false) => {
       const selection = document.getSelection?.()
       const root = listRef.current
       if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
         setIsTextSelectionActive(false)
-        setTextSelection(null)
+        if (!preserveCapturedSelection) {
+          setTextSelection(null)
+        }
         return
       }
 
@@ -288,26 +290,36 @@ export const MessageList = memo(function MessageList({
     }
 
     const scheduleSelectionUpdate = () => {
-      window.requestAnimationFrame(updateSelectionState)
+      window.requestAnimationFrame(() => updateSelectionState(true))
+    }
+
+    const finalizeSelectionUpdate = (event: Event) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-testid="message-selection-actions"]')
+      ) {
+        return
+      }
+      updateSelectionState()
     }
 
     const handleBlur = () => {
       updateSelectionState()
     }
 
-    document.addEventListener('pointerup', scheduleSelectionUpdate)
-    document.addEventListener('pointercancel', scheduleSelectionUpdate)
-    document.addEventListener('mouseup', scheduleSelectionUpdate)
-    document.addEventListener('keyup', scheduleSelectionUpdate)
+    document.addEventListener('pointerup', finalizeSelectionUpdate)
+    document.addEventListener('pointercancel', finalizeSelectionUpdate)
+    document.addEventListener('mouseup', finalizeSelectionUpdate)
+    document.addEventListener('keyup', finalizeSelectionUpdate)
     document.addEventListener('selectionchange', scheduleSelectionUpdate)
     window.addEventListener('scroll', updateSelectionState, true)
     window.addEventListener('blur', handleBlur)
 
     return () => {
-      document.removeEventListener('pointerup', scheduleSelectionUpdate)
-      document.removeEventListener('pointercancel', scheduleSelectionUpdate)
-      document.removeEventListener('mouseup', scheduleSelectionUpdate)
-      document.removeEventListener('keyup', scheduleSelectionUpdate)
+      document.removeEventListener('pointerup', finalizeSelectionUpdate)
+      document.removeEventListener('pointercancel', finalizeSelectionUpdate)
+      document.removeEventListener('mouseup', finalizeSelectionUpdate)
+      document.removeEventListener('keyup', finalizeSelectionUpdate)
       document.removeEventListener('selectionchange', scheduleSelectionUpdate)
       window.removeEventListener('scroll', updateSelectionState, true)
       window.removeEventListener('blur', handleBlur)
