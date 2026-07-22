@@ -68,6 +68,7 @@ export interface ModelFormData {
   customHeaders: string
   contextWindow?: number
   maxOutputTokens?: number
+  costIndex?: number
   // Type-specific configs
   ttsVoice?: string
   ttsSpeed?: number
@@ -107,6 +108,7 @@ export interface ModelInitialData {
   protocol?: string
   contextWindow?: number
   maxOutputTokens?: number
+  costIndex?: number
   // Type-specific configs
   ttsConfig?: TTSConfig
   sttConfig?: STTConfig
@@ -303,6 +305,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             protocol: model.spec.protocol,
             contextWindow: model.spec.contextWindow,
             maxOutputTokens: model.spec.maxOutputTokens,
+            costIndex: model.spec.costIndex,
             ttsConfig: model.spec.ttsConfig,
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
@@ -338,6 +341,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // LLM-specific config state
   const [contextWindow, setContextWindow] = useState<number | undefined>(undefined)
   const [maxOutputTokens, setMaxOutputTokens] = useState<number | undefined>(undefined)
+  const [costIndex, setCostIndex] = useState<number | undefined>(undefined)
   // Thinking/Reasoning config (JSON passthrough)
   const [thinkingConfigStr, setThinkingConfigStr] = useState('')
   const [thinkingConfigError, setThinkingConfigError] = useState('')
@@ -495,6 +499,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Load LLM-specific configs
         setContextWindow(effectiveInitialData.contextWindow)
         setMaxOutputTokens(effectiveInitialData.maxOutputTokens)
+        setCostIndex(effectiveInitialData.costIndex)
         // Load thinking config
         if (
           effectiveInitialData.thinkingConfig &&
@@ -543,6 +548,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Reset multimodal capabilities
         setSupportsImageInput(false)
         setSupportsVideoInput(false)
+        setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
         setCapResolutions([])
@@ -1144,6 +1150,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
+          ...(modelCategoryType === 'llm' && costIndex && { costIndex }),
           ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
           ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
           ...(ttsConfig && { ttsConfig }),
@@ -1174,6 +1181,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         customHeaders,
         contextWindow,
         maxOutputTokens,
+        costIndex,
         ttsVoice,
         ttsSpeed,
         ttsOutputFormat,
@@ -1551,7 +1559,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
           {/* LLM-specific fields - Context Window and Max Output Tokens */}
           {modelCategoryType === 'llm' && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="context_window" className="text-sm font-medium">
                   {t('common:models.context_window')}
@@ -1581,6 +1589,26 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 <p className="text-xs text-text-muted">
                   {t('common:models.max_output_tokens_hint')}
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cost_index" className="text-sm font-medium">
+                  {t('common:models.cost_index')}
+                </Label>
+                <Input
+                  id="cost_index"
+                  data-testid="model-cost-index-input"
+                  type="number"
+                  min="0.1"
+                  step="0.1"
+                  value={costIndex ?? ''}
+                  onChange={e => {
+                    const value = Number(e.target.value)
+                    setCostIndex(e.target.value && value > 0 ? value : undefined)
+                  }}
+                  placeholder="1"
+                  className="bg-base"
+                />
+                <p className="text-xs text-text-muted">{t('common:models.cost_index_hint')}</p>
               </div>
             </div>
           )}

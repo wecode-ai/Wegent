@@ -164,6 +164,13 @@ class TestModelAggregationService:
                 },
                 "modelGroup": "Primary Group",
                 "modelSubGroup": "Secondary Group",
+                "contextWindow": 1048576,
+                "maxOutputTokens": 131072,
+                "costIndex": 50,
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": True,
+                },
             },
             "status": {"state": "Available"},
         }
@@ -173,6 +180,13 @@ class TestModelAggregationService:
         assert info["model_group"] == "Primary Group"
         assert info["model_sub_group"] == "Secondary Group"
         assert info["provider"] == "openai"
+        assert info["context_window"] == 1048576
+        assert info["max_output_tokens"] == 131072
+        assert info["cost_index"] == 50
+        assert info["model_capabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
 
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""
@@ -182,6 +196,10 @@ class TestModelAggregationService:
             provider="openai",
             model_id="gpt-5.4",
             resource_user_id=0,
+            context_window=1048576,
+            max_output_tokens=131072,
+            cost_index=50,
+            model_capabilities={"supportsImage": True, "supportsVideo": True},
             config={
                 "env": {
                     "model": "openai",
@@ -202,6 +220,13 @@ class TestModelAggregationService:
         assert "env" not in model_dict["config"]
         assert "env" not in full_model_dict["config"]
         assert model_dict["resourceUserId"] == 0
+        assert model_dict["contextWindow"] == 1048576
+        assert model_dict["maxOutputTokens"] == 131072
+        assert model_dict["costIndex"] == 50
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
         assert full_model_dict["resourceUserId"] == 0
         assert full_model_dict["runtime"] == {
             "family": "openai.openai-responses",
@@ -234,6 +259,13 @@ class TestModelAggregationService:
             "spec": {
                 "protocol": "openai-responses",
                 "apiFormat": "responses",
+                "contextWindow": 1048576,
+                "maxOutputTokens": 131072,
+                "costIndex": 50,
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": True,
+                },
                 "modelConfig": {
                     "env": {
                         "model": "openai",
@@ -258,6 +290,13 @@ class TestModelAggregationService:
         assert model_dict["provider"] == "openai"
         assert model_dict["model_id"] == "gpt-5.4"
         assert model_dict["config"]["protocol"] == "openai-responses"
+        assert model_dict["contextWindow"] == 1048576
+        assert model_dict["maxOutputTokens"] == 131072
+        assert model_dict["costIndex"] == 50
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
         assert model_dict["config"]["apiFormat"] == "responses"
         assert model_dict["config"]["env"] == {}
 

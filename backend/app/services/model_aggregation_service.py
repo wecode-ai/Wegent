@@ -105,6 +105,10 @@ class UnifiedModel:
         is_advanced: bool = False,
         model_group: Optional[str] = None,
         model_sub_group: Optional[str] = None,
+        context_window: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
+        cost_index: Optional[float] = None,
+        model_capabilities: Optional[Dict[str, bool]] = None,
         resource_user_id: Optional[int] = None,
         runtime_family: Optional[str] = None,
         created_at: Optional[Any] = None,
@@ -124,6 +128,10 @@ class UnifiedModel:
         self.is_advanced = is_advanced
         self.model_group = model_group
         self.model_sub_group = model_sub_group
+        self.context_window = context_window
+        self.max_output_tokens = max_output_tokens
+        self.cost_index = cost_index
+        self.model_capabilities = model_capabilities
         self.resource_user_id = resource_user_id
         self.created_at = created_at
         self.updated_at = updated_at
@@ -155,6 +163,10 @@ class UnifiedModel:
             "isAdvanced": self.is_advanced,
             "modelGroup": self.model_group,
             "modelSubGroup": self.model_sub_group,
+            "contextWindow": self.context_window,
+            "maxOutputTokens": self.max_output_tokens,
+            "costIndex": self.cost_index,
+            "modelCapabilities": self.model_capabilities,
             "runtime": self.runtime,
             "config": safe_config,
             "created_at": self.created_at,
@@ -203,6 +215,10 @@ class ModelAggregationService:
                 "is_advanced": False,
                 "model_group": None,
                 "model_sub_group": None,
+                "context_window": None,
+                "max_output_tokens": None,
+                "cost_index": None,
+                "model_capabilities": None,
             }
 
         try:
@@ -223,12 +239,15 @@ class ModelAggregationService:
                 config = {**config, "apiFormat": model_crd.spec.apiFormat.value}
 
             if model_crd.spec.modelCapabilities:
+                model_capabilities = model_crd.spec.modelCapabilities.model_dump(
+                    exclude_none=True
+                )
                 config = {
                     **config,
-                    "modelCapabilities": model_crd.spec.modelCapabilities.model_dump(
-                        exclude_none=True
-                    ),
+                    "modelCapabilities": model_capabilities,
                 }
+            else:
+                model_capabilities = None
 
             # Include type-specific config for non-LLM models
             if model_category_type == "video":
@@ -266,6 +285,10 @@ class ModelAggregationService:
                 ),
                 "model_group": model_crd.spec.modelGroup,
                 "model_sub_group": model_crd.spec.modelSubGroup,
+                "context_window": model_crd.spec.contextWindow,
+                "max_output_tokens": model_crd.spec.maxOutputTokens,
+                "cost_index": model_crd.spec.costIndex,
+                "model_capabilities": model_capabilities,
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -278,6 +301,10 @@ class ModelAggregationService:
                 "is_advanced": False,
                 "model_group": None,
                 "model_sub_group": None,
+                "context_window": None,
+                "max_output_tokens": None,
+                "cost_index": None,
+                "model_capabilities": None,
             }
 
     def _is_model_compatible_with_shell(
@@ -586,6 +613,10 @@ class ModelAggregationService:
                     is_advanced=info.get("is_advanced", False),
                     model_group=info.get("model_group"),
                     model_sub_group=info.get("model_sub_group"),
+                    context_window=info.get("context_window"),
+                    max_output_tokens=info.get("max_output_tokens"),
+                    cost_index=info.get("cost_index"),
+                    model_capabilities=info.get("model_capabilities"),
                     resource_user_id=resource.user_id,
                     created_at=resource.created_at,
                     updated_at=resource.updated_at,
@@ -641,6 +672,10 @@ class ModelAggregationService:
                 or model_dict.get("model_group"),
                 model_sub_group=model_dict.get("modelSubGroup")
                 or model_dict.get("model_sub_group"),
+                context_window=model_dict.get("contextWindow"),
+                max_output_tokens=model_dict.get("maxOutputTokens"),
+                cost_index=model_dict.get("costIndex"),
+                model_capabilities=model_dict.get("modelCapabilities"),
                 resource_user_id=0,
                 created_at=model_dict.get("created_at"),
                 updated_at=model_dict.get("updated_at"),
@@ -716,6 +751,10 @@ class ModelAggregationService:
                     is_active=resource.is_active,
                     model_group=info.get("model_group"),
                     model_sub_group=info.get("model_sub_group"),
+                    context_window=info.get("context_window"),
+                    max_output_tokens=info.get("max_output_tokens"),
+                    cost_index=info.get("cost_index"),
+                    model_capabilities=info.get("model_capabilities"),
                     resource_user_id=resource.user_id,
                     created_at=resource.created_at,
                     updated_at=resource.updated_at,
@@ -745,6 +784,10 @@ class ModelAggregationService:
                         or model_dict.get("model_group"),
                         model_sub_group=model_dict.get("modelSubGroup")
                         or model_dict.get("model_sub_group"),
+                        context_window=model_dict.get("contextWindow"),
+                        max_output_tokens=model_dict.get("maxOutputTokens"),
+                        cost_index=model_dict.get("costIndex"),
+                        model_capabilities=model_dict.get("modelCapabilities"),
                         resource_user_id=0,
                         created_at=model_dict.get("created_at"),
                         updated_at=model_dict.get("updated_at"),

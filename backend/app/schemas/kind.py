@@ -258,6 +258,11 @@ class ModelSpec(BaseModel):
         None,
         description="Maximum output tokens the model can generate per response.",
     )
+    costIndex: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Relative model usage cost. A value of 1 represents the baseline cost.",
+    )
 
     # New fields for multi-type model support
     modelType: Optional[ModelCategoryType] = Field(

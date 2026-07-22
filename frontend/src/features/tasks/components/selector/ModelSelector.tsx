@@ -20,7 +20,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { ChevronDown, Video, ImageIcon } from 'lucide-react'
+import { ChevronDown, ImageIcon, Info, Video } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { ModelIcon } from '@/components/icons/ModelIcon'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -53,6 +53,7 @@ export type {
 
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
+import { ModelDetailsBody, ModelDetailsDialog } from './ModelDetailsDialog'
 
 // ============================================================================
 // Types
@@ -103,6 +104,79 @@ function getModelKey(model: Model): string {
 /** Get a stable sync key for comparing models across component boundaries */
 function getModelSyncKey(model: Model | null): string | null {
   return model ? getModelKey(model) : null
+}
+
+function hasModelDetails(model: Model): boolean {
+  const capabilities = model.modelCapabilities ?? model.config?.modelCapabilities
+  const supportsMedia =
+    capabilities !== null &&
+    typeof capabilities === 'object' &&
+    ('supportsImage' in capabilities || 'supportsVideo' in capabilities)
+
+  return (
+    model.costIndex != null ||
+    model.contextWindow != null ||
+    model.maxOutputTokens != null ||
+    supportsMedia
+  )
+}
+
+interface ModelInformationActionProps {
+  model: Model
+  label: string
+  isMobile: boolean
+  unavailableLabel: string
+  onOpenDetails: (model: Model) => void
+}
+
+function ModelInformationAction({
+  model,
+  label,
+  isMobile,
+  unavailableLabel,
+  onOpenDetails,
+}: ModelInformationActionProps) {
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+  const button = (
+    <button
+      type="button"
+      data-testid={`model-info-${model.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+      aria-label={label}
+      title={label}
+      onClick={() => {
+        setIsPreviewOpen(false)
+        onOpenDetails(model)
+      }}
+      className="flex min-h-[44px] w-10 shrink-0 items-center justify-center text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:min-h-0 sm:h-10"
+    >
+      <Info className="h-4 w-4" aria-hidden="true" />
+    </button>
+  )
+
+  if (isMobile) return button
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent
+          side="right"
+          align="start"
+          sideOffset={8}
+          data-testid="model-details-preview"
+          className="w-[420px] max-w-[calc(100vw-32px)] rounded-lg bg-base p-5 text-text-primary"
+        >
+          <div className="mb-4">
+            <div className="truncate text-lg font-semibold">{model.displayName || model.name}</div>
+            <div className="mt-1 truncate text-sm text-text-muted">
+              {model.modelId || unavailableLabel}
+            </div>
+          </div>
+          <ModelDetailsBody model={model} />
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
 }
 
 // ============================================================================
@@ -243,6 +317,7 @@ export default function ModelSelector({
   // Local UI state
   const [isOpen, setIsOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
+  const [inspectedModel, setInspectedModel] = useState<Model | null>(null)
 
   // Reset search when popover closes
   useEffect(() => {
@@ -414,6 +489,22 @@ export default function ModelSelector({
                   </span>
                 ) : null
               }
+              renderModelActions={model => {
+                if (modelCategoryType !== 'llm' || !hasModelDetails(model)) return null
+
+                const label = `${t('common:models.view_details')}：${
+                  model.displayName || model.name
+                }`
+                return (
+                  <ModelInformationAction
+                    model={model}
+                    label={label}
+                    isMobile={isMobile}
+                    unavailableLabel={t('common:models.details_unavailable')}
+                    onOpenDetails={setInspectedModel}
+                  />
+                )
+              }}
               footer={
                 <div
                   data-testid="model-selector-footer"
@@ -455,6 +546,12 @@ export default function ModelSelector({
           )}
         </PopoverContent>
       </Popover>
+      <ModelDetailsDialog
+        model={inspectedModel}
+        onOpenChange={open => {
+          if (!open) setInspectedModel(null)
+        }}
+      />
     </div>
   )
 }

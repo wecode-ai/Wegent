@@ -5,6 +5,7 @@
 import '@testing-library/jest-dom'
 import React from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import ModelSelector from '@/features/tasks/components/selector/ModelSelector'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 
@@ -31,7 +32,24 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string) => fallback ?? _key,
+    t: (key: string, fallback?: string) => {
+      const translations: Record<string, string> = {
+        'models.model_id': '模型 ID',
+        'models.cost_index': '成本指数',
+        'models.cost_index_description': '成本指数说明',
+        'models.details_unavailable': '暂无信息',
+        'models.input_output_types': '输入输出类型',
+        'models.input_type': '输入',
+        'models.output_type': '输出',
+        'models.modality_text': '文本',
+        'models.modality_image': '图片',
+        'models.modality_video': '视频',
+        'models.model_limits': '模型限制',
+        'models.context_window': '上下文窗口',
+        'models.max_output_tokens': '最大输出 Token',
+      }
+      return translations[key] ?? fallback ?? key
+    },
   }),
 }))
 
@@ -96,6 +114,13 @@ const mockModel: Model = {
   provider: 'anthropic',
   modelId: 'claude-3-5-sonnet-20241022',
   type: 'shared' as Model['type'],
+  contextWindow: 1048576,
+  maxOutputTokens: 131072,
+  costIndex: 50,
+  modelCapabilities: {
+    supportsImage: true,
+    supportsVideo: true,
+  },
 }
 
 const mockAdvancedModel: Model = {
@@ -354,5 +379,83 @@ describe('ModelSelector', () => {
     expect(modelOption).toHaveClass('bg-primary/10')
     expect(modelOption).toHaveClass('text-primary')
     expect(screen.getByTestId('model-special-option-__default__')).toHaveClass('bg-primary/10')
+  })
+
+  it('does not show an information action when a model has no detail metadata', async () => {
+    mockModelSelectionOverrides = {
+      filteredModels: [mockAdvancedModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    expect(await screen.findByTestId('model-option-claude-opus-4-advanced')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-info-claude-opus-4-advanced')).not.toBeInTheDocument()
+  })
+
+  it('opens model details without selecting the model', async () => {
+    const externalSetSelectedModel = jest.fn()
+    mockModelSelectionOverrides = {
+      filteredModels: [mockModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={externalSetSelectedModel}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+    fireEvent.click(await screen.findByTestId('model-info-claude-3-5-sonnet'))
+
+    expect(await screen.findByTestId('model-details-dialog')).toHaveTextContent(
+      'claude-3-5-sonnet-20241022'
+    )
+    expect(screen.getByTestId('model-details-cost-index')).toHaveTextContent('50x')
+    expect(screen.getByTestId('model-details-context-window')).toHaveTextContent('1.05M Tokens')
+    expect(screen.getByTestId('model-details-max-output')).toHaveTextContent('131.1K Tokens')
+    expect(screen.getByText('文本、图片、视频')).toBeInTheDocument()
+    expect(externalSetSelectedModel).not.toHaveBeenCalled()
+  })
+
+  it('shows full model details in a non-modal layer when hovering', async () => {
+    const user = userEvent.setup()
+    mockModelSelectionOverrides = {
+      filteredModels: [mockModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+    await user.hover(await screen.findByTestId('model-info-claude-3-5-sonnet'))
+
+    const preview = await screen.findByTestId('model-details-preview')
+    expect(preview).toHaveTextContent('claude-3-5-sonnet-20241022')
+    expect(preview).toHaveTextContent('50x')
+    expect(screen.queryByTestId('model-details-dialog')).not.toBeInTheDocument()
   })
 })
