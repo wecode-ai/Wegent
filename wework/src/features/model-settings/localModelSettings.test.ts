@@ -312,6 +312,7 @@ describe('localModelSettings', () => {
     })
     expect(cleared).not.toHaveProperty('catalogEntry')
     expect(cleared).not.toHaveProperty('catalogPendingRuntimeInstanceId')
+    expect(cleared.catalogReady).toBe(true)
   })
 
   test('marks only the catalog snapshot that was written as ready', () => {
@@ -336,6 +337,30 @@ describe('localModelSettings', () => {
         expect.objectContaining({ id: concurrent.id, catalogReady: false }),
       ])
     )
+  })
+
+  test('uses a monotonic revision for rapid saves of the same model', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    try {
+      const written = saveLocalModelConfig({
+        id: 'rapid-model',
+        modelId: 'rapid-model',
+        baseUrl: 'http://localhost:11434/v1',
+        catalogReady: false,
+      })
+      const newer = saveLocalModelConfig({
+        id: written.id,
+        modelId: written.modelId,
+        baseUrl: written.baseUrl,
+        catalogReady: false,
+      })
+
+      expect(newer.updatedAt).not.toBe(written.updatedAt)
+      markLocalModelCatalogReady([written])
+      expect(listLocalModelConfigs()[0].catalogReady).toBe(false)
+    } finally {
+      now.mockRestore()
+    }
   })
 
   test('updates, deletes, clears, and emits change events', () => {

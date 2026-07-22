@@ -396,6 +396,14 @@ export function createLocalModelConfigId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}`
 }
 
+function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
+  const previousTimestamp = previous ? Date.parse(previous.updatedAt) : Number.NaN
+  const timestamp = Number.isFinite(previousTimestamp)
+    ? Math.max(Date.now(), previousTimestamp + 1)
+    : Date.now()
+  return new Date(timestamp).toISOString()
+}
+
 export function listLocalModelConfigs(): LocalModelConfig[] {
   return readStoredConfigs()
 }
@@ -462,12 +470,13 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
       : {}),
     ...(catalogEntry ? { catalogEntry } : {}),
     catalogReady:
-      input.catalogReady ?? (catalogChanged ? false : (previous?.catalogReady ?? !catalogEntry)),
+      input.catalogReady ??
+      (!catalogEntry ? true : catalogChanged ? false : (previous?.catalogReady ?? false)),
     ...(pendingRuntimeInstanceId
       ? { catalogPendingRuntimeInstanceId: pendingRuntimeInstanceId }
       : {}),
     enabled: input.enabled ?? previous?.enabled ?? true,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nextLocalModelUpdatedAt(previous),
   }
   const index = existing.findIndex(config => config.id === id)
   const configs =

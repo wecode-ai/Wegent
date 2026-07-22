@@ -50,6 +50,7 @@ import {
   saveLocalModelConfig,
   splitLocalModelRequestUrl,
   type LocalModelConfig,
+  type LocalModelCatalogSnapshot,
   type LocalModelApiFormat,
   type LocalModelToolProfile,
   type LocalModelWebSearchMode,
@@ -695,10 +696,9 @@ function LocalModelSettingsSection({
   const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
   const [pendingDiscardAction, setPendingDiscardAction] =
     useState<PendingLocalModelFormAction | null>(null)
-  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState<Array<{
-    id: string
-    updatedAt: string
-  }> | null>(null)
+  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState<
+    LocalModelCatalogSnapshot[] | null
+  >(null)
   const [restartingCatalog, setRestartingCatalog] = useState(false)
 
   const refreshModels = useCallback(() => {
@@ -959,13 +959,13 @@ function LocalModelSettingsSection({
         enabled: form.enabled,
       })
       if (catalogEntry) {
-        const writtenCatalogSnapshot = listLocalModelConfigs()
-          .filter(model => model.catalogEntry)
-          .map(({ id: modelId, updatedAt }) => ({ id: modelId, updatedAt }))
+        const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+        const writtenCatalogSnapshot = catalogModels.map(({ id: modelId, updatedAt }) => ({
+          id: modelId,
+          updatedAt,
+        }))
         await requestLocalExecutor('runtime.codex.catalog.custom.write', {
-          models: listLocalModelConfigs().flatMap(model =>
-            model.catalogEntry ? [model.catalogEntry] : []
-          ),
+          models: catalogModels.flatMap(model => (model.catalogEntry ? [model.catalogEntry] : [])),
         })
         const restart = await requestLocalExecutor<{
           restarted: boolean
