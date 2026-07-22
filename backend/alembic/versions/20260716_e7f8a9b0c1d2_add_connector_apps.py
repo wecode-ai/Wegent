@@ -144,6 +144,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("connector_oauth_sessions")
-    op.drop_table("connector_connections")
-    op.drop_table("connector_apps")
+    if _table_exists("connector_oauth_sessions"):
+        op.drop_table("connector_oauth_sessions")
+    if _table_exists("connector_connections"):
+        op.drop_table("connector_connections")
+    if _table_exists("connector_apps"):
+        op.drop_table("connector_apps")

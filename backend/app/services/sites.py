@@ -30,6 +30,9 @@ class SitesUpstreamResponseError(RuntimeError):
         self.detail = detail
 
 
+MAX_PLATFORM_SITE_PAGE_FETCHES = 10
+
+
 class SitesService:
     """Call Sites with server-controlled configuration and user identity."""
 
@@ -167,8 +170,9 @@ class SitesService:
         items: list[SiteResponse] = []
         has_more = False
         query_value = query.lower() if query else None
+        page_fetches = 0
 
-        while len(items) < limit:
+        while len(items) < limit and page_fetches < MAX_PLATFORM_SITE_PAGE_FETCHES:
             params: dict[str, Any] = {"username": username, "limit": 100}
             if query:
                 params["sitename"] = query
@@ -177,6 +181,7 @@ class SitesService:
             payload = await self._request(
                 "GET", "/api/v1/projects/search", params=params
             )
+            page_fetches += 1
             page_items = payload.get("items", []) if isinstance(payload, dict) else []
             if not isinstance(page_items, list):
                 raise SitesUpstreamUnavailableError(

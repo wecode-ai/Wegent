@@ -6,6 +6,7 @@ describe('buildAiVerifyEnvironment', () => {
     const environment = buildAiVerifyEnvironment(
       {
         PATH: '/usr/bin',
+        WEGENT_EXECUTOR_APP_IPC_ADDR: '127.0.0.1:7777',
         WEGENT_EXECUTOR_APP_IPC_ADDR_FILE: '/tmp/foreign.addr',
         WEGENT_EXECUTOR_APP_IPC_SOCKET: '/tmp/legacy.sock',
         WEGENT_EXECUTOR_BINARY: '/tmp/foreign-executor',
@@ -38,6 +39,7 @@ describe('buildAiVerifyEnvironment', () => {
       '/tmp/session/executor-home/workspace/projects'
     )
     expect(environment.WEWORK_EXECUTOR_ISOLATION_OVERRIDE).toBe('true')
+    expect(environment.WEGENT_EXECUTOR_APP_IPC_ADDR).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_APP_IPC_ADDR_FILE).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_APP_IPC_SOCKET).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_BINARY).toBeUndefined()

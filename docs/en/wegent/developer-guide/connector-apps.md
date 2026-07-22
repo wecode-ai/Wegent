@@ -56,13 +56,13 @@ When Backend is behind a reverse proxy and cannot derive the public callback ori
 CONNECTOR_OAUTH_CALLBACK_BASE_URL=https://wegent.example.com
 ```
 
-The resulting callback is:
+With the default `API_PREFIX` of `/api`, the resulting callback is:
 
 ```text
 https://wegent.example.com/api/connector-apps/oauth/callback
 ```
 
-Register this exact URL with the OAuth provider. Production deployments should use HTTPS. Internal MCP endpoints may use HTTP, but only trusted administrators can configure them and egress should be constrained by network policy.
+Register this exact URL with the OAuth provider, replacing `/api` with your deployment's configured API prefix when it differs from the default. Production deployments should use HTTPS. Internal MCP endpoints may use HTTP, but only trusted administrators can configure them and egress should be constrained by network policy.
 
 ## Data and lifecycle
 

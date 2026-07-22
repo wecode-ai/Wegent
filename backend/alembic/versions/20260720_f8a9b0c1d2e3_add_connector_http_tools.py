@@ -17,7 +17,13 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _table_exists(table_name: str) -> bool:
+    return table_name in sa.inspect(op.get_bind()).get_table_names()
+
+
 def _column_exists(table_name: str, column_name: str) -> bool:
+    if not _table_exists(table_name):
+        return False
     return any(
         column["name"] == column_name
         for column in sa.inspect(op.get_bind()).get_columns(table_name)
@@ -82,4 +88,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("connector_apps", "http_tools")
+    if _column_exists("connector_apps", "http_tools"):
+        op.drop_column("connector_apps", "http_tools")

@@ -73,22 +73,34 @@ impl ConnectorGatewayConfig {
             )
         })?;
         let status = response.status();
-        let value = response.json::<Value>().await.map_err(|error| {
+        let text = response.text().await.map_err(|error| {
             ConnectorGatewayError::new(
                 "connector_gateway_invalid_response",
                 format!("Invalid connector gateway response: {error}"),
             )
         })?;
         if !status.is_success() {
-            let message = value
-                .get("detail")
-                .and_then(Value::as_str)
-                .unwrap_or("Connector gateway request failed");
+            let detail = serde_json::from_str::<Value>(&text).ok().and_then(|value| {
+                value
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+            let message = match detail {
+                Some(detail) => format!("{detail} (HTTP {status})"),
+                None => format!("Connector gateway request failed (HTTP {status}): {text}"),
+            };
             return Err(ConnectorGatewayError::new(
                 "connector_gateway_error",
-                format!("{message} (HTTP {status})"),
+                message,
             ));
         }
+        let value = serde_json::from_str::<Value>(&text).map_err(|error| {
+            ConnectorGatewayError::new(
+                "connector_gateway_invalid_response",
+                format!("Invalid connector gateway response: {error}"),
+            )
+        })?;
         Ok(value)
     }
 }
@@ -179,6 +191,8 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
+    use tokio::net::TcpListener;
 
     #[test]
     fn persists_and_loads_scoped_authorization() {
@@ -208,6 +222,64 @@ mod tests {
                     & 0o777,
                 0o600
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn non_success_json_detail_returns_gateway_error() {
+        let config =
+            gateway_config_for_response(StatusCode::BAD_REQUEST, r#"{"detail":"cloud rejected"}"#)
+                .await;
+
+        let error = config
+            .request(Method::GET, "tools", None)
+            .await
+            .expect_err("gateway error should be returned");
+
+        assert_eq!(error.code, "connector_gateway_error");
+        assert_eq!(error.message, "cloud rejected (HTTP 400 Bad Request)");
+    }
+
+    #[tokio::test]
+    async fn non_success_plain_text_returns_gateway_error_with_body() {
+        let config =
+            gateway_config_for_response(StatusCode::BAD_GATEWAY, "upstream unavailable").await;
+
+        let error = config
+            .request(Method::GET, "tools", None)
+            .await
+            .expect_err("gateway error should be returned");
+
+        assert_eq!(error.code, "connector_gateway_error");
+        assert_eq!(
+            error.message,
+            "Connector gateway request failed (HTTP 502 Bad Gateway): upstream unavailable"
+        );
+    }
+
+    async fn gateway_config_for_response(
+        status: StatusCode,
+        body: &'static str,
+    ) -> ConnectorGatewayConfig {
+        let app = Router::new().route(
+            "/connector-runtime/tools",
+            get(move || async move { (status, body).into_response() }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("test listener address should be available");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("test server should run");
+        });
+        ConnectorGatewayConfig {
+            api_base_url: format!("http://{address}"),
+            connector_token: "scoped-token".to_owned(),
+            expires_at_ms: now_ms() + 60_000,
         }
     }
 }

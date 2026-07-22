@@ -582,6 +582,18 @@ def test_apps_projection_lists_reads_and_installs_callable_connector(
     assert installed["tool_summaries"][0]["name"] == "projection-api__lookup"
 
 
+def test_apps_projection_rejects_malformed_cursor(
+    test_client: TestClient,
+    test_token: str,
+):
+    response = test_client.get(
+        "/api/apps/list?cursor=not-a-number", headers=_admin_headers(test_token)
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "cursor must be a numeric offset"
+
+
 def test_admin_can_register_wegent_sites_mcp_connector(
     test_client: TestClient,
     test_db: Session,

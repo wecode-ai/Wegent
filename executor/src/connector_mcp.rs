@@ -298,7 +298,8 @@ fn read_json_file(path: &Path, description: &str) -> Result<Value, String> {
 
 fn source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
-    collect_source_files(root, root, &mut files)?;
+    let mut total_size = 0_u64;
+    collect_source_files(root, root, &mut files, &mut total_size)?;
     files.sort();
     if files.len() > MAX_SOURCE_FILES {
         return Err(format!(
@@ -312,6 +313,7 @@ fn collect_source_files(
     root: &Path,
     directory: &Path,
     files: &mut Vec<PathBuf>,
+    total_size: &mut u64,
 ) -> Result<(), String> {
     let mut entries = fs::read_dir(directory)
         .map_err(|error| format!("Failed to read {}: {error}", directory.display()))?
@@ -336,12 +338,18 @@ fn collect_source_files(
             ));
         }
         if metadata.is_dir() {
-            collect_source_files(root, &path, files)?;
+            collect_source_files(root, &path, files, total_size)?;
         } else if metadata.is_file() {
             if metadata.len() > MAX_SOURCE_FILE_BYTES {
                 return Err(format!(
                     "file exceeds {MAX_SOURCE_FILE_BYTES} bytes: {relative}."
                 ));
+            }
+            *total_size = total_size
+                .checked_add(metadata.len())
+                .ok_or_else(source_archive_size_error)?;
+            if *total_size > MAX_SOURCE_ARCHIVE_BYTES as u64 {
+                return Err(source_archive_size_error());
             }
             files.push(path);
         }
@@ -373,8 +381,17 @@ fn source_archive(root: &Path, files: &[PathBuf]) -> Result<Vec<u8>, String> {
             .compression_method(CompressionMethod::Deflated)
             .unix_permissions(0o644)
             .last_modified_time(zip::DateTime::default());
+        let mut total_size = 0_u64;
         for file in files {
             let relative = relative_source_path(root, file)?;
+            let metadata = fs::metadata(file)
+                .map_err(|error| format!("Failed to inspect {relative}: {error}"))?;
+            total_size = total_size
+                .checked_add(metadata.len())
+                .ok_or_else(source_archive_size_error)?;
+            if total_size > MAX_SOURCE_ARCHIVE_BYTES as u64 {
+                return Err(source_archive_size_error());
+            }
             archive
                 .start_file(relative.clone(), options)
                 .map_err(|error| format!("Failed to package {relative}: {error}"))?;
@@ -393,6 +410,10 @@ fn source_archive(root: &Path, files: &[PathBuf]) -> Result<Vec<u8>, String> {
             .map_err(|error| format!("Failed to finalize source archive: {error}"))?;
     }
     Ok(cursor.into_inner())
+}
+
+fn source_archive_size_error() -> String {
+    format!("Source archive exceeds {MAX_SOURCE_ARCHIVE_BYTES} bytes.")
 }
 
 fn relative_source_path(root: &Path, path: &Path) -> Result<String, String> {

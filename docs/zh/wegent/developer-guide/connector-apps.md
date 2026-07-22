@@ -58,13 +58,13 @@ USER_AES_KEY="base64:$(openssl rand -base64 32)"
 CONNECTOR_OAUTH_CALLBACK_BASE_URL=https://wegent.example.com
 ```
 
-最终回调地址为：
+使用默认 `API_PREFIX` `/api` 时，最终回调地址为：
 
 ```text
 https://wegent.example.com/api/connector-apps/oauth/callback
 ```
 
-必须把该地址登记到 OAuth Provider。生产环境应使用 HTTPS。内部 MCP 可以使用 HTTP，但只能由受信任管理员配置，并应由网络策略限制 Backend 的出站范围。
+必须把该地址登记到 OAuth Provider；如果部署使用的 API prefix 不是默认值，请把 `/api` 替换为实际配置。生产环境应使用 HTTPS。内部 MCP 可以使用 HTTP，但只能由受信任管理员配置，并应由网络策略限制 Backend 的出站范围。
 
 ## 数据与生命周期
 

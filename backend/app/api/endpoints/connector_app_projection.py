@@ -4,7 +4,7 @@
 
 """Connector app projections for desktop app surfaces."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -31,6 +31,15 @@ def _app_id(app: ConnectorApp) -> str:
     return app.slug
 
 
+def _parse_cursor(cursor: str | None) -> int:
+    try:
+        return int(cursor or "0")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="cursor must be a numeric offset"
+        ) from exc
+
+
 async def _tool_summaries_by_app(
     db: Session, user: User
 ) -> dict[str, list[ConnectorToolSummary]]:
@@ -55,7 +64,7 @@ async def list_apps(
     user: User = Depends(get_current_user),
 ) -> ConnectorAppListResponse:
     apps = connector_app_service.list_visible_apps(db, user)
-    start = int(cursor or "0")
+    start = _parse_cursor(cursor)
     page = apps[start : start + limit]
     tools_by_app = await _tool_summaries_by_app(db, user)
     data = []

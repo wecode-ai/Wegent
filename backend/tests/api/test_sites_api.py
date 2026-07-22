@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
+from app.services.sites import MAX_PLATFORM_SITE_PAGE_FETCHES
 
 SITES_API_BASE_URL = "https://sites.example.test"
 
@@ -105,6 +106,45 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
     assert request.headers["authorization"] == "Bearer platform-token"
     assert request.url.params["username"] == "testuser"
     assert request.url.params["sitename"] == "product"
+
+
+def test_list_sites_stops_after_platform_page_fetch_cap(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/search"
+            "?username=testuser&limit=100"
+        ),
+        json={"items": [], "next_cursor": "page-1"},
+    )
+    for page in range(1, MAX_PLATFORM_SITE_PAGE_FETCHES):
+        httpx_mock.add_response(
+            method="GET",
+            url=(
+                f"{SITES_API_BASE_URL}/api/v1/projects/search"
+                f"?username=testuser&limit=100&cursor=page-{page}"
+            ),
+            json={"items": [], "next_cursor": f"page-{page + 1}"},
+        )
+
+    response = test_client.get(
+        "/api/sites",
+        params={"offset": 0, "limit": 1},
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"] == []
+    assert body["total"] == 1
+    assert body["next_cursor"] == f"page-{MAX_PLATFORM_SITE_PAGE_FETCHES}"
+    assert len(httpx_mock.get_requests()) == MAX_PLATFORM_SITE_PAGE_FETCHES
 
 
 def test_publish_site_sets_network_to_outer(
