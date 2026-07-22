@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import { useTranslation } from '@/hooks/useTranslation'
+import { terminalOutputToText } from '@/lib/terminal-text'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
@@ -1150,8 +1151,9 @@ function BashBlockDetail({
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
-  const outputText =
+  const rawOutputText =
     typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
+  const outputText = terminalOutputToText(rawOutputText)
   const isDone = block.status === 'done'
   const isError = block.status === 'error'
   const [copied, setCopied] = useState(false)
