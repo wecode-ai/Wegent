@@ -415,10 +415,10 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_40px]')
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelTitle).toHaveClass('min-w-0', 'flex-1', 'truncate')
-    expect(screen.getByLabelText('图片理解')).toBeInTheDocument()
-    expect(screen.getByLabelText('视频理解')).toBeInTheDocument()
-    expect(selectedIndicator).toHaveClass('self-center')
-    expect(informationAction).toHaveClass('self-stretch')
+    expect(screen.getByTitle('图片理解').querySelector('.lucide-image')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解').querySelector('.lucide-square-play')).toBeInTheDocument()
+    expect(selectedIndicator).toHaveClass('self-start', 'mt-0.5')
+    expect(informationAction).toHaveClass('self-stretch', 'items-start', 'pt-3')
   })
 
   it('shows an information action when model detail metadata is unavailable', async () => {

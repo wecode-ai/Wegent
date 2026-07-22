@@ -129,7 +129,7 @@ function ModelInformationAction({
       aria-label={label}
       title={label}
       onClick={isMobile ? () => onOpenDetails(model) : undefined}
-      className="flex min-h-[44px] w-10 shrink-0 self-stretch items-center justify-center text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:min-h-0"
+      className="flex min-h-[44px] w-10 shrink-0 self-stretch items-start justify-center pt-3 text-text-muted transition-colors hover:bg-hover hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:min-h-0"
     >
       <Info className="h-4 w-4" aria-hidden="true" />
     </button>

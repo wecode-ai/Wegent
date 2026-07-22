@@ -255,7 +255,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {renderModelMeta?.(model)}
           </span>
           <Check
-            className={cn('h-4 w-4 shrink-0 self-center', isSelected ? 'opacity-100' : 'opacity-0')}
+            className={cn(
+              'mt-0.5 h-4 w-4 shrink-0 self-start',
+              isSelected ? 'opacity-100' : 'opacity-0'
+            )}
           />
         </button>
         {modelActions}
@@ -335,7 +338,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {renderModelMeta?.(model)}
           </span>
           <Check
-            className={cn('h-4 w-4 shrink-0 self-center', isSelected ? 'opacity-100' : 'opacity-0')}
+            className={cn(
+              'mt-0.5 h-4 w-4 shrink-0 self-start',
+              isSelected ? 'opacity-100' : 'opacity-0'
+            )}
           />
         </button>
         {modelActions}

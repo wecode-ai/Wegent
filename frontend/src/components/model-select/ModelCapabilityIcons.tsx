@@ -4,7 +4,7 @@
 
 'use client'
 
-import { ImageIcon, Video } from 'lucide-react'
+import { Image, SquarePlay } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -30,19 +30,19 @@ export function ModelCapabilityIcons({ model, className }: ModelCapabilityIconsP
     supportsImageUnderstanding(model) && {
       key: 'image',
       label: t('common:models.image_understanding', '图片理解'),
-      icon: ImageIcon,
+      icon: Image,
       className: 'border-sky-100 bg-sky-50 text-sky-600',
     },
     supportsVideoUnderstanding(model) && {
       key: 'video',
       label: t('common:models.video_understanding', '视频理解'),
-      icon: Video,
+      icon: SquarePlay,
       className: 'border-emerald-100 bg-emerald-50 text-emerald-600',
     },
   ].filter(Boolean) as Array<{
     key: string
     label: string
-    icon: typeof ImageIcon
+    icon: typeof Image
     className: string
   }>
 
