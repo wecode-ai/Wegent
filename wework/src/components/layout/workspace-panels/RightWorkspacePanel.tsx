@@ -171,7 +171,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     setBrowserFaviconUrl(null)
     setBrowserTitle(null)
     onSelectBrowser()
-  }, [onSelectBrowser])
+  }, [onSelectBrowser, setBrowserFaviconUrl, setBrowserTitle])
 
   useEffect(() => {
     if (!visible) return

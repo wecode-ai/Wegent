@@ -4,7 +4,6 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import {
-  DEFAULT_KEYBINDINGS,
   getDefaultKeybindings,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
@@ -175,7 +174,7 @@ export function KeyboardShortcutsSettingsPage() {
         setSavingCommand(null)
       }
     },
-    [overrides, t]
+    [defaultBindings, overrides, t]
   )
 
   useEffect(() => {
