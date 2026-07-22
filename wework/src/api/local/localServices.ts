@@ -99,6 +99,8 @@ import {
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
   localModelName,
+  markLocalModelCatalogReady,
+  reconcileLocalModelCatalogRuntime,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
@@ -215,6 +217,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
   const family = group
     ? `model-interface:${encodeURIComponent(group.toLowerCase())}`
     : 'model-interface'
+  const reasoningEfforts = localModelReasoningEfforts(config)
+  const defaultReasoningEffort = localModelDefaultReasoningEffort(config)
   return {
     name: localModelName(config),
     type: 'runtime',
@@ -230,6 +234,8 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
         family,
         ...(group ? { familyLabel: group } : {}),
         modelLabel: config.displayName,
+        ...(reasoningEfforts.length > 0 ? { reasoningEfforts } : {}),
+        ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
         controls: ['speed'],
         sortOrder: 20,
       },
@@ -241,6 +247,24 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     },
     isActive: config.enabled,
   }
+}
+
+function localModelReasoningEfforts(config: LocalModelConfig): string[] {
+  if (config.codexCatalogModelId === 'wework-kimi-k3') return ['low', 'high', 'max']
+  const values = config.catalogEntry?.supported_reasoning_levels
+  if (!Array.isArray(values)) return []
+  return values.flatMap(value => {
+    if (typeof value === 'string') return [value]
+    if (!value || typeof value !== 'object') return []
+    const effort = (value as Record<string, unknown>).effort
+    return typeof effort === 'string' ? [effort] : []
+  })
+}
+
+function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
+  if (config.codexCatalogModelId === 'wework-kimi-k3') return 'low'
+  const value = config.catalogEntry?.default_reasoning_level
+  return typeof value === 'string' ? value : null
 }
 
 function localRuntimeModels(
@@ -260,7 +284,7 @@ function localRuntimeModels(
   return [
     ...officialModels,
     ...listLocalModelConfigs()
-      .filter(config => config.enabled)
+      .filter(config => config.enabled && config.catalogReady)
       .map(localModelConfigToUnifiedModel),
   ]
 }
@@ -656,6 +680,9 @@ function localRuntimeModelConfig(
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
+    if (!localModel.catalogReady) {
+      throw new Error('Local model requires a Codex restart')
+    }
     const requestUrl = buildLocalModelRequestUrl(
       localModel.baseUrl,
       localModel.requestPath,
@@ -664,6 +691,9 @@ function localRuntimeModelConfig(
     return {
       model: 'openai',
       model_id: localModel.modelId,
+      ...(localModel.codexCatalogModelId
+        ? { codex_catalog_model_id: localModel.codexCatalogModelId }
+        : {}),
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
       tool_profile: localModel.toolProfile,
@@ -677,6 +707,9 @@ function localRuntimeModelConfig(
       ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
+      ...(localModelDefaultReasoningEffort(localModel)
+        ? { reasoning: { effort: localModelDefaultReasoningEffort(localModel) } }
+        : {}),
       codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {
@@ -2033,8 +2066,23 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const ensureStatus = async () => {
     if (!ensurePromise) {
       ensurePromise = ensure()
-        .then(status => {
+        .then(async status => {
           lastStatus = status
+          reconcileLocalModelCatalogRuntime(status.runtimeInstanceId)
+          const pendingCatalogModels = listLocalModelConfigs().filter(
+            model => !model.catalogReady && model.catalogEntry
+          )
+          if (pendingCatalogModels.length > 0) {
+            await request('runtime.codex.catalog.custom.write', {
+              models: listLocalModelConfigs().flatMap(model =>
+                model.catalogEntry ? [model.catalogEntry] : []
+              ),
+            })
+            const restart = await request<{
+              restarted?: boolean
+            }>('runtime.codex.app_server.restart', { ifIdle: true })
+            if (restart.restarted) markLocalModelCatalogReady()
+          }
           return status
         })
         .finally(() => {

@@ -143,6 +143,35 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('does not expose a custom model until its catalog restart is applied', async () => {
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+      }),
+      request: vi.fn().mockResolvedValue({
+        providers: [],
+        data: OFFICIAL_CODEX_MODELS,
+      }),
+      subscribe: vi.fn(),
+    })
+
+    const models = await services.modelApi.listModels()
+
+    expect(models.data).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'local-model:pending-model' })])
+    )
+  })
+
   test('returns Codex provider models in local model list', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.models.list') {
@@ -1049,6 +1078,45 @@ describe('createLocalAppServices', () => {
         base_url: 'http://localhost:9876/api',
         responses_url: 'http://localhost:9876/api/respond',
         codex_responses_compat_proxy: true,
+      })
+    )
+  })
+
+  test('uses the built-in K3 catalog profile with 256K context and low reasoning', async () => {
+    saveLocalModelConfig({
+      id: 'kimi-k3',
+      providerProfileId: 'kimi-coding',
+      displayName: 'Kimi K3',
+      modelId: 'k3',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      contextWindow: 262_144,
+      codexCatalogModelId: 'wework-kimi-k3',
+    })
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-k3',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'K3',
+      modelId: 'local-model:kimi-k3',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload.executionRequest.model_config).toEqual(
+      expect.objectContaining({
+        model_id: 'k3',
+        codex_catalog_model_id: 'wework-kimi-k3',
+        model_context_window: 262_144,
+        reasoning: { effort: 'low' },
       })
     )
   })
