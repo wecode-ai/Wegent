@@ -5,26 +5,68 @@ import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
 const mocks = vi.hoisted(() => ({
   connect: vi.fn().mockResolvedValue({ running: true, ready: true }),
   disconnect: vi.fn().mockResolvedValue({ running: true, ready: true }),
+  ensure: vi.fn().mockResolvedValue({ running: true, ready: true }),
+  issueToken: vi.fn(),
+  listApps: vi.fn(),
+  request: vi.fn().mockResolvedValue({}),
+  notifySkillsChanged: vi.fn(),
 }))
 
 vi.mock('./cloudConnectionAvailability', () => ({
   isCloudConnectionUiAvailable: () => true,
 }))
 
+vi.mock('@/api/cloud/connectorApps', () => ({
+  issueWegentConnectorToken: mocks.issueToken,
+  listWegentInstalledConnectorApps: mocks.listApps,
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   connectLocalExecutorToBackend: mocks.connect,
   disconnectLocalExecutorFromBackend: mocks.disconnect,
+  ensureLocalExecutorStarted: mocks.ensure,
+  requestLocalExecutor: mocks.request,
+}))
+
+vi.mock('@/features/plugins/pluginTrial', () => ({
+  notifyLocalPluginSkillsChanged: mocks.notifySkillsChanged,
 }))
 
 describe('LocalExecutorCloudBridge', () => {
   beforeEach(() => {
-    mocks.connect.mockClear()
-    mocks.disconnect.mockClear()
+    vi.clearAllMocks()
+    mocks.issueToken.mockResolvedValue({
+      access_token: 'scoped-connector-token',
+      token_type: 'bearer',
+      expires_in: 900,
+    })
+    mocks.listApps.mockResolvedValue({
+      apps: [
+        {
+          id: 'tickets',
+          slug: 'tickets',
+          runtime_name: 'Tickets',
+          enabled: true,
+          callable: true,
+          connection: { status: 'connected' },
+          tool_summaries: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+        },
+        {
+          id: 'docs',
+          slug: 'docs',
+          runtime_name: 'Docs',
+          enabled: true,
+          callable: false,
+          connection: { status: 'connected' },
+        },
+      ],
+    })
   })
 
   test('updates backend connection whenever the cloud target changes', async () => {
     const view = render(
       <LocalExecutorCloudBridge
+        apiBaseUrl="https://backend.example.com/api"
         backendUrl="https://backend.example.com"
         isConnected
         token="token-a"
@@ -39,7 +81,12 @@ describe('LocalExecutorCloudBridge', () => {
     })
 
     view.rerender(
-      <LocalExecutorCloudBridge backendUrl="https://next.example.com" isConnected token="token-b" />
+      <LocalExecutorCloudBridge
+        apiBaseUrl="https://next.example.com/api"
+        backendUrl="https://next.example.com"
+        isConnected
+        token="token-b"
+      />
     )
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
     expect(mocks.connect).toHaveBeenLastCalledWith({
@@ -48,10 +95,53 @@ describe('LocalExecutorCloudBridge', () => {
     })
   })
 
-  test('disconnects the executor when the cloud connection is unavailable', async () => {
+  test('passes only a short-lived scoped token and syncs connected apps', async () => {
+    render(
+      <LocalExecutorCloudBridge
+        apiBaseUrl="https://cloud.example.test/api"
+        backendUrl="https://cloud.example.test"
+        isConnected
+        token="cloud-token"
+      />
+    )
+
+    await waitFor(() => {
+      expect(mocks.request).toHaveBeenCalledWith(
+        'runtime.connectors.configure',
+        expect.objectContaining({
+          apiBaseUrl: 'https://cloud.example.test/api',
+          connectorToken: 'scoped-connector-token',
+          syncRevision: expect.any(Number),
+        })
+      )
+    })
+    expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.apps.sync', {
+      apps: [
+        {
+          slug: 'tickets',
+          name: 'Tickets',
+          description: '',
+          tools: [{ name: 'tickets__search', raw_tool_name: 'search' }],
+        },
+      ],
+    })
+    expect(mocks.notifySkillsChanged).toHaveBeenCalled()
+    expect(
+      mocks.request.mock.calls.find(call => call[0] === 'runtime.connectors.configure')?.[1]
+    ).not.toHaveProperty('authToken')
+  })
+
+  test('disconnects the executor and clears connector state when cloud is unavailable', async () => {
     render(<LocalExecutorCloudBridge isConnected={false} token={null} />)
 
-    await waitFor(() => expect(mocks.disconnect).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(mocks.disconnect).toHaveBeenCalledTimes(1)
+      expect(mocks.request).toHaveBeenCalledWith('runtime.connectors.clear', {
+        syncRevision: expect.any(Number),
+      })
+    })
+    expect(mocks.ensure).toHaveBeenCalled()
     expect(mocks.connect).not.toHaveBeenCalled()
+    expect(mocks.notifySkillsChanged).toHaveBeenCalled()
   })
 })

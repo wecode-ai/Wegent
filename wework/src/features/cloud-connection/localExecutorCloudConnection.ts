@@ -5,6 +5,7 @@ import {
 import { isCloudConnectionUiAvailable } from './cloudConnectionAvailability'
 
 export interface LocalExecutorCloudConnection {
+  apiBaseUrl?: string
   backendUrl?: string
   isConnected: boolean
   token: string | null

@@ -4,6 +4,7 @@ import {
   deleteLocalModelConfig,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  reconcileLocalModelCatalogRuntime,
   saveLocalModelConfig,
 } from './localModelSettings'
 
@@ -214,6 +215,36 @@ describe('localModelSettings', () => {
     ])
   })
 
+  test('migrates existing K3 configs to the built-in 256K catalog profile', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'existing-k3',
+          providerProfileId: 'kimi-coding',
+          displayName: 'K3',
+          modelId: 'k3',
+          baseUrl: 'https://api.kimi.com/coding/v1',
+          apiFormat: 'openai-chat-completions',
+          contextWindow: 256000,
+          webSearchMode: 'disabled',
+          imageGenerationEnabled: false,
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'existing-k3',
+        contextWindow: 262_144,
+        codexCatalogModelId: 'wework-kimi-k3',
+        catalogReady: true,
+      }),
+    ])
+  })
+
   test('validates optional context window before saving', () => {
     expect(() =>
       saveLocalModelConfig({
@@ -234,6 +265,24 @@ describe('localModelSettings', () => {
         contextWindow: 0,
       })
     ).toThrow('Context window must be a positive integer')
+  })
+
+  test('makes pending catalog models ready after the executor instance changes', () => {
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+      catalogPendingRuntimeInstanceId: 'runtime-1',
+    })
+
+    reconcileLocalModelCatalogRuntime('runtime-1')
+    expect(listLocalModelConfigs()[0]).toMatchObject({ catalogReady: false })
+
+    reconcileLocalModelCatalogRuntime('runtime-2')
+    expect(listLocalModelConfigs()[0]).toMatchObject({ catalogReady: true })
+    expect(listLocalModelConfigs()[0]).not.toHaveProperty('catalogPendingRuntimeInstanceId')
   })
 
   test('updates, deletes, clears, and emits change events', () => {

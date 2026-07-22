@@ -5,6 +5,13 @@
 #[tokio::main]
 async fn main() {
     install_termination_signal_diagnostics();
+    if wegent_executor::connector_mcp::is_connector_mcp_command() {
+        if let Err(error) = wegent_executor::connector_mcp::run().await {
+            eprintln!("connector MCP server failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if wegent_executor::browser_mcp::is_browser_mcp_command() {
         if let Err(error) = wegent_executor::browser_mcp::run().await {
             eprintln!("browser MCP server failed: {error}");
