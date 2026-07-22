@@ -7,6 +7,7 @@ mod local_executor;
 mod local_terminal;
 mod process_environment;
 mod system_drag;
+mod system_sleep;
 mod wecode;
 mod workbench_background;
 
@@ -384,6 +385,8 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default = "default_true")]
     system_drag_enabled: bool,
+    #[serde(default = "default_true")]
+    prevent_sleep_while_tasks_running: bool,
     #[serde(default)]
     close_to_tray_hint_seen: bool,
     #[serde(default = "default_language_preference")]
@@ -483,6 +486,7 @@ impl Default for AppPreferences {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             system_drag_enabled: true,
+            prevent_sleep_while_tasks_running: true,
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
             terminal_context_injection_enabled: true,
@@ -508,6 +512,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     system_drag_enabled: Option<bool>,
+    prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -936,6 +941,9 @@ fn update_app_preferences(
     if let Some(value) = patch.system_drag_enabled {
         preferences.system_drag_enabled = value;
     }
+    if let Some(value) = patch.prevent_sleep_while_tasks_running {
+        preferences.prevent_sleep_while_tasks_running = value;
+    }
     if let Some(value) = patch.close_to_tray_hint_seen {
         preferences.close_to_tray_hint_seen = value;
     }
@@ -980,6 +988,8 @@ fn update_app_preferences(
         preferences.quick_phrases = value;
     }
     write_app_preferences_impl(&app, &preferences)?;
+    app.state::<system_sleep::SystemSleepState>()
+        .set_enabled(preferences.prevent_sleep_while_tasks_running);
     Ok(preferences)
 }
 
@@ -990,6 +1000,7 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     system_drag_enabled: bool,
+    prevent_sleep_while_tasks_running: bool,
     close_to_tray_hint_seen: bool,
     language: String,
     terminal_context_injection_enabled: bool,
@@ -1013,6 +1024,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     system_drag_enabled: Option<bool>,
+    prevent_sleep_while_tasks_running: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
     terminal_context_injection_enabled: Option<bool>,
@@ -1036,6 +1048,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         system_drag_enabled: true,
+        prevent_sleep_while_tasks_running: true,
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
         terminal_context_injection_enabled: true,
@@ -1063,6 +1076,7 @@ fn update_app_preferences(
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         system_drag_enabled: patch.system_drag_enabled.unwrap_or(true),
+        prevent_sleep_while_tasks_running: patch.prevent_sleep_while_tasks_running.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
         language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
         terminal_context_injection_enabled: patch
@@ -2435,6 +2449,8 @@ struct TrayMenuStatePayload {
     unread_more: Vec<TrayMenuTaskItem>,
     running_count: usize,
     #[serde(default)]
+    active_task_count: usize,
+    #[serde(default)]
     show_running_status: bool,
     #[serde(default)]
     unread_count: usize,
@@ -2480,6 +2496,7 @@ impl TrayMenuStatePayload {
             unread: Vec::new(),
             unread_more: Vec::new(),
             running_count: 0,
+            active_task_count: 0,
             show_running_status: false,
             unread_count: 0,
             pinned: Vec::new(),
@@ -3311,6 +3328,8 @@ fn update_tray_visual<R: tauri::Runtime>(
 #[cfg(desktop)]
 #[tauri::command]
 fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
+    app.state::<system_sleep::SystemSleepState>()
+        .set_running_count(state.active_task_count);
     let menu = build_system_tray_menu(&app, &state)
         .map_err(|error| format!("Failed to build tray menu: {error}"))?;
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
@@ -3767,6 +3786,7 @@ pub fn run() {
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .manage(system_drag::SystemDragState::default())
+        .manage(system_sleep::SystemSleepState::default())
         .on_window_event(|window, event| {
             #[cfg(desktop)]
             if hide_main_window_on_close(window, event) {
@@ -3805,6 +3825,10 @@ pub fn run() {
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
+            #[cfg(desktop)]
+            app.state::<system_sleep::SystemSleepState>().set_enabled(
+                read_app_preferences_impl(app.handle()).prevent_sleep_while_tasks_running,
+            );
             #[cfg(desktop)]
             system_drag::setup(app.handle().clone());
             #[cfg(desktop)]

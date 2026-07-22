@@ -192,36 +192,41 @@ function seedDesktopE2ECloudConnection() {
     },
     connectedAt: new Date().toISOString(),
   })
-  for (const model of [
-    {
-      id: 'desktop-e2e-responses',
-      displayName: 'Desktop E2E Responses',
-      modelId: 'desktop-e2e-responses-model',
-      apiFormat: 'openai-responses' as const,
-      toolProfile: 'custom' as const,
-      requestPath: '/v1/responses',
-    },
-    {
-      id: 'desktop-e2e-chat',
-      displayName: 'Desktop E2E Chat',
-      modelId: 'desktop-e2e-chat-model',
-      apiFormat: 'openai-chat-completions' as const,
-      toolProfile: 'function' as const,
-      requestPath: '/v1/chat/completions',
-    },
-    {
-      id: 'desktop-e2e-anthropic',
-      displayName: 'Desktop E2E Anthropic',
-      modelId: 'desktop-e2e-anthropic-model',
-      apiFormat: 'anthropic-messages' as const,
-      toolProfile: 'function' as const,
-      requestPath: '/v1/messages',
-    },
-  ]) {
+  const localModels =
+    import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
+      ? [
+          {
+            id: 'desktop-e2e-responses',
+            displayName: 'Desktop E2E Responses',
+            modelId: 'desktop-e2e-responses-model',
+            apiFormat: 'openai-responses' as const,
+            toolProfile: 'custom' as const,
+            requestPath: '/v1/responses',
+          },
+          {
+            id: 'desktop-e2e-chat',
+            displayName: 'Desktop E2E Chat',
+            modelId: 'desktop-e2e-chat-model',
+            apiFormat: 'openai-chat-completions' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/chat/completions',
+          },
+          {
+            id: 'desktop-e2e-anthropic',
+            displayName: 'Desktop E2E Anthropic',
+            modelId: 'desktop-e2e-anthropic-model',
+            apiFormat: 'anthropic-messages' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/messages',
+          },
+        ]
+      : []
+  for (const model of localModels) {
     saveLocalModelConfig({
       ...model,
       baseUrl: backendUrl,
       apiKey: 'wework-e2e-test-key',
+      catalogReady: false,
       enabled: true,
     })
   }
@@ -557,6 +562,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getStyle': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const property = command.value?.trim()
+      if (!property) throw new Error('getStyle requires a CSS property name')
+      return window.getComputedStyle(element).getPropertyValue(property)
+    }
+    case 'getInlineStyle': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      const property = command.value?.trim()
+      if (!property) throw new Error('getInlineStyle requires a CSS property name')
+      return element.style.getPropertyValue(property)
+    }
     case 'getValue': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)

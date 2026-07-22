@@ -11,7 +11,17 @@ describe('localModelProviders', () => {
       requestPath: '/chat/completions',
       modelsPath: '/models',
       toolProfile: 'function',
-      contextWindow: 256_000,
+      contextWindow: 262_144,
+      modelDefaults: {
+        k3: {
+          contextWindow: 262_144,
+          codexCatalogModelId: 'wework-kimi-k3',
+        },
+        'kimi-for-coding': {
+          contextWindow: 262_144,
+          codexCatalogModelId: 'wework-kimi-k2-7',
+        },
+      },
     })
   })
 
@@ -19,7 +29,7 @@ describe('localModelProviders', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
-          data: [{ id: 'kimi-k3' }, { id: '' }, { id: 'kimi-k2.5' }, { id: 'kimi-k3' }],
+          data: [{ id: 'k3' }, { id: '' }, { id: 'kimi-for-coding' }, { id: 'k3' }],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -39,8 +49,8 @@ describe('localModelProviders', () => {
       })
     )
     expect(models).toEqual([
-      { id: 'kimi-k2.5', displayName: 'kimi-k2.5' },
-      { id: 'kimi-k3', displayName: 'kimi-k3' },
+      { id: 'k3', displayName: 'k3' },
+      { id: 'kimi-for-coding', displayName: 'kimi-for-coding' },
     ])
   })
 

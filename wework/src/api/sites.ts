@@ -59,13 +59,13 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
       params.set('offset', String(input.offset))
       params.set('limit', String(input.limit))
 
-      return client.get(`/v1/sites?${params.toString()}`)
+      return client.get(`/sites?${params.toString()}`)
     },
     publishSite(siteid) {
-      return client.post(`/v1/sites/${encodeURIComponent(siteid)}/publish`)
+      return client.post(`/sites/${encodeURIComponent(siteid)}/publish`)
     },
     deleteSite(siteid) {
-      return client.delete<void>(`/v1/sites/${encodeURIComponent(siteid)}`)
+      return client.delete<void>(`/sites/${encodeURIComponent(siteid)}`)
     },
   }
 }

@@ -151,7 +151,7 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('main-app')).toBeInTheDocument()
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
-    expect(connectMock).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(connectMock).toHaveBeenCalledTimes(1))
     expect(ensureMock).toHaveBeenCalledTimes(1)
   })
 

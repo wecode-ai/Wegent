@@ -1460,6 +1460,11 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
+            app.state::<crate::system_sleep::SystemSleepState>()
+                .handle_terminal_event(
+                    &event.event,
+                    event.payload.get("taskId").and_then(Value::as_str),
+                );
             if let Some((previous_runtime_instance_id, runtime_instance_id)) =
                 update_ready_event_inner(inner, &event)
             {
@@ -1621,12 +1626,15 @@ fn handle_stdio_line(
 }
 
 fn finish_stdio_reader(
+    app: &tauri::AppHandle,
     state: &SharedExecutorInner,
     generation: u64,
     sender: &mut Option<mpsc::Sender<Result<(), String>>>,
     message: String,
     terminate_child: bool,
 ) {
+    app.state::<crate::system_sleep::SystemSleepState>()
+        .clear_running_tasks();
     if let Some(sender) = sender.take() {
         let _ = sender.send(Err(message.clone()));
     }
@@ -1688,6 +1696,7 @@ fn spawn_configured_sidecar(
                 Err(error) => {
                     let message = format!("Local executor stdout read failed: {error}");
                     finish_stdio_reader(
+                        &app,
                         &state_handle,
                         generation,
                         &mut ready_sender,
@@ -1699,6 +1708,7 @@ fn spawn_configured_sidecar(
             }
         }
         finish_stdio_reader(
+            &app,
             &state_handle,
             generation,
             &mut ready_sender,
@@ -1747,6 +1757,7 @@ fn spawn_bundled_sidecar(
                 CommandEvent::Terminated(payload) => {
                     let message = format!("Local executor exited: {payload:?}");
                     finish_stdio_reader(
+                        &app,
                         &state_handle,
                         generation,
                         &mut ready_sender,
@@ -1758,6 +1769,7 @@ fn spawn_bundled_sidecar(
                 CommandEvent::Error(error) => {
                     let message = format!("Local executor stdio failed: {error}");
                     finish_stdio_reader(
+                        &app,
                         &state_handle,
                         generation,
                         &mut ready_sender,
@@ -1770,6 +1782,7 @@ fn spawn_bundled_sidecar(
             }
         }
         finish_stdio_reader(
+            &app,
             &state_handle,
             generation,
             &mut ready_sender,

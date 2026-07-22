@@ -33,6 +33,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 WORKDIR /build/executor
 COPY executor/Cargo.toml executor/Cargo.lock ./
 COPY executor/src ./src
+COPY shared/assets /build/shared/assets
 RUN APP_VERSION="${APP_VERSION}" cargo build --release --locked
 
 # ---------------------------------------------------------------------------

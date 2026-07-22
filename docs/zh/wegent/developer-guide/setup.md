@@ -159,7 +159,12 @@ cp .env.example .env
 # REDIS_URL=redis://127.0.0.1:6379/0
 # CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
+# USER_AES_KEY=base64:your-32-byte-base64-key
+# GIT_TOKEN_AES_KEY=your-32-byte-sensitive-data-key
+# GIT_TOKEN_AES_IV=your-16-byte-iv
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
+# SITES_API_BASE_URL=http://localhost:8765
+# SITES_API_TOKEN=your-sites-platform-token
 ```
 
 `CHECK_SYSTEM_INITIALIZATION_STATUS` 默认开启。开启时,后端启动会把首次管理员密码初始化状态加载到内存,登录页通过 `/users/me` 握手获取 `ADMIN_PASSWORD_SETUP_REQUIRED` 错误码。特殊部署需要跳过该检查时可设置为 `False`。
