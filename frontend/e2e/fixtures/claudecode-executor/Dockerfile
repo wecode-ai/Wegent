@@ -3,6 +3,7 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
 WORKDIR /workspace/src/executor
 
 COPY executor /workspace/src/executor
+COPY shared/assets /workspace/src/shared/assets
 
 RUN dnf install -y gcc ca-certificates openssl-devel pkgconf-pkg-config \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \

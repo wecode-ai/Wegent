@@ -1,5 +1,5 @@
 import type { LocalModelToolProfile } from './localModelSettings'
-import GPT_DEFAULT_INSTRUCTIONS from './gptDefaultInstructions.md?raw'
+import GPT_DEFAULT_INSTRUCTIONS from '../../../../shared/assets/gptDefaultInstructions.md?raw'
 
 export type LocalModelCatalogEntry = Record<string, unknown>
 

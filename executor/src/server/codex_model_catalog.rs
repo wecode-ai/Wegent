@@ -32,7 +32,7 @@ pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_BASE_INSTRUCTIONS: &str =
-    include_str!("../../../wework/src/features/model-settings/gptDefaultInstructions.md");
+    include_str!("../../../shared/assets/gptDefaultInstructions.md");
 
 fn default_base_instructions() -> String {
     DEFAULT_BASE_INSTRUCTIONS.replace(
