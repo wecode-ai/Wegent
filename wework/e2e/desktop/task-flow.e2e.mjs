@@ -3419,6 +3419,9 @@ async function main() {
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('waitFor', '[data-testid="cancel-device-folder-picker-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command('click', '[data-testid="cancel-device-folder-picker-button"]')
     const cancelledFolderPickerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.equal(
