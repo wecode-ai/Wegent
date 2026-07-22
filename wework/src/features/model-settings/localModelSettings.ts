@@ -439,10 +439,14 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
       : (input.catalogEntry ?? undefined)
   const catalogChanged =
     Boolean(catalogEntry) && JSON.stringify(catalogEntry) !== JSON.stringify(previous?.catalogEntry)
+  const shouldClearPendingRuntimeInstanceId =
+    input.catalogEntry !== undefined || (input.providerProfileId !== undefined && !isCustomProvider)
   const pendingRuntimeInstanceId =
-    input.catalogPendingRuntimeInstanceId === undefined
-      ? previous?.catalogPendingRuntimeInstanceId
-      : input.catalogPendingRuntimeInstanceId?.trim() || undefined
+    input.catalogPendingRuntimeInstanceId !== undefined
+      ? input.catalogPendingRuntimeInstanceId?.trim() || undefined
+      : shouldClearPendingRuntimeInstanceId
+        ? undefined
+        : previous?.catalogPendingRuntimeInstanceId
   const webSearchMode = normalizeLocalModelWebSearchMode(
     input.webSearchMode ?? previous?.webSearchMode
   )

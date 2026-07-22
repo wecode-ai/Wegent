@@ -308,11 +308,27 @@ describe('localModelSettings', () => {
       modelId: initial.modelId,
       baseUrl: initial.baseUrl,
       catalogEntry: null,
-      catalogPendingRuntimeInstanceId: null,
     })
     expect(cleared).not.toHaveProperty('catalogEntry')
     expect(cleared).not.toHaveProperty('catalogPendingRuntimeInstanceId')
     expect(cleared.catalogReady).toBe(true)
+
+    const pendingChange = saveLocalModelConfig({
+      id: 'changed-model',
+      modelId: 'changed-model',
+      baseUrl: initial.baseUrl,
+      catalogPendingRuntimeInstanceId: 'runtime-1',
+    })
+    const changed = saveLocalModelConfig({
+      id: pendingChange.id,
+      modelId: pendingChange.modelId,
+      baseUrl: pendingChange.baseUrl,
+      catalogEntry: {
+        ...pendingChange.catalogEntry,
+        description: 'Changed catalog metadata',
+      },
+    })
+    expect(changed).not.toHaveProperty('catalogPendingRuntimeInstanceId')
   })
 
   test('marks only the catalog snapshot that was written as ready', () => {
