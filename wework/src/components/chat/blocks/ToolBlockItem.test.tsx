@@ -223,6 +223,37 @@ describe('ToolBlockItem', () => {
     expect(document.body.textContent).not.toContain('\u001b')
   })
 
+  test('keeps the latest shell output lines in terminal-style scrollback', async () => {
+    const user = userEvent.setup()
+    const toolOutput = Array.from({ length: 201 }, (_, index) => `line ${index}`).join('\n')
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400)
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'cmd-scrollback',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'exec_command',
+          toolInput: { cmd: 'long-running-command' },
+          toolOutput,
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+
+    const outputElement = screen.getByTestId('shell-tool-output')
+    const renderedOutput = outputElement.textContent
+    expect(renderedOutput).not.toContain('line 0\n')
+    expect(renderedOutput).toContain('line 1\n')
+    expect(renderedOutput).toContain('line 200')
+    expect(outputElement.scrollTop).toBe(400)
+    scrollHeight.mockRestore()
+  })
+
   test('renders unknown tool as a non-expandable activity row', () => {
     render(
       <ToolBlockItem

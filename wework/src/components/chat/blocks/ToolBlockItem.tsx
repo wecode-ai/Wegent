@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
 import { Streamdown } from 'streamdown'
@@ -1151,12 +1151,20 @@ function BashBlockDetail({
   const command = getInputField(block, 'command', 'cmd', 'commandLine')
   const cwd = getInputField(block, 'cwd', 'workdir', 'workingDirectory')
   const output = block.toolOutput
-  const rawOutputText =
-    typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''
-  const outputText = terminalOutputToText(rawOutputText)
+  const rawOutputText = useMemo(
+    () => (typeof output === 'string' ? output : output ? JSON.stringify(output, null, 2) : ''),
+    [output]
+  )
+  const outputText = useMemo(() => terminalOutputToText(rawOutputText), [rawOutputText])
+  const outputRef = useRef<HTMLPreElement>(null)
   const isDone = block.status === 'done'
   const isError = block.status === 'error'
   const [copied, setCopied] = useState(false)
+
+  useLayoutEffect(() => {
+    const outputElement = outputRef.current
+    if (outputElement) outputElement.scrollTop = outputElement.scrollHeight
+  }, [outputText])
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(command ?? '')
@@ -1237,8 +1245,12 @@ function BashBlockDetail({
               ) : null}
             </div>
           ) : null}
-          <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
-            {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
+          <pre
+            ref={outputRef}
+            className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary"
+            data-testid="shell-tool-output"
+          >
+            {outputText}
           </pre>
         </>
       )}
