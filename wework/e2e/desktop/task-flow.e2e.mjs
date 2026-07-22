@@ -698,6 +698,22 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
   )
 }
 
+async function revealGroupedModelOption(control, targetOptionId) {
+  const menu = JSON.parse(await control.command('snapshot', 'body'))
+  const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
+
+  for (const familyTestId of familyTestIds) {
+    await control.command('hover', `[data-testid="${familyTestId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
+    const familyMenu = JSON.parse(await control.command('snapshot', 'body'))
+    if (familyMenu.testIds.includes(targetOptionId)) return true
+  }
+
+  return false
+}
+
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
   const selectedModelText = await control.command(
     'waitFor',
@@ -730,6 +746,9 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
     optionVisible = menu.testIds.includes(targetOptionId)
+    if (!optionVisible) {
+      optionVisible = await revealGroupedModelOption(control, targetOptionId)
+    }
   }
 
   assert.ok(optionVisible, `Model option ${modelId} did not become visible`)
