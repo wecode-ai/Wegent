@@ -66,7 +66,8 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request, id_field,
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
-        prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
+        prompt_text, runtime_task_id, string_field, timestamp_ms_field, workspace_group_path,
+        workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -1326,6 +1327,7 @@ impl RuntimeWorkRpcHandler {
             .await
             .map_err(|error| AppIpcError::new("codex_error", error))?;
         let thread = response.get("thread").unwrap_or(&response).clone();
+        self.repair_legacy_task_activity_time(&local_task_id, &thread);
         let workspace_path = string_field(&thread, "cwd")
             .or_else(|| string_field(&payload, "workspacePath"))
             .or_else(|| string_field(&payload, "workspace_path"))
@@ -3139,6 +3141,21 @@ impl RuntimeWorkRpcHandler {
         route.request = request;
         route.active = route.active || active;
         routes.insert(thread_id.to_owned(), route);
+    }
+
+    fn repair_legacy_task_activity_time(&self, local_task_id: &str, thread: &Value) {
+        if self.is_active_local_task(local_task_id) {
+            return;
+        }
+        let Some(thread_updated_at) = timestamp_ms_field(thread, "updatedAt") else {
+            return;
+        };
+        self.store.update_task(local_task_id, |link| {
+            if !link.running && link.completed_at.is_none() && link.updated_at > thread_updated_at {
+                link.updated_at = thread_updated_at;
+                link.completed_at = Some(thread_updated_at);
+            }
+        });
     }
 
     #[cfg(test)]
@@ -6187,6 +6204,35 @@ mod tests {
         assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
         assert_eq!(event["payload"]["data"]["delta"], "Hi");
 
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn thread_read_repairs_legacy_activity_time_pollution() {
+        let index_path = temp_runtime_work_index_path("repair-legacy-activity-time");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-task-1";
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        link.updated_at = 1_790_000_000_000;
+        link.completed_at = None;
+        handler.upsert_local_task(link);
+
+        handler
+            .repair_legacy_task_activity_time(local_task_id, &json!({"updatedAt": 1_780_000_000}));
+
+        let repaired = handler
+            .store
+            .get_task(local_task_id)
+            .expect("repaired task should remain stored");
+        assert_eq!(repaired.updated_at, 1_780_000_000_000);
+        assert_eq!(repaired.completed_at, Some(1_780_000_000_000));
         let _ = fs::remove_file(index_path);
     }
 
