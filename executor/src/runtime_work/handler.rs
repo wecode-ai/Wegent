@@ -3117,8 +3117,9 @@ impl RuntimeWorkRpcHandler {
             return;
         }
         self.store.update_task(&local_task_id, |link| {
-            link.thread_id = Some(thread_id.to_owned());
-            link.updated_at = now_ms();
+            if link.thread_id.as_deref() != Some(thread_id) {
+                link.thread_id = Some(thread_id.to_owned());
+            }
         });
         let pending_id = pending_thread_event_route_id(&local_task_id);
         let mut routes = self
@@ -6141,9 +6142,19 @@ mod tests {
             "Task".to_owned(),
         );
         link.thread_id = Some("thread-1".to_owned());
+        link.updated_at = 1_780_000_000_000;
         handler.upsert_local_task(link);
         handler.mark_active_local_task(local_task_id);
         handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+
+        assert_eq!(
+            handler
+                .store
+                .get_task(local_task_id)
+                .expect("registered task should remain stored")
+                .updated_at,
+            1_780_000_000_000
+        );
 
         handler.route_codex_notification(json!({
             "method": "item/agentMessage/delta",
