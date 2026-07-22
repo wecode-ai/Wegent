@@ -1589,17 +1589,35 @@ async fn cpu_used_pct() -> Option<f64> {
             ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
         }
 
-        let mut idle1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut kernel1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut user1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut idle1 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut kernel1 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut user1 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
         let ok1 = unsafe { GetSystemTimes(&mut idle1, &mut kernel1, &mut user1) };
         if ok1 == 0 {
             return None;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let mut idle2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut kernel2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut user2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut idle2 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut kernel2 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut user2 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
         let ok2 = unsafe { GetSystemTimes(&mut idle2, &mut kernel2, &mut user2) };
         if ok2 == 0 {
             return None;
@@ -1664,9 +1682,7 @@ fn memory_usage_bytes() -> Option<ByteUsage> {
     }
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::SystemInformation::{
-            GlobalMemoryStatusEx, MEMORYSTATUSEX,
-        };
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
         let mut status = std::mem::MaybeUninit::<MEMORYSTATUSEX>::uninit();
         unsafe {
