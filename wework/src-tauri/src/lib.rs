@@ -1288,11 +1288,11 @@ fn related_macos_webkit_process_ids(
 
     Ok(expected_processes
         .into_iter()
-        .filter_map(|(suffix, bundle_id)| {
+        .flat_map(|(suffix, bundle_id)| {
             let expected_name = format!("{display_name} {suffix}");
             instance_processes
                 .iter()
-                .find(|process| {
+                .filter(move |process| {
                     process.display_name == expected_name
                         && process.bundle_id.as_deref() == Some(bundle_id)
                 })
@@ -3635,12 +3635,15 @@ mod tests {
 8) "app Web Content" ASN:8:
     bundleID="com.apple.WebKit.WebContent"
     pid = 203 type="UIElement"
+9) "app Web Content" ASN:9:
+    bundleID="com.apple.WebKit.WebContent"
+    pid = 204 type="UIElement"
 "#,
         );
 
         assert_eq!(
             related_macos_webkit_process_ids(&processes, 200),
-            Ok(HashSet::from([201, 202, 203]))
+            Ok(HashSet::from([201, 202, 203, 204]))
         );
     }
 

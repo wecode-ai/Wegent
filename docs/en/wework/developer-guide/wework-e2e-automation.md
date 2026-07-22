@@ -38,6 +38,12 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
+Run the desktop streaming-memory regression on macOS:
+
+```bash
+pnpm --filter wework e2e:desktop:memory
+```
+
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
 
 ```bash
@@ -87,6 +93,8 @@ Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
 The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
+
+The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. Every 500 milliseconds it samples the aggregate physical footprint of all associated WebKit Web Content processes, writing the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 512 MiB, settled growth after completion to 256 MiB, and continued growth during the settled window to 32 MiB. The first two limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` and `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`.
 
 ## Responses API Mock
 
@@ -164,6 +172,13 @@ pnpm --filter wework prepare:codex
 xvfb-run -a pnpm --filter wework e2e:desktop:plugins
 xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
+```
+
+The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
+
+```bash
+pnpm --filter wework prepare:codex
+pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
