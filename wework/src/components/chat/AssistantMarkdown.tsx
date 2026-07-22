@@ -8,12 +8,15 @@ import {
   classifyMarkdownLink,
   getAuthenticatedImageFetchUrl,
   isAuthenticatedAttachmentImageSrc,
+  isHtmlFilePath,
+  localHtmlBrowserUrl,
   resolveDirectMarkdownImageSrc,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
 import { openExternalUrl } from '@/lib/external-links'
+import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -304,6 +307,10 @@ function AssistantMarkdownLink({
         className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
         data-testid="assistant-markdown-link"
         onClick={() => {
+          if (isHtmlFilePath(filePath)) {
+            const browserUrl = localHtmlBrowserUrl(filePath)
+            if (browserUrl && requestEmbeddedBrowserOpen(browserUrl)) return
+          }
           if (openOptions) {
             onOpenFile?.(filePath, openOptions)
             return
