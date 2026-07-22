@@ -234,32 +234,26 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 py-2.5 pl-3 pr-0 text-left',
+            'flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 pr-0 text-left',
             'hover:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span
-                className="min-w-0 truncate text-sm font-medium text-text-primary"
-                title={getModelDisplayName(model)}
-              >
-                {getModelDisplayName(model)}
-              </span>
-              <ModelCapabilityIcons model={model} />
-              {renderModelBadges?.(model)}
+            <span
+              className="block truncate text-sm font-medium text-text-primary"
+              title={getModelDisplayName(model)}
+            >
+              {getModelDisplayName(model)}
             </span>
             {showPath && (
               <span className="block truncate text-xs text-text-muted">{groupPath}</span>
             )}
             {renderModelMeta?.(model)}
           </span>
-          <Check
-            className={cn(
-              'mt-0.5 h-4 w-4 shrink-0 self-start justify-self-center',
-              isSelected ? 'opacity-100' : 'opacity-0'
-            )}
-          />
+          <span className="flex shrink-0 items-center gap-1.5">
+            <ModelCapabilityIcons model={model} />
+            {renderModelBadges?.(model)}
+          </span>
         </button>
         {modelActions}
       </div>
@@ -317,32 +311,26 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'grid min-h-[44px] min-w-0 flex-1 grid-cols-[minmax(0,1fr)_20px] items-start gap-1 py-2.5 pl-3 pr-0 text-left',
+            'flex min-h-[44px] min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 pr-0 text-left',
             'active:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span
-                className="min-w-0 truncate text-sm font-medium text-text-primary"
-                title={getModelDisplayName(model)}
-              >
-                {getModelDisplayName(model)}
-              </span>
-              <ModelCapabilityIcons model={model} />
-              {renderModelBadges?.(model)}
+            <span
+              className="block truncate text-sm font-medium text-text-primary"
+              title={getModelDisplayName(model)}
+            >
+              {getModelDisplayName(model)}
             </span>
             {showPath && (
               <span className="block truncate text-xs text-text-muted">{groupPath}</span>
             )}
             {renderModelMeta?.(model)}
           </span>
-          <Check
-            className={cn(
-              'mt-0.5 h-4 w-4 shrink-0 self-start justify-self-center',
-              isSelected ? 'opacity-100' : 'opacity-0'
-            )}
-          />
+          <span className="flex shrink-0 items-center gap-1.5">
+            <ModelCapabilityIcons model={model} />
+            {renderModelBadges?.(model)}
+          </span>
         </button>
         {modelActions}
       </div>

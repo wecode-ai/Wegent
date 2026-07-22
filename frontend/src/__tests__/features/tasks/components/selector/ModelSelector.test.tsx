@@ -406,7 +406,6 @@ describe('ModelSelector', () => {
 
     const modelOption = await screen.findByTestId('model-option-claude-3-5-sonnet')
     const informationAction = screen.getByTestId('model-info-claude-3-5-sonnet')
-    const selectedIndicator = modelOption.querySelector('.lucide-check')
     const modelTitle = screen.getByTitle('Claude 3.5 Sonnet')
 
     expect(modelOption.parentElement).toBe(informationAction.parentElement)
@@ -414,13 +413,14 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('overflow-hidden')
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_40px]')
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
-    expect(modelOption).toHaveClass('grid-cols-[minmax(0,1fr)_20px]', 'gap-1', 'pl-3', 'pr-0')
-    expect(modelTitle).toHaveClass('min-w-0', 'truncate')
+    expect(modelOption).toHaveClass('flex', 'items-center', 'gap-3', 'pl-3', 'pr-0')
+    expect(modelTitle).toHaveClass('block', 'truncate')
     expect(modelTitle).not.toHaveClass('flex-1')
     expect(screen.getByTitle('图片理解').querySelector('.lucide-image')).toBeInTheDocument()
     expect(screen.getByTitle('视频理解').querySelector('.lucide-video')).toBeInTheDocument()
-    expect(selectedIndicator).toHaveClass('self-start', 'justify-self-center', 'mt-0.5')
-    expect(informationAction).toHaveClass('self-stretch', 'items-start', 'pt-3')
+    expect(modelOption.querySelector('.lucide-check')).not.toBeInTheDocument()
+    expect(informationAction).toHaveClass('self-stretch', 'items-center')
+    expect(informationAction).not.toHaveClass('pt-3')
   })
 
   it('shows an information action when model detail metadata is unavailable', async () => {
