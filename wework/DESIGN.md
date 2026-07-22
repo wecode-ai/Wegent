@@ -151,7 +151,8 @@ from `8px` through `24px`, in whole-pixel steps. Changing UI size scales every
 UI and heading token by `configuredSize / 14` and rounds each result to the
 nearest pixel. Code size is independent and applies directly to code blocks,
 diffs, editors, and terminals. The increase/decrease-font-size shortcuts step
-both configured values together while respecting their separate limits.
+both configured values together while respecting their separate limits. The
+reset-font-size shortcut restores the default `14px` UI and `12px` code sizes.
 
 Product code must consume the semantic Tailwind sizes, `heading-*` classes,
 `text-chat`, `text-code`, or the corresponding CSS variables. Arbitrary font
@@ -453,6 +454,9 @@ The active-conversation capture is also normative:
   are quiet and subordinate.
 - The bottom Composer shares the thread column and stays visible. It uses the
   same input hierarchy as home but without the home project-selector layer.
+- When opening, closing, or resizing a side panel reflows conversation content,
+  preserve the reader's visible message or content anchor. Continue following
+  the bottom only when the reader was already at the bottom before the reflow.
 - When the right work panel is open, render it as a floating `12px`-radius white
   panel near the top-right with a subtle ring and shadow. “输出” and “来源” are
   stacked sections separated by a quiet hairline, each with its own trailing add

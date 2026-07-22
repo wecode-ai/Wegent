@@ -26,16 +26,6 @@ wework_get_local_ip() {
   echo "127.0.0.1"
 }
 
-wework_normalize_api_proxy_target() {
-  local value="${1%/}"
-
-  if [[ "$value" == */api ]]; then
-    value="${value%/api}"
-  fi
-
-  echo "$value"
-}
-
 wework_resolve_backend_base_url() {
   local local_ip="${WEWORK_HOST:-$(wework_get_local_ip)}"
   local backend_port="${BACKEND_PORT:-9100}"

@@ -7,15 +7,21 @@ import { constants } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { loadDesktopScenario } from './scenario-loader.mjs'
+import { stopProcess, stopProcessGroup } from './process-lifecycle.mjs'
+
 const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
-const PROCESS_STOP_TIMEOUT_MS = 10_000
 const COMPOSER_READY_STABILITY_MS = 750
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
 const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const REQUEST_USER_INPUT_PROMPT =
+  'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
+const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
+const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const WINDOW_LIFECYCLE_PROMPT =
   'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
@@ -36,26 +42,117 @@ const GIT_SEED_CONTENT = '# Desktop E2E workspace\n'
 const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
+const MODEL_LABEL = 'GPT 5.4'
+const CUSTOM_TOOL_INPUT_DESCRIPTION =
+  'Raw string input for the original custom tool. Put only the tool input in this field, preserve every character exactly, and follow the original definition embedded in the function description. Do not add Markdown fences or explanatory text.'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
+const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
+const LOCAL_MODEL_CASES = [
+  {
+    protocol: 'responses',
+    optionId: 'local-model:desktop-e2e-responses',
+    label: 'Desktop E2E Responses',
+    modelId: 'desktop-e2e-responses-model',
+  },
+  {
+    protocol: 'chat',
+    optionId: 'local-model:desktop-e2e-chat',
+    label: 'Desktop E2E Chat',
+    modelId: 'desktop-e2e-chat-model',
+  },
+  {
+    protocol: 'anthropic',
+    optionId: 'local-model:desktop-e2e-anthropic',
+    label: 'Desktop E2E Anthropic',
+    modelId: 'desktop-e2e-anthropic-model',
+  },
+]
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
+const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const COMPOSER_PROJECT_NAME = 'Composer Flow Project'
 const ATTACHMENT_ONLY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_ATTACHMENT_ONLY_COMPLETE'
 const ATTACHMENT_ONLY_FILENAME = 'same-name-attachment.png'
-const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
+const CLOUD_TASK_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_TASK: create the requested cloud verification file.'
+const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
+const CLOUD_FOLLOW_UP_PROMPT =
+  'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
+const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
+const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
+const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
+const ACTIVE_WORKBENCH_SELECTOR =
+  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
+const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 const MACOS_LAUNCH_SERVICES_REGISTER =
   '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
 const LIFECYCLE_ONLY = process.argv.includes('--lifecycle-only')
+const REQUEST_INPUT_ONLY = process.env.WEWORK_DESKTOP_E2E_REQUEST_INPUT_ONLY === '1'
 const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
+const CLOUD_ONLY = process.argv.includes('--cloud-only')
+const PLUGINS_ONLY = process.argv.includes('--plugins-only')
+const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
 const repoDir = resolve(weworkDir, '..')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
+
+const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
+const PLUGIN_NAME = 'desktop-e2e-plugin'
+const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
+
+async function createPluginMarketplaceFixture(root) {
+  const marketplaceManifestDir = join(root, '.agents', 'plugins')
+  const pluginRoot = join(root, 'plugins', PLUGIN_NAME)
+  await Promise.all([
+    mkdir(marketplaceManifestDir, { recursive: true }),
+    mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true }),
+    mkdir(join(pluginRoot, 'skills', 'desktop-e2e-skill'), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(
+      join(marketplaceManifestDir, 'marketplace.json'),
+      `${JSON.stringify(
+        {
+          name: PLUGIN_MARKETPLACE_NAME,
+          interface: { displayName: 'Desktop E2E Marketplace' },
+          plugins: [
+            {
+              name: PLUGIN_NAME,
+              source: { source: 'local', path: `./plugins/${PLUGIN_NAME}` },
+            },
+          ],
+        },
+        null,
+        2
+      )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, '.codex-plugin', 'plugin.json'),
+      `${JSON.stringify(
+        {
+          name: PLUGIN_NAME,
+          interface: {
+            displayName: PLUGIN_DISPLAY_NAME,
+            shortDescription: 'Exercises the real Wework plugin lifecycle',
+          },
+        },
+        null,
+        2
+      )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, 'skills', 'desktop-e2e-skill', 'SKILL.md'),
+      `---\nname: desktop-e2e-skill\ndescription: Verifies the installed plugin can be used in chat.\n---\n\nUse this skill to verify the Wework desktop plugin flow.\n`
+    ),
+  ])
+}
 
 function withTimeout(promise, timeoutMs, message) {
   let timeout
@@ -107,6 +204,43 @@ async function runChecked(command, args, options = {}) {
   })
 }
 
+async function reservePort() {
+  const server = createServer()
+  await new Promise((resolvePromise, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolvePromise)
+  })
+  const address = server.address()
+  assert.ok(address && typeof address !== 'string', 'Unable to reserve an E2E port')
+  await new Promise(resolvePromise => server.close(resolvePromise))
+  return address.port
+}
+
+async function waitForUrl(url, message, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(url)
+      if (response.ok) return
+    } catch {
+      // The real service is still starting.
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+  }
+  throw new Error(message)
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options)
+  const body = await response.json()
+  assert.equal(
+    response.ok,
+    true,
+    `${options.method ?? 'GET'} ${url} failed: ${JSON.stringify(body)}`
+  )
+  return body
+}
+
 async function resolveExecutable(configuredPath, fallbackCommand, description) {
   const candidate = configuredPath?.trim()
   if (candidate) {
@@ -122,26 +256,6 @@ async function resolveExecutable(configuredPath, fallbackCommand, description) {
   const resolved = commandOutput('which', [fallbackCommand])
   assert.equal(await isExecutable(resolved), true, `${description} is not executable: ${resolved}`)
   return resolved
-}
-
-function waitForProcessExit(child, timeoutMs) {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-  return withTimeout(
-    new Promise(resolvePromise => child.once('exit', resolvePromise)),
-    timeoutMs,
-    `Timed out waiting for process ${child.pid ?? 'unknown'} to exit`
-  )
-}
-
-async function stopProcess(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
-  try {
-    await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  } catch {
-    child.kill('SIGKILL')
-    await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
-  }
 }
 
 async function appendProcessOutput(stream, destination) {
@@ -161,11 +275,90 @@ async function sendPrompt(control, selector, prompt) {
   await control.command('press', selector, { key: 'Enter' })
 }
 
-async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
+async function prepareCompletedTurnScreenshot(control) {
+  await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const startedAt = Date.now()
+  let menuClosedAt = null
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (snapshot.testIds.includes('model-selector-menu')) {
+      menuClosedAt = null
+      await control.command('pointerDown', ACTIVE_COMPOSER_SELECTOR)
+    } else {
+      menuClosedAt ??= Date.now()
+      if (Date.now() - menuClosedAt >= COMPOSER_READY_STABILITY_MS) return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The model selector menu remained open before the verification screenshot')
+}
+
+async function waitForSnapshot(
+  control,
+  predicate,
+  message,
+  timeoutMs = UI_TIMEOUT_MS,
+  selector = 'body'
+) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const snapshot = JSON.parse(await control.command('snapshot', selector))
     if (predicate(snapshot)) return snapshot
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForScenarioRequestCount(control, scenario, expectedCount) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const requestCount = control.scenarioRequests.get(scenario)?.length ?? 0
+    if (requestCount >= expectedCount) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The model service did not receive ${expectedCount} ${scenario} requests`)
+}
+
+async function waitForFolderPathReady(control, expectedPath) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
+    const directoryText = await control.command(
+      'getText',
+      '[data-testid="device-folder-directory-list"]'
+    )
+    if (inputValue === expectedPath && !/Loading directories|正在加载目录/.test(directoryText)) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`The device folder picker did not finish loading ${expectedPath}`)
+}
+
+async function waitForFolderPickerInitialized(control) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    const inputValue = await control.command('getValue', '[data-testid="device-folder-path-input"]')
+    const directoryText = await control.command(
+      'getText',
+      '[data-testid="device-folder-directory-list"]'
+    )
+    if (inputValue.length > 0 && !/Loading directories|正在加载目录/.test(directoryText)) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The device folder picker did not finish loading its initial path')
+}
+
+async function waitForControlValue(control, selector, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+    if ((await control.command('getValue', selector)) === expected) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
@@ -197,6 +390,86 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
   await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
   return screenshotPath
+}
+
+async function verifyPluginLifecycle(control, marketplacePath) {
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
+  } else {
+    await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+  }
+  await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+    value: marketplacePath,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const marketplaceSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(PLUGIN_DISPLAY_NAME) &&
+      snapshot.testIds.some(testId => testId.startsWith('plugin-marketplace-row-')),
+    'The local plugin marketplace did not expose its plugin'
+  )
+  const rowTestId = marketplaceSnapshot.testIds.find(testId =>
+    testId.startsWith('plugin-marketplace-row-')
+  )
+  assert.ok(rowTestId, 'The plugin marketplace row did not have a stable test id')
+  const pluginId = rowTestId.slice('plugin-marketplace-row-'.length)
+  const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
+  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
+
+  await control.command('click', installSelector)
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The plugin was not shown as installed after the real app-server request'
+  )
+  assert.match(
+    await control.command('getText', installSelector),
+    /Try in chat|在对话中试用/,
+    'The installed plugin did not expose its chat action'
+  )
+  await captureVerificationScreenshot(control, 'plugins-02-installed.png')
+
+  await control.command('click', installSelector)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes(PLUGIN_DISPLAY_NAME),
+    'Trying the installed plugin did not place its reference in the composer',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('click', actionsSelector)
+  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The plugin remained installed after the uninstall request'
+  )
+  assert.match(
+    await control.command('getText', installSelector),
+    /Install|安装/,
+    'The marketplace did not return to the install state after uninstall'
+  )
+  await captureVerificationScreenshot(control, 'plugins-04-uninstalled.png')
 }
 
 function processIsAlive(processId) {
@@ -261,6 +534,62 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
   )
 }
 
+async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
+  const selectedModelText = await control.command(
+    'waitFor',
+    '[data-testid="model-selector-button"]',
+    { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+  )
+  if (selectedModelText.includes(modelLabel)) return
+
+  const targetOptionId = `model-option-${modelId}`
+  let optionVisible = false
+  for (let attempt = 0; attempt < 6 && !optionVisible; attempt += 1) {
+    let menu = JSON.parse(await control.command('snapshot', 'body'))
+    if (menu.testIds.includes(targetOptionId)) {
+      optionVisible = true
+      break
+    }
+    if (menu.testIds.includes('model-control-menu-model')) {
+      await control.command('hover', '[data-testid="model-control-menu-model"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+    } else {
+      await control.command('hover', '[data-testid="model-selector-button"]', {
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+        stableMs: 100,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
+    menu = JSON.parse(await control.command('snapshot', 'body'))
+    optionVisible = menu.testIds.includes(targetOptionId)
+  }
+
+  assert.ok(optionVisible, `Model option ${modelId} did not become visible`)
+  await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  for (const localModel of LOCAL_MODEL_CASES) {
+    await control.command('waitFor', `[data-testid="model-option-${localModel.optionId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+  }
+  await control.command('click', `[data-testid="model-option-${modelId}"]`)
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    text: modelLabel,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('press', 'body', { key: 'Escape' })
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('model-selector-menu'),
+    'The model selector menu did not close after selecting the E2E model'
+  )
+}
+
 async function verifyBackgroundTaskWindowLifecycle({
   app,
   appIdentifier,
@@ -276,6 +605,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await selectE2EModel(control)
   await sendPromptUntilScenarioRequest(
     control,
     composerSelector,
@@ -309,6 +639,11 @@ async function verifyBackgroundTaskWindowLifecycle({
   if (process.platform === 'darwin') {
     setPhase('close-to-tray-and-reopen')
     const readyCountBeforeClose = control.readyCount
+    const controlClientIdBeforeClose = control.ready?.clientId
+    assert.ok(
+      controlClientIdBeforeClose,
+      'The original WebView did not register a control client ID'
+    )
     const readyEvidenceBeforeClose = await waitForExecutorReadyEvidence(executorLogPath)
     const executorProcessId = readyEvidenceBeforeClose.processIds.at(-1)
     assert.ok(executorProcessId, 'The executor stdio-ready log did not include a process ID')
@@ -334,10 +669,24 @@ async function verifyBackgroundTaskWindowLifecycle({
       WORKBENCH_READY_TIMEOUT_MS,
       'The reopened Wework WebView did not reconnect to the desktop controller'
     )
-    await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
+    assert.notEqual(
+      control.ready?.clientId,
+      controlClientIdBeforeClose,
+      'The reopened WebView reused the closed control client identity'
+    )
+    const reopenedTaskWait = control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    const staleClientPoll = await fetch(
+      `${control.controlUrl}/commands?clientId=${encodeURIComponent(controlClientIdBeforeClose)}`
+    )
+    assert.equal(
+      staleClientPoll.status,
+      204,
+      'A closed WebView control client was able to steal a replacement WebView command'
+    )
+    await reopenedTaskWait
     const readyEvidenceAfterReopen = await waitForExecutorReadyEvidence(executorLogPath)
     assert.deepEqual(
       readyEvidenceAfterReopen.processIds,
@@ -371,34 +720,41 @@ async function verifyBackgroundTaskWindowLifecycle({
     )
   }
 
-  const reopenedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  if (!reopenedSnapshot.text.includes(WINDOW_LIFECYCLE_PROMPT)) {
-    await control.command('deferredClick', `[data-testid="${taskRowTestId}"]`)
-  }
-  await control.command('waitFor', '[data-testid="message-user"]', {
-    text: WINDOW_LIFECYCLE_PROMPT,
-    visible: true,
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('message-user') && snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
+    'The reopened task did not restore its running user message',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('03-running-task-after-reopen.png')
   )
   control.releaseWindowLifecycleResponse()
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
-    visible: true,
-    stableMs: COMPOSER_READY_STABILITY_MS,
-    timeoutMs: UI_TIMEOUT_MS,
-  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('message-assistant') &&
+      snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT),
+    'The reopened task did not render its completed assistant message',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   if (process.platform === 'darwin') {
     await waitForSnapshot(
       control,
       snapshot =>
         !snapshot.testIds.includes('thinking-indicator') &&
         !snapshot.testIds.includes(runningTaskTestId),
-      'The reopened task did not settle after its persisted transcript completed'
+      'The reopened task did not settle after its persisted transcript completed',
+      UI_TIMEOUT_MS,
+      ACTIVE_WORKBENCH_SELECTOR
     )
   }
   await captureVerificationScreenshot(
@@ -645,6 +1001,31 @@ function assistantMessage(text) {
   }
 }
 
+function localProtocolCase(modelId) {
+  return LOCAL_MODEL_CASES.find(model => model.modelId === modelId) ?? null
+}
+
+function localProtocolPrompt(model, phase) {
+  return `WEWORK_LOCAL_MODEL_${model.protocol.toUpperCase()}_${phase}`
+}
+
+function localProtocolArtifact(model) {
+  return `wework-local-${model.protocol}.txt`
+}
+
+function localProtocolArtifactContent(model) {
+  return `WEWORK_LOCAL_${model.protocol.toUpperCase()}_APPLY_PATCH`
+}
+
+function localProtocolPatch(model) {
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${localProtocolArtifact(model)}`,
+    `+${localProtocolArtifactContent(model)}`,
+    '*** End Patch',
+  ].join('\n')
+}
+
 function readRequestBody(request) {
   return new Promise((resolvePromise, reject) => {
     let body = ''
@@ -678,7 +1059,8 @@ function cors(response) {
 }
 
 function requestContainsToolOutput(request) {
-  return JSON.stringify(request.input ?? []).includes('function_call_output')
+  const input = JSON.stringify(request.input ?? [])
+  return input.includes('function_call_output') || input.includes('custom_tool_call_output')
 }
 
 function requestAdvertisesShellTool(request) {
@@ -730,29 +1112,241 @@ function selectApplyPatchTool(request) {
   ].join('\n')
 }
 
+function selectCloudApplyPatchTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  assert.ok(
+    tools.some(tool => tool?.name === 'apply_patch'),
+    'Real cloud Codex did not advertise apply_patch'
+  )
+  return [
+    '*** Begin Patch',
+    `*** Add File: ${CLOUD_ARTIFACT_NAME}`,
+    `+${CLOUD_ARTIFACT_CONTENT}`,
+    '*** End Patch',
+  ].join('\n')
+}
+
 function selectViewImageTool(request, workspacePath) {
   return selectTool(request, 'view_image', {
     path: join(workspacePath, IMAGE_ARTIFACT_NAME),
   })
 }
 
-class DesktopE2EServer {
-  constructor(workspacePath) {
+class RealCloudEnvironment {
+  constructor({ codexBinary, executorBinary, modelServerUrl, workspacePath }) {
+    this.codexBinary = codexBinary
+    this.executorBinary = executorBinary
+    this.modelServerUrl = modelServerUrl
     this.workspacePath = workspacePath
+  }
+
+  async start() {
+    this.redisPort = await reservePort()
+    this.backendPort = await reservePort()
+    this.backendUrl = `http://127.0.0.1:${this.backendPort}`
+    this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
+    this.backendLogPath = join(resultDir, 'cloud-backend.log')
+    this.redisLogPath = join(resultDir, 'cloud-redis.log')
+    this.remoteExecutorLogPath = join(resultDir, 'cloud-executor.log')
+
+    this.redis = spawn(
+      'redis-server',
+      ['--port', String(this.redisPort), '--save', '', '--appendonly', 'no'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    )
+    await Promise.all([
+      appendProcessOutput(this.redis.stdout, this.redisLogPath),
+      appendProcessOutput(this.redis.stderr, this.redisLogPath),
+    ])
+
+    const backendEnv = {
+      ...process.env,
+      DATABASE_URL: `sqlite:///${this.databasePath}`,
+      REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
+      SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
+      INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
+      DB_AUTO_MIGRATE: 'false',
+      INIT_DATA_ENABLED: 'true',
+    }
+    await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
+      cwd: join(repoDir, 'backend'),
+      env: backendEnv,
+    })
+    this.backend = spawn(
+      'uv',
+      ['run', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(this.backendPort)],
+      {
+        cwd: join(repoDir, 'backend'),
+        env: backendEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }
+    )
+    await Promise.all([
+      appendProcessOutput(this.backend.stdout, this.backendLogPath),
+      appendProcessOutput(this.backend.stderr, this.backendLogPath),
+    ])
+    await waitForUrl(
+      `${this.backendUrl}/api/docs`,
+      `Real cloud backend did not start; see ${this.backendLogPath}`
+    )
+
+    const password = `wework-desktop-e2e-${process.pid}`
+    const setup = await fetchJson(`${this.backendUrl}/api/auth/admin-password/setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    this.authToken = setup.access_token
+    assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+
+    const remoteHome = join(resultDir, 'cloud-executor-home')
+    const remoteCodexHome = join(remoteHome, 'codex')
+    await writeCodexConfig(remoteCodexHome, this.modelServerUrl)
+    const remoteEnv = {
+      ...process.env,
+      CODEX_BIN: this.codexBinary,
+      CODEX_HOME: remoteCodexHome,
+      HOME: remoteHome,
+      WEGENT_CODEX_HOME: remoteCodexHome,
+      WEGENT_EXECUTOR_HOME: remoteHome,
+      WEGENT_EXECUTOR_LOG_DIR: resultDir,
+      WEGENT_EXECUTOR_LOG_FILE: 'cloud-executor-runtime.log',
+      EXECUTOR_MODE: 'local',
+      WEGENT_BACKEND_URL: this.backendUrl,
+      WEGENT_AUTH_TOKEN: this.authToken,
+      DEVICE_ID: CLOUD_DEVICE_ID,
+      DEVICE_NAME: 'Wework E2E Cloud Device',
+      DEVICE_TYPE: 'remote',
+      BIND_SHELL: 'claudecode',
+      LOCAL_WORKSPACE_ROOT: dirname(this.workspacePath),
+      WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+      DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
+      DEVICE_SESSION_GATEWAY_PORT: '0',
+    }
+    delete remoteEnv.WEGENT_APP_IPC_DEVICE_ID
+    this.remoteExecutor = spawn(this.executorBinary, [], {
+      cwd: weworkDir,
+      env: remoteEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    await Promise.all([
+      appendProcessOutput(this.remoteExecutor.stdout, this.remoteExecutorLogPath),
+      appendProcessOutput(this.remoteExecutor.stderr, this.remoteExecutorLogPath),
+    ])
+    await this.waitForDevice()
+  }
+
+  async waitForDevice() {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const response = await fetch(`${this.backendUrl}/api/devices`, {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      })
+      if (response.ok) {
+        const devices = await response.json()
+        const device = devices.items?.find(item => item.device_id === CLOUD_DEVICE_ID)
+        if (device?.status === 'online') return
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error(`Real cloud executor did not register; see ${this.remoteExecutorLogPath}`)
+  }
+
+  async waitForWorkspaceRemoved(workspacePath) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < UI_TIMEOUT_MS) {
+      const response = await fetch(`${this.backendUrl}/api/runtime-work`, {
+        headers: { Authorization: `Bearer ${this.authToken}` },
+      })
+      if (response.ok) {
+        const work = await response.json()
+        const stillPresent = work.workspaces?.some(
+          workspace => workspace.workspacePath === workspacePath
+        )
+        if (!stillPresent) return
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error('The real cloud backend still returned the removed project')
+  }
+
+  async cancelRunningTasks() {
+    if (!this.backendUrl || !this.authToken) return
+    const work = await fetchJson(`${this.backendUrl}/api/runtime-work`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    const workspaces = [
+      ...(work.projects ?? []).flatMap(project => project.deviceWorkspaces ?? []),
+      ...(work.chats ?? []),
+    ]
+    const runningTasks = workspaces.flatMap(workspace =>
+      (workspace.tasks ?? [])
+        .filter(task => task.running)
+        .map(task => ({
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+          workspacePath: task.workspacePath,
+        }))
+    )
+    await Promise.all(
+      runningTasks.map(address =>
+        fetchJson(`${this.backendUrl}/api/runtime-work/cancel`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.authToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(address),
+        })
+      )
+    )
+  }
+
+  async stop() {
+    try {
+      await this.cancelRunningTasks()
+    } catch (error) {
+      await appendFile(
+        this.remoteExecutorLogPath,
+        `Cloud E2E cleanup could not cancel running tasks: ${String(error)}\n`
+      )
+    }
+    await stopProcessGroup(this.remoteExecutor)
+    await stopProcess(this.backend)
+    await stopProcess(this.redis)
+  }
+}
+
+class DesktopE2EServer {
+  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
+    this.workspacePath = workspacePath
+    this.cloudWorkspacePath = cloudWorkspacePath
+    this.desktopScenario = desktopScenario
     this.server = createServer((request, response) => {
-      void this.handle(request, response)
+      void this.handle(request, response).catch(error => this.fail(error, response))
     })
+    this.desktopScenario?.attachServer?.(this.server)
     this.controlServer = createServer((request, response) => {
-      void this.handleControl(request, response)
+      void this.handleControl(request, response).catch(error => this.fail(error, response))
     })
+    this.fatalError = null
+    this.fatalErrorPromise = new Promise((_, reject) => {
+      this.rejectFatalError = reject
+    })
+    // A guarded operation observes this rejection; this handler prevents Node from
+    // reporting it as unhandled in the small window before that operation starts.
+    void this.fatalErrorPromise.catch(() => {})
     this.ready = null
     this.readyResolver = null
     this.readyCount = 0
+    this.activeControlClientId = null
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
     this.commandHistory = []
     this.modelRequests = []
+    this.catalogRequests = []
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
@@ -761,13 +1355,21 @@ class DesktopE2EServer {
     this.failedCloudModelWaiter = null
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.cloudModelStage = 'initial'
     this.toolLessPrewarmHandled = false
+    this.cloudToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
       this.releaseInitialTool = resolvePromise
     })
     this.retryCompletionRelease = new Promise(resolvePromise => {
       this.releaseRetryCompletion = resolvePromise
+    })
+    this.requestUserInputRelease = new Promise(resolvePromise => {
+      this.releaseRequestUserInput = resolvePromise
+    })
+    this.requestUserInputResponseWritten = new Promise(resolvePromise => {
+      this.resolveRequestUserInputResponseWritten = resolvePromise
     })
     this.reconnectDisconnectRelease = new Promise(resolvePromise => {
       this.releaseReconnectDisconnect = resolvePromise
@@ -786,6 +1388,9 @@ class DesktopE2EServer {
     })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
+    this.localProtocolStates = new Map(
+      LOCAL_MODEL_CASES.map(model => [model.protocol, { stage: 'initial', requests: [] }])
+    )
   }
 
   async start() {
@@ -814,6 +1419,7 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
+    this.desktopScenario?.close?.()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
     await Promise.all([
@@ -823,25 +1429,49 @@ class DesktopE2EServer {
   }
 
   awaitReady() {
-    if (this.ready) return Promise.resolve(this.ready)
-    return new Promise(resolvePromise => {
-      this.readyResolver = resolvePromise
-    })
+    if (this.ready) return this.guard(Promise.resolve(this.ready))
+    return this.guard(
+      new Promise(resolvePromise => {
+        this.readyResolver = resolvePromise
+      })
+    )
   }
 
   awaitReadyAfter(readyCount) {
-    if (this.readyCount > readyCount) return Promise.resolve(this.ready)
-    return new Promise(resolvePromise => {
-      this.readyWaiters.push({ readyCount, resolve: resolvePromise })
-    })
+    if (this.readyCount > readyCount) return this.guard(Promise.resolve(this.ready))
+    return this.guard(
+      new Promise(resolvePromise => {
+        this.readyWaiters.push({ readyCount, resolve: resolvePromise })
+      })
+    )
   }
 
   awaitBlockedCloudRequest(pathname) {
     const request = this.blockedCloudRequests.find(item => item.pathname === pathname)
-    if (request) return Promise.resolve(request)
-    return new Promise(resolvePromise => {
-      this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
-    })
+    if (request) return this.guard(Promise.resolve(request))
+    return this.guard(
+      new Promise(resolvePromise => {
+        this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
+      })
+    )
+  }
+
+  fail(error, response) {
+    if (!response.headersSent) {
+      json(response, 500, { error: error instanceof Error ? error.message : String(error) })
+    } else if (!response.writableEnded) {
+      response.destroy(error instanceof Error ? error : undefined)
+    }
+    if (this.fatalError) return
+    this.fatalError = error instanceof Error ? error : new Error(String(error))
+    this.rejectFatalError(this.fatalError)
+    for (const pending of this.commandResults.values()) pending.reject(this.fatalError)
+    this.commandResults.clear()
+  }
+
+  guard(promise) {
+    if (this.fatalError) return Promise.reject(this.fatalError)
+    return Promise.race([promise, this.fatalErrorPromise])
   }
 
   blockCloudRequest(request, response, url) {
@@ -867,17 +1497,25 @@ class DesktopE2EServer {
 
   failBlockedCloudModels() {
     this.failCloudModels = true
+    const failedRequests = this.blockedCloudResponses.size
     for (const response of this.blockedCloudResponses) {
       json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
     }
     this.blockedCloudResponses.clear()
+    this.failedCloudModelRequests += failedRequests
+    if (failedRequests > 0) {
+      this.failedCloudModelWaiter?.()
+      this.failedCloudModelWaiter = null
+    }
   }
 
   awaitFailedCloudModelRequest() {
-    if (this.failedCloudModelRequests > 0) return Promise.resolve()
-    return new Promise(resolvePromise => {
-      this.failedCloudModelWaiter = resolvePromise
-    })
+    if (this.failedCloudModelRequests > 0) return this.guard(Promise.resolve())
+    return this.guard(
+      new Promise(resolvePromise => {
+        this.failedCloudModelWaiter = resolvePromise
+      })
+    )
   }
 
   setScenario(scenario) {
@@ -885,12 +1523,15 @@ class DesktopE2EServer {
       [
         'initial',
         'follow_up',
+        'request_user_input',
         'window_lifecycle',
         'cancellation',
         'retry',
         'reconnect',
         'fresh_chat',
         'attachment_only',
+        'cloud_initial',
+        'cloud_follow_up',
       ].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
@@ -910,10 +1551,12 @@ class DesktopE2EServer {
 
   awaitScenarioRequest(scenario) {
     const request = this.scenarioRequests.get(scenario)?.at(-1)
-    if (request) return Promise.resolve(request)
-    return new Promise(resolvePromise => {
-      this.scenarioWaiters.set(scenario, resolvePromise)
-    })
+    if (request) return this.guard(Promise.resolve(request))
+    return this.guard(
+      new Promise(resolvePromise => {
+        this.scenarioWaiters.set(scenario, resolvePromise)
+      })
+    )
   }
 
   async awaitScenarioRequestCount(scenario, count) {
@@ -931,8 +1574,13 @@ class DesktopE2EServer {
     this.releaseRetryCompletion()
   }
 
+  releaseRequestUserInputResponse() {
+    this.releaseRequestUserInput()
+    return this.guard(this.requestUserInputResponseWritten)
+  }
+
   awaitReconnectResponseStarted() {
-    return this.reconnectResponseStarted
+    return this.guard(this.reconnectResponseStarted)
   }
 
   disconnectReconnectResponse() {
@@ -944,7 +1592,7 @@ class DesktopE2EServer {
   }
 
   awaitWindowLifecycleResponseStarted() {
-    return this.windowLifecycleResponseStarted
+    return this.guard(this.windowLifecycleResponseStarted)
   }
 
   releaseWindowLifecycleResponse() {
@@ -952,14 +1600,16 @@ class DesktopE2EServer {
   }
 
   async command(action, selector, options = {}) {
+    assert.ok(this.activeControlClientId, 'No active desktop control client is registered')
     const id = randomUUID()
     const command = { id, action, selector, ...options }
+    const clientId = this.activeControlClientId
     const result = new Promise((resolvePromise, reject) => {
-      this.commandResults.set(id, { resolve: resolvePromise, reject })
+      this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
     })
-    this.commandQueue.push(command)
+    this.commandQueue.push({ clientId, command })
     return withTimeout(
-      result,
+      this.guard(result),
       options.timeoutMs ?? UI_TIMEOUT_MS,
       `Timed out running UI action ${action} for ${selector}`
     )
@@ -990,6 +1640,7 @@ class DesktopE2EServer {
 
     const url = new URL(request.url ?? '/', this.url)
     if (await this.handleControlRoute(request, response, url)) return
+    if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
 
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
@@ -1013,21 +1664,34 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
+      this.catalogRequests.push({
+        authorization: request.headers.authorization ?? null,
+        ifNoneMatch: request.headers['if-none-match'] ?? null,
+        pathname: url.pathname,
+        search: url.search,
+      })
+      assert.equal(
+        request.headers.authorization,
+        `Bearer ${MODEL_API_KEY}`,
+        'The local catalog router did not forward the configured model API key'
+      )
+      response.setHeader('ETag', '"wework-desktop-e2e-models-v1"')
       json(response, 200, {
-        object: 'list',
-        data: [
-          { id: MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID },
-          { id: DEFAULT_MODEL_ID, object: 'model', created: 0, owned_by: MODEL_PROVIDER_ID },
-        ],
+        models: [],
       })
       return
     }
 
-    if (
-      request.method === 'POST' &&
-      (url.pathname === '/v1/responses' || url.pathname === '/responses')
-    ) {
-      await this.handleModelResponse(request, response)
+    const modelProtocol =
+      url.pathname === '/v1/responses' || url.pathname === '/responses'
+        ? 'responses'
+        : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
+          ? 'chat'
+          : url.pathname === '/v1/messages' || url.pathname === '/messages'
+            ? 'anthropic'
+            : null
+    if (request.method === 'POST' && modelProtocol) {
+      await this.handleModelResponse(request, response, modelProtocol)
       return
     }
 
@@ -1037,6 +1701,21 @@ class DesktopE2EServer {
   async handleControlRoute(request, response, url) {
     if (request.method === 'POST' && url.pathname === '/ready') {
       const ready = await readRequestBody(request)
+      assert.equal(typeof ready.clientId, 'string', 'Desktop control client ID is required')
+      assert.ok(ready.clientId.length > 0, 'Desktop control client ID cannot be empty')
+      const previousClientId = this.activeControlClientId
+      this.activeControlClientId = ready.clientId
+      if (previousClientId && previousClientId !== ready.clientId) {
+        const replacementError = new Error(
+          `Desktop control client ${previousClientId} was replaced by ${ready.clientId}`
+        )
+        this.commandQueue = this.commandQueue.filter(item => item.clientId !== previousClientId)
+        for (const [id, pending] of this.commandResults) {
+          if (pending.clientId !== previousClientId) continue
+          this.commandResults.delete(id)
+          pending.reject(replacementError)
+        }
+      }
       this.ready = ready
       this.readyCount += 1
       this.readyResolver?.(ready)
@@ -1055,9 +1734,20 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === '/commands') {
-      if (this.commandQueue.length > 0) {
-        const command = this.commandQueue.shift()
-        this.commandHistory.push({ ...command, deliveredAt: new Date().toISOString() })
+      const clientId = url.searchParams.get('clientId')
+      if (!clientId || clientId !== this.activeControlClientId) {
+        response.writeHead(204)
+        response.end()
+        return true
+      }
+      const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
+      if (commandIndex >= 0) {
+        const [{ command }] = this.commandQueue.splice(commandIndex, 1)
+        this.commandHistory.push({
+          ...command,
+          clientId,
+          deliveredAt: new Date().toISOString(),
+        })
         json(response, 200, command)
         return true
       }
@@ -1066,11 +1756,25 @@ class DesktopE2EServer {
       return true
     }
 
+    if (request.method === 'GET' && url.pathname === '/control-tick') {
+      setTimeout(() => {
+        response.writeHead(204)
+        response.end()
+      }, 50)
+      return true
+    }
+
     if (request.method === 'POST' && url.pathname === '/results') {
       const result = await readRequestBody(request)
       const pending = this.commandResults.get(result.id)
       if (!pending) {
         json(response, 404, { error: `Unknown command ${result.id}` })
+        return true
+      }
+      if (result.clientId !== pending.clientId || result.clientId !== this.activeControlClientId) {
+        json(response, 409, {
+          error: `Command ${result.id} belongs to a different desktop control client`,
+        })
         return true
       }
       this.commandResults.delete(result.id)
@@ -1085,13 +1789,24 @@ class DesktopE2EServer {
     return false
   }
 
-  async handleModelResponse(request, response) {
+  async handleModelResponse(request, response, protocol) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
     const modelRequest = { authorization, body, scenario: this.scenario }
     this.modelRequests.push(modelRequest)
     if (authorization !== `Bearer ${MODEL_API_KEY}`) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
+      return
+    }
+
+    const localModel = localProtocolCase(body.model)
+    if (localModel) {
+      assert.equal(
+        protocol,
+        localModel.protocol,
+        `Local model ${body.model} reached the wrong ${protocol} endpoint`
+      )
+      this.handleLocalProtocolResponse(response, localModel, body, request.headers)
       return
     }
 
@@ -1120,6 +1835,17 @@ class DesktopE2EServer {
       !requestAdvertisesShellTool(body)
     ) {
       this.toolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
+      this.scenario === 'cloud_initial' &&
+      this.cloudModelStage === 'initial' &&
+      !this.cloudToolLessPrewarmHandled &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.cloudToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
@@ -1159,9 +1885,61 @@ class DesktopE2EServer {
       )
       this.toolOutput = JSON.stringify(body.input)
       this.modelStage = 'complete'
+      // Let the workbench commit the completed tool items before the final response
+      // triggers a transcript refresh. Real providers have network latency here; an
+      // immediate mock response can otherwise race the live image-view rendering.
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'cloud_initial' && this.cloudModelStage === 'initial') {
+      this.recordScenarioRequest('cloud_initial', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_TASK_PROMPT),
+        'The real cloud Codex request did not contain the UI task prompt'
+      )
+      const tool = selectShellTool(body, this.cloudWorkspacePath)
+      const patch = selectCloudApplyPatchTool(body)
+      this.cloudModelStage = 'awaiting_tool_output'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
+        customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'cloud_initial') {
+      this.recordScenarioRequest('cloud_initial', modelRequest)
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The real cloud Codex request did not report its tool output to the model service'
+      )
+      this.cloudModelStage = 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CLOUD_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'cloud_follow_up') {
+      this.recordScenarioRequest('cloud_follow_up', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
+        'The real cloud Codex request did not contain the follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -1202,6 +1980,43 @@ class DesktopE2EServer {
           responseCompleted(responseId),
         ])
       )
+      return
+    }
+
+    if (this.scenario === 'request_user_input') {
+      this.recordScenarioRequest('request_user_input', modelRequest)
+      if (JSON.stringify(body.input).includes('wework-e2e-request-user-input')) {
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(REQUEST_USER_INPUT_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.ok(
+        JSON.stringify(body).includes(REQUEST_USER_INPUT_PROMPT),
+        'The real Codex request did not contain the request-user-input prompt'
+      )
+      const tool = selectTool(body, 'request_user_input', {
+        questions: [
+          {
+            header: 'Direction',
+            id: 'direction',
+            question: REQUEST_USER_INPUT_QUESTION,
+            options: [
+              { label: 'Minimal', description: 'Make the smallest focused change.' },
+              { label: 'Complete', description: 'Cover the full interaction flow.' },
+            ],
+          },
+        ],
+      })
+      await this.requestUserInputRelease
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall('wework-e2e-request-user-input', tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      this.resolveRequestUserInputResponseWritten()
       return
     }
 
@@ -1308,6 +2123,473 @@ class DesktopE2EServer {
     throw new Error(`Unexpected desktop E2E scenario: ${this.scenario}`)
   }
 
+  handleLocalProtocolResponse(response, model, body, headers) {
+    const state = this.localProtocolStates.get(model.protocol)
+    assert.ok(state, `Missing local protocol state for ${model.protocol}`)
+    state.requests.push({ body, headers })
+    const serialized = JSON.stringify(body)
+    const initialPrompt = localProtocolPrompt(model, 'INITIAL')
+    const followUpPrompt = localProtocolPrompt(model, 'FOLLOW_UP')
+
+    this.assertLocalRequestEnvelope(model, body, headers)
+
+    if (state.stage === 'initial' && serialized.includes(initialPrompt)) {
+      this.assertLocalConversation(model, body, {
+        includes: [initialPrompt],
+        excludes: [followUpPrompt],
+      })
+      this.assertLocalApplyPatchTool(model, body)
+      state.stage = 'awaiting_tool_output'
+      this.writeLocalToolCall(response, model, localProtocolPatch(model))
+      return
+    }
+    if (state.stage === 'awaiting_tool_output') {
+      this.assertLocalConversation(model, body, {
+        includes: [],
+        excludes: [followUpPrompt],
+      })
+      this.assertLocalApplyPatchTool(model, body)
+      this.assertLocalToolOutput(model, body)
+      state.stage = 'complete'
+      this.writeLocalAssistantMessage(
+        response,
+        model,
+        `WEWORK_LOCAL_${model.protocol.toUpperCase()}_COMPLETE`
+      )
+      return
+    }
+    if (state.stage === 'complete' && serialized.includes(followUpPrompt)) {
+      const completedMessage = `WEWORK_LOCAL_${model.protocol.toUpperCase()}_COMPLETE`
+      this.assertLocalConversation(model, body, {
+        includes:
+          model.protocol === 'responses'
+            ? [initialPrompt, followUpPrompt, completedMessage]
+            : [initialPrompt, followUpPrompt, completedMessage],
+        excludes: [],
+      })
+      this.assertLocalApplyPatchTool(model, body)
+      // Stateful Responses requests may compact completed tool call/output pairs.
+      // Stateless Chat and Anthropic conversions must keep the pair for history.
+      if (model.protocol !== 'responses') this.assertLocalToolOutput(model, body)
+      state.stage = 'follow_up_complete'
+      this.writeLocalAssistantMessage(
+        response,
+        model,
+        `WEWORK_LOCAL_${model.protocol.toUpperCase()}_FOLLOW_UP_COMPLETE`
+      )
+      return
+    }
+    // Codex may prewarm a provider before it sends the first prompt and tools.
+    if (state.stage === 'initial') {
+      assert.equal(
+        serialized.includes(initialPrompt),
+        false,
+        `${model.protocol} prewarm unexpectedly contained the initial prompt`
+      )
+      this.writeLocalAssistantMessage(response, model, '')
+      return
+    }
+    throw new Error(
+      `Unexpected ${model.protocol} request at ${state.stage}: ${serialized.slice(0, 1000)}`
+    )
+  }
+
+  assertLocalRequestEnvelope(model, body, headers) {
+    assert.equal(body.model, model.modelId, `${model.protocol} forwarded the wrong model ID`)
+    assert.equal(body.stream, true, `${model.protocol} request was not streaming`)
+    assert.equal(
+      headers.authorization,
+      `Bearer ${MODEL_API_KEY}`,
+      `${model.protocol} did not forward bearer authentication`
+    )
+    if (model.protocol === 'responses') {
+      assert.ok(Array.isArray(body.input), 'Responses input was not an array')
+      assert.equal(
+        headers['anthropic-version'],
+        undefined,
+        'Responses unexpectedly received Anthropic headers'
+      )
+      return
+    }
+    assert.ok(Array.isArray(body.messages), `${model.protocol} messages were not an array`)
+    if (model.protocol === 'chat') {
+      assert.equal(
+        body.stream_options?.include_usage,
+        true,
+        'Chat streaming usage metadata was not requested'
+      )
+      assert.equal(
+        headers['anthropic-version'],
+        undefined,
+        'Chat unexpectedly received Anthropic headers'
+      )
+      return
+    }
+    assert.equal(headers['x-api-key'], MODEL_API_KEY, 'Anthropic x-api-key was not forwarded')
+    assert.equal(
+      headers['anthropic-version'],
+      '2023-06-01',
+      'Anthropic protocol version was not forwarded'
+    )
+    assert.ok(
+      typeof body.system === 'string' && body.system.length > 0,
+      'Anthropic system instructions were not preserved'
+    )
+    assert.ok(body.max_tokens > 0, 'Anthropic max_tokens was not populated')
+  }
+
+  assertLocalConversation(model, body, { includes, excludes }) {
+    const serialized = JSON.stringify(body)
+    for (const value of includes) {
+      assert.ok(serialized.includes(value), `${model.protocol} request lost history: ${value}`)
+    }
+    for (const value of excludes) {
+      assert.equal(
+        serialized.includes(value),
+        false,
+        `${model.protocol} request leaked future history: ${value}`
+      )
+    }
+  }
+
+  assertLocalApplyPatchTool(model, body) {
+    const tools = Array.isArray(body.tools) ? body.tools : []
+    const tool = tools.find(
+      candidate => (candidate?.name ?? candidate?.function?.name) === 'apply_patch'
+    )
+    assert.ok(tool, `${model.protocol} did not receive apply_patch`)
+    const names = tools
+      .map(candidate => candidate?.name ?? candidate?.function?.name)
+      .filter(Boolean)
+    assert.ok(
+      names.includes('shell_command') || names.includes('exec_command'),
+      `${model.protocol} did not receive a shell tool: ${names.join(', ')}`
+    )
+    if (model.protocol === 'responses') {
+      assert.equal(tool.type, 'custom', 'Responses apply_patch was not a custom tool')
+      assert.equal(tool.format?.type, 'grammar', 'Responses apply_patch grammar was missing')
+      assert.equal(tool.format?.syntax, 'lark', 'Responses apply_patch grammar was not Lark')
+      assert.ok(tool.format?.definition, 'Responses apply_patch grammar definition was empty')
+      return
+    }
+    if (model.protocol === 'chat') {
+      assert.equal(tool.type, 'function', 'Chat apply_patch was not converted to function')
+      const description = tool.function?.description ?? ''
+      assert.match(
+        description,
+        /Original tool definition:[\s\S]*"syntax":"lark"/,
+        'Chat apply_patch lost its custom grammar'
+      )
+      this.assertApplyPatchOutputContract(model, description)
+      assert.deepEqual(
+        tool.function?.parameters,
+        {
+          type: 'object',
+          properties: {
+            input: {
+              type: 'string',
+              description: CUSTOM_TOOL_INPUT_DESCRIPTION,
+            },
+          },
+          required: ['input'],
+          additionalProperties: false,
+        },
+        'Chat apply_patch wrapper schema was not preserved'
+      )
+      return
+    }
+    assert.ok(tool.input_schema, 'Anthropic apply_patch input_schema was missing')
+    const description = tool.description ?? ''
+    assert.match(
+      description,
+      /Original tool definition:[\s\S]*"syntax":"lark"/,
+      'Anthropic apply_patch lost its custom grammar'
+    )
+    this.assertApplyPatchOutputContract(model, description)
+    assert.deepEqual(
+      tool.input_schema,
+      {
+        type: 'object',
+        properties: {
+          input: {
+            type: 'string',
+            description: CUSTOM_TOOL_INPUT_DESCRIPTION,
+          },
+        },
+        required: ['input'],
+        additionalProperties: false,
+      },
+      'Anthropic apply_patch wrapper schema was not preserved'
+    )
+  }
+
+  assertApplyPatchOutputContract(model, description) {
+    for (const instruction of [
+      'Critical apply_patch input contract:',
+      'exactly `*** Begin Patch\\n`',
+      'with no blank line',
+      'Do not include Markdown code fences',
+      'every added-file content line must start with `+`',
+    ]) {
+      assert.ok(
+        description.includes(instruction),
+        `${model.protocol} apply_patch wrapper omitted instruction: ${instruction}`
+      )
+    }
+  }
+
+  assertLocalToolOutput(model, body) {
+    const patch = localProtocolPatch(model)
+    if (model.protocol === 'responses') {
+      const output = body.input?.find(item => item?.type === 'custom_tool_call_output')
+      assert.equal(
+        output?.call_id,
+        'local-responses-tool',
+        'Responses lost the apply_patch call ID'
+      )
+      assert.ok(output?.output, 'Responses lost the apply_patch output')
+      return
+    }
+    if (model.protocol === 'chat') {
+      const call = body.messages
+        ?.flatMap(message => message?.tool_calls ?? [])
+        .find(candidate => candidate?.function?.name === 'apply_patch')
+      assert.deepEqual(
+        JSON.parse(call?.function?.arguments ?? '{}'),
+        { input: patch },
+        'Chat changed the wrapped apply_patch input'
+      )
+      assert.ok(
+        body.messages?.some(
+          message => message?.role === 'tool' && message?.tool_call_id === call?.id
+        ),
+        'Chat lost the function tool result or call ID'
+      )
+      return
+    }
+    const blocks = body.messages?.flatMap(message => message?.content ?? []) ?? []
+    const call = blocks.find(block => block?.type === 'tool_use' && block?.name === 'apply_patch')
+    assert.deepEqual(call?.input, { input: patch }, 'Anthropic changed the apply_patch input')
+    assert.ok(
+      blocks.some(block => block?.type === 'tool_result' && block?.tool_use_id === call?.id),
+      'Anthropic lost the tool_result block or tool_use_id'
+    )
+  }
+
+  writeLocalToolCall(response, model, patch) {
+    if (model.protocol === 'responses') {
+      const id = `local-${model.protocol}-tool`
+      this.writeSse(response, [
+        responseCreated(id),
+        customToolCall(id, 'apply_patch', patch),
+        responseCompleted(id),
+      ])
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatToolCall(response, patch)
+      return
+    }
+    this.writeAnthropicToolCall(response, patch)
+  }
+
+  writeLocalAssistantMessage(response, model, text) {
+    if (model.protocol === 'responses') {
+      const id = `local-${model.protocol}-message`
+      const events = [responseCreated(id)]
+      if (text) events.push(assistantMessage(text))
+      events.push(responseCompleted(id))
+      this.writeSse(response, events)
+      return
+    }
+    if (model.protocol === 'chat') {
+      this.writeChatMessage(response, text)
+      return
+    }
+    this.writeAnthropicMessage(response, text)
+  }
+
+  writeChatToolCall(response, patch) {
+    const argumentsValue = JSON.stringify({ input: patch })
+    const splitAt = Math.max(1, Math.floor(argumentsValue.length / 2))
+    const chunks = [
+      {
+        id: 'chat-local-tool',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'chat-local-apply-patch',
+                  type: 'function',
+                  function: {
+                    name: 'apply_patch',
+                    arguments: argumentsValue.slice(0, splitAt),
+                  },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: 'chat-local-tool',
+        object: 'chat.completion.chunk',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'chat-local-apply-patch',
+                  function: {
+                    name: 'apply_patch',
+                    arguments: argumentsValue.slice(splitAt),
+                  },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+    ]
+    this.writeRawSse(
+      response,
+      `${chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('')}data: [DONE]\n\n`
+    )
+  }
+
+  writeChatMessage(response, text) {
+    const chunk = {
+      id: 'chat-local-message',
+      object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+    }
+    this.writeRawSse(response, `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)
+  }
+
+  writeAnthropicToolCall(response, patch) {
+    const input = JSON.stringify({ input: patch })
+    this.writeAnthropicSse(response, [
+      [
+        'message_start',
+        {
+          type: 'message_start',
+          message: {
+            id: 'anthropic-local-tool',
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            model: 'desktop-e2e-anthropic-model',
+            stop_reason: null,
+            usage: { input_tokens: 1, output_tokens: 0 },
+          },
+        },
+      ],
+      [
+        'content_block_start',
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: {
+            type: 'tool_use',
+            id: 'anthropic-local-apply-patch',
+            name: 'apply_patch',
+            input: {},
+          },
+        },
+      ],
+      [
+        'content_block_delta',
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: input },
+        },
+      ],
+      ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+      [
+        'message_delta',
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'tool_use', stop_sequence: null },
+          usage: { output_tokens: 1 },
+        },
+      ],
+      ['message_stop', { type: 'message_stop' }],
+    ])
+  }
+
+  writeAnthropicMessage(response, text) {
+    this.writeAnthropicSse(response, [
+      [
+        'message_start',
+        {
+          type: 'message_start',
+          message: {
+            id: 'anthropic-local-message',
+            type: 'message',
+            role: 'assistant',
+            content: [],
+            model: 'desktop-e2e-anthropic-model',
+            stop_reason: null,
+            usage: { input_tokens: 1, output_tokens: 0 },
+          },
+        },
+      ],
+      [
+        'content_block_start',
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: '' },
+        },
+      ],
+      [
+        'content_block_delta',
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text },
+        },
+      ],
+      ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+      [
+        'message_delta',
+        {
+          type: 'message_delta',
+          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          usage: { output_tokens: 1 },
+        },
+      ],
+      ['message_stop', { type: 'message_stop' }],
+    ])
+  }
+
+  writeAnthropicSse(response, events) {
+    this.writeRawSse(
+      response,
+      events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join('')
+    )
+  }
+
+  writeRawSse(response, body) {
+    response.writeHead(200, {
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+    })
+    response.end(body)
+  }
+
   writeSse(response, events) {
     response.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
@@ -1353,6 +2635,17 @@ async function readTauriMainBinaryName() {
   }
 }
 
+async function readTauriE2EWindowConfig() {
+  const configPath = join(weworkDir, 'src-tauri', 'tauri.conf.json')
+  const config = JSON.parse(await readFile(configPath, 'utf8'))
+  const windows = config.app?.windows
+  assert.ok(Array.isArray(windows) && windows.length > 0, 'Tauri main window config is missing')
+  return windows.map(windowConfig => ({
+    ...windowConfig,
+    backgroundThrottling: 'disabled',
+  }))
+}
+
 async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   if (process.platform !== 'darwin') return { binaryPath, appBundlePath: null }
 
@@ -1385,13 +2678,14 @@ async function wrapMacDesktopApp(binaryPath, binaryName, appIdentifier) {
   return { binaryPath: bundledBinaryPath, appBundlePath }
 }
 
-async function buildDesktopApp(controlUrl, cloudBackendUrl, appIdentifier) {
+async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdentifier) {
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) {
     const binaryPath = await resolveExecutable(configured, 'app', 'Configured Wework desktop app')
     return wrapMacDesktopApp(binaryPath, binaryPath.split('/').at(-1), appIdentifier)
   }
 
+  const windows = await readTauriE2EWindowConfig()
   await runChecked(
     'pnpm',
     [
@@ -1401,7 +2695,27 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, appIdentifier) {
       '--debug',
       '--no-bundle',
       '--config',
-      JSON.stringify({ identifier: appIdentifier }),
+      JSON.stringify({
+        identifier: appIdentifier,
+        app: {
+          windows,
+          security: {
+            capabilities: [
+              'default',
+              {
+                identifier: 'desktop-e2e-focus',
+                description: 'Allows the desktop E2E runner to keep WebKit timers unthrottled',
+                windows: ['main'],
+                permissions: [
+                  'core:window:allow-set-focus',
+                  'core:window:allow-show',
+                  'core:window:allow-unminimize',
+                ],
+              },
+            ],
+          },
+        },
+      }),
     ],
     {
       cwd: weworkDir,
@@ -1409,6 +2723,7 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, appIdentifier) {
         ...process.env,
         VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
+        VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
@@ -1441,11 +2756,146 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, appIdentifier) {
   )
 }
 
+async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) {
+  const composerSelector = ACTIVE_COMPOSER_SELECTOR
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: CLOUD_DEVICE_ID,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    join(resultDir, 'cloud-executor-home'),
+    'The remote folder picker did not load the real executor home directory'
+  )
+  await captureVerificationScreenshot(control, 'cloud-01-remote-device-selected.png')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    workspacePath,
+    'The remote folder picker did not retain the selected cloud workspace path'
+  )
+  await captureVerificationScreenshot(control, 'cloud-02-workspace-path-confirmed.png')
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('standalone-folder-project-dialog') &&
+      value.testIds.some(testId => testId.startsWith('project-device-status-')),
+    'The real cloud project was not shown with its remote device status'
+  )
+  await control.command('waitFor', '[data-testid^="project-menu-"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS * 2,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const deviceStatusTestId = projectSnapshot.testIds.find(testId =>
+    testId.startsWith('project-device-status-')
+  )
+  assert.ok(deviceStatusTestId, 'The cloud project did not expose its remote device status')
+  const projectId = deviceStatusTestId.slice('project-device-status-'.length)
+  await captureVerificationScreenshot(control, 'cloud-03-project-created.png')
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+  )
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'workspace',
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', composerSelector, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+
+  control.setScenario('cloud_initial')
+  await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequestCount('cloud_initial', 2),
+    UI_TIMEOUT_MS,
+    'The real cloud executor did not complete its model tool loop'
+  )
+  assert.equal(
+    (await readFile(join(workspacePath, CLOUD_ARTIFACT_NAME), 'utf8')).trim(),
+    CLOUD_ARTIFACT_CONTENT,
+    'The real cloud executor did not create the verification artifact'
+  )
+  const taskSnapshot = await waitForSnapshot(
+    control,
+    value => value.testIds.some(testId => testId.startsWith('runtime-local-task-row-')),
+    'The completed cloud task was not persisted in the sidebar'
+  )
+  const taskRowTestId = taskSnapshot.testIds.find(testId =>
+    testId.startsWith('runtime-local-task-row-')
+  )
+  assert.ok(taskRowTestId, 'The completed cloud task row was not available')
+  await control.command('click', `[data-testid="${taskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
+
+  control.setScenario('cloud_follow_up')
+  await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequest('cloud_follow_up'),
+    UI_TIMEOUT_MS,
+    'The real cloud executor did not send the follow-up model request'
+  )
+  await control.command('click', `[data-testid="${taskRowTestId}"]`)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-06-follow-up-completed.png')
+
+  const projectMenuTestId = `project-menu-${projectId}`
+  await waitForSnapshot(
+    control,
+    value => value.testIds.includes(projectMenuTestId),
+    'The cloud project was not shown in the sidebar'
+  )
+  await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+  await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+  )
+  await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes(projectMenuTestId) &&
+      !value.testIds.includes(`remove-project-dialog-${projectId}`),
+    'The removed cloud project remained visible in the workbench'
+  )
+  await captureVerificationScreenshot(control, 'cloud-07-project-removed.png')
+}
+
 async function main() {
   await mkdir(resultDir, { recursive: true })
   const workspacePath = join(resultDir, 'workspace')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
+  const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -1458,6 +2908,7 @@ async function main() {
     join(workspacePath, IMAGE_ARTIFACT_NAME),
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
+  await createPluginMarketplaceFixture(pluginMarketplacePath)
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
@@ -1470,9 +2921,17 @@ async function main() {
     cwd: workspacePath,
   })
 
-  const control = new DesktopE2EServer(workspacePath)
+  const desktopScenario = await loadDesktopScenario(
+    process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
+    { uiTimeoutMs: UI_TIMEOUT_MS }
+  )
+  if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
+    throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
+  }
+  const control = new DesktopE2EServer(workspacePath, workspacePath, desktopScenario)
   let app
   let appBundlePath
+  let cloudEnvironment
   let phase = 'startup'
   try {
     await control.start()
@@ -1486,10 +2945,22 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
 
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
-    const [executorBinary, desktopApp] = await Promise.all([
-      buildExecutor(),
-      buildDesktopApp(control.controlUrl, control.url, appIdentifier),
-    ])
+    const executorBinary = await buildExecutor()
+    if (CLOUD_ONLY) {
+      cloudEnvironment = new RealCloudEnvironment({
+        codexBinary,
+        executorBinary,
+        modelServerUrl: control.url,
+        workspacePath,
+      })
+      await cloudEnvironment.start()
+    }
+    const desktopApp = await buildDesktopApp(
+      control.controlUrl,
+      cloudEnvironment?.backendUrl ?? control.url,
+      cloudEnvironment?.authToken ?? desktopScenario?.authToken ?? 'wework-desktop-e2e-cloud-token',
+      appIdentifier
+    )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     await writeCodexConfig(join(executorHome, 'codex'), control.url)
@@ -1514,6 +2985,7 @@ async function main() {
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
     })
     await Promise.all([
       appendProcessOutput(app.stdout, appLogPath),
@@ -1530,6 +3002,19 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
+    await control.command('focusMainWindow', 'body')
+
+    if (CLOUD_ONLY) {
+      phase = 'cloud-project-flow'
+      await verifyCloudProjectFlow(control, cloudEnvironment, workspacePath)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop cloud-project E2E passed. Diagnostics: ${resultDir}`)
+      return
+    }
 
     phase = 'cloud-request-non-blocking'
     await withTimeout(
@@ -1542,6 +3027,27 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+
+    if (PLUGINS_ONLY) {
+      phase = 'plugin-lifecycle'
+      await verifyPluginLifecycle(control, pluginMarketplacePath)
+      console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (desktopScenario) {
+      phase = 'desktop-extension-scenario'
+      await desktopScenario.verify(control)
+      if (DESKTOP_SCENARIO_ONLY) {
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop extension scenario E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -1580,24 +3086,39 @@ async function main() {
       'Cancelling folder selection did not restore the workbench'
     )
 
-    phase = 'project-folder-select'
-    await control.command('click', '[data-testid="projects-create-button"]')
-    await control.command('click', '[data-testid="project-create-existing-option"]')
+    phase = 'composer-project-folder-select'
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('hover', '[data-testid="add-local-project-option"]')
+    await control.command('click', '[data-testid="add-local-existing-project-option"]')
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await waitForFolderPickerInitialized(control)
     await control.command('fill', '[data-testid="device-folder-path-input"]', {
       value: workspacePath,
     })
+    assert.equal(
+      await control.command('getValue', '[data-testid="device-folder-path-input"]'),
+      workspacePath,
+      'The device folder path did not update before confirmation'
+    )
     await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
-    await control.command('click', '[data-testid="confirm-device-folder-picker-button"]')
+    await waitForFolderPathReady(control, workspacePath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
 
     const composerSelector = ACTIVE_COMPOSER_SELECTOR
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
-    phase = 'project-folder-remove-immediately'
+    phase = 'composer-project-visible-in-sidebar'
     const openedProjectSnapshot = await waitForSnapshot(
       control,
       snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
@@ -1608,6 +3129,30 @@ async function main() {
     )
     assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
     const projectId = projectMenuTestId.slice('project-menu-'.length)
+    const projectRowSelector = `[data-testid="project-row-${projectId}"]`
+    await control.command('waitFor', projectRowSelector, {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
+    phase = 'sidebar-project-new-conversation'
+    await control.command(
+      'click',
+      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+    )
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: 'workspace',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
+    phase = 'project-folder-remove-immediately'
     await control.command('click', `[data-testid="${projectMenuTestId}"]`)
     await control.command('click', `[data-testid="remove-project-${projectId}"]`)
     await control.command(
@@ -1626,11 +3171,25 @@ async function main() {
     await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await waitForFolderPickerInitialized(control)
     await control.command('fill', '[data-testid="device-folder-path-input"]', {
       value: workspacePath,
     })
+    assert.equal(
+      await control.command('getValue', '[data-testid="device-folder-path-input"]'),
+      workspacePath,
+      'The device folder path did not update before confirmation'
+    )
     await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
-    await control.command('click', '[data-testid="confirm-device-folder-picker-button"]')
+    await waitForFolderPathReady(control, workspacePath)
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="confirm-device-folder-picker-button"]',
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
@@ -1830,6 +3389,9 @@ async function main() {
       text: '+1',
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('waitFor', '[data-testid="file-change-stats-label"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     if (VIEW_IMAGE_ONLY) {
       await writeFile(
         join(resultDir, 'model-requests.json'),
@@ -1841,12 +3403,12 @@ async function main() {
     }
     const changedEnvironmentText = await control.command(
       'getText',
-      '[data-testid="environment-changes-button"]'
+      '[data-testid="file-change-stats-label"]'
     )
     assert.match(
       changedEnvironmentText,
       /\+1\s*-0/,
-      'The environment diff did not refresh after the real tool changed the workspace'
+      'The real apply_patch result did not render the expected file diff'
     )
 
     phase = 'workspace-mention'
@@ -1872,6 +3434,10 @@ async function main() {
     )
     assert.ok(control.modelRequests.length >= 2, 'The real Codex did not make both model requests')
     assert.ok(
+      control.catalogRequests.length >= 1,
+      'The Codex model catalog did not pass through the local router'
+    )
+    assert.ok(
       typeof control.modelRequests[0].body.model === 'string' &&
         control.modelRequests[0].body.model.length > 0,
       'The real Codex request did not select a model'
@@ -1891,32 +3457,128 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
+    if (!REQUEST_INPUT_ONLY) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      await control.command('click', `[data-testid="${taskRowTestId}"]`)
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: MODEL_LABEL,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+
+      phase = 'follow-up'
+      control.setScenario('follow_up')
+      const followUpRequest = await sendPromptUntilScenarioRequest(
+        control,
+        composerSelector,
+        FOLLOW_UP_PROMPT,
+        'follow_up'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FOLLOW_UP_COMPLETION_TEXT,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      assert.ok(
+        JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+        'The follow-up request did not preserve the user prompt'
+      )
+
+      for (const [index, localModel] of LOCAL_MODEL_CASES.entries()) {
+        phase = `local-model-${localModel.protocol}-initial`
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await control.command('waitFor', composerSelector, {
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        })
+        await selectE2EModel(control, localModel.optionId, localModel.label)
+        await sendPrompt(control, composerSelector, localProtocolPrompt(localModel, 'INITIAL'))
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: `WEWORK_LOCAL_${localModel.protocol.toUpperCase()}_COMPLETE`,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        assert.equal(
+          await readFile(join(workspacePath, localProtocolArtifact(localModel)), 'utf8'),
+          `${localProtocolArtifactContent(localModel)}\n`,
+          `${localModel.protocol} apply_patch did not create the expected artifact`
+        )
+
+        phase = `local-model-${localModel.protocol}-follow-up`
+        await sendPrompt(control, composerSelector, localProtocolPrompt(localModel, 'FOLLOW_UP'))
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: `WEWORK_LOCAL_${localModel.protocol.toUpperCase()}_FOLLOW_UP_COMPLETE`,
+          timeoutMs: UI_TIMEOUT_MS,
+        })
+        const localState = control.localProtocolStates.get(localModel.protocol)
+        assert.equal(
+          localState?.stage,
+          'follow_up_complete',
+          `${localModel.protocol} did not complete the send/tool/follow-up lifecycle`
+        )
+        assert.ok(
+          localState.requests.length >= 3,
+          `${localModel.protocol} did not send the full model request sequence`
+        )
+        await prepareCompletedTurnScreenshot(control)
+        await captureVerificationScreenshot(
+          control,
+          `${String(index + 3).padStart(2, '0')}-local-model-${localModel.protocol}-follow-up.png`
+        )
+      }
+
+      await control.command('click', `[data-testid="${taskRowTestId}"]`)
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: MODEL_LABEL,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+    }
+
+    phase = 'background-request-user-input'
+    control.setScenario('request_user_input')
+    await control.command('click', '[data-testid="add-context-button"]')
+    await control.command('click', '[data-testid="set-plan-mode-button"]')
+    await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      REQUEST_USER_INPUT_PROMPT,
+      'request_user_input'
+    )
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await control.command('click', composerSelector)
+    await control.command('press', 'body', { key: 'Escape' })
+    await captureVerificationScreenshot(control, '01-request-running-in-background.png')
+    await withTimeout(
+      control.releaseRequestUserInputResponse(),
+      UI_TIMEOUT_MS,
+      'Timed out waiting for the request-user-input SSE response'
+    )
+    await control.command('press', 'body', { key: 'Escape' })
     await control.command('click', `[data-testid="${taskRowTestId}"]`)
-    await control.command('waitFor', activeModelSelector, {
-      text: initialModelLabel,
+    await control.command('waitFor', '[data-testid="request-user-input-card"]', {
+      text: REQUEST_USER_INPUT_QUESTION,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: UI_TIMEOUT_MS,
     })
-
-    phase = 'follow-up'
-    control.setScenario('follow_up')
-    const followUpRequest = await sendPromptUntilScenarioRequest(
-      control,
-      composerSelector,
-      FOLLOW_UP_PROMPT,
-      'follow_up'
-    )
+    await captureVerificationScreenshot(control, '02-background-request-user-input-visible.png')
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 3_000))
+    await control.command('click', '[data-testid="request-user-input-option-direction-1"]')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: FOLLOW_UP_COMPLETION_TEXT,
+      text: REQUEST_USER_INPUT_COMPLETION_TEXT,
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: UI_TIMEOUT_MS,
     })
-    assert.ok(
-      JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
-      'The follow-up request did not preserve the user prompt'
-    )
+    await captureVerificationScreenshot(control, '03-delayed-answer-completed.png')
+    await control.command('click', '[data-testid="cancel-plan-mode-button"]')
+    if (REQUEST_INPUT_ONLY) return
 
     await verifyBackgroundTaskWindowLifecycle({
       app,
@@ -1969,13 +3631,7 @@ async function main() {
         timeoutMs: UI_TIMEOUT_MS,
       }
     )
-    await control.command(
-      'waitFor',
-      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`,
-      {
-        timeoutMs: UI_TIMEOUT_MS,
-      }
-    )
+    await waitForScenarioRequestCount(control, 'retry', 2)
     control.releaseRetryResponse()
     await control.command(
       'waitFor',
@@ -2000,6 +3656,7 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
     const freshChatSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     assert.equal(
       freshChatSnapshot.text.includes(TASK_PROMPT),
@@ -2081,6 +3738,59 @@ async function main() {
       'The created worktree was not marked permanent'
     )
 
+    phase = 'composer-project-create-and-new-chat'
+    const projectRowsBeforeComposerCreate = new Set(
+      (
+        await waitForSnapshot(
+          control,
+          snapshot => snapshot.testIds.includes('project-work-button'),
+          'The project selector was not ready for composer project creation'
+        )
+      ).testIds.filter(testId => testId.startsWith('project-row-'))
+    )
+    await control.command('click', '[data-testid="project-work-button"]')
+    await control.command('click', '[data-testid="add-local-project-option"]')
+    await control.command('click', '[data-testid="add-local-blank-project-option"]')
+    await control.command('fill', '[data-testid="standalone-blank-project-name-input"]', {
+      value: COMPOSER_PROJECT_NAME,
+    })
+    await control.command(
+      'clickWhenEnabled',
+      '[data-testid="save-standalone-blank-project-button"]'
+    )
+    const createdComposerProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.text.includes(COMPOSER_PROJECT_NAME) &&
+        snapshot.testIds.includes('project-work-button'),
+      'The composer-created project was not selected after creation'
+    )
+    const createdComposerProjectRow = createdComposerProjectSnapshot.testIds.find(
+      testId => testId.startsWith('project-row-') && !projectRowsBeforeComposerCreate.has(testId)
+    )
+    assert.ok(
+      createdComposerProjectRow,
+      'The composer-created project was not added to the sidebar'
+    )
+
+    await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+    await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.includes('project-work-button') &&
+        (snapshot.text.includes('请选择项目') || snapshot.text.includes('Select project')),
+      'The standalone new task did not clear the composer-created project'
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `[data-testid="${createdComposerProjectRow}"] [data-testid="project-new-conversation-button"]`
+    )
+    await control.command('waitFor', '[data-testid="project-work-button"]', {
+      text: COMPOSER_PROJECT_NAME,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -2089,12 +3799,25 @@ async function main() {
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
     await writeFile(
+      join(resultDir, 'model-requests.json'),
+      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+      'utf8'
+    )
+    await writeFile(
       join(resultDir, 'scenario-state.json'),
       `${JSON.stringify(
         {
           phase,
           scenario: control.scenario,
           modelStage: control.modelStage,
+          localProtocolStates: Object.fromEntries(
+            [...control.localProtocolStates.entries()].map(([protocol, state]) => [
+              protocol,
+              { stage: state.stage, requestCount: state.requests.length },
+            ])
+          ),
+          desktopScenario: desktopScenario?.diagnostics?.() ?? null,
+          cloudModelStage: control.cloudModelStage,
           scenarioRequestCounts: Object.fromEntries(
             [...control.scenarioRequests.entries()].map(([name, requests]) => [
               name,
@@ -2106,6 +3829,11 @@ async function main() {
         null,
         2
       )}\n`,
+      'utf8'
+    )
+    await writeFile(
+      join(resultDir, 'model-requests.json'),
+      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
       'utf8'
     )
     try {
@@ -2121,7 +3849,8 @@ async function main() {
     )
     throw error
   } finally {
-    await stopProcess(app)
+    await cloudEnvironment?.stop()
+    await stopProcessGroup(app)
     await control.close()
     if (appBundlePath) {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
@@ -2129,7 +3858,10 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? (error.stack ?? error.message) : error)
-  process.exitCode = 1
-})
+main().then(
+  () => process.stdout.write('', () => process.exit(0)),
+  error => {
+    const message = error instanceof Error ? (error.stack ?? error.message) : String(error)
+    process.stderr.write(`${message}\n`, () => process.exit(1))
+  }
+)

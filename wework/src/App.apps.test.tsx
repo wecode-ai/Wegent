@@ -2,6 +2,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
+import { saveStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  }),
+}))
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
@@ -176,7 +188,7 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
@@ -188,6 +200,28 @@ describe('App center route', () => {
     expect(screen.queryByText('Skills')).not.toBeInTheDocument()
     expect(screen.queryByText('MCP')).not.toBeInTheDocument()
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
+  })
+
+  test('loads Agent from the connected cloud address', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://app.example.com',
+      token: 'cloud-token',
+      tokenExpiresAt: null,
+      user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-21T00:00:00.000Z',
+    })
+    window.history.pushState({}, '', '/app/wegent')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('app-iframe-wegent')).toHaveAttribute(
+      'src',
+      'https://app.example.com'
+    )
   })
 
   test('does not render the global chrome titlebar on the workbench route', async () => {

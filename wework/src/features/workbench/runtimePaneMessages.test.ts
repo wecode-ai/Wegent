@@ -541,6 +541,58 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
   })
 
+  test('restores historical blocks that use a numeric subtask identity', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-history',
+        role: 'assistant',
+        content: '已完成',
+        subtaskId: 901,
+        blocks: [
+          {
+            id: 'tool-history',
+            type: 'tool',
+            tool_name: 'exec_command',
+            tool_input: { cmd: 'pwd' },
+            status: 'done',
+          },
+          {
+            id: 'file-history',
+            type: 'file_changes',
+            status: 'done',
+            file_changes: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-history',
+              device_id: 'device-1',
+              workspace_path: '/workspace/project',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: 'history.txt',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      subtaskId: '901',
+      blocks: [
+        { type: 'tool', toolName: 'exec_command' },
+        { type: 'file_changes', fileChanges: { files: [{ path: 'history.txt' }] } },
+      ],
+    })
+  })
+
   test('treats interrupted runtime errors as cancellation events', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
@@ -783,6 +835,24 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
 
     expect(messages[0]).toMatchObject({
       content: '这是一段完整的短回复。',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+    })
+  })
+
+  test('ignores a short streamed suffix mislabeled as truncated content', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-k3',
+        role: 'assistant',
+        content: '保持两边同步。',
+        content_truncated: true,
+        content_original_chars: 26,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      content: '保持两边同步。',
       contentTruncated: undefined,
       contentOriginalChars: undefined,
     })

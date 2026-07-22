@@ -14,6 +14,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) mod codex_model_catalog;
 mod codex_responses_proxy_transform;
 mod config;
 pub(crate) mod local_model_proxy;
@@ -89,7 +90,8 @@ where
         .route("/init", post(envd_init))
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
-        .route(local_model_proxy::ROUTE, post(local_model_proxy::handle))
+        .route(codex_model_catalog::ROUTE, get(codex_model_catalog::handle))
+        .route(local_model_proxy::ROUTE, local_model_proxy::route())
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
@@ -1587,17 +1589,35 @@ async fn cpu_used_pct() -> Option<f64> {
             ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
         }
 
-        let mut idle1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut kernel1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut user1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut idle1 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut kernel1 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut user1 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
         let ok1 = unsafe { GetSystemTimes(&mut idle1, &mut kernel1, &mut user1) };
         if ok1 == 0 {
             return None;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let mut idle2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut kernel2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
-        let mut user2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut idle2 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut kernel2 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut user2 = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
         let ok2 = unsafe { GetSystemTimes(&mut idle2, &mut kernel2, &mut user2) };
         if ok2 == 0 {
             return None;
@@ -1662,9 +1682,7 @@ fn memory_usage_bytes() -> Option<ByteUsage> {
     }
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::SystemInformation::{
-            GlobalMemoryStatusEx, MEMORYSTATUSEX,
-        };
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
         let mut status = std::mem::MaybeUninit::<MEMORYSTATUSEX>::uninit();
         unsafe {
@@ -1756,6 +1774,11 @@ fn has_read_access(path: &Path) -> bool {
     wide_path.push(0);
     let attributes = unsafe { GetFileAttributesW(wide_path.as_ptr()) };
     attributes != INVALID_FILE_ATTRIBUTES
+}
+
+#[cfg(unix)]
+fn has_read_access(path: &Path) -> bool {
+    std::fs::OpenOptions::new().read(true).open(path).is_ok()
 }
 
 #[cfg(not(any(unix, windows)))]

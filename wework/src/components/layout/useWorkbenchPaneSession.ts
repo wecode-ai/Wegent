@@ -60,6 +60,7 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { useWorkbenchPaneActive } from './workbenchPaneStack'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -198,6 +199,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
   const interruptedGuidanceIdsRef = useRef(new Set<string>())
   const interruptAndSendInFlightRef = useRef(false)
+  const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
@@ -310,6 +312,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const runtimeTaskStatusAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskExecution = useMemo(
     () => getRuntimePaneTaskExecution(workbenchState.runtimeWork, runtimeTaskStatusAddress),
+    [runtimeTaskStatusAddress, workbenchState.runtimeWork]
+  )
+  const taskGoalStatus = useMemo(
+    () => findRuntimeTask(workbenchState.runtimeWork, runtimeTaskStatusAddress)?.goalStatus ?? null,
     [runtimeTaskStatusAddress, workbenchState.runtimeWork]
   )
   const paneStatus = useMemo(
@@ -610,6 +616,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     runtimeTaskLoadTarget,
     shouldReconcileRunningTranscript,
   ])
+
+  useEffect(() => {
+    if (!runtimeTaskLoadTarget || !shouldReconcileRunningTranscript || !taskExecution.running) {
+      return
+    }
+    setRunningTranscriptReconcileKey(current => current ?? runtimeTaskLoadTarget.key)
+  }, [runtimeTaskLoadTarget, shouldReconcileRunningTranscript, taskExecution.running])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
@@ -1474,6 +1487,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
+      if (queuedMessageSendInFlightIdsRef.current.has(queuedMessage.id)) return
+      queuedMessageSendInFlightIdsRef.current.add(queuedMessage.id)
       setQueuedMessages(messages =>
         messages.map(message =>
           message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
@@ -1504,6 +1519,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
         )
         setSendPhase('idle')
+      } finally {
+        queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
     [sendRuntimeMessage]
@@ -2168,8 +2185,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {
-      if (!goal) return false
       if (!currentRuntimeTask) {
+        if (!goal) return false
         setPendingGoalState(current =>
           current
             ? {
@@ -2222,16 +2239,17 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask) return
 
+    if (goal?.status === 'active' || taskGoalStatus === 'active') {
+      const paused = await updateCurrentGoalStatus('paused')
+      if (!paused) return
+    }
+
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) return
 
     setQueuedMessagesPaused(queuedMessages.some(message => message.status === 'queued'))
     setSendPhase('idle')
     void refreshWorkLists()
-
-    if (goal?.status === 'active') {
-      await updateCurrentGoalStatus('paused')
-    }
 
     if (!activeAssistantMessage) return
 
@@ -2246,6 +2264,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     goal?.status,
     queuedMessages,
     refreshWorkLists,
+    taskGoalStatus,
     updateCurrentGoalStatus,
   ])
 

@@ -306,7 +306,7 @@ fn send_signal(pid: u32, signal: libc::c_int) -> bool {
 #[cfg(windows)]
 fn send_signal(pid: u32, _signal: libc::c_int) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
     unsafe {
         let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);

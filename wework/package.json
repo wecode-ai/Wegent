@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.0.23",
+  "version": "0.0.25",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,6 +26,8 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:desktop": "node e2e/desktop/task-flow.e2e.mjs",
+    "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
+    "e2e:desktop:plugins": "node e2e/desktop/task-flow.e2e.mjs --plugins-only",
     "e2e:desktop:lifecycle": "node e2e/desktop/task-flow.e2e.mjs --lifecycle-only",
     "e2e:desktop:reconnect": "node e2e/desktop/task-flow.e2e.mjs --reconnect-only",
     "e2e:desktop:attachment-only-sidebar": "node e2e/desktop/task-flow.e2e.mjs --attachment-only-sidebar",

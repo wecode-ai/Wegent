@@ -23,6 +23,8 @@ import { stripCodexUiDirectives } from '@/lib/codex-directives'
 import { mergeTurnFileChanges, normalizeTurnFileChanges } from './turnFileChanges'
 import { normalizeWorkbenchBlockStatus, type WorkbenchMessageAction } from '@wegent/chat-core'
 
+const RUNTIME_MESSAGE_CONTENT_TRUNCATION_THRESHOLD_CHARS = 200_000
+
 export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFileChangesSummary>
 
 export interface RuntimeTaskStreamHandlers {
@@ -493,7 +495,9 @@ function hasTruncatedRuntimeContent(message: NormalizedRuntimeMessage): boolean 
 
   const originalChars = runtimeMessageOriginalChars(message)
   return (
-    originalChars !== undefined && originalChars > runtimeContentCharacterCount(message.content)
+    originalChars !== undefined &&
+    originalChars > RUNTIME_MESSAGE_CONTENT_TRUNCATION_THRESHOLD_CHARS &&
+    originalChars > runtimeContentCharacterCount(message.content)
   )
 }
 
@@ -584,9 +588,9 @@ function normalizeRuntimeGoalRequest(message: NormalizedRuntimeMessage): boolean
 }
 
 function runtimeMessageSubtaskId(message: NormalizedRuntimeMessage): string | undefined {
-  return typeof message.subtaskId === 'string' && message.subtaskId.trim()
-    ? message.subtaskId
-    : undefined
+  const subtaskId = message.subtaskId
+  if (typeof subtaskId === 'number') return String(subtaskId)
+  return typeof subtaskId === 'string' && subtaskId.trim() ? subtaskId : undefined
 }
 
 function warnInvalidRuntimeTranscriptIdentity(

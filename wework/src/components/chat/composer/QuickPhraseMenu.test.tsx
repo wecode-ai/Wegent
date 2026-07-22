@@ -73,6 +73,24 @@ describe('QuickPhraseMenu', () => {
     expect(screen.getByTestId('quick-phrase-stash-preview')).toHaveTextContent('两张图片')
   })
 
+  test('renders icon-only without label when iconOnly is true', () => {
+    render(<QuickPhraseMenu iconOnly onSelect={vi.fn()} />)
+
+    const button = screen.getByTestId('quick-phrase-button')
+    expect(button).not.toHaveTextContent('快捷短语')
+    expect(button.className).toContain('h-8')
+    expect(button.className).toContain('w-8')
+  })
+
+  test('renders compact circular button without label when compact is true', () => {
+    render(<QuickPhraseMenu compact onSelect={vi.fn()} />)
+
+    const button = screen.getByTestId('quick-phrase-button')
+    expect(button).not.toHaveTextContent('快捷短语')
+    expect(button.className).toContain('h-11')
+    expect(button.className).toContain('w-11')
+  })
+
   test('deletes a stash without selecting it', async () => {
     const onSelect = vi.fn()
     appPreferenceMocks.get.mockResolvedValue({
@@ -101,5 +119,36 @@ describe('QuickPhraseMenu', () => {
       })
     )
     expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  test('clears every stash while preserving regular phrases', async () => {
+    appPreferenceMocks.get.mockResolvedValue({
+      quickPhrases: [
+        { id: 'summary', title: '总结进展', content: '总结当前进展', mode: 'normal' },
+        { id: 'stash-text', title: '文本', content: '暂存文本', mode: 'normal' },
+        {
+          id: 'stash-images',
+          title: '图片',
+          content: '',
+          mode: 'normal',
+          attachmentPaths: ['/tmp/image.png'],
+        },
+      ],
+    })
+    appPreferenceMocks.update.mockResolvedValue(undefined)
+    render(<QuickPhraseMenu onSelect={vi.fn()} />)
+
+    fireEvent.click(screen.getByTestId('quick-phrase-button'))
+    const clearButton = screen.getByTestId('quick-phrase-stash-clear-button')
+    expect(clearButton).toHaveClass('min-h-11', 'min-w-11', 'md:min-h-0', 'md:min-w-0')
+    fireEvent.click(clearButton)
+
+    await waitFor(() =>
+      expect(appPreferenceMocks.update).toHaveBeenCalledWith({
+        quickPhrases: [
+          { id: 'summary', title: '总结进展', content: '总结当前进展', mode: 'normal' },
+        ],
+      })
+    )
   })
 })

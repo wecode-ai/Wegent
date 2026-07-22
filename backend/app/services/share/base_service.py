@@ -24,7 +24,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.namespace import Namespace
-from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.resource_member import (
+    APPROVED_MEMBER_STATUS_VALUES,
+    KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES,
+    MemberStatus,
+    ResourceMember,
+    ResourceRole,
+)
 from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
 from app.schemas.base_role import BaseRole, get_highest_role, has_permission
@@ -46,7 +52,7 @@ from app.schemas.share import (
     ShareLinkConfig,
     ShareLinkResponse,
 )
-from app.services.share.external_entity_resolver import get_entity_resolver
+from app.services.external_entity_resolver import get_entity_resolver
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -83,18 +89,14 @@ class UnifiedShareService(ABC):
     @property
     def _resource_type_variants(self) -> list[str]:
         """Return resource_type values to query, handling legacy formats."""
-        variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            variants.append("KNOWLEDGE_BASE")
-        return variants
+        if self.resource_type == ResourceType.KNOWLEDGE_BASE:
+            return list(KNOWLEDGE_BASE_RESOURCE_TYPE_VALUES)
+        return [self.resource_type.value]
 
     @property
     def _approved_status_variants(self) -> list[str]:
         """Return approved status values to query, handling legacy case formats."""
-        return [
-            MemberStatus.APPROVED.value,
-            MemberStatus.APPROVED.value.upper(),
-        ]
+        return list(APPROVED_MEMBER_STATUS_VALUES)
 
     # =========================================================================
     # Abstract methods (must be implemented by subclasses)
@@ -2019,7 +2021,7 @@ class UnifiedShareService(ABC):
         Delegates to shared resolve_entity_roles_for_resource and returns
         the highest privilege role among matched bindings.
         """
-        from app.services.share.external_entity_resolver import (
+        from app.services.external_entity_resolver import (
             resolve_entity_roles_for_resource,
         )
 

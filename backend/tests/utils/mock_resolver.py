@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
-from app.services.share.external_entity_resolver import (
+from app.services.external_entity_resolver import (
     IExternalEntityResolver,
     _external_entity_resolvers,
     register_entity_resolver,

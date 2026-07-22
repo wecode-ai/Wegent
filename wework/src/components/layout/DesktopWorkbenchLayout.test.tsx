@@ -39,6 +39,11 @@ import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
+const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+
+vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
+  useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
+}))
 
 vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
@@ -402,7 +407,6 @@ const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
 const startDeviceTerminalSessionMock = vi.fn()
-const getDeviceVncConfigMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 
 function createDefaultImNotificationSettings() {
@@ -481,12 +485,12 @@ describe('DesktopWorkbenchLayout', () => {
         memory: [],
         disk: [],
       }),
-      getVncConfig: getDeviceVncConfigMock,
       ...overrides,
     }
   }
 
   beforeEach(() => {
+    experimentalFeatures.enabled = true
     vi.clearAllMocks()
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -921,7 +925,6 @@ describe('DesktopWorkbenchLayout', () => {
           startProjectCodeServer: startCodeServerSessionMock,
           startDeviceTerminal: startDeviceTerminalSessionMock,
           startDeviceCodeServer: vi.fn(),
-          getDeviceVncConfig: getDeviceVncConfigMock,
           createRemoteTerminalClient: createRemoteTerminalClientMock,
         },
       },
@@ -1763,6 +1766,27 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('continue-im-session-session-1')).toHaveTextContent('Alice')
   })
 
+  test('hides task fork and IM actions while experimental features are disabled', () => {
+    experimentalFeatures.enabled = false
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-1',
+          },
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+  })
+
   test('keeps continue-in-im action with workspace panel actions on web', () => {
     render(
       <DesktopWorkbenchLayout
@@ -2305,7 +2329,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.queryByTestId('chrome-tab-todo')).not.toBeInTheDocument()
     expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('Wework')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
@@ -2692,10 +2716,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-button'))
 
     expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
-    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
+    expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
-    expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
   })
 
@@ -4113,14 +4136,14 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd')
     ).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd')
-    ).toBeInTheDocument()
+      screen.queryByTestId('connection-cloud-desktop-button-24a59054-4638-4744-983d-372706c30fcd')
+    ).not.toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
     expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.queryByText('桌面')).not.toBeInTheDocument()
     expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
     expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
-    expect(screen.queryByText('桌面 VNC')).not.toBeInTheDocument()
+    expect(screen.queryByText('云桌面')).not.toBeInTheDocument()
     expect(screen.getByText('10.201.3.200')).toBeInTheDocument()
     expect(screen.queryByText('yunpeng7-executor-372706c30fcd')).not.toBeInTheDocument()
     expect(screen.queryByText('CPU')).not.toBeInTheDocument()
@@ -6094,6 +6117,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     view.rerender(renderTask(secondTask))
 
+    expect(activePane().getByTestId('environment-info-panel-container')).toHaveClass(
+      'transition-none'
+    )
     await waitFor(() =>
       expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
         'aria-expanded',

@@ -4,6 +4,7 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -275,13 +276,11 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     [terminalPinnedPaneKeys, validRuntimePaneKeySet]
   )
   const pinnedPaneKeys = runtimePaneKeys
-  const pinTerminalPane = useCallback((paneKey: string) => {
-    setTerminalPinnedPaneKeys(current =>
-      current.includes(paneKey) ? current : [...current, paneKey]
-    )
+  const pinTerminalPane = useCallback((key: string) => {
+    setTerminalPinnedPaneKeys(current => (current.includes(key) ? current : [...current, key]))
   }, [])
-  const unpinTerminalPane = useCallback((paneKey: string) => {
-    setTerminalPinnedPaneKeys(current => current.filter(key => key !== paneKey))
+  const unpinTerminalPane = useCallback((key: string) => {
+    setTerminalPinnedPaneKeys(current => current.filter(item => item !== key))
   }, [])
 
   const paneStack = (
@@ -359,6 +358,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -383,11 +383,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const { t: tChat } = useTranslation('chat')
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
-  const paneKey = getWorkbenchPaneKey(pane)
+  const paneKey = useMemo(() => getWorkbenchPaneKey(pane), [pane])
   const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const paneActive = useWorkbenchPaneActive()
+  const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
+    return () => cancelAnimationFrame(frame)
+  }, [paneActive])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -1367,7 +1372,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
   const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
-  const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
+  const canForkCurrentRuntimeTask = Boolean(
+    experimentalFeaturesEnabled && currentRuntimeTask && forkCurrentRuntimeTask
+  )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <button
       type="button"
@@ -1380,7 +1387,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <ArrowLeftRight />
     </button>
   ) : undefined
-  const canContinueInIm = Boolean(currentRuntimeTask)
+  const canContinueInIm = experimentalFeaturesEnabled && Boolean(currentRuntimeTask)
   const continueInImButton = canContinueInIm ? (
     <button
       type="button"
@@ -1403,7 +1410,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const platform = getPlatform()
   const topRightActions = isTauri ? (
-    platform === 'win' ? null : <>{panelChromeActions}</>
+    platform === 'win' ? null : (
+      <>{panelChromeActions}</>
+    )
   ) : (
     <>
       {forkTaskButton}
@@ -1515,7 +1524,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         {topRightActions}
       </div>
       {platform === 'win' && (
-        <div className="relative z-chrome w-[138px] shrink-0 self-stretch" data-tauri-drag-region={false}>
+        <div
+          className="relative z-chrome w-[138px] shrink-0 self-stretch"
+          data-tauri-drag-region={false}
+        >
           <WindowFrameControls className="h-full justify-end" />
         </div>
       )}
@@ -1593,7 +1605,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         'top-0',
-        !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        !isTauri &&
+          'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
         isTauri && platform === 'win' && 'rounded-tl-xl'
       )}
     >
@@ -1601,7 +1614,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
       ) : null}
       {paneActive && windowsTitlebarMiddleContent && platform === 'win' ? (
-        <WorkbenchWindowsTitlebarMiddlePortal>{windowsTitlebarMiddleContent}</WorkbenchWindowsTitlebarMiddlePortal>
+        <WorkbenchWindowsTitlebarMiddlePortal>
+          {windowsTitlebarMiddleContent}
+        </WorkbenchWindowsTitlebarMiddlePortal>
       ) : null}
       <WorkbenchPaneActiveOnly>
         {!isTauri && (
@@ -1909,7 +1924,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           <aside
             data-testid="environment-info-panel-container"
-            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible"
+            className={cn(
+              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              paneActive && environmentInfoTransitionEnabled
+                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                : 'transition-none'
+            )}
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (

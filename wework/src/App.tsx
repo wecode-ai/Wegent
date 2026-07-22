@@ -42,6 +42,7 @@ import {
   GO_FORWARD_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
   DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
@@ -55,6 +56,7 @@ import {
   dispatchToggleSidePanelShortcut,
   dispatchToggleModelSelectorShortcut,
   dispatchStepFontSizeShortcut,
+  dispatchResetFontSizeShortcut,
   isEditableShortcutTarget,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -68,6 +70,7 @@ import {
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -102,9 +105,16 @@ interface AppRoutesProps {
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
+  const cloudConnection = useCloudConnection()
   const { activeTab, isNativeApp } = useChromeTabs(path)
+  const resolvedActiveTab =
+    activeTab?.key === 'wegent' && cloudConnection.webUrl
+      ? { ...activeTab, url: cloudConnection.webUrl }
+      : activeTab
   const activeIframeTab =
-    !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? activeTab : null
+    !isNativeApp && resolvedActiveTab?.mode === 'iframe' && resolvedActiveTab.url
+      ? resolvedActiveTab
+      : null
   const isAuxiliaryRoute =
     Boolean(activeIframeTab) ||
     path === '/plugins/manage' ||
@@ -133,9 +143,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }
 
   useEffect(() => {
-    if (isLoading || !user || isNativeApp || !activeTab?.url) return
+    if (isLoading || !user || isNativeApp || !resolvedActiveTab?.url) return
     onWorkbenchStartupReadyChange?.(true)
-  }, [activeTab?.url, isLoading, isNativeApp, onWorkbenchStartupReadyChange, user])
+  }, [isLoading, isNativeApp, onWorkbenchStartupReadyChange, resolvedActiveTab?.url, user])
 
   if (path === '/login') {
     return <LoginPage />
@@ -275,7 +285,6 @@ function AppShell() {
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
       const terminalKey = activeBindings[OPEN_TERMINAL_COMMAND]
       const settingsKey = activeBindings[OPEN_SETTINGS_COMMAND]
       const goBackKey = activeBindings[GO_BACK_COMMAND]
@@ -285,7 +294,15 @@ function AppShell() {
       const modelSelectorKey = activeBindings[TOGGLE_MODEL_SELECTOR_COMMAND]
       const increaseFontSizeKey = activeBindings[INCREASE_FONT_SIZE_COMMAND]
       const decreaseFontSizeKey = activeBindings[DECREASE_FONT_SIZE_COMMAND]
+      const resetFontSizeKey = activeBindings[RESET_FONT_SIZE_COMMAND]
       const eventKey = keybindingFromKeyboardEvent(event)
+      const matchesFontSizeShortcut =
+        eventKey === increaseFontSizeKey ||
+        eventKey === decreaseFontSizeKey ||
+        eventKey === resetFontSizeKey
+      // The page zoom guard prevents WebView zoom before this window-level
+      // handler runs. Keep application font-size shortcuts actionable.
+      if (event.defaultPrevented && !matchesFontSizeShortcut) return
       const matchesRegisteredShortcut = [
         terminalKey,
         settingsKey,
@@ -296,6 +313,7 @@ function AppShell() {
         modelSelectorKey,
         increaseFontSizeKey,
         decreaseFontSizeKey,
+        resetFontSizeKey,
       ].some(key => key && key === eventKey)
       if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
 
@@ -339,6 +357,11 @@ function AppShell() {
         dispatchStepFontSizeShortcut(-1)
         return
       }
+      if (resetFontSizeKey && eventKey === resetFontSizeKey) {
+        event.preventDefault()
+        dispatchResetFontSizeShortcut()
+        return
+      }
       if (!terminalKey || eventKey !== terminalKey) return
       event.preventDefault()
       dispatchOpenTerminalShortcut()
@@ -369,6 +392,10 @@ function AppShell() {
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     }
   }, [isTauri])
+
+  useEffect(() => {
+    return installMacOSInputArrowKeyGuard()
+  }, [])
 
   useEffect(() => {
     if (

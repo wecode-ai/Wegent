@@ -1,0 +1,16 @@
+{
+  "PostToolUse": [
+    {
+      "matcher": "^(apply_patch|Write|Edit)$",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "./bin/log-file-change",
+          "timeout": 5,
+          "async": false,
+          "statusMessage": "Logging file changes"
+        }
+      ]
+    }
+  ]
+}

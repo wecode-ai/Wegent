@@ -4,12 +4,12 @@ import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import {
-  DEFAULT_KEYBINDINGS,
   getDefaultKeybindings,
   GO_BACK_COMMAND,
   GO_FORWARD_COMMAND,
   INCREASE_FONT_SIZE_COMMAND,
   DECREASE_FONT_SIZE_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
   KEYBINDINGS_CHANGED_EVENT,
   OPEN_SETTINGS_COMMAND,
   OPEN_TERMINAL_COMMAND,
@@ -60,6 +60,10 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
     label: 'keyboard_shortcuts_decrease_font_size',
     description: 'keyboard_shortcuts_decrease_font_size_description',
   },
+  [RESET_FONT_SIZE_COMMAND]: {
+    label: 'keyboard_shortcuts_reset_font_size',
+    description: 'keyboard_shortcuts_reset_font_size_description',
+  },
 }
 
 function commandFallback(command: string): string {
@@ -71,6 +75,7 @@ function commandFallback(command: string): string {
   if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '选择模型'
   if (command === INCREASE_FONT_SIZE_COMMAND) return '增大字号'
   if (command === DECREASE_FONT_SIZE_COMMAND) return '减小字号'
+  if (command === RESET_FONT_SIZE_COMMAND) return '重置字号'
   return command === OPEN_TERMINAL_COMMAND ? '切换底部面板' : command
 }
 
@@ -83,6 +88,7 @@ function commandDescriptionFallback(command: string): string {
   if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '打开或关闭当前输入区的模型选择器'
   if (command === INCREASE_FONT_SIZE_COMMAND) return '同时增大 UI 和代码字号'
   if (command === DECREASE_FONT_SIZE_COMMAND) return '同时减小 UI 和代码字号'
+  if (command === RESET_FONT_SIZE_COMMAND) return '将 UI 和代码字号恢复为默认值'
   return command === OPEN_TERMINAL_COMMAND ? '显示或隐藏底部面板' : ''
 }
 
@@ -168,7 +174,7 @@ export function KeyboardShortcutsSettingsPage() {
         setSavingCommand(null)
       }
     },
-    [overrides, t]
+    [defaultBindings, overrides, t]
   )
 
   useEffect(() => {
