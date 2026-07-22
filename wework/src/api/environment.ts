@@ -297,7 +297,9 @@ async function runGitCommand(
   const response = await api.executeCommand(deviceId, request)
 
   if (!response.success) {
-    throw new Error(response.error || response.stderr || `${commandKey} failed`)
+    throw new Error(
+      [response.error, response.stderr].filter(Boolean).join('\n') || `${commandKey} failed`
+    )
   }
 
   return outputAsString(response.stdout).trim()
@@ -455,12 +457,16 @@ async function loadProjectEnvironmentUncached(
     return {
       ...environmentWorkspaceInfo,
       ...diff,
+      isGitRepository: true,
       branchName,
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
     }
   } catch (error) {
     if (isNotGitRepositoryError(error)) {
-      return environmentWorkspaceInfo
+      return {
+        ...environmentWorkspaceInfo,
+        isGitRepository: false,
+      }
     }
 
     return {

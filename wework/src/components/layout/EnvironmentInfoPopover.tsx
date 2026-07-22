@@ -109,9 +109,12 @@ export function EnvironmentInfoPopover({
           t('workbench.current_device', '当前设备'),
       })
     : info.error
-  const hasGitInfo = Boolean(info.branchName?.trim())
-  const canShowBranchSelector = Boolean(onListBranches && onCheckoutBranch)
-  const hasDiffStats = Boolean(info.additions || info.deletions)
+  const gitRepositoryAvailable = info.isGitRepository !== false
+  const hasGitInfo = gitRepositoryAvailable && Boolean(info.branchName?.trim())
+  const canShowBranchSelector = Boolean(
+    gitRepositoryAvailable && onListBranches && onCheckoutBranch
+  )
+  const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
   function handleCreatePullRequest() {

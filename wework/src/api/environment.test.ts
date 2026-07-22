@@ -22,6 +22,41 @@ describe('parseGitShortStat', () => {
     })
   })
 
+  test('detects a non-git workspace from stderr when a generic error is present', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      error: 'Command failed',
+      stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 4,
+        name: 'plain-cloud-workspace',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'cloud',
+            deviceId: 'device-456',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/plain-cloud-workspace',
+          },
+        },
+      }
+    )
+
+    expect(info).toMatchObject({
+      isGitRepository: false,
+      deviceId: 'device-456',
+      workspacePath: '/workspace/plain-cloud-workspace',
+    })
+    expect(info.error).toBeUndefined()
+  })
+
   test('defaults missing additions and deletions to zero', () => {
     expect(parseGitShortStat('')).toEqual({ additions: '+0', deletions: '-0' })
   })
@@ -202,6 +237,7 @@ describe('loadProjectEnvironment', () => {
       executionTarget: 'cloud',
       deviceId: 'device-123',
       workspacePath: '/workspace/Wegent',
+      isGitRepository: true,
       branchName: 'human/narwhal-20260528-073440',
       additions: '+8',
       deletions: '-3',
@@ -371,6 +407,7 @@ describe('loadProjectEnvironment', () => {
       additions: '+0',
       deletions: '-0',
       executionTarget: 'local',
+      isGitRepository: false,
       deviceId: 'device-123',
       workspacePath: '/workspace/plain-workspace',
     })
