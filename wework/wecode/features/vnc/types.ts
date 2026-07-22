@@ -11,5 +11,5 @@ export interface OpenCloudDesktopOptions {
   connection: CloudDesktopConnection
   deviceId: string
   isCurrent: () => boolean
-  target?: CloudDesktopOpenTarget
+  target: CloudDesktopOpenTarget
 }

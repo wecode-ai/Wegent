@@ -98,6 +98,7 @@ describe('WorkspaceDesktopAction', () => {
       connection: expect.objectContaining({ serviceKey: 'connected:1', token: 'cloud-token' }),
       deviceId: 'device-1',
       isCurrent: expect.any(Function),
+      target: 'embedded',
     })
   })
 

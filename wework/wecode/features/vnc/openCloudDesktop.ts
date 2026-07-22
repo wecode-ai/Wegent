@@ -8,7 +8,7 @@ export async function openCloudDesktop({
   connection,
   deviceId,
   isCurrent,
-  target = 'embedded',
+  target,
 }: OpenCloudDesktopOptions): Promise<boolean> {
   if (!connection.socketBaseUrl || !connection.token) {
     throw new Error('Cloud connection is required')

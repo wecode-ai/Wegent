@@ -13,7 +13,7 @@ interface UseCloudDesktopLaunchOptions {
   onBusyChange?: (busy: boolean) => void
   onErrorChange?: (message: string | null) => void
   onOpened: () => void
-  target?: CloudDesktopOpenTarget
+  target: CloudDesktopOpenTarget
 }
 
 interface UseCloudDesktopLaunchResult {
@@ -150,7 +150,7 @@ export function useCloudDesktopLaunch({
           connection: cloudConnection,
           deviceId,
           isCurrent: isCurrentRequest,
-          ...(target ? { target } : {}),
+          target,
         })
         if (opened && isCurrentRequest() && options?.notifyOpened !== false) onOpened()
       } catch (exception) {

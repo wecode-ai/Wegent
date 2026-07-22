@@ -14,6 +14,7 @@ export function WorkspaceDesktopAction({
   const launch = useCloudDesktopLaunch({
     ...props,
     failureMessage: t('open_project_desktop_failed', '启动失败'),
+    target: 'embedded',
   })
 
   useEffect(() => {
