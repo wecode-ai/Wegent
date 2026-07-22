@@ -26,6 +26,7 @@ import {
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import {
@@ -136,7 +137,7 @@ export function EnvironmentInfoPopover({
       return
     }
 
-    await navigator.clipboard?.writeText(info.workspacePath)
+    await copyTextToClipboard(info.workspacePath)
     setWorkspacePathCopied(true)
     window.setTimeout(() => setWorkspacePathCopied(false), 1200)
   }
@@ -282,31 +283,33 @@ export function EnvironmentInfoPopover({
             </h2>
 
             <div className="space-y-3">
-              <section data-testid="environment-device-section" className="space-y-0.5">
+              <section
+                data-testid="environment-device-section"
+                className="flex h-9 w-full items-center gap-2 text-sm text-text-primary"
+              >
                 <div
                   data-testid="environment-execution-target-row"
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary"
+                  title={`${executionTargetLabel} · ${executionLabel}`}
+                  className="flex min-w-0 shrink-0 items-center gap-1.5"
                 >
-                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                    <MapPin className="h-[18px] w-[18px]" />
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
+                    <MapPin className="h-4 w-4" />
                   </span>
-                  <span className="shrink-0">{executionTargetLabel}</span>
-                  <span className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right text-text-secondary">
-                    {executionLabel}
-                  </span>
+                  <span className="sr-only">{executionTargetLabel}</span>
+                  <span className="whitespace-nowrap text-text-secondary">{executionLabel}</span>
                 </div>
                 <div
                   data-testid="environment-device-button"
                   title={deviceTitle}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary"
+                  className="flex min-w-0 items-center gap-1.5 border-l border-border pl-2"
                 >
-                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                    <Laptop className="h-[18px] w-[18px]" />
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
+                    <Laptop className="h-4 w-4" />
                   </span>
-                  <span className="shrink-0">{deviceLabel}</span>
+                  <span className="sr-only">{deviceLabel}</span>
                   <span
                     data-testid="environment-device-name"
-                    className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right text-text-secondary"
+                    className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary"
                   >
                     {deviceDisplayName}
                   </span>
@@ -317,24 +320,25 @@ export function EnvironmentInfoPopover({
                     data-testid="environment-workspace-path-button"
                     onClick={handleCopyWorkspacePath}
                     title={info.workspacePath}
-                    className="flex h-9 w-full items-center gap-3 rounded-md text-left text-sm text-text-primary hover:bg-hover"
+                    aria-label={`${t('workbench.environment_workspace_path')} · ${info.workspacePath}`}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 border-l border-border pl-2 text-left hover:text-text-primary"
                   >
-                    <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                      <FolderOpen className="h-[18px] w-[18px]" />
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
+                      <FolderOpen className="h-4 w-4" />
                     </span>
-                    <span className="shrink-0">{t('workbench.environment_workspace_path')}</span>
+                    <span className="sr-only">{t('workbench.environment_workspace_path')}</span>
                     <span
                       data-testid="environment-workspace-path"
-                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
+                      className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-text-secondary"
                     >
                       {info.workspacePath}
                     </span>
                     <span
                       data-testid="environment-workspace-path-copy-icon"
-                      className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary"
+                      className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary"
                       aria-hidden="true"
                     >
-                      <Copy className="h-[16px] w-[16px]" />
+                      <Copy className="h-3.5 w-3.5" />
                     </span>
                     {workspacePathCopied && (
                       <span className="shrink-0 text-xs text-green-500">

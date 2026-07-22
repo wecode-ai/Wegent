@@ -552,6 +552,12 @@ Menu items use `14px` text, an `8px` radius, `8px–10px` horizontal padding,
 Icons default to `16px` at `75%` opacity and become fully visible on hover or
 focus. Disabled items use `50%` opacity and do not activate.
 
+In the narrow environment popover, execution location, device, and workspace
+path form one compact metadata row. Keep their localized labels available to
+assistive technology and tooltips instead of repeating them visually. The path
+uses the remaining width, truncates without displacing the device name, and
+retains access to its complete value through the copy action.
+
 Use a menu for commands, a popover for a compact interactive surface, and a
 dialog when a decision blocks continuation. Do not substitute one merely to get
 a preferred shape.
