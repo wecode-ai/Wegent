@@ -8,8 +8,12 @@ import type {
 } from '@/types/api'
 import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import type { DragEventHandler } from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { isCloudDevice } from '@/lib/device-selection'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
+import { findProjectDeviceWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -109,12 +113,45 @@ export function ProjectChatComposer({
   isStreaming = false,
   onPause,
 }: ProjectChatComposerProps) {
+  const { t } = useTranslation('common')
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
+  const [deviceMenuOpenSignal, setDeviceMenuOpenSignal] = useState(0)
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) &&
     !disabled &&
     !submitDisabled
+  const executionDevice = useMemo(() => {
+    const selectedProjectWorkspace = findProjectDeviceWorkspace(
+      projectWork.runtimeWork,
+      projectWork.currentProject?.id,
+      projectWork.selectedDeviceWorkspaceId
+    )
+    const deviceId =
+      projectWork.currentRuntimeDeviceId ??
+      selectedProjectWorkspace?.deviceId ??
+      getProjectDeviceId(projectWork.currentProject) ??
+      projectWork.currentStandaloneDeviceId
+    const device = findWorkbenchDevice(projectWork.devices, deviceId)
+    if (!deviceId || !device) return undefined
+    const cloud = isCloudDevice(device)
+    const location = cloud
+      ? t('workbench.environment_cloud_device', '云设备')
+      : t('workbench.environment_local', '本机')
+    const deviceName = device.name?.trim() || device.device_id
+    return {
+      kind: cloud ? ('cloud' as const) : ('local' as const),
+      label: t('workbench.composer_execution_device_label', {
+        location,
+        device: deviceName,
+      }),
+      selectable: showProjectWorkBar && !projectWork.currentRuntimeDeviceId,
+      onSelect:
+        showProjectWorkBar && !projectWork.currentRuntimeDeviceId
+          ? () => setDeviceMenuOpenSignal(signal => signal + 1)
+          : undefined,
+    }
+  }, [projectWork, showProjectWorkBar, t])
   const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
     if (!hasDraggedFiles(event.dataTransfer)) return
 
@@ -185,6 +222,7 @@ export function ProjectChatComposer({
           worktreeBranch={projectWork.worktreeBranch}
           onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
           projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
+          externalMenuOpenSignal={deviceMenuOpenSignal}
           projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
           className="min-h-10 rounded-t-[26px] bg-surface px-4"
           buttonClassName="text-sm leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
@@ -287,6 +325,7 @@ export function ProjectChatComposer({
           onPause={onPause}
           onQuickPhraseSelect={handleQuickPhraseSelect}
           onSubmit={options => onSubmit(value, options)}
+          executionDevice={executionDevice}
         />
       </form>
     </div>

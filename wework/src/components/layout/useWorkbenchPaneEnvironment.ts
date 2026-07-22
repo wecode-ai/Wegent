@@ -6,6 +6,8 @@ import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
+import { isCloudDevice } from '@/lib/device-selection'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import {
   resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
@@ -245,7 +247,19 @@ export function useWorkbenchPaneEnvironment({
             })
           : await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget)
         if (environmentInfoRequestSequence.current === requestId) {
-          setEnvironmentInfo({ ...info, loading: false })
+          const actualDevice = findWorkbenchDevice(
+            state.devices,
+            latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
+          )
+          setEnvironmentInfo({
+            ...info,
+            executionTarget: actualDevice
+              ? isCloudDevice(actualDevice)
+                ? 'cloud'
+                : 'local'
+              : info.executionTarget,
+            loading: false,
+          })
         }
       } catch (error) {
         if (environmentInfoRequestSequence.current === requestId) {
@@ -257,7 +271,13 @@ export function useWorkbenchPaneEnvironment({
         }
       }
     },
-    [environmentWorkspaceReady, loadEnvironmentInfo, workspaceTargetError, workspaceTargetResolving]
+    [
+      environmentWorkspaceReady,
+      loadEnvironmentInfo,
+      state.devices,
+      workspaceTargetError,
+      workspaceTargetResolving,
+    ]
   )
 
   const refreshEnvironmentInfo = useCallback(
