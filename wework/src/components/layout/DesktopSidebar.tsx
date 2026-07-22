@@ -41,6 +41,7 @@ import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnecti
 import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneBlankProjectDialog,
   StandaloneFolderProjectDialog,
@@ -2559,6 +2560,7 @@ export function DesktopSidebar({
   const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const usesOverlayTitlebar = isTauriRuntime()
   const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
+  const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const sidebarAccount = requiresCloudLogin
     ? {
         label: t('workbench.account_cloud_title', 'Wegent 账户'),
@@ -3118,13 +3120,15 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
-              <SidebarButton
-                icon={Grid3X3}
-                label={t('workbench.sites', '站点')}
-                testId="sites-button"
-                selected={activeItem === 'sites'}
-                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
-              />
+              {experimentalFeaturesEnabled && (
+                <SidebarButton
+                  icon={Grid3X3}
+                  label={t('workbench.sites', '站点')}
+                  testId="sites-button"
+                  selected={activeItem === 'sites'}
+                  onClick={onOpenSites ?? (() => navigateTo('/sites'))}
+                />
+              )}
               {showCloudConnectionEntry && (
                 <CloudConnectionSidebarButton
                   devices={devices}
