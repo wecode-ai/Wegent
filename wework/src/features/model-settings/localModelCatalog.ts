@@ -41,6 +41,7 @@ export function createDefaultLocalModelCatalogEntry(input: {
     base_instructions: DEFAULT_CUSTOM_MODEL_BASE_INSTRUCTIONS,
     model_messages: null,
     include_skills_usage_instructions: false,
+    supports_reasoning_summaries: true,
     supports_reasoning_summary_parameter: true,
     default_reasoning_summary: 'auto',
     support_verbosity: false,
@@ -79,10 +80,18 @@ export function normalizeLocalModelCatalogEntry(
   }
   const entry = value as LocalModelCatalogEntry
   const defaults = createDefaultLocalModelCatalogEntry(input)
+  const supportsReasoningSummaries =
+    typeof entry.supports_reasoning_summary_parameter === 'boolean'
+      ? entry.supports_reasoning_summary_parameter
+      : typeof entry.supports_reasoning_summaries === 'boolean'
+        ? entry.supports_reasoning_summaries
+        : true
   return {
     ...defaults,
     ...entry,
     slug: defaults.slug,
     display_name: input.displayName || defaults.display_name,
+    supports_reasoning_summaries: supportsReasoningSummaries,
+    supports_reasoning_summary_parameter: supportsReasoningSummaries,
   }
 }

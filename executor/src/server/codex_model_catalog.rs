@@ -96,10 +96,15 @@ pub(crate) fn models() -> Vec<Value> {
 }
 
 pub(crate) fn write_custom_models(entries: &[Value]) -> Result<usize, String> {
-    for entry in entries {
+    let entries = entries
+        .iter()
+        .cloned()
+        .map(normalize_compatibility_fields)
+        .collect::<Vec<_>>();
+    for entry in &entries {
         validate_custom_model(entry)?;
     }
-    write_custom_models_to(&custom_models_path(), entries)?;
+    write_custom_models_to(&custom_models_path(), &entries)?;
     Ok(entries.len())
 }
 
@@ -178,8 +183,24 @@ fn read_custom_models() -> Vec<Value> {
     };
     entries
         .into_iter()
+        .map(normalize_compatibility_fields)
         .filter(|entry| validate_custom_model(entry).is_ok())
         .collect()
+}
+
+fn normalize_compatibility_fields(mut entry: Value) -> Value {
+    let supports_reasoning_summaries = entry
+        .get("supports_reasoning_summary_parameter")
+        .and_then(Value::as_bool)
+        .or_else(|| {
+            entry
+                .get("supports_reasoning_summaries")
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(true);
+    entry["supports_reasoning_summaries"] = Value::Bool(supports_reasoning_summaries);
+    entry["supports_reasoning_summary_parameter"] = Value::Bool(supports_reasoning_summaries);
+    entry
 }
 
 fn write_custom_models_to(path: &Path, entries: &[Value]) -> Result<(), String> {
@@ -208,6 +229,7 @@ struct CodexCatalogModel {
     supported_in_api: bool,
     priority: i64,
     base_instructions: String,
+    supports_reasoning_summaries: bool,
     support_verbosity: bool,
     truncation_policy: Value,
     supports_parallel_tool_calls: bool,
@@ -411,6 +433,7 @@ fn model_entry(slug: &str, display_name: &str, apply_patch_tool_type: Option<&st
         "base_instructions": default_base_instructions(),
         "model_messages": null,
         "include_skills_usage_instructions": false,
+        "supports_reasoning_summaries": true,
         "supports_reasoning_summary_parameter": true,
         "default_reasoning_summary": "auto",
         "support_verbosity": false,
@@ -472,6 +495,26 @@ mod tests {
 
         entry["slug"] = Value::String("gpt-5.6-sol".to_owned());
         assert!(validate_custom_model(&entry).is_err());
+    }
+
+    #[test]
+    fn normalizes_reasoning_summary_fields_for_codex_versions() {
+        let mut entry = model_entry(
+            "wework-custom-compatibility-test",
+            "Compatibility test",
+            Some("freeform"),
+        );
+        entry
+            .as_object_mut()
+            .expect("catalog entry")
+            .remove("supports_reasoning_summaries");
+        entry["supports_reasoning_summary_parameter"] = Value::Bool(false);
+
+        let normalized = normalize_compatibility_fields(entry);
+
+        assert_eq!(normalized["supports_reasoning_summaries"], false);
+        assert_eq!(normalized["supports_reasoning_summary_parameter"], false);
+        assert!(validate_custom_model(&normalized).is_ok());
     }
 
     #[test]
