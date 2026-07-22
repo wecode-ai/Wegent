@@ -288,6 +288,7 @@ describe('ModelCascadeContent', () => {
     render(
       <ModelCascadeContent
         models={[capableModel]}
+        selectedModel={capableModel}
         labels={labels}
         searchValue=""
         onSearchValueChange={jest.fn()}
@@ -301,5 +302,8 @@ describe('ModelCascadeContent', () => {
 
     expect(screen.getByTitle('图片理解')).toBeInTheDocument()
     expect(screen.getByTitle('视频理解')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('model-mobile-option-model-a').querySelector('.lucide-check')
+    ).toBeInTheDocument()
   })
 })

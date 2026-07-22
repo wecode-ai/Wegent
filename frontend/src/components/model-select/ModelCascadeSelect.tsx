@@ -311,26 +311,27 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
           onClick={() => onSelectModel(model)}
           className={cn(
-            'flex min-h-[44px] min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 pr-0 text-left',
+            'flex min-h-[44px] min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 text-left',
             'active:bg-hover focus:bg-hover focus:outline-none'
           )}
         >
           <span className="min-w-0 flex-1">
-            <span
-              className="block truncate text-sm font-medium text-text-primary"
-              title={getModelDisplayName(model)}
-            >
-              {getModelDisplayName(model)}
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="min-w-0 truncate text-sm font-medium text-text-primary"
+                title={getModelDisplayName(model)}
+              >
+                {getModelDisplayName(model)}
+              </span>
+              <ModelCapabilityIcons model={model} />
+              {renderModelBadges?.(model)}
             </span>
             {showPath && (
               <span className="block truncate text-xs text-text-muted">{groupPath}</span>
             )}
             {renderModelMeta?.(model)}
           </span>
-          <span className="flex shrink-0 items-center gap-1.5">
-            <ModelCapabilityIcons model={model} />
-            {renderModelBadges?.(model)}
-          </span>
+          {isSelected && <Check className="h-4 w-4 shrink-0 text-primary" />}
         </button>
         {modelActions}
       </div>
