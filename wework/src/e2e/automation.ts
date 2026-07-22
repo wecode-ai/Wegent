@@ -192,32 +192,36 @@ function seedDesktopE2ECloudConnection() {
     },
     connectedAt: new Date().toISOString(),
   })
-  for (const model of [
-    {
-      id: 'desktop-e2e-responses',
-      displayName: 'Desktop E2E Responses',
-      modelId: 'desktop-e2e-responses-model',
-      apiFormat: 'openai-responses' as const,
-      toolProfile: 'custom' as const,
-      requestPath: '/v1/responses',
-    },
-    {
-      id: 'desktop-e2e-chat',
-      displayName: 'Desktop E2E Chat',
-      modelId: 'desktop-e2e-chat-model',
-      apiFormat: 'openai-chat-completions' as const,
-      toolProfile: 'function' as const,
-      requestPath: '/v1/chat/completions',
-    },
-    {
-      id: 'desktop-e2e-anthropic',
-      displayName: 'Desktop E2E Anthropic',
-      modelId: 'desktop-e2e-anthropic-model',
-      apiFormat: 'anthropic-messages' as const,
-      toolProfile: 'function' as const,
-      requestPath: '/v1/messages',
-    },
-  ]) {
+  const localModels =
+    import.meta.env.VITE_WEWORK_E2E_PLUGINS_ONLY === 'true'
+      ? []
+      : [
+          {
+            id: 'desktop-e2e-responses',
+            displayName: 'Desktop E2E Responses',
+            modelId: 'desktop-e2e-responses-model',
+            apiFormat: 'openai-responses' as const,
+            toolProfile: 'custom' as const,
+            requestPath: '/v1/responses',
+          },
+          {
+            id: 'desktop-e2e-chat',
+            displayName: 'Desktop E2E Chat',
+            modelId: 'desktop-e2e-chat-model',
+            apiFormat: 'openai-chat-completions' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/chat/completions',
+          },
+          {
+            id: 'desktop-e2e-anthropic',
+            displayName: 'Desktop E2E Anthropic',
+            modelId: 'desktop-e2e-anthropic-model',
+            apiFormat: 'anthropic-messages' as const,
+            toolProfile: 'function' as const,
+            requestPath: '/v1/messages',
+          },
+        ]
+  for (const model of localModels) {
     saveLocalModelConfig({
       ...model,
       baseUrl: backendUrl,
