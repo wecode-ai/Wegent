@@ -42,7 +42,7 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import { DesktopWindowControls } from './DesktopWindowControls'
-import { DesktopAppBrandSwitcher } from './DesktopAppBrandSwitcher'
+import { DesktopAppSwitcher, type DesktopAppKey } from './DesktopAppSwitcher'
 import { WindowFrameControls } from './WindowFrameControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
@@ -193,6 +193,14 @@ export function DesktopWorkbenchLayout() {
   const platform = getPlatform()
   const isTauri = isTauriRuntime()
   const showWindowsTopBar = isTauri && platform === 'win' && !settingsOpen && !todoOpen
+  const activeApp: DesktopAppKey =
+    currentPath === '/todo'
+      ? 'todo'
+      : currentPath === '/app/wegent'
+        ? 'wegent'
+        : currentPath === '/apps'
+          ? 'apps'
+          : 'wework'
 
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
@@ -652,8 +660,19 @@ export function DesktopWorkbenchLayout() {
           onToggleSidebar={() => updateSidebarCollapsed(!effectiveSidebarCollapsed)}
           className="gap-1"
         />
-        <DesktopAppBrandSwitcher
-          onNavigate={app => navigateTo(app === 'wework' ? '/' : '/app/wegent')}
+        <DesktopAppSwitcher
+          activeApp={activeApp}
+          onNavigate={app =>
+            navigateTo(
+              app === 'wework'
+                ? '/'
+                : app === 'todo'
+                  ? '/todo'
+                  : app === 'wegent'
+                    ? '/app/wegent'
+                    : '/apps'
+            )
+          }
         />
       </div>
       <div
@@ -692,90 +711,92 @@ export function DesktopWorkbenchLayout() {
       {windowsTopBar}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {!todoOpen && <WorkbenchBackground />}
-        {!settingsOpen && !todoOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-      {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
-        <>
-          <div
-            data-testid="desktop-sidebar-hover-edge"
-            aria-hidden="true"
-            onPointerEnter={openSidebarPreview}
-            className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
-          />
-          <div
-            data-testid="desktop-sidebar-preview"
-            aria-hidden={!sidebarPreviewOpen}
-            onPointerEnter={openSidebarPreview}
-            onPointerLeave={closeSidebarPreview}
-            className={cn(
-              'absolute left-0 top-0 z-popover h-full overflow-hidden rounded-tl-xl transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
-              sidebarPreviewOpen
-                ? 'pointer-events-auto translate-x-0 opacity-100'
-                : 'pointer-events-none -translate-x-full opacity-100'
-            )}
-          >
-            {renderDesktopSidebar({
-              collapsed: false,
-              containerTestId: 'desktop-sidebar-preview-panel',
-              hideResizeHandle: true,
-              onPointerEnter: openSidebarPreview,
-              onPointerLeave: closeSidebarPreview,
-            })}
-          </div>
-        </>
-      )}
-      {settingsOpen && (
-        <ConnectionsSettingsPage
-          autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
-          services={services}
-          devices={state.devices}
-          onOpenRuntimeTask={onOpenRuntimeTask}
-          onRefreshWorkLists={refreshWorkLists}
-          onBack={() => {
-            setSettingsOpen(false)
-            setAutoOpenAddCloudDeviceDialog(false)
-            navigateTo('/')
-          }}
-        />
-      )}
-      <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-        {todoOpen && (
-          <TodoWorkspace
-            user={state.user}
-            projects={state.projects}
-            runtimeWork={state.runtimeWork}
-            currentProjectId={state.currentProject?.id}
+        {!settingsOpen &&
+          !todoOpen &&
+          renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+        {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
+          <>
+            <div
+              data-testid="desktop-sidebar-hover-edge"
+              aria-hidden="true"
+              onPointerEnter={openSidebarPreview}
+              className="absolute left-0 top-0 z-popover h-full w-4 after:absolute after:left-0 after:top-0 after:h-full after:w-px after:bg-border/70 after:transition-colors after:duration-150 hover:after:bg-primary/50"
+            />
+            <div
+              data-testid="desktop-sidebar-preview"
+              aria-hidden={!sidebarPreviewOpen}
+              onPointerEnter={openSidebarPreview}
+              onPointerLeave={closeSidebarPreview}
+              className={cn(
+                'absolute left-0 top-0 z-popover h-full overflow-hidden rounded-tl-xl transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
+                sidebarPreviewOpen
+                  ? 'pointer-events-auto translate-x-0 opacity-100'
+                  : 'pointer-events-none -translate-x-full opacity-100'
+              )}
+            >
+              {renderDesktopSidebar({
+                collapsed: false,
+                containerTestId: 'desktop-sidebar-preview-panel',
+                hideResizeHandle: true,
+                onPointerEnter: openSidebarPreview,
+                onPointerLeave: closeSidebarPreview,
+              })}
+            </div>
+          </>
+        )}
+        {settingsOpen && (
+          <ConnectionsSettingsPage
+            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
             services={services}
-            modelName={projectChat.selectedModel?.displayName ?? projectChat.selectedModel?.name}
-            onRunTodo={({ project, message, goal, attachments }) =>
-              onCreateProjectRuntimeTask(message, {
-                project,
-                attachments,
-                initialGoal: goal ? { objective: goal } : null,
-              })
-            }
-            onOpenRuntimeTask={async address => {
+            devices={state.devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={refreshWorkLists}
+            onBack={() => {
+              setSettingsOpen(false)
+              setAutoOpenAddCloudDeviceDialog(false)
               navigateTo('/')
-              await onOpenRuntimeTask?.(address)
             }}
           />
         )}
-        <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
-          <DesktopWorkbenchMain
-            visible={!settingsOpen && !todoOpen}
-            sidebarCollapsed={effectiveSidebarCollapsed}
-            sidebarResizing={sidebarResizing}
-            onSidebarCollapsedChange={updateSidebarCollapsed}
-            activePane={{
-              currentRuntimeTask: state.currentRuntimeTask,
-              currentProject: state.currentProject,
-              standaloneChatKey: state.standaloneChatKey,
-            }}
-          />
+        <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
+          {todoOpen && (
+            <TodoWorkspace
+              user={state.user}
+              projects={state.projects}
+              runtimeWork={state.runtimeWork}
+              currentProjectId={state.currentProject?.id}
+              services={services}
+              modelName={projectChat.selectedModel?.displayName ?? projectChat.selectedModel?.name}
+              onRunTodo={({ project, message, goal, attachments }) =>
+                onCreateProjectRuntimeTask(message, {
+                  project,
+                  attachments,
+                  initialGoal: goal ? { objective: goal } : null,
+                })
+              }
+              onOpenRuntimeTask={async address => {
+                navigateTo('/')
+                await onOpenRuntimeTask?.(address)
+              }}
+            />
+          )}
+          <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
+            <DesktopWorkbenchMain
+              visible={!settingsOpen && !todoOpen}
+              sidebarCollapsed={effectiveSidebarCollapsed}
+              sidebarResizing={sidebarResizing}
+              onSidebarCollapsedChange={updateSidebarCollapsed}
+              activePane={{
+                currentRuntimeTask: state.currentRuntimeTask,
+                currentProject: state.currentProject,
+                standaloneChatKey: state.standaloneChatKey,
+              }}
+            />
+          </div>
         </div>
       </div>
-    </div>
-    <StandaloneBlankProjectDialog
-      open={blankProjectDialogOpen}
+      <StandaloneBlankProjectDialog
+        open={blankProjectDialogOpen}
         devices={state.devices}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target

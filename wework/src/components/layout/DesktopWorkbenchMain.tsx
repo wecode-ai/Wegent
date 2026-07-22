@@ -58,7 +58,6 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { DesktopAppSwitcher } from './DesktopAppSwitcher'
-import { DesktopAppBrandSwitcher } from './DesktopAppBrandSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { WindowFrameControls } from './WindowFrameControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -1436,26 +1435,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             onToggleSidebar={() => onSidebarCollapsedChange(!sidebarCollapsed)}
             className="gap-1"
           />
-          {platform === 'win' ? (
-            <DesktopAppBrandSwitcher
-              onNavigate={app => navigateTo(app === 'wework' ? '/' : '/app/wegent')}
-            />
-          ) : (
-            <DesktopAppSwitcher
-              activeApp="wework"
-              onNavigate={app =>
-                navigateTo(
-                  app === 'wework'
-                    ? '/'
-                    : app === 'todo'
-                      ? '/todo'
-                      : app === 'wegent'
-                        ? '/app/wegent'
-                        : '/apps'
-                )
-              }
-            />
-          )}
+          <DesktopAppSwitcher
+            activeApp="wework"
+            onNavigate={app =>
+              navigateTo(
+                app === 'wework'
+                  ? '/'
+                  : app === 'todo'
+                    ? '/todo'
+                    : app === 'wegent'
+                      ? '/app/wegent'
+                      : '/apps'
+              )
+            }
+          />
         </div>
       )}
       {runtimeTaskTitle ? (

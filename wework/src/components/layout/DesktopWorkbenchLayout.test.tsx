@@ -2259,10 +2259,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(getDesktopWorkbenchMainElement()).toHaveClass(
-      'transition-[margin]',
-      'duration-[300ms]'
-    )
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('will-change-[margin]')
     expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
       'w-[min(46rem,calc(100%_-_2rem))]'
@@ -2468,7 +2465,7 @@ describe('DesktopWorkbenchLayout', () => {
       right: '138px',
     })
     expect(screen.getByTestId('desktop-window-controls')).toBeInTheDocument()
-    expect(screen.getByTestId('desktop-app-brand-switcher')).toHaveTextContent('wework')
+    expect(screen.getByTestId('desktop-app-switcher')).toHaveTextContent('任务')
     expect(screen.getByTestId('window-frame-controls')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-main-header')).not.toBeInTheDocument()
     expect(getDesktopWorkbenchMainElement()).toHaveClass('rounded-tl-xl')
