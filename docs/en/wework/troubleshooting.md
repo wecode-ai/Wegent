@@ -38,4 +38,15 @@ For browser failures, include `http://` or `https://`, confirm that local server
 
 Select the cloud status in the sidebar to authorize again. Verify the Backend address with your administrator and confirm that its sign-in page is reachable.
 
-When reporting a problem, include the Wework version, operating system, reproduction steps, visible error, and relevant logs. Remove tokens, API keys, device commands, and authentication-file contents.
+## Getting help
+
+Select **Report a problem** in the upper-right corner of the affected task, choose the information to include, and select **Export diagnostics**. Wework saves the bundle in the system Downloads directory. Additional information is optional.
+
+The bundle includes the following items by default:
+
+- Complete Wework and local runtime logs.
+- Current task, device, and runtime state.
+- A screenshot of the current task.
+- Wework version, operating system, and processor architecture.
+
+You can deselect any item before exporting. The bundle is generated only on the local computer and is never uploaded automatically. Wework redacts common credentials and the user home path, but you should still review the bundle before sharing business-sensitive information.

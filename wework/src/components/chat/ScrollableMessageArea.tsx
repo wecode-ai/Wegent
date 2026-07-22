@@ -286,6 +286,14 @@ function ScrollableMessagePaneContent({
     }
   }, [])
 
+  const scheduleScrollTimer = useCallback((callback: () => void, delay: number) => {
+    const timer = setTimeout(() => {
+      scrollTimersRef.current = scrollTimersRef.current.filter(current => current !== timer)
+      callback()
+    }, delay)
+    scrollTimersRef.current.push(timer)
+  }, [])
+
   const isTurnNavigationAutoScrollSuspended = useCallback(
     () => turnNavigationLoadingRef.current,
     []
@@ -452,12 +460,11 @@ function ScrollableMessagePaneContent({
       setShowScrollButton(overflow && !isAtBottom)
       setConversationScrollSnapshot(key, savedSnapshot)
 
-      const applyingTimer = setTimeout(() => {
+      scheduleScrollTimer(() => {
         applyingSavedScrollRef.current = false
       }, 0)
-      scrollTimersRef.current.push(applyingTimer)
     },
-    [clearScheduledScrolls]
+    [clearScheduledScrolls, scheduleScrollTimer]
   )
 
   const scheduleStableRestoreSavedScrollPosition = useCallback(
@@ -466,13 +473,12 @@ function ScrollableMessagePaneContent({
       restoringScrollKeyRef.current = key
 
       STABLE_SCROLL_DELAYS.forEach(delay => {
-        const timer = setTimeout(() => {
+        scheduleScrollTimer(() => {
           restoreSavedScrollPosition(key, { clearScheduled: false })
         }, delay)
-        scrollTimersRef.current.push(timer)
       })
 
-      const clearRestoreTimer = setTimeout(
+      scheduleScrollTimer(
         () => {
           if (restoringScrollKeyRef.current === key) {
             restoringScrollKeyRef.current = null
@@ -480,9 +486,8 @@ function ScrollableMessagePaneContent({
         },
         Math.max(...STABLE_SCROLL_DELAYS) + 50
       )
-      scrollTimersRef.current.push(clearRestoreTimer)
     },
-    [clearScheduledScrolls, restoreSavedScrollPosition]
+    [clearScheduledScrolls, restoreSavedScrollPosition, scheduleScrollTimer]
   )
 
   const scrollToBottom = useCallback(
@@ -507,13 +512,12 @@ function ScrollableMessagePaneContent({
       clearScheduledScrolls()
 
       STABLE_SCROLL_DELAYS.forEach(delay => {
-        const timer = setTimeout(() => {
+        scheduleScrollTimer(() => {
           scrollToBottom(behavior, options)
         }, delay)
-        scrollTimersRef.current.push(timer)
       })
     },
-    [clearScheduledScrolls, scrollToBottom]
+    [clearScheduledScrolls, scheduleScrollTimer, scrollToBottom]
   )
 
   useLayoutEffect(() => {
