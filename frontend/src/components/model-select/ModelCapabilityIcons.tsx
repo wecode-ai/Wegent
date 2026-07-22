@@ -8,6 +8,7 @@ import { ImageIcon, Video } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { GroupableModel } from './model-grouping'
 
 interface ModelCapabilityIconsProps {
@@ -16,11 +17,11 @@ interface ModelCapabilityIconsProps {
 }
 
 export function supportsImageUnderstanding(model: GroupableModel): boolean {
-  return model.modelCapabilities?.supportsImage === true
+  return getModelCapabilities(model).supportsImage === true
 }
 
 export function supportsVideoUnderstanding(model: GroupableModel): boolean {
-  return model.modelCapabilities?.supportsVideo === true
+  return getModelCapabilities(model).supportsVideo === true
 }
 
 export function ModelCapabilityIcons({ model, className }: ModelCapabilityIconsProps) {

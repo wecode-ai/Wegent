@@ -15,6 +15,7 @@ export interface GroupableModel {
     supportsImage?: boolean
     supportsVideo?: boolean
   } | null
+  config?: Record<string, unknown> | null
 }
 
 export interface ModelSubGroup<T extends GroupableModel = GroupableModel> {

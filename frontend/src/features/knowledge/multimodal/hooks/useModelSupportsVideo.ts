@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import { modelApis } from '@/apis/models'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 
 interface MultimodalModelRef {
   name: string
@@ -48,7 +49,7 @@ export function useModelSupportsVideo(knowledgeBase: KnowledgeBaseLike): boolean
         )
         // Default to true when the model can't be resolved, so a transient
         // fetch failure does not wrongly block video uploads.
-        setModelSupportsVideo(match?.modelCapabilities?.supportsVideo !== false)
+        setModelSupportsVideo(!match || getModelCapabilities(match).supportsVideo !== false)
       })
       .catch(() => {
         if (!cancelled) setModelSupportsVideo(true)

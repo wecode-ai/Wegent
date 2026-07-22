@@ -12,6 +12,7 @@ import {
 } from '@/components/model-select/ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { SummaryModelRef } from '@/types/knowledge'
 
 interface MultimodalAnalysisModelSelectorProps {
@@ -36,7 +37,7 @@ function isGeminiProvider(provider?: string | null): boolean {
 }
 
 function supportsMultimodalAnalysis(model: UnifiedModel): boolean {
-  return model.modelCapabilities?.supportsVideo === true && isGeminiProvider(model.provider)
+  return getModelCapabilities(model).supportsVideo === true && isGeminiProvider(model.provider)
 }
 
 export function MultimodalAnalysisModelSelector({

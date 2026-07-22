@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 
 interface ModelDetailsDialogProps {
@@ -20,17 +21,8 @@ interface ModelDetailsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-interface ModelCapabilities {
-  supportsImage?: boolean
-  supportsVideo?: boolean
-}
-
 interface ModelDetailsBodyProps {
   model: Model
-}
-
-function getCapabilities(model: Model): ModelCapabilities {
-  return model.modelCapabilities ?? {}
 }
 
 function formatTokenCount(value: number | null | undefined, unavailable: string): string {
@@ -52,7 +44,7 @@ function formatCostIndex(value: number | null | undefined, unavailable: string):
 export function ModelDetailsBody({ model }: ModelDetailsBodyProps) {
   const { t } = useTranslation('common')
   const unavailable = t('models.details_unavailable')
-  const capabilities = getCapabilities(model)
+  const capabilities = getModelCapabilities(model)
   const inputTypes = [
     t('models.modality_text'),
     capabilities.supportsImage && t('models.modality_image'),

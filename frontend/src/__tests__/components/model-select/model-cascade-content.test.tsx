@@ -177,7 +177,7 @@ describe('ModelCascadeContent', () => {
     expect(screen.getByTitle('视频理解')).toBeInTheDocument()
   })
 
-  it('does not read model capabilities from config', () => {
+  it('falls back to model capabilities from config', () => {
     const legacyModel = {
       ...models[0],
       config: {
@@ -195,8 +195,8 @@ describe('ModelCascadeContent', () => {
       />
     )
 
-    expect(screen.queryByTitle('图片理解')).not.toBeInTheDocument()
-    expect(screen.queryByTitle('视频理解')).not.toBeInTheDocument()
+    expect(screen.getByTitle('图片理解')).toBeInTheDocument()
+    expect(screen.getByTitle('视频理解')).toBeInTheDocument()
   })
 
   it('shows declared capabilities in the selected-model trigger', () => {

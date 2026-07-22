@@ -25,6 +25,7 @@ from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.kind import kind_service
+from app.services.model_capabilities import normalize_model_capabilities
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_CATEGORY_TYPE,
     CODEX_RUNTIME_MODEL_DISPLAY_NAME,
@@ -158,6 +159,8 @@ class UnifiedModel:
             if self.config
             else {}
         )
+        if self.model_capabilities:
+            safe_config["modelCapabilities"] = self.model_capabilities
         result = {
             "name": self.name,
             "type": self.type.value,
@@ -238,6 +241,9 @@ class ModelAggregationService:
             if model_crd.spec.modelType:
                 model_category_type = model_crd.spec.modelType.value
 
+            legacy_model_capabilities = model_crd.spec.modelConfig.get(
+                "modelCapabilities"
+            )
             config = {
                 key: value
                 for key, value in model_crd.spec.modelConfig.items()
@@ -251,6 +257,10 @@ class ModelAggregationService:
             if model_crd.spec.modelCapabilities:
                 model_capabilities = model_crd.spec.modelCapabilities.model_dump(
                     exclude_none=True
+                )
+            elif legacy_model_capabilities is not None:
+                model_capabilities = normalize_model_capabilities(
+                    legacy_model_capabilities
                 )
             else:
                 model_capabilities = None

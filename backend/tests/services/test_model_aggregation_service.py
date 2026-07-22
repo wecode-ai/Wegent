@@ -236,13 +236,68 @@ class TestModelAggregationService:
             "supportsImage": True,
             "supportsVideo": True,
         }
-        assert "modelCapabilities" not in model_dict["config"]
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
         assert full_model_dict["resourceUserId"] == 0
         assert full_model_dict["runtime"] == {
             "family": "openai.openai-responses",
             "provider": "openai",
         }
-        assert full_model_dict["config"] == {"protocol": "openai-responses"}
+        assert full_model_dict["config"] == {
+            "protocol": "openai-responses",
+            "modelCapabilities": {
+                "supportsImage": True,
+                "supportsVideo": True,
+            },
+        }
+
+    def test_extract_model_info_normalizes_legacy_config_capabilities(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "gemini", "model_id": "legacy-model"},
+                    "modelCapabilities": {
+                        "supportsImage": True,
+                        "supportsVideo": True,
+                    },
+                }
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["model_capabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert "modelCapabilities" not in info["config"]
+
+    def test_extract_model_info_rejects_malformed_legacy_capabilities(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "modelCapabilities": {
+                        "supportsImage": "true",
+                        "supportsVideo": False,
+                    }
+                }
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["model_capabilities"] is None
+        assert "modelCapabilities" not in info["config"]
 
     def test_runtime_family_falls_back_to_provider_without_protocol(self):
         """Test runtime family remains provider-only when spec.protocol is absent."""
@@ -311,9 +366,78 @@ class TestModelAggregationService:
             "supportsImage": True,
             "supportsVideo": True,
         }
-        assert "modelCapabilities" not in model_dict["config"]
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
         assert model_dict["config"]["apiFormat"] == "responses"
         assert model_dict["config"]["env"] == {}
+
+    def test_public_model_adapter_normalizes_legacy_config_capabilities(self):
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-public-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {"model": "gemini", "model_id": "legacy-public-model"},
+                    "modelCapabilities": {
+                        "supportsImage": True,
+                        "supportsVideo": True,
+                    },
+                }
+            },
+            "status": {"state": "Available"},
+        }
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="legacy-public-model",
+            namespace="default",
+            json=model_crd,
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+
+    def test_public_model_adapter_normalizes_direct_legacy_capabilities(self):
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="legacy-direct-model",
+            namespace="default",
+            json={
+                "env": {
+                    "model": "gemini",
+                    "model_id": "legacy-direct-model",
+                },
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": False,
+                },
+            },
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": False,
+        }
+        assert model_dict["config"]["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": False,
+        }
 
     def _create_public_shell(
         self,

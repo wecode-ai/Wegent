@@ -14,6 +14,7 @@ from app.schemas.kind import Model, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
+from app.services.model_capabilities import normalize_model_capabilities
 
 
 class ModelAdapter:
@@ -42,6 +43,9 @@ class ModelAdapter:
             if "metadata" in kind.json and "spec" in kind.json:
                 try:
                     model_crd = Model.model_validate(kind.json)
+                    legacy_model_capabilities = model_crd.spec.modelConfig.get(
+                        "modelCapabilities"
+                    )
                     config = {
                         key: value
                         for key, value in model_crd.spec.modelConfig.items()
@@ -73,6 +77,10 @@ class ModelAdapter:
                                 exclude_none=True
                             )
                         )
+                    elif legacy_model_capabilities is not None:
+                        model_capabilities = normalize_model_capabilities(
+                            legacy_model_capabilities
+                        )
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -95,9 +103,16 @@ class ModelAdapter:
                     context_window = spec.get("contextWindow")
                     max_output_tokens = spec.get("maxOutputTokens")
                     cost_index = spec.get("costIndex")
-                    capabilities = spec.get("modelCapabilities")
-                    if isinstance(capabilities, dict):
+                    capabilities = normalize_model_capabilities(
+                        spec.get("modelCapabilities")
+                    )
+                    if capabilities:
                         model_capabilities = capabilities
+
+        if model_capabilities is None and isinstance(config, dict):
+            model_capabilities = normalize_model_capabilities(
+                config.get("modelCapabilities")
+            )
 
         # Extract provider and model_id from env before stripping
         env = config.get("env", {}) if isinstance(config, dict) else {}
@@ -109,6 +124,8 @@ class ModelAdapter:
             config = {**config, "env": {}}
         if isinstance(config, dict) and "modelCapabilities" in config:
             config = {k: v for k, v in config.items() if k != "modelCapabilities"}
+        if model_capabilities:
+            config = {**config, "modelCapabilities": model_capabilities}
 
         return {
             "id": kind.id,
