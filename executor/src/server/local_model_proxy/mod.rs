@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn rewrites_internal_catalog_model_to_real_upstream_model() {
         let body = serde_json::to_vec(&json!({
-            "model": "wework-custom-apply-patch",
+            "model": "wework-custom-user-model",
             "input": "hello"
         }))
         .expect("request body");

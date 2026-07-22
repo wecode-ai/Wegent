@@ -234,8 +234,10 @@ class Settings(BaseSettings):
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
-    # Optional upstream for the Sites service. Wework accesses it through Backend.
+    # Upstream Sites Platform base URL. Wework accesses it through Backend.
     SITES_API_BASE_URL: str = ""
+    # Optional bearer token for the upstream Sites Platform project API.
+    SITES_API_TOKEN: str = ""
 
     # Task notification URL configuration (for DingTalk mobile notifications)
     # External URL for task completion notifications

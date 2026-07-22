@@ -139,7 +139,7 @@ describe('createHttpClient', () => {
 
     const client = createHttpClient({ baseUrl: 'https://sites.example.com' })
 
-    await expect(client.post('/api/v1/sites/site-1/publish')).rejects.toMatchObject<ApiError>({
+    await expect(client.post('/api/sites/site-1/publish')).rejects.toMatchObject<ApiError>({
       message: 'CDN failed',
       status: 502,
       errorCode: 'site_publish_failed',

@@ -8,6 +8,7 @@ from fastapi import APIRouter
 
 from app.api.endpoints.admin import (
     api_keys,
+    connector_apps,
     device_monitor,
     im_channels,
     kind_management,
@@ -39,6 +40,7 @@ router.include_router(public_shells.router, tags=["admin-public-shells"])
 router.include_router(public_retrievers.router, tags=["admin-public-retrievers"])
 router.include_router(system_config.router, tags=["admin-system-config"])
 router.include_router(api_keys.router, tags=["admin-api-keys"])
+router.include_router(connector_apps.router, tags=["admin-connector-apps"])
 router.include_router(token_issuers.router, tags=["admin-token-issuers"])
 router.include_router(kind_management.router, tags=["admin-kind-management"])
 router.include_router(stats.router, tags=["admin-stats"])

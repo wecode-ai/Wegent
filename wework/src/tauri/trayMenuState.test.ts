@@ -201,6 +201,7 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.hasRunningTasks).toBe(true)
     expect(groups.showRunningStatus).toBe(true)
     expect(groups.runningCount).toBe(1)
+    expect(groups.activeTaskCount).toBe(1)
   })
 
   test('hides unread and running task groups when tray status switches are off', () => {
@@ -249,6 +250,7 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.unreadCount).toBe(0)
     expect(groups.running).toEqual([])
     expect(groups.runningCount).toBe(0)
+    expect(groups.activeTaskCount).toBe(1)
     expect(groups.hasRunningTasks).toBe(false)
     expect(groups.showRunningStatus).toBe(false)
     expect(groups.recent.map(item => item.title)).toEqual(['Running task', 'Unread task'])

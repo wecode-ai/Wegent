@@ -8,6 +8,7 @@ const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   systemDragEnabled: true,
+  preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
   terminalContextInjectionEnabled: true,
@@ -40,6 +41,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     systemDragEnabled: true,
+    preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
     terminalContextInjectionEnabled: true,
@@ -153,6 +155,22 @@ describe('GeneralSettingsPage', () => {
 
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ systemDragEnabled: false })
+    })
+  })
+
+  test('prevents sleep during tasks by default and persists disabling it', async () => {
+    render(<GeneralSettingsPage />)
+
+    const toggle = await screen.findByTestId('general-prevent-sleep-while-tasks-running-toggle')
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        preventSleepWhileTasksRunning: false,
+      })
     })
   })
 

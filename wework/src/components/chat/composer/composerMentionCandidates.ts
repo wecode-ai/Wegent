@@ -168,5 +168,6 @@ export function skillReference(skill: LocalDeviceSkill): string {
 }
 
 export function appReference(app: LocalDeviceApp): string {
+  if (app.skillPath) return `[$${app.name || app.id}](${app.skillPath})`
   return `[$${app.name || app.id}](app://${app.id})`
 }

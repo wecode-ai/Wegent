@@ -87,8 +87,15 @@ REDIS_PROTOCOL=2  # Default RESP2, compatible with Redis-compatible servers with
 
 # Backend Configuration
 PASSWORD_KEY=your-password-key-here
+USER_AES_KEY=base64:your-32-byte-base64-key
+GIT_TOKEN_AES_KEY=your-32-byte-sensitive-data-key
+GIT_TOKEN_AES_IV=your-16-byte-iv
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
 CHECK_SYSTEM_INITIALIZATION_STATUS=True
+
+# Sites Platform configuration (optional)
+# SITES_API_BASE_URL=https://sites-platform.example.com
+# SITES_API_TOKEN=your-sites-platform-token
 
 # Attachment Storage Configuration (Optional)
 # Default: mysql (stores files in database)

@@ -1,9 +1,12 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { shouldUseTauriFetch } from '@/api/http'
-import type {
-  LocalModelApiFormat,
-  LocalModelToolProfile,
-  LocalModelWebSearchMode,
+import {
+  KIMI_CODING_CONTEXT_WINDOW,
+  KIMI_K27_CATALOG_MODEL_ID,
+  KIMI_K3_CATALOG_MODEL_ID,
+  type LocalModelApiFormat,
+  type LocalModelToolProfile,
+  type LocalModelWebSearchMode,
 } from './localModelSettings'
 
 export type LocalModelProviderProfileId = 'custom' | 'kimi-coding'
@@ -21,6 +24,13 @@ export interface LocalModelProviderProfile {
   contextWindow?: number
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
+  modelDefaults?: Record<
+    string,
+    {
+      contextWindow?: number
+      codexCatalogModelId?: string
+    }
+  >
 }
 
 export interface DiscoveredLocalModel {
@@ -39,9 +49,23 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     modelsPath: '/models',
     toolProfile: 'function',
     group: 'Kimi',
-    contextWindow: 256_000,
+    contextWindow: KIMI_CODING_CONTEXT_WINDOW,
     webSearchMode: 'disabled',
     imageGenerationEnabled: false,
+    modelDefaults: {
+      k3: {
+        contextWindow: KIMI_CODING_CONTEXT_WINDOW,
+        codexCatalogModelId: KIMI_K3_CATALOG_MODEL_ID,
+      },
+      'kimi-for-coding': {
+        contextWindow: KIMI_CODING_CONTEXT_WINDOW,
+        codexCatalogModelId: KIMI_K27_CATALOG_MODEL_ID,
+      },
+      'kimi-for-coding-highspeed': {
+        contextWindow: KIMI_CODING_CONTEXT_WINDOW,
+        codexCatalogModelId: KIMI_K27_CATALOG_MODEL_ID,
+      },
+    },
   },
   {
     id: 'custom',

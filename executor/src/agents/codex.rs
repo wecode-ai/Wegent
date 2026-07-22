@@ -2985,24 +2985,13 @@ fn codex_request_model(request: &ExecutionRequest) -> Option<String> {
     {
         return model_id(request);
     }
-    let tool_profile = non_empty_config(&request.model_config, "tool_profile")
-        .unwrap_or_else(|| "custom".to_owned());
-    if !tool_profile.eq_ignore_ascii_case("shell") {
-        if let Some(catalog_model_id) =
-            non_empty_config(&request.model_config, "codex_catalog_model_id")
-                .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"))
-        {
-            return Some(catalog_model_id);
-        }
+    if let Some(catalog_model_id) =
+        non_empty_config(&request.model_config, "codex_catalog_model_id")
+            .or_else(|| non_empty_config(&request.model_config, "codexCatalogModelId"))
+    {
+        return Some(catalog_model_id);
     }
-    Some(
-        if tool_profile.eq_ignore_ascii_case("shell") {
-            codex_model_catalog::SHELL_MODEL
-        } else {
-            codex_model_catalog::APPLY_PATCH_MODEL
-        }
-        .to_owned(),
-    )
+    model_id(request)
 }
 
 fn codex_web_search_mode(model_config: &Value) -> Option<String> {
@@ -5300,7 +5289,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_function_profile_uses_stable_apply_patch_catalog_model() {
+    fn custom_model_without_catalog_entry_uses_upstream_id() {
         let request = ExecutionRequest {
             model_config: json!({
             "model_id": "kimi-for-coding",
@@ -5312,7 +5301,25 @@ mod tests {
 
         assert_eq!(
             codex_request_model(&request).as_deref(),
-            Some(codex_model_catalog::APPLY_PATCH_MODEL)
+            Some("kimi-for-coding")
+        );
+    }
+
+    #[test]
+    fn kimi_k3_profile_uses_the_built_in_catalog_entry() {
+        let request = ExecutionRequest {
+            model_config: json!({
+                "model_id": "kimi-k3",
+                "tool_profile": "function",
+                "codex_catalog_model_id": codex_model_catalog::KIMI_K3_MODEL,
+                "codex_responses_compat_proxy": true
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        assert_eq!(
+            codex_request_model(&request).as_deref(),
+            Some(codex_model_catalog::KIMI_K3_MODEL)
         );
     }
 
@@ -5334,7 +5341,7 @@ mod tests {
     }
 
     #[test]
-    fn shell_profile_ignores_catalog_model_capabilities() {
+    fn shell_profile_uses_explicit_catalog_capabilities() {
         let request = ExecutionRequest {
             model_config: json!({
                 "model_id": "openai-gpt-5.6-luna(海外)",
@@ -5347,12 +5354,12 @@ mod tests {
 
         assert_eq!(
             codex_request_model(&request).as_deref(),
-            Some(codex_model_catalog::SHELL_MODEL)
+            Some("gpt-5.6-luna")
         );
     }
 
     #[test]
-    fn custom_shell_profile_uses_stable_shell_catalog_model() {
+    fn custom_shell_profile_without_catalog_entry_uses_upstream_id() {
         let request = ExecutionRequest {
             model_config: json!({
                 "model_id": "native-model",
@@ -5364,7 +5371,7 @@ mod tests {
 
         assert_eq!(
             codex_request_model(&request).as_deref(),
-            Some(codex_model_catalog::SHELL_MODEL)
+            Some("native-model")
         );
     }
 
