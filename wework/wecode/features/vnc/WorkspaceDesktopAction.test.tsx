@@ -6,6 +6,7 @@ import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
+import type { CloudDesktopLaunchAction } from '@/extensions/cloud-desktop-contract'
 import { openCloudDesktop } from './openCloudDesktop'
 import { WorkspaceDesktopAction } from './WorkspaceDesktopAction'
 
@@ -47,17 +48,20 @@ function renderAction({
   contextKey = 'project-a',
   onBusyChange = vi.fn(),
   onErrorChange = vi.fn(),
+  onLaunchActionChange = vi.fn(),
   onOpened = vi.fn(),
 }: {
   cloudConnection?: CloudConnectionContextValue
   contextKey?: string
   onBusyChange?: (busy: boolean) => void
   onErrorChange?: (message: string | null) => void
+  onLaunchActionChange?: (action: CloudDesktopLaunchAction | null) => void
   onOpened?: () => void
 } = {}) {
   return {
     onBusyChange,
     onErrorChange,
+    onLaunchActionChange,
     onOpened,
     ...render(
       <CloudConnectionContext.Provider value={cloudConnection}>
@@ -67,6 +71,7 @@ function renderAction({
           disabled={false}
           onBusyChange={onBusyChange}
           onErrorChange={onErrorChange}
+          onLaunchActionChange={onLaunchActionChange}
           onOpened={onOpened}
         />
       </CloudConnectionContext.Provider>
@@ -93,6 +98,7 @@ describe('WorkspaceDesktopAction', () => {
       connection: expect.objectContaining({ serviceKey: 'connected:1', token: 'cloud-token' }),
       deviceId: 'device-1',
       isCurrent: expect.any(Function),
+      target: 'embedded',
     })
   })
 
@@ -115,6 +121,20 @@ describe('WorkspaceDesktopAction', () => {
     } finally {
       consoleError.mockRestore()
     }
+  })
+
+  test('exposes a launch action that can keep the shared host open', async () => {
+    const onLaunchActionChange = vi.fn<(action: CloudDesktopLaunchAction | null) => void>()
+    const onOpened = vi.fn()
+    renderAction({ onLaunchActionChange, onOpened })
+
+    await waitFor(() => expect(onLaunchActionChange).toHaveBeenCalledWith(expect.any(Function)))
+    const launchAction = onLaunchActionChange.mock.calls.find(([action]) => action)?.[0]
+
+    await act(async () => launchAction?.({ notifyOpened: false }))
+
+    expect(openCloudDesktop).toHaveBeenCalledOnce()
+    expect(onOpened).not.toHaveBeenCalled()
   })
 
   test('ignores pending completion after the project context changes', async () => {

@@ -3,14 +3,17 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { getVncConfig } from './api'
 import { openCloudDesktop } from './openCloudDesktop'
-import { buildVncPageUrl, prepareVncSession } from './session'
+import { buildExternalVncPageUrl, buildVncPageUrl, prepareVncSession } from './session'
+import { openSystemBrowserIfCurrent } from './systemBrowser'
 
 vi.mock('@/lib/embedded-browser', () => ({ requestEmbeddedBrowserOpen: vi.fn() }))
 vi.mock('./api', () => ({ getVncConfig: vi.fn() }))
 vi.mock('./session', () => ({
+  buildExternalVncPageUrl: vi.fn(),
   buildVncPageUrl: vi.fn(),
   prepareVncSession: vi.fn(),
 }))
+vi.mock('./systemBrowser', () => ({ openSystemBrowserIfCurrent: vi.fn() }))
 
 const connection = {
   apiBaseUrl: 'https://cloud.example.com/api',
@@ -28,15 +31,78 @@ describe('openCloudDesktop', () => {
       wss_url: 'wss://cloud.example.com/vnc',
     })
     vi.mocked(prepareVncSession).mockResolvedValue('session-1')
+    vi.mocked(buildExternalVncPageUrl).mockResolvedValue(
+      'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
+    )
     vi.mocked(buildVncPageUrl).mockReturnValue(
       'tauri://localhost/vnc.html?sessionId=session-1&sandboxId=sandbox-1'
     )
+    vi.mocked(openSystemBrowserIfCurrent).mockResolvedValue(true)
     vi.mocked(requestEmbeddedBrowserOpen).mockReturnValue(true)
+  })
+
+  test('opens a loopback viewer with the system browser when status has no VNC URL', async () => {
+    await expect(
+      openCloudDesktop({
+        connection,
+        deviceId: 'device/1',
+        isCurrent: () => true,
+        target: 'system',
+      })
+    ).resolves.toBe(true)
+
+    expect(getVncConfig).toHaveBeenCalledWith(connection, 'device/1')
+    expect(prepareVncSession).toHaveBeenCalledWith({
+      deviceId: 'device/1',
+      socketBaseUrl: 'https://cloud.example.com',
+      token: 'cloud-token',
+    })
+    expect(buildExternalVncPageUrl).toHaveBeenCalledWith({
+      sandboxId: 'sandbox-1',
+      sessionId: 'session-1',
+    })
+    expect(openSystemBrowserIfCurrent).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1',
+      expect.any(Function)
+    )
+    expect(requestEmbeddedBrowserOpen).not.toHaveBeenCalled()
+  })
+
+  test('does not report an error when the system-browser request becomes stale', async () => {
+    const isCurrent = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false)
+    vi.mocked(openSystemBrowserIfCurrent).mockImplementationOnce(async (_value, current) => {
+      expect(current()).toBe(false)
+      return false
+    })
+
+    await expect(
+      openCloudDesktop({
+        connection,
+        deviceId: 'device-1',
+        isCurrent,
+        target: 'system',
+      })
+    ).resolves.toBe(false)
+
+    expect(openSystemBrowserIfCurrent).toHaveBeenCalledWith(
+      'http://127.0.0.1:43123/vnc.html?sessionId=session-1&sandboxId=sandbox-1',
+      isCurrent
+    )
   })
 
   test('opens a credential-free local page after preparing the secure session', async () => {
     await expect(
-      openCloudDesktop({ connection, deviceId: 'device/1', isCurrent: () => true })
+      openCloudDesktop({
+        connection,
+        deviceId: 'device/1',
+        isCurrent: () => true,
+        target: 'embedded',
+      })
     ).resolves.toBe(true)
 
     expect(getVncConfig).toHaveBeenCalledWith(connection, 'device/1')
@@ -59,7 +125,12 @@ describe('openCloudDesktop', () => {
 
   test('drops a stale request after configuration without preparing a session', async () => {
     await expect(
-      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent: () => false })
+      openCloudDesktop({
+        connection,
+        deviceId: 'device-1',
+        isCurrent: () => false,
+        target: 'embedded',
+      })
     ).resolves.toBe(false)
 
     expect(prepareVncSession).not.toHaveBeenCalled()
@@ -69,9 +140,9 @@ describe('openCloudDesktop', () => {
   test('drops a stale request after session preparation without opening a page', async () => {
     const isCurrent = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
 
-    await expect(openCloudDesktop({ connection, deviceId: 'device-1', isCurrent })).resolves.toBe(
-      false
-    )
+    await expect(
+      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent, target: 'embedded' })
+    ).resolves.toBe(false)
 
     expect(prepareVncSession).toHaveBeenCalledOnce()
     expect(buildVncPageUrl).not.toHaveBeenCalled()
@@ -84,6 +155,7 @@ describe('openCloudDesktop', () => {
         connection: { apiBaseUrl: '/api', isConnected: true, token: 'token' },
         deviceId: 'device-1',
         isCurrent: () => true,
+        target: 'embedded',
       })
     ).rejects.toThrow('Cloud connection is required')
     expect(getVncConfig).not.toHaveBeenCalled()
@@ -93,13 +165,23 @@ describe('openCloudDesktop', () => {
     const configError = new Error('configuration failed')
     vi.mocked(getVncConfig).mockRejectedValueOnce(configError)
     await expect(
-      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent: () => true })
+      openCloudDesktop({
+        connection,
+        deviceId: 'device-1',
+        isCurrent: () => true,
+        target: 'embedded',
+      })
     ).rejects.toBe(configError)
 
     const sessionError = new Error('session failed')
     vi.mocked(prepareVncSession).mockRejectedValueOnce(sessionError)
     await expect(
-      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent: () => true })
+      openCloudDesktop({
+        connection,
+        deviceId: 'device-1',
+        isCurrent: () => true,
+        target: 'embedded',
+      })
     ).rejects.toBe(sessionError)
   })
 
@@ -111,7 +193,12 @@ describe('openCloudDesktop', () => {
     })
 
     await expect(
-      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent: () => true })
+      openCloudDesktop({
+        connection,
+        deviceId: 'device-1',
+        isCurrent: () => true,
+        target: 'embedded',
+      })
     ).rejects.toThrow('Desktop sandbox ID is missing')
     expect(prepareVncSession).not.toHaveBeenCalled()
   })
@@ -120,7 +207,12 @@ describe('openCloudDesktop', () => {
     vi.mocked(requestEmbeddedBrowserOpen).mockReturnValueOnce(false)
 
     await expect(
-      openCloudDesktop({ connection, deviceId: 'device-1', isCurrent: () => true })
+      openCloudDesktop({
+        connection,
+        deviceId: 'device-1',
+        isCurrent: () => true,
+        target: 'embedded',
+      })
     ).rejects.toThrow('Built-in browser is unavailable')
   })
 })

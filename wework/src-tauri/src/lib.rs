@@ -3779,7 +3779,6 @@ pub fn run() {
     let app = builder
         .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
-        .manage(wecode::vnc_session::VncSessionState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
         .manage(TrayVisualState::default())
@@ -3859,6 +3858,7 @@ pub fn run() {
             {
                 log::warn!("Failed to start embedded browser bridge: {error}");
             }
+            wecode::setup(app);
             #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
@@ -3867,13 +3867,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            wecode::local_executor::detect_wecode_cli,
-            wecode::local_executor::get_executor_process_diagnostics,
-            wecode::local_executor::get_executor_status,
-            wecode::local_executor::get_local_executor_auth_token,
-            wecode::local_executor::get_startup_env,
-            wecode::local_executor::kill_executor_processes,
+        .invoke_handler(wecode::invoke_handler![
             appshots::acknowledge_appshot,
             appshots::get_appshots_status,
             appshots::open_appshots_permission_settings,
@@ -3896,8 +3890,6 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
-            wecode::vnc_session::get_vnc_session_config,
-            wecode::vnc_session::prepare_vnc_session,
             local_terminal::close_local_terminal,
             workbench_background::import_workbench_background,
             workbench_background::remove_workbench_background,
@@ -3929,7 +3921,6 @@ pub fn run() {
             download_local_file_to_downloads,
             save_text_file_to_downloads,
             local_path_exists,
-            wecode::local_executor::open_executor_logs_directory,
             open_local_file,
             reveal_local_file,
             list_local_file_openers,
@@ -3943,9 +3934,6 @@ pub fn run() {
             system_drag::log_system_drag_debug,
             system_drag::take_pending_system_drag_drops,
             local_terminal::resize_local_terminal,
-            wecode::local_executor::run_executor_command,
-            wecode::local_executor::save_local_executor_auth_token,
-            wecode::local_executor::save_startup_env,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal
         ])

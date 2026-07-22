@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { buildVncPageUrl, isInternalVncPageUrl, prepareVncSession } from './session'
+import {
+  buildExternalVncPageUrl,
+  buildVncPageUrl,
+  isInternalVncPageUrl,
+  prepareVncSession,
+} from './session'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 const vncHtml = readFileSync(resolve(process.cwd(), 'wecode/features/vnc/assets/vnc.html'), 'utf8')
@@ -33,7 +38,7 @@ class RfbMock {
   }
 }
 
-function runVncPage(invoke: ReturnType<typeof vi.fn>) {
+function runVncPage(invoke?: ReturnType<typeof vi.fn>) {
   expect(vncInlineScript).toBeDefined()
   document.body.innerHTML = `
     <div id="vnc-container"></div>
@@ -50,10 +55,12 @@ function runVncPage(invoke: ReturnType<typeof vi.fn>) {
     configurable: true,
     value: RfbMock,
   })
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: { invoke },
-  })
+  if (invoke) {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: { invoke },
+    })
+  }
   window.eval(vncInlineScript!)
 }
 
@@ -75,6 +82,7 @@ describe('buildVncPageUrl', () => {
     window.history.replaceState({}, '', '/')
     Reflect.deleteProperty(window, 'noVNC')
     Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
+    vi.unstubAllGlobals()
   })
 
   test('keeps the VNC page local without putting credentials in its URL', async () => {
@@ -107,6 +115,29 @@ describe('buildVncPageUrl', () => {
     expect(parsedUrl.searchParams.has('wsUrl')).toBe(false)
     expect(isInternalVncPageUrl(parsedUrl.toString())).toBe(true)
     expect(isInternalVncPageUrl('https://cloud.example.com/wework/vnc.html')).toBe(false)
+  })
+
+  test('builds a credential-free loopback URL for the system browser', async () => {
+    invokeMock.mockImplementation(command => {
+      if (command === 'get_vnc_external_bridge_url') {
+        return Promise.resolve('http://127.0.0.1:43123')
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const url = await buildExternalVncPageUrl({
+      sandboxId: 'sandbox/1',
+      sessionId: '123e4567-e89b-42d3-a456-426614174000',
+    })
+    const parsedUrl = new URL(url)
+
+    expect(invokeMock).toHaveBeenCalledWith('get_vnc_external_bridge_url')
+    expect(parsedUrl.origin).toBe('http://127.0.0.1:43123')
+    expect(parsedUrl.pathname).toBe('/vnc.html')
+    expect(parsedUrl.searchParams.get('sessionId')).toBe('123e4567-e89b-42d3-a456-426614174000')
+    expect(parsedUrl.searchParams.get('sandboxId')).toBe('sandbox/1')
+    expect(parsedUrl.searchParams.has('token')).toBe(false)
+    expect(parsedUrl.searchParams.has('wsUrl')).toBe(false)
   })
 
   test.each([
@@ -145,6 +176,7 @@ describe('buildVncPageUrl', () => {
     expect(vncHtml).toContain("invoke('get_vnc_session_config'")
     expect(vncHtml).not.toContain("params.get('wsUrl')")
     expect(vncHtml).toContain("retryButton.addEventListener('click', connect)")
+    expect(vncHtml).toContain('scheduleReconnect()')
     expect(vncHtml).toContain("document.documentElement.dataset.vncConnected = 'true'")
     expect(vncHtml).toContain('云桌面会话已过期，请关闭后重新打开桌面')
     expect(vncHtml).not.toContain('window.location.reload()')
@@ -174,6 +206,52 @@ describe('buildVncPageUrl', () => {
     expect(firstRfb.disconnect).toHaveBeenCalledTimes(1)
     expect(RfbMock.instances[1].url).toBe(firstRfb.url)
     expect(pageInvoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('automatically reconnects after a transient upstream disconnect', async () => {
+    vi.useFakeTimers()
+    const pageInvoke = vi.fn().mockResolvedValue({
+      wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
+      token: 'cloud-token',
+    })
+
+    try {
+      runVncPage(pageInvoke)
+      await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(1))
+
+      RfbMock.instances[0].emit('disconnect', { clean: false })
+      expect(document.querySelector('.error')?.textContent).toBe('连接已断开，正在重试...')
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(RfbMock.instances).toHaveLength(2)
+      expect(RfbMock.instances[1].url).toBe(RfbMock.instances[0].url)
+      expect(pageInvoke).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('loads the session from the loopback bridge outside Tauri', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () =>
+        Promise.resolve({
+          wsUrl: 'wss://cloud.example.com/vnc-proxy/device-1',
+          token: 'cloud-token',
+        }),
+      ok: true,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    runVncPage()
+
+    await vi.waitFor(() => expect(RfbMock.instances).toHaveLength(1))
+    expect(fetchMock).toHaveBeenCalledWith('/session/123e4567-e89b-42d3-a456-426614174000', {
+      cache: 'no-store',
+      credentials: 'omit',
+    })
+    expect(RfbMock.instances[0].url).toBe(
+      'wss://cloud.example.com/vnc-proxy/device-1?token=cloud-token'
+    )
   })
 
   test('explains that an expired reload must be reopened without offering a broken retry', async () => {

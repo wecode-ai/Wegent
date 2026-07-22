@@ -1,18 +1,26 @@
 import { Loader2, Monitor } from 'lucide-react'
+import { useEffect } from 'react'
 
 import type { CloudDesktopWorkspaceActionProps } from '@/extensions/cloud-desktop-contract'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useCloudDesktopLaunch } from './useCloudDesktopLaunch'
 
 export function WorkspaceDesktopAction({
+  onLaunchActionChange,
   testIdsEnabled = true,
   ...props
 }: CloudDesktopWorkspaceActionProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('vnc')
   const launch = useCloudDesktopLaunch({
     ...props,
-    failureMessage: t('workbench.project_tool_start_failed', '启动失败'),
+    failureMessage: t('open_project_desktop_failed', '启动失败'),
+    target: 'embedded',
   })
+
+  useEffect(() => {
+    onLaunchActionChange?.(launch.open)
+    return () => onLaunchActionChange?.(null)
+  }, [launch.open, onLaunchActionChange])
 
   return (
     <button
@@ -27,11 +35,9 @@ export function WorkspaceDesktopAction({
       ) : (
         <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
       )}
-      <span className="text-sm font-semibold text-text-primary">
-        {t('workbench.desktop', '桌面')}
-      </span>
+      <span className="text-sm font-semibold text-text-primary">{t('desktop', '桌面')}</span>
       <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-        {t('workbench.open_project_desktop', '打开项目桌面')}
+        {t('open_project_desktop', '打开项目桌面')}
       </span>
     </button>
   )

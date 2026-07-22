@@ -1,0 +1,6 @@
+{
+  "desktop": "桌面",
+  "open_project_desktop": "打开项目桌面",
+  "open_project_desktop_failed": "启动失败",
+  "open_system_desktop_failed": "无法使用系统默认浏览器打开云桌面，请重试"
+}

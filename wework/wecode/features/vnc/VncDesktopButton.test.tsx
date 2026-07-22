@@ -80,10 +80,11 @@ describe('VncDesktopButton', () => {
       connection: expect.objectContaining({ serviceKey: 'connected:1', token: 'cloud-token' }),
       deviceId: 'device-1',
       isCurrent: expect.any(Function),
+      target: 'system',
     })
   })
 
-  test.each(['VNC configuration failed', 'Built-in browser is unavailable'])(
+  test.each(['VNC status failed', 'System browser is unavailable'])(
     'shows a recoverable error when opening fails: %s',
     async message => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -94,7 +95,7 @@ describe('VncDesktopButton', () => {
         await userEvent.click(screen.getByTestId('connection-vnc-button-device-1'))
 
         expect(await screen.findByTestId('connection-vnc-error-device-1')).toHaveTextContent(
-          '无法在 Wework 中打开云桌面，请重试'
+          '无法使用系统默认浏览器打开云桌面，请重试'
         )
         expect(onOpened).not.toHaveBeenCalled()
       } finally {
@@ -159,6 +160,17 @@ describe('VncDesktopButton', () => {
     const button = screen.getByTestId('connection-vnc-button-device-1')
     expect(button).toBeDisabled()
     await userEvent.click(button)
+    expect(openCloudDesktop).not.toHaveBeenCalled()
+  })
+
+  test('shows an error without launching when the VNC socket URL is missing', async () => {
+    renderButton({ cloudConnection: connection({ socketBaseUrl: undefined }) })
+
+    await userEvent.click(screen.getByTestId('connection-vnc-button-device-1'))
+
+    expect(await screen.findByTestId('connection-vnc-error-device-1')).toHaveTextContent(
+      '无法使用系统默认浏览器打开云桌面，请重试'
+    )
     expect(openCloudDesktop).not.toHaveBeenCalled()
   })
 

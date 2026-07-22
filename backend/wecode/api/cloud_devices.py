@@ -14,9 +14,11 @@ import logging
 from typing import Any
 
 import httpx
+import websockets
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, status
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
+from websockets.exceptions import InvalidStatus
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -669,6 +671,20 @@ def _build_vnc_wss_url(sandbox_id: str) -> str:
     )
 
 
+def _connect_vnc_upstream(upstream_url: str, signature: str) -> Any:
+    """Open a direct, uncompressed WebSocket connection to Nevis VNC."""
+    return websockets.connect(
+        upstream_url,
+        additional_headers={"X-Signature": signature},
+        compression=None,
+        proxy=None,
+        max_size=None,
+        ping_interval=20,
+        ping_timeout=20,
+        close_timeout=5,
+    )
+
+
 async def vnc_websocket_proxy(
     websocket: WebSocket,
     device_id: str,
@@ -688,8 +704,6 @@ async def vnc_websocket_proxy(
     Query params:
         token: JWT authentication token
     """
-    import websockets
-
     logger.info(
         f"[VNC Proxy] Handler called: device_id={device_id}, has_token={bool(token)}"
     )
@@ -753,17 +767,10 @@ async def vnc_websocket_proxy(
         f"sandbox={sandbox_id}, url={upstream_url}"
     )
 
+    close_code = 1000
+    close_reason = ""
     try:
-        # Connect to upstream Nevis VNC WebSocket
-        extra_headers = {"X-Signature": signature}
-        async with websockets.connect(
-            upstream_url,
-            additional_headers=extra_headers,
-            max_size=None,
-            ping_interval=20,
-            ping_timeout=20,
-            close_timeout=5,
-        ) as upstream:
+        async with _connect_vnc_upstream(upstream_url, signature) as upstream:
             logger.info(f"[VNC Proxy] Upstream connected for sandbox={sandbox_id}")
 
             async def client_to_upstream():
@@ -798,16 +805,20 @@ async def vnc_websocket_proxy(
             for task in pending:
                 task.cancel()
 
-    except websockets.exceptions.InvalidStatusCode as e:
+    except InvalidStatus as e:
+        close_code = 1011
+        close_reason = "VNC upstream rejected connection"
         logger.error(
             f"[VNC Proxy] Upstream rejected connection for sandbox={sandbox_id}: "
-            f"status={e.status_code}"
+            f"status={e.response.status_code}"
         )
     except Exception as e:
+        close_code = 1011
+        close_reason = "VNC upstream connection failed"
         logger.error(f"[VNC Proxy] Error for sandbox={sandbox_id}: {e}")
     finally:
         try:
-            await websocket.close()
+            await websocket.close(code=close_code, reason=close_reason)
         except Exception:
             pass
         logger.info(f"[VNC Proxy] Connection closed for sandbox={sandbox_id}")

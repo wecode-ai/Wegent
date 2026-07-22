@@ -1,7 +1,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
+import type { CloudDesktopLaunchOptions } from '@/extensions/cloud-desktop-contract'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { openCloudDesktop } from './openCloudDesktop'
+import type { CloudDesktopOpenTarget } from './types'
 
 interface UseCloudDesktopLaunchOptions {
   contextKey: string
@@ -11,13 +13,14 @@ interface UseCloudDesktopLaunchOptions {
   onBusyChange?: (busy: boolean) => void
   onErrorChange?: (message: string | null) => void
   onOpened: () => void
+  target: CloudDesktopOpenTarget
 }
 
 interface UseCloudDesktopLaunchResult {
   disabled: boolean
   error: string | null
   loading: boolean
-  open: () => Promise<void>
+  open: (options?: CloudDesktopLaunchOptions) => Promise<void>
 }
 
 interface CloudDesktopRequestContext {
@@ -43,6 +46,7 @@ export function useCloudDesktopLaunch({
   onBusyChange,
   onErrorChange,
   onOpened,
+  target,
 }: UseCloudDesktopLaunchOptions): UseCloudDesktopLaunchResult {
   const cloudConnection = useOptionalCloudConnection()
   const [requestState, setRequestState] = useState<CloudDesktopRequestState | null>(null)
@@ -101,78 +105,83 @@ export function useCloudDesktopLaunch({
     deviceId,
   ])
 
-  const open = useCallback(async () => {
-    if (disabled || loading || !cloudConnection.isConnected) return
+  const open = useCallback(
+    async (options?: CloudDesktopLaunchOptions) => {
+      if (disabled || loading || !cloudConnection.isConnected) return
 
-    const requestGeneration = requestGenerationRef.current + 1
-    requestGenerationRef.current = requestGeneration
-    const requestContext = {
-      connectedAt: cloudConnection.connectedAt,
+      const requestGeneration = requestGenerationRef.current + 1
+      requestGenerationRef.current = requestGeneration
+      const requestContext = {
+        connectedAt: cloudConnection.connectedAt,
+        contextKey,
+        deviceId,
+        isConnected: cloudConnection.isConnected,
+        requestGeneration,
+        serviceKey: cloudConnection.serviceKey,
+        token: cloudConnection.token,
+      }
+      setRequestState({ ...requestContext, error: null, loading: true })
+      onErrorChange?.(null)
+      onBusyChange?.(true)
+
+      const isCurrentRequest = () => {
+        const latest = latestRequestContextRef.current
+        return (
+          mountedRef.current &&
+          requestGenerationRef.current === requestGeneration &&
+          latest.isConnected &&
+          latest.connectedAt === requestContext.connectedAt &&
+          latest.contextKey === requestContext.contextKey &&
+          latest.deviceId === requestContext.deviceId &&
+          latest.serviceKey === requestContext.serviceKey &&
+          latest.token === requestContext.token
+        )
+      }
+
+      if (!cloudConnection.token || !cloudConnection.socketBaseUrl) {
+        setRequestState({ ...requestContext, error: failureMessage, loading: false })
+        onErrorChange?.(failureMessage)
+        onBusyChange?.(false)
+        return
+      }
+
+      try {
+        const opened = await openCloudDesktop({
+          connection: cloudConnection,
+          deviceId,
+          isCurrent: isCurrentRequest,
+          target,
+        })
+        if (opened && isCurrentRequest() && options?.notifyOpened !== false) onOpened()
+      } catch (exception) {
+        if (!isCurrentRequest()) return
+        console.error('Failed to open device desktop:', exception)
+        setRequestState({ ...requestContext, error: failureMessage, loading: true })
+        onErrorChange?.(failureMessage)
+      } finally {
+        if (isCurrentRequest()) {
+          setRequestState(current =>
+            current?.requestGeneration === requestGeneration
+              ? { ...current, loading: false }
+              : current
+          )
+          onBusyChange?.(false)
+        }
+      }
+    },
+    [
+      cloudConnection,
       contextKey,
       deviceId,
-      isConnected: cloudConnection.isConnected,
-      requestGeneration,
-      serviceKey: cloudConnection.serviceKey,
-      token: cloudConnection.token,
-    }
-    setRequestState({ ...requestContext, error: null, loading: true })
-    onErrorChange?.(null)
-    onBusyChange?.(true)
-
-    const isCurrentRequest = () => {
-      const latest = latestRequestContextRef.current
-      return (
-        mountedRef.current &&
-        requestGenerationRef.current === requestGeneration &&
-        latest.isConnected &&
-        latest.connectedAt === requestContext.connectedAt &&
-        latest.contextKey === requestContext.contextKey &&
-        latest.deviceId === requestContext.deviceId &&
-        latest.serviceKey === requestContext.serviceKey &&
-        latest.token === requestContext.token
-      )
-    }
-
-    if (!cloudConnection.socketBaseUrl || !cloudConnection.token) {
-      setRequestState({ ...requestContext, error: failureMessage, loading: false })
-      onErrorChange?.(failureMessage)
-      onBusyChange?.(false)
-      return
-    }
-
-    try {
-      const opened = await openCloudDesktop({
-        connection: cloudConnection,
-        deviceId,
-        isCurrent: isCurrentRequest,
-      })
-      if (opened && isCurrentRequest()) onOpened()
-    } catch (exception) {
-      if (!isCurrentRequest()) return
-      console.error('Failed to open device desktop:', exception)
-      setRequestState({ ...requestContext, error: failureMessage, loading: true })
-      onErrorChange?.(failureMessage)
-    } finally {
-      if (isCurrentRequest()) {
-        setRequestState(current =>
-          current?.requestGeneration === requestGeneration
-            ? { ...current, loading: false }
-            : current
-        )
-        onBusyChange?.(false)
-      }
-    }
-  }, [
-    cloudConnection,
-    contextKey,
-    deviceId,
-    disabled,
-    failureMessage,
-    loading,
-    onBusyChange,
-    onErrorChange,
-    onOpened,
-  ])
+      disabled,
+      failureMessage,
+      loading,
+      onBusyChange,
+      onErrorChange,
+      onOpened,
+      target,
+    ]
+  )
 
   return {
     disabled: disabled || loading || !cloudConnection.isConnected,

@@ -94,6 +94,17 @@
         const statusText = overlay.querySelector('.status-text')
         let authenticatedWsUrl = null
         let rfb = null
+        let reconnectTimer = null
+        let reconnectAttempt = 0
+
+        const reconnectDelays = [1000, 2000, 3000, 5000, 10000]
+
+        function clearReconnectTimer() {
+          if (reconnectTimer !== null) {
+            window.clearTimeout(reconnectTimer)
+            reconnectTimer = null
+          }
+        }
 
         function showConnecting() {
           delete document.documentElement.dataset.vncConnected
@@ -118,9 +129,17 @@
           const retryButton = document.createElement('button')
           retryButton.type = 'button'
           retryButton.className = 'retry-btn'
-          retryButton.textContent = '重试'
+          retryButton.textContent = '立即重试'
           retryButton.addEventListener('click', connect)
           statusText.replaceChildren(errorText, retryButton)
+        }
+
+        function scheduleReconnect() {
+          clearReconnectTimer()
+          const delay = reconnectDelays[Math.min(reconnectAttempt, reconnectDelays.length - 1)]
+          reconnectAttempt += 1
+          showError('连接已断开，正在重试...', true)
+          reconnectTimer = window.setTimeout(connect, delay)
         }
 
         function authenticatedWebSocketUrl(config) {
@@ -156,7 +175,31 @@
           return url.toString()
         }
 
+        async function getSessionConfig() {
+          const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
+          if (typeof invoke === 'function') {
+            return invoke('get_vnc_session_config', { sessionId: sessionId })
+          }
+
+          const response = await fetch('/session/' + encodeURIComponent(sessionId), {
+            cache: 'no-store',
+            credentials: 'omit',
+          })
+          if (!response.ok) {
+            var body = await response.json().catch(function () {
+              return null
+            })
+            throw new Error(
+              body && typeof body.error === 'string'
+                ? body.error
+                : 'VNC session is missing or expired'
+            )
+          }
+          return response.json()
+        }
+
         async function connect() {
+          clearReconnectTimer()
           showConnecting()
           container.replaceChildren()
 
@@ -185,13 +228,8 @@
               showError('noVNC 加载失败', false)
               return
             }
-            const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
-            if (typeof invoke !== 'function') {
-              showError('云桌面会话服务不可用', false)
-              return
-            }
             if (!authenticatedWsUrl) {
-              const config = await invoke('get_vnc_session_config', { sessionId: sessionId })
+              const config = await getSessionConfig()
               authenticatedWsUrl = authenticatedWebSocketUrl(config)
             }
 
@@ -204,6 +242,8 @@
 
             nextRfb.addEventListener('connect', function () {
               if (rfb !== nextRfb) return
+              clearReconnectTimer()
+              reconnectAttempt = 0
               overlay.classList.add('hidden')
               document.documentElement.dataset.vncConnected = 'true'
               document.title = '云桌面' + (sandboxId ? ' - ' + sandboxId : '')
@@ -213,7 +253,7 @@
               if (rfb !== nextRfb) return
               var clean = e.detail && e.detail.clean
               if (!clean) {
-                showError('连接已断开', true)
+                scheduleReconnect()
               } else {
                 showError('会话已结束', true)
               }
