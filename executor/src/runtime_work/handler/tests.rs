@@ -126,6 +126,39 @@ fn runtime_session_ids_only_accept_codex_uuid_thread_ids() {
 }
 
 #[test]
+fn imported_runtime_task_ids_are_unique() {
+    let first = fork_transfer::next_imported_task_id();
+    let second = fork_transfer::next_imported_task_id();
+
+    assert_ne!(first, second);
+    assert!(first.starts_with("runtime-fork-"));
+    assert!(second.starts_with("runtime-fork-"));
+}
+
+#[tokio::test]
+async fn archived_delete_falls_back_inline_when_enqueue_fails() {
+    let index_path = temp_runtime_work_index_path("delete-enqueue-fallback");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+    drop(archived_delete_rx);
+    handler.archived_delete_tx = archived_delete_tx;
+    let link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/runtime-work-delete-enqueue-fallback".to_owned(),
+        "Task".to_owned(),
+    );
+    handler.upsert_local_task(link.clone());
+
+    let response = handler.delete_archived_link(link).await;
+
+    assert_eq!(response["deleted"], true);
+    assert_eq!(response["cleanup"]["background"], false);
+    assert!(handler.local_task_link("task-1").is_none());
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
     for method in [
         "marketplace/add",

@@ -4,6 +4,8 @@
 
 use super::*;
 
+static IMPORTED_TASK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn prepare_fork_transfer(&self, payload: Value) -> Result<Value, AppIpcError> {
         let transfer =
@@ -33,6 +35,15 @@ impl RuntimeWorkRpcHandler {
             Value::Bool(include_workspace),
         );
         archive.insert("directUrls".to_owned(), Value::Array(Vec::new()));
+        if let Some(upload_url) = transfer.upload_url {
+            archive.insert("uploadUrl".to_owned(), Value::String(upload_url));
+        }
+        if let Some(direct_hosts) = transfer.direct_hosts {
+            archive.insert(
+                "directHosts".to_owned(),
+                Value::Array(direct_hosts.into_iter().map(Value::String).collect()),
+            );
+        }
 
         Ok(json!({
             "success": true,
@@ -71,7 +82,7 @@ impl RuntimeWorkRpcHandler {
             Ok(runtime_handle) => runtime_handle,
             Err(error) => return Ok(fork_error_response(error.code(), error.to_string())),
         };
-        let local_task_id = format!("runtime-fork-{}", now_ms());
+        let local_task_id = next_imported_task_id();
         let title = string_field(&import.fork_package, "title")
             .unwrap_or_else(|| "Forked runtime task".to_owned());
         let parent = source_parent_json(&import.source);
@@ -86,4 +97,9 @@ impl RuntimeWorkRpcHandler {
         self.upsert_local_task(link.clone());
         Ok(task_action_success(&link))
     }
+}
+
+pub(super) fn next_imported_task_id() -> String {
+    let sequence = IMPORTED_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("runtime-fork-{}-{sequence}", now_ms())
 }

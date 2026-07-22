@@ -322,20 +322,25 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
         self.mark_archived_link_deleted(&link);
-        if let Err(error) = self.archived_delete_tx.send(link.clone()) {
-            log_executor_event(
-                "runtime archived conversation background enqueue failed",
-                &[
-                    ("local_task_id", link.local_task_id.clone()),
-                    ("error", error.to_string()),
-                ],
-            );
-        }
+        let background = match self.archived_delete_tx.send(link.clone()) {
+            Ok(()) => true,
+            Err(error) => {
+                log_executor_event(
+                    "runtime archived conversation background enqueue failed",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        ("error", error.to_string()),
+                    ],
+                );
+                self.delete_archived_link_background(link.clone()).await;
+                false
+            }
+        };
 
         let mut response = task_action_success(&link);
         response["deleted"] = json!(true);
         response["cleanup"] = json!({
-            "background": true,
+            "background": background,
             "taskId": link.local_task_id,
             "workspacePath": link.workspace_path,
         });
@@ -478,10 +483,16 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Result<Value, AppIpcError> {
         let links = self.archived_cleanup_links(&payload).await?;
-        let previews = links
-            .iter()
-            .map(cleanup_task_files_preview)
+        let previews = stream::iter(links)
+            .map(|link| async move {
+                let fallback = link.clone();
+                tokio::task::spawn_blocking(move || cleanup_task_files_preview(&link))
+                    .await
+                    .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))
+            })
+            .buffer_unordered(8)
             .collect::<Vec<_>>();
+        let previews = previews.await;
         Ok(cleanup_summary_response(previews, false))
     }
 
@@ -490,10 +501,30 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
     ) -> Result<Value, AppIpcError> {
         let links = self.archived_cleanup_links(&payload).await?;
-        let results = links
-            .iter()
-            .map(|link| cleanup_task_files_response(link, true, false))
+        let results = stream::iter(links)
+            .map(|link| async move {
+                let fallback = link.clone();
+                tokio::task::spawn_blocking(move || cleanup_task_files_response(&link, true, false))
+                    .await
+                    .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))
+            })
+            .buffer_unordered(8)
             .collect::<Vec<_>>();
+        let results = results.await;
         Ok(cleanup_summary_response(results, true))
     }
+}
+
+fn cleanup_join_error_response(link: &RuntimeTaskLink, error: tokio::task::JoinError) -> Value {
+    json!({
+        "taskId": link.local_task_id,
+        "workspacePath": link.workspace_path,
+        "targetCount": 0,
+        "cleanableCount": 0,
+        "skippedCount": 0,
+        "errorCount": 1,
+        "bytes": 0,
+        "items": [],
+        "error": error.to_string(),
+    })
 }
