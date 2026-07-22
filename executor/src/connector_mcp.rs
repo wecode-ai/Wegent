@@ -554,7 +554,7 @@ mod tests {
             .and_then(Value::as_str)
             .is_some_and(|value| !value.is_empty()));
         assert_eq!(normalized["source_sha256"], json!(source_sha256));
-        assert_eq!(normalized["size_bytes"].as_u64().unwrap() > 0, true);
+        assert!(normalized["size_bytes"].as_u64().unwrap() > 0);
         assert!(normalized["source_archive_sha256"]
             .as_str()
             .unwrap()
