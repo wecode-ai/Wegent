@@ -159,7 +159,12 @@ cp .env.example .env
 # REDIS_URL=redis://127.0.0.1:6379/0
 # CHECK_SYSTEM_INITIALIZATION_STATUS=True
 # PASSWORD_KEY=your-password-key-here
+# USER_AES_KEY=base64:your-32-byte-base64-key
+# GIT_TOKEN_AES_KEY=your-32-byte-sensitive-data-key
+# GIT_TOKEN_AES_IV=your-16-byte-iv
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
+# SITES_API_BASE_URL=http://localhost:8765
+# SITES_API_TOKEN=your-sites-platform-token
 ```
 
 `CHECK_SYSTEM_INITIALIZATION_STATUS` is enabled by default. When enabled, the backend loads the first-run administrator password setup state into memory at startup, and the login page receives the `ADMIN_PASSWORD_SETUP_REQUIRED` error code through the `/users/me` handshake. Set it to `False` for deployments that must skip this check.

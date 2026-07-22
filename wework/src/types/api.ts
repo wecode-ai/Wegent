@@ -1179,6 +1179,7 @@ export interface LocalDeviceApp {
   isEnabled?: boolean
   pluginDisplayNames?: string[]
   source?: 'codex-app' | string
+  skillPath?: string | null
 }
 
 export interface SkillDirectoryMove {

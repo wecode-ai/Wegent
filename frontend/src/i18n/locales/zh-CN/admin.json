@@ -14,6 +14,7 @@
     "api_keys": "密钥管理",
     "system_config": "系统配置",
     "im_channels": "IM 渠道",
+    "connector_apps": "应用连接",
     "monitor": "订阅监控",
     "device_monitor": "设备监控"
   },
@@ -1055,6 +1056,75 @@
       "restart_all_cloud_title": "确认重启全部云设备",
       "restart_all_cloud_message": "将向所有云设备发送重启命令，可能中断正在运行的任务。请确认后继续。",
       "restart_all_cloud_confirm": "确认重启"
+    }
+  },
+  "connector_apps": {
+    "title": "应用连接",
+    "description": "发布 MCP 或 HTTP 应用，并统一管理认证、可见范围和工具权限。",
+    "create": "添加应用",
+    "edit": "编辑应用",
+    "disable": "停用应用",
+    "discover_tools": "发现工具",
+    "test_tool": "测试工具",
+    "enabled": "已启用",
+    "disabled": "已停用",
+    "empty": "尚未配置应用。",
+    "connections": "已有 {{count}} 个用户连接",
+    "confirm_disable": "确定停用应用“{{name}}”吗？现有连接将被删除，重新启用后用户需要再次授权。",
+    "auth": {
+      "none": "无需用户认证"
+    },
+    "visibility": {
+      "all": "所有用户",
+      "roles": "指定角色"
+    },
+    "dialog": {
+      "create_title": "添加应用",
+      "edit_title": "编辑应用",
+      "description": "既可连接 Streamable HTTP/SSE MCP 服务，也可把普通 HTTP API 适配为工具。密钥会加密保存，且不会通过 API 返回。"
+    },
+    "fields": {
+      "name": "显示名称",
+      "slug": "唯一标识",
+      "description": "应用描述",
+      "mcp_url": "MCP 端点地址",
+      "http_base_url": "HTTP API 基础地址",
+      "transport": "连接协议",
+      "http_tools": "HTTP 工具定义",
+      "icon_url": "图标地址",
+      "auth_type": "用户认证方式",
+      "visibility": "可见范围",
+      "allowed_roles": "允许的角色",
+      "provider_headers": "服务端固定请求头",
+      "clear_provider_headers": "清除已保存的固定请求头",
+      "tool_allowlist": "工具白名单",
+      "enabled": "向用户开放此应用"
+    },
+    "hints": {
+      "lines": "每行填写一个值。",
+      "allowlist": "每行填写一个上游工具名；留空表示开放全部工具。",
+      "http_tools": "填写工具 JSON 数组。每个工具包含名称、描述、HTTP 方法、相对路径、input_schema，可选参数位置和超时时间。",
+      "http_tools_example": "[{\"name\":\"get_ticket\",\"description\":\"查询工单\",\"method\":\"GET\",\"path\":\"/tickets/{id}\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"]},\"argument_locations\":{\"id\":\"path\"},\"timeout_seconds\":30}]",
+      "headers_json": "可选 JSON 对象，值会加密保存。",
+      "headers_configured": "已配置请求头：{{names}}。留空会保留，填写 JSON 对象则整体替换；填写 {} 可清空。"
+    },
+    "success": {
+      "saved": "应用已保存",
+      "disabled": "应用已停用",
+      "discovered": "发现 {{count}} 个工具",
+      "tested": "工具测试完成"
+    },
+    "errors": {
+      "load_failed": "加载应用失败",
+      "save_failed": "保存应用失败",
+      "disable_failed": "停用应用失败",
+      "discover_failed": "发现工具失败",
+      "test_failed": "测试工具失败",
+      "test_returned_error": "工具测试返回错误",
+      "no_test_tool": "请先配置或开放至少一个工具再测试",
+      "required": "名称、标识、端点地址和所选协议的必要配置不能为空",
+      "provider_headers_invalid": "固定请求头必须是值均为字符串的 JSON 对象",
+      "http_tools_invalid": "HTTP 工具定义必须是 JSON 数组"
     }
   },
   "templates": {
