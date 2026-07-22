@@ -32,6 +32,12 @@ Run only the cloud-project desktop E2E:
 pnpm --filter wework e2e:desktop:cloud
 ```
 
+Run only the plugin marketplace, install, chat-use, and uninstall flow:
+
+```bash
+pnpm --filter wework e2e:desktop:plugins
+```
+
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
 
 ```bash
@@ -79,6 +85,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
+
+The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
 
 ## Responses API Mock
 
@@ -153,6 +161,7 @@ Desktop task-flow E2E requires a Linux runner with a graphical session, for exam
 
 ```bash
 pnpm --filter wework prepare:codex
+xvfb-run -a pnpm --filter wework e2e:desktop:plugins
 xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
 ```
