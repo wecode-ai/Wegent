@@ -1,30 +1,37 @@
-import { describe, expect, test } from 'vitest'
-import { getNextBufferedStreamingText } from './useBufferedStreamingText'
+import { act, renderHook } from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
 
-describe('getNextBufferedStreamingText', () => {
-  test('reveals a bounded prefix while preserving the current content', () => {
-    const target = `Hello ${'world '.repeat(30)}`
-    const next = getNextBufferedStreamingText('Hello ', target)
+describe('useBufferedStreamingText', () => {
+  test('coalesces streaming updates before rendering the latest content', () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'Hello' } }
+    )
 
-    expect(target.startsWith(next)).toBe(true)
-    expect(next.length).toBeGreaterThan('Hello '.length)
-    expect(next).not.toBe(target)
+    rerender({ content: 'Hello world' })
+    rerender({ content: 'Hello world again' })
+    expect(result.current).toBe('Hello')
+
+    act(() => vi.advanceTimersByTime(50))
+    expect(result.current).toBe('Hello world again')
+    vi.useRealTimers()
   })
 
-  test('does not split Unicode code points', () => {
-    expect(getNextBufferedStreamingText('', '😀你好')).toBe('😀')
-  })
+  test('renders completed content immediately and cancels a pending update', () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(
+      ({ content, streaming }) => useBufferedStreamingText(content, streaming),
+      { initialProps: { content: 'partial', streaming: true } }
+    )
 
-  test('drains a small reserve on alternating frames', () => {
-    expect(getNextBufferedStreamingText('', '一二三四', false)).toBe('')
-    expect(getNextBufferedStreamingText('', '一二三四', true)).toBe('一')
-  })
+    rerender({ content: 'partial update', streaming: true })
+    rerender({ content: 'complete', streaming: false })
+    expect(result.current).toBe('complete')
 
-  test('immediately adopts non-append updates', () => {
-    expect(getNextBufferedStreamingText('old content', 'replacement')).toBe('replacement')
-  })
-
-  test('returns completed content unchanged', () => {
-    expect(getNextBufferedStreamingText('done', 'done')).toBe('done')
+    act(() => vi.runOnlyPendingTimers())
+    expect(result.current).toBe('complete')
+    vi.useRealTimers()
   })
 })
