@@ -23,6 +23,9 @@ const REQUEST_USER_INPUT_PROMPT =
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
+const UNSENT_BLANK_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_BLANK_TASK_DRAFT'
+const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
+const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
 const WINDOW_LIFECYCLE_PROMPT =
   'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
 const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
@@ -4033,6 +4036,27 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
+
+    phase = 'blank-task-draft-restoration'
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('fill', composerSelector, { value: UNSENT_BLANK_TASK_DRAFT })
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await waitForControlValue(
+      control,
+      composerSelector,
+      UNSENT_BLANK_TASK_DRAFT,
+      'The blank task lost its unsent composer draft after switching tasks'
+    )
+    await control.command('fill', composerSelector, { value: '' })
+
     if (!REQUEST_INPUT_ONLY) {
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, {
@@ -4228,6 +4252,11 @@ async function main() {
 
     phase = 'fresh-chat'
     control.setScenario('fresh_chat')
+    const taskRowsBeforeFreshChat = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('runtime-local-task-row-')
+      )
+    )
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4244,6 +4273,41 @@ async function main() {
       text: FRESH_CHAT_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    phase = 'task-draft-isolation'
+    const secondTaskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
+        ),
+      'The second task was not available for task draft isolation'
+    )
+    const secondTaskRowTestId = secondTaskSnapshot.testIds.find(
+      testId => testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
+    )
+    assert.ok(secondTaskRowTestId, 'The second task row was not found')
+    await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('fill', composerSelector, { value: UNSENT_FIRST_TASK_DRAFT })
+    await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+    await waitForControlValue(
+      control,
+      composerSelector,
+      UNSENT_SECOND_TASK_DRAFT,
+      'The second task lost its unsent composer draft after switching tasks'
+    )
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await waitForControlValue(
+      control,
+      composerSelector,
+      UNSENT_FIRST_TASK_DRAFT,
+      'The first task lost its unsent composer draft after switching tasks'
+    )
+    await control.command('fill', composerSelector, { value: '' })
+    await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+    await control.command('fill', composerSelector, { value: '' })
 
     phase = 'standalone-new-task-state'
     await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')

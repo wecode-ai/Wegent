@@ -1306,6 +1306,7 @@ export function WorkbenchProvider({
   )
   const projectChatValue = useMemo(
     () => ({
+      scopeKey: projectChatScopeKey,
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -1345,6 +1346,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      projectChatScopeKey,
       draftInput,
       trialTemplates,
       handleBlockedModelSelect,
@@ -1370,6 +1372,7 @@ export function WorkbenchProvider({
   )
   const paneProjectChatValue = useMemo(
     () => ({
+      scopeKey: projectChatScopeKey,
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
@@ -1409,6 +1412,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      projectChatScopeKey,
       draftInput,
       trialTemplates,
       handleBlockedModelSelect,
