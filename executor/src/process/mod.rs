@@ -39,9 +39,10 @@ use crate::{
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
-        collect_claude_stream_summary, extract_claude_child_blocks, extract_claude_subagent_update,
-        extract_claude_tool_results, extract_claude_tool_uses, extract_reasoning, extract_text,
-        ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolUse,
+        collect_claude_stream_summary, compact_claude_stdout_line, extract_claude_child_blocks,
+        extract_claude_subagent_update, extract_claude_tool_results, extract_claude_tool_uses,
+        extract_reasoning, extract_text, ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer,
+        ClaudeStdoutJsonError, ClaudeToolUse,
     },
 };
 
@@ -1040,6 +1041,16 @@ where
     let dispatcher = StreamingEventDispatcher::new(sink);
     while let Ok(Some(line)) = lines.next_line().await {
         line_number += 1;
+        let line = match compact_claude_stdout_line(&line, line_number) {
+            Ok(line) => line,
+            Err(error) => {
+                dispatcher.flush().await;
+                return StreamingStdoutOutcome::InvalidJson {
+                    stdout: output,
+                    error,
+                };
+            }
+        };
         output.push_str(&line);
         output.push('\n');
         if let Some(file) = debug_stdout_file.as_mut() {

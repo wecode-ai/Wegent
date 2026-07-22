@@ -32,6 +32,15 @@ const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream disconnects.'
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
+const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
+const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
+const MEMORY_SAMPLE_INTERVAL_MS = 500
+const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
+  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 512 * 1024
+)
+const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 256 * 1024
+)
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
@@ -95,6 +104,7 @@ const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
+const MEMORY_ONLY = process.argv.includes('--memory-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -311,6 +321,122 @@ async function waitForSnapshot(
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+async function openBottomWorkspaceLauncher(control, description) {
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  const snapshot = await waitForSnapshot(
+    control,
+    value => value.testIds.includes('workspace-tool-launcher'),
+    `${description} did not show the workspace tool launcher`,
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  assert.ok(
+    snapshot.testIds.includes('workspace-terminal-card'),
+    `${description} did not offer Terminal`
+  )
+  assert.ok(snapshot.testIds.includes('workspace-ide-card'), `${description} did not offer IDE`)
+  assert.equal(
+    snapshot.testIds.includes('workspace-terminal-window'),
+    false,
+    `${description} started a terminal before Terminal was selected`
+  )
+  return snapshot
+}
+
+async function closeBottomWorkspacePanel(control) {
+  await control.command('click', '[data-testid="close-bottom-workspace-panel-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The bottom workspace panel did not close',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+function processGroup(snapshot, groupName) {
+  return snapshot.processMemory.groups.find(group => group.group === groupName) ?? null
+}
+
+async function captureMemorySample(control, phase) {
+  const snapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+  const webContent = processGroup(snapshot, 'webkit-webcontent')
+  assert.ok(webContent, 'The Wework WebContent process was missing from the memory snapshot')
+  return {
+    phase,
+    timestamp: snapshot.timestamp,
+    domNodeCount: snapshot.domNodeCount,
+    rssKiB: webContent.rss_kib,
+    physicalFootprintKiB: webContent.physical_footprint_kib,
+    pids: webContent.pids,
+  }
+}
+
+async function verifyMemoryGrowth({ composerSelector, control }) {
+  assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
+  control.setScenario('memory')
+  const samples = [await captureMemorySample(control, 'baseline')]
+  await sendPromptUntilScenarioRequest(control, composerSelector, MEMORY_PROMPT, 'memory')
+
+  let completed = false
+  const startedAt = Date.now()
+  while (!completed && Date.now() - startedAt < UI_TIMEOUT_MS) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, MEMORY_SAMPLE_INTERVAL_MS))
+    samples.push(await captureMemorySample(control, 'streaming'))
+    const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+    completed = snapshot.text.includes(MEMORY_COMPLETION_TEXT)
+  }
+  assert.equal(completed, true, 'The memory E2E response did not complete')
+
+  for (let index = 0; index < 5; index += 1) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    samples.push(await captureMemorySample(control, 'settled'))
+  }
+
+  const baseline = samples[0]
+  const peak = samples.reduce((largest, sample) =>
+    sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
+  )
+  const settledSamples = samples.filter(sample => sample.phase === 'settled')
+  const settled = settledSamples.at(-1)
+  assert.ok(settled, 'The memory E2E did not capture settled samples')
+  const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
+  const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
+  const settledDriftKiB = settled.physicalFootprintKiB - settledSamples[0].physicalFootprintKiB
+
+  await writeFile(
+    join(resultDir, 'memory-growth.json'),
+    `${JSON.stringify(
+      {
+        limits: {
+          maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
+          maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
+        },
+        summary: { peakGrowthKiB, settledGrowthKiB, settledDriftKiB },
+        samples,
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
+
+  assert.ok(
+    peakGrowthKiB <= MEMORY_MAX_PEAK_GROWTH_KIB,
+    `WebContent peak physical footprint grew by ${peakGrowthKiB} KiB`
+  )
+  assert.ok(
+    settledGrowthKiB <= MEMORY_MAX_SETTLED_GROWTH_KIB,
+    `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`
+  )
+  assert.ok(
+    settledDriftKiB <= 32 * 1024,
+    `WebContent kept growing after completion by ${settledDriftKiB} KiB`
+  )
 }
 
 async function waitForScenarioRequestCount(control, scenario, expectedCount) {
@@ -1007,6 +1133,77 @@ function assistantMessage(text) {
   }
 }
 
+function streamingMarkdownReport() {
+  const section = index =>
+    [
+      `### Memory section ${index}`,
+      '',
+      '| Metric | Value |',
+      '| --- | ---: |',
+      `| Section | ${index} |`,
+      '| Rendering | Streaming Markdown |',
+      '',
+      '```ts',
+      `export const memorySection${index} = { enabled: true, index: ${index} }`,
+      '```',
+      '',
+      'This section exercises incremental Markdown parsing, syntax highlighting, React reconciliation, and WebKit layout allocation.',
+      '',
+    ].join('\n')
+  return `${Array.from({ length: 80 }, (_, index) => section(index + 1)).join('\n')}\n${MEMORY_COMPLETION_TEXT}`
+}
+
+function streamingTextEvents(id, text) {
+  const itemId = `${id}-message`
+  const chunks = text.match(/[\s\S]{1,48}/g) ?? []
+  return {
+    chunks,
+    start: [
+      responseCreated(id),
+      {
+        type: 'response.output_item.added',
+        output_index: 0,
+        item: {
+          id: itemId,
+          type: 'message',
+          status: 'in_progress',
+          role: 'assistant',
+          content: [],
+        },
+      },
+      {
+        type: 'response.content_part.added',
+        item_id: itemId,
+        output_index: 0,
+        content_index: 0,
+        part: { type: 'output_text', text: '', annotations: [] },
+      },
+    ],
+    finish: [
+      {
+        type: 'response.output_text.done',
+        item_id: itemId,
+        output_index: 0,
+        content_index: 0,
+        text,
+      },
+      {
+        type: 'response.output_item.done',
+        output_index: 0,
+        item: {
+          id: itemId,
+          type: 'message',
+          status: 'completed',
+          role: 'assistant',
+          content: [{ type: 'output_text', text, annotations: [] }],
+        },
+      },
+      responseCompleted(id),
+    ],
+    itemId,
+  }
+}
+
 function localProtocolCase(modelId) {
   return LOCAL_MODEL_CASES.find(model => model.modelId === modelId) ?? null
 }
@@ -1361,8 +1558,10 @@ class DesktopE2EServer {
     this.failedCloudModelWaiter = null
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.memoryStage = 'initial'
     this.cloudModelStage = 'initial'
     this.toolLessPrewarmHandled = false
+    this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -1536,6 +1735,7 @@ class DesktopE2EServer {
         'reconnect',
         'fresh_chat',
         'attachment_only',
+        'memory',
         'cloud_initial',
         'cloud_follow_up',
       ].includes(scenario),
@@ -1856,6 +2056,17 @@ class DesktopE2EServer {
       return
     }
 
+    if (
+      this.scenario === 'memory' &&
+      this.memoryStage === 'initial' &&
+      !this.memoryToolLessPrewarmHandled &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.memoryToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
     if (this.scenario === 'initial' && this.modelStage === 'initial') {
       this.recordScenarioRequest('initial', modelRequest)
       assert.ok(
@@ -1900,6 +2111,35 @@ class DesktopE2EServer {
         assistantMessage(COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'memory' && this.memoryStage === 'initial') {
+      this.recordScenarioRequest('memory', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(MEMORY_PROMPT),
+        'The real Codex request did not contain the memory E2E prompt'
+      )
+      const tool = selectShellTool(body, this.workspacePath)
+      this.memoryStage = 'awaiting_tool_output'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall('wework-memory-tool-call', tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'memory') {
+      this.recordScenarioRequest('memory', modelRequest)
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The real Codex request did not report the memory E2E tool output'
+      )
+      this.memoryStage = 'streaming'
+      await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
+      this.memoryStage = 'complete'
       return
     }
 
@@ -2605,6 +2845,35 @@ class DesktopE2EServer {
     })
     response.end(createSse(events))
   }
+
+  async writeStreamingMarkdown(response, responseId, text) {
+    const stream = streamingTextEvents(responseId, text)
+    response.writeHead(200, {
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+    })
+    response.write(createSse(stream.start))
+    let offset = 0
+    for (const delta of stream.chunks) {
+      response.write(
+        createSse([
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta,
+            offset,
+          },
+        ])
+      )
+      offset += [...delta].length
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 5))
+    }
+    response.end(createSse(stream.finish))
+  }
 }
 
 async function writeCodexConfig(codexHome, modelServerUrl) {
@@ -2830,6 +3099,29 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
+  await openBottomWorkspaceLauncher(control, 'The new cloud task')
+  await control.command('click', '[data-testid="workspace-terminal-card"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes('workspace-terminal-window') &&
+      value.testIds.includes('remote-terminal') &&
+      !value.testIds.includes('workspace-tool-launcher'),
+    'The new cloud task did not start its terminal after Terminal was selected',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
+  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The new cloud task terminal and bottom panel did not close cleanly',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
@@ -2858,6 +3150,47 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: UI_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
+
+  await openBottomWorkspaceLauncher(control, 'The historical cloud task')
+  await control.command('click', '[data-testid="workspace-terminal-card"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes('workspace-terminal-window') &&
+      value.testIds.includes('remote-terminal') &&
+      !value.testIds.includes('workspace-tool-launcher'),
+    'The historical cloud task did not start its terminal after Terminal was selected',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await closeBottomWorkspacePanel(control)
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes('workspace-terminal-window') &&
+      value.testIds.includes('remote-terminal') &&
+      !value.testIds.includes('workspace-tool-launcher'),
+    'The historical cloud task did not restore its existing terminal',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await control.command('click', '[data-testid="workspace-terminal-new-tab-button"]')
+  const addMenuSnapshot = await waitForSnapshot(
+    control,
+    value => value.testIds.includes('workspace-terminal-new-tab-menu'),
+    'The bottom workspace add menu did not open'
+  )
+  assert.ok(addMenuSnapshot.testIds.includes('workspace-add-terminal-option'))
+  assert.ok(addMenuSnapshot.testIds.includes('workspace-add-ide-option'))
+  assert.equal(
+    addMenuSnapshot.testIds.includes('workspace-add-desktop-option'),
+    false,
+    'The external build exposed the internal desktop extension'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(control, 'cloud-05b-historical-terminal-restored.png')
+  await closeBottomWorkspacePanel(control)
 
   control.setScenario('cloud_follow_up')
   await sendPrompt(control, composerSelector, CLOUD_FOLLOW_UP_PROMPT)
@@ -3208,6 +3541,14 @@ async function main() {
       phase = 'attachment-only-sidebar'
       await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
       console.log(`Wework attachment-only sidebar E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (MEMORY_ONLY) {
+      phase = 'memory-growth'
+      await selectE2EModel(control)
+      await verifyMemoryGrowth({ composerSelector, control })
+      console.log(`Wework desktop memory E2E passed. Evidence: ${resultDir}`)
       return
     }
 
