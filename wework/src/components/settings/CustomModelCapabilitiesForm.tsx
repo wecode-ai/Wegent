@@ -283,6 +283,11 @@ export function CustomModelCapabilitiesForm({
     read_only: null,
     ...nestedObject(modelMessages.permissions),
   }
+  const upgrade = {
+    model: '',
+    migration_markdown: '',
+    ...nestedObject(entry.upgrade),
+  }
   const updateModelMessages = (patch: CatalogObject) =>
     update({ model_messages: { ...modelMessages, ...patch } })
   const updateMessageGroup = (key: string, current: CatalogObject, patch: CatalogObject) =>
@@ -951,9 +956,7 @@ export function CustomModelCapabilitiesForm({
                                 update({
                                   upgrade: event.target.value
                                     ? {
-                                        model: '',
-                                        migration_markdown: '',
-                                        ...nestedObject(entry.upgrade),
+                                        ...upgrade,
                                         model: event.target.value,
                                       }
                                     : null,
@@ -974,9 +977,7 @@ export function CustomModelCapabilitiesForm({
                               onChange={event =>
                                 update({
                                   upgrade: {
-                                    model: '',
-                                    migration_markdown: '',
-                                    ...nestedObject(entry.upgrade),
+                                    ...upgrade,
                                     migration_markdown: event.target.value,
                                   },
                                 })
@@ -1022,20 +1023,22 @@ export function CustomModelCapabilitiesForm({
                           />
                         </Field>
                         <div className="grid gap-3 sm:grid-cols-2">
-                          {[
+                          {(
                             [
-                              'personality_default',
-                              t('workbench.local_model_personality_default', '默认个性提示词'),
-                            ],
-                            [
-                              'personality_friendly',
-                              t('workbench.local_model_personality_friendly', '友好个性提示词'),
-                            ],
-                            [
-                              'personality_pragmatic',
-                              t('workbench.local_model_personality_pragmatic', '务实个性提示词'),
-                            ],
-                          ].map(([key, label]) => (
+                              [
+                                'personality_default',
+                                t('workbench.local_model_personality_default', '默认个性提示词'),
+                              ],
+                              [
+                                'personality_friendly',
+                                t('workbench.local_model_personality_friendly', '友好个性提示词'),
+                              ],
+                              [
+                                'personality_pragmatic',
+                                t('workbench.local_model_personality_pragmatic', '务实个性提示词'),
+                              ],
+                            ] as const
+                          ).map(([key, label]) => (
                             <Field key={key} label={label}>
                               <textarea
                                 data-testid={`local-model-${key}-input`}
