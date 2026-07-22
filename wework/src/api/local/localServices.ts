@@ -2102,7 +2102,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
               const restart = await request<{
                 restarted?: boolean
               }>('runtime.codex.app_server.restart', { ifIdle: true })
-              if (restart.restarted) markLocalModelCatalogReady()
+              if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
             } catch (error) {
               console.error('Local model catalog reconciliation failed', error)
             }

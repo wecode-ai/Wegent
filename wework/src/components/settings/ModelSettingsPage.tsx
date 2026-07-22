@@ -695,7 +695,10 @@ function LocalModelSettingsSection({
   const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
   const [pendingDiscardAction, setPendingDiscardAction] =
     useState<PendingLocalModelFormAction | null>(null)
-  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState(false)
+  const [catalogRestartConfirmation, setCatalogRestartConfirmation] = useState<Array<{
+    id: string
+    updatedAt: string
+  }> | null>(null)
   const [restartingCatalog, setRestartingCatalog] = useState(false)
 
   const refreshModels = useCallback(() => {
@@ -956,6 +959,9 @@ function LocalModelSettingsSection({
         enabled: form.enabled,
       })
       if (catalogEntry) {
+        const writtenCatalogSnapshot = listLocalModelConfigs()
+          .filter(model => model.catalogEntry)
+          .map(({ id: modelId, updatedAt }) => ({ id: modelId, updatedAt }))
         await requestLocalExecutor('runtime.codex.catalog.custom.write', {
           models: listLocalModelConfigs().flatMap(model =>
             model.catalogEntry ? [model.catalogEntry] : []
@@ -966,9 +972,9 @@ function LocalModelSettingsSection({
           requiresConfirmation: boolean
         }>('runtime.codex.app_server.restart', { ifIdle: true })
         if (restart.restarted) {
-          markLocalModelCatalogReady()
+          markLocalModelCatalogReady(writtenCatalogSnapshot)
         } else if (restart.requiresConfirmation) {
-          setCatalogRestartConfirmation(true)
+          setCatalogRestartConfirmation(writtenCatalogSnapshot)
         }
       }
       resetForm()
@@ -982,8 +988,8 @@ function LocalModelSettingsSection({
     setError(null)
     try {
       await requestLocalExecutor('runtime.codex.app_server.restart', { force: true })
-      markLocalModelCatalogReady()
-      setCatalogRestartConfirmation(false)
+      markLocalModelCatalogReady(catalogRestartConfirmation ?? [])
+      setCatalogRestartConfirmation(null)
     } catch (restartError) {
       setError(
         getErrorMessage(
@@ -1710,7 +1716,7 @@ function LocalModelSettingsSection({
       {catalogRestartConfirmation && (
         <LocalModelCatalogRestartDialog
           restarting={restartingCatalog}
-          onLater={() => setCatalogRestartConfirmation(false)}
+          onLater={() => setCatalogRestartConfirmation(null)}
           onRestart={() => void confirmCatalogRestart()}
         />
       )}
