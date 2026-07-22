@@ -61,6 +61,7 @@ import { reduceWorkbenchMessages } from '@wegent/chat-core'
 import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { useWorkbenchPaneActive } from './workbenchPaneStack'
 import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { getRuntimeMessageIndex, mergeRuntimeTranscriptMessages } from './runtimeTranscriptMessages'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -2745,37 +2746,6 @@ function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number)
   }
 }
 
-function mergeRuntimeTranscriptMessages(
-  leadingMessages: WorkbenchMessage[],
-  trailingMessages: WorkbenchMessage[]
-): WorkbenchMessage[] {
-  const merged: WorkbenchMessage[] = []
-  const seenIds = new Set<string>()
-  for (const message of [...leadingMessages, ...trailingMessages]) {
-    if (seenIds.has(message.id)) continue
-    seenIds.add(message.id)
-    merged.push(message)
-  }
-
-  if (!merged.some(message => getRuntimeMessageIndex(message) !== null)) {
-    return merged
-  }
-
-  return merged
-    .map((message, order) => ({ message, order }))
-    .sort((left, right) => {
-      const leftIndex = getRuntimeMessageIndex(left.message)
-      const rightIndex = getRuntimeMessageIndex(right.message)
-      if (leftIndex !== null && rightIndex !== null && leftIndex !== rightIndex) {
-        return leftIndex - rightIndex
-      }
-      if (leftIndex !== null && rightIndex === null) return -1
-      if (leftIndex === null && rightIndex !== null) return 1
-      return left.order - right.order
-    })
-    .map(item => item.message)
-}
-
 function transcriptRangeFromPage(transcript: RuntimePaneTranscript): LoadedTranscriptRange[] {
   const indexedRange = transcriptRangeFromMessageIndexes(transcript.messages)
   const rangeStart =
@@ -2824,13 +2794,6 @@ function mergeTranscriptRanges(
     previous.end = Math.max(previous.end, range.end)
   }
   return merged
-}
-
-function getRuntimeMessageIndex(message: WorkbenchMessage): number | null {
-  return typeof message.runtimeMessageIndex === 'number' &&
-    Number.isFinite(message.runtimeMessageIndex)
-    ? message.runtimeMessageIndex
-    : null
 }
 
 function numericValue(value: number | null | undefined): number | null {
