@@ -36,10 +36,10 @@ const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the repo
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 512 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 256 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 256 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 128 * 1024
 )
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
@@ -384,7 +384,9 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
   control.setScenario('memory')
   const samples = [await captureMemorySample(control, 'baseline')]
+  await captureVerificationScreenshot(control, 'memory-01-baseline.png')
   await sendPromptUntilScenarioRequest(control, composerSelector, MEMORY_PROMPT, 'memory')
+  await captureVerificationScreenshot(control, 'memory-02-streaming.png')
 
   let completed = false
   const startedAt = Date.now()
@@ -395,6 +397,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     completed = snapshot.text.includes(MEMORY_COMPLETION_TEXT)
   }
   assert.equal(completed, true, 'The memory E2E response did not complete')
+  await captureVerificationScreenshot(control, 'memory-03-completed.png')
 
   for (let index = 0; index < 5; index += 1) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
@@ -408,6 +411,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const settledSamples = samples.filter(sample => sample.phase === 'settled')
   const settled = settledSamples.at(-1)
   assert.ok(settled, 'The memory E2E did not capture settled samples')
+  await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledDriftKiB = settled.physicalFootprintKiB - settledSamples[0].physicalFootprintKiB
@@ -438,7 +442,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`
   )
   assert.ok(
-    settledDriftKiB <= 32 * 1024,
+    settledDriftKiB <= 16 * 1024,
     `WebContent kept growing after completion by ${settledDriftKiB} KiB`
   )
 }
@@ -732,11 +736,6 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  for (const localModel of LOCAL_MODEL_CASES) {
-    await control.command('waitFor', `[data-testid="model-option-${localModel.optionId}"]`, {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-  }
   await control.command('click', `[data-testid="model-option-${modelId}"]`)
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     text: modelLabel,

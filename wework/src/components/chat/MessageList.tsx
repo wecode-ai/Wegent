@@ -113,6 +113,8 @@ const USER_MESSAGE_COLLAPSE_LINES = 10
 const USER_MESSAGE_COLLAPSE_CHARACTERS = 600
 const MESSAGE_LAYOUT_RESIZE_SETTLE_MS = 120
 const SELECTION_ACTION_GAP = 8
+const MESSAGE_WINDOW_ROOT_MARGIN = '1200px 0px'
+const ALWAYS_MOUNT_RECENT_MESSAGE_COUNT = 4
 
 interface MessageTextSelection {
   text: string
@@ -198,8 +200,7 @@ export const MessageList = memo(function MessageList({
     isWaitingForAssistant &&
     waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
-  const disableMessageContentVisibility =
-    disableContentVisibility || isTextSelectionActive || isTauri
+  const windowMessages = isTauri && !disableContentVisibility && !isTextSelectionActive
   const messageIntrinsicHeights = useMemo(() => {
     return new Map(
       visibleMessages.map(message => [
@@ -373,19 +374,19 @@ export const MessageList = memo(function MessageList({
         )}
       {visibleMessages.map((message, index) => {
         const nextMessage = visibleMessages[index + 1]
+        const forceMounted =
+          index >= visibleMessages.length - ALWAYS_MOUNT_RECENT_MESSAGE_COUNT ||
+          message.status === 'streaming' ||
+          message.id === activeEditingMessageId ||
+          message.id === activeSubmittingEditMessageId
         return (
           <Fragment key={message.id}>
-            <article
-              className={[
-                'min-w-0',
-                disableMessageContentVisibility ? '' : '[content-visibility:auto]',
-                message.role === 'user' ? 'flex justify-end' : '',
-              ].join(' ')}
-              style={
-                disableMessageContentVisibility
-                  ? undefined
-                  : getMessageContainmentStyle(messageIntrinsicHeights.get(message.id))
-              }
+            <WindowedMessageArticle
+              enabled={windowMessages}
+              estimatedHeight={messageIntrinsicHeights.get(message.id)}
+              forceMounted={forceMounted}
+              messageRole={message.role}
+              useContentVisibility={!isTauri && !disableContentVisibility && !isTextSelectionActive}
               data-message-id={message.id}
               data-testid={`message-${message.role}`}
             >
@@ -436,7 +437,7 @@ export const MessageList = memo(function MessageList({
                   hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
               )}
-            </article>
+            </WindowedMessageArticle>
             {renderGapAfterMessage?.(message, nextMessage)}
           </Fragment>
         )
@@ -449,6 +450,74 @@ export const MessageList = memo(function MessageList({
     </div>
   )
 }, areMessageListPropsEqual)
+
+function WindowedMessageArticle({
+  enabled,
+  estimatedHeight,
+  forceMounted,
+  messageRole,
+  useContentVisibility,
+  children,
+  ...attributes
+}: {
+  enabled: boolean
+  estimatedHeight: number | undefined
+  forceMounted: boolean
+  messageRole: WorkbenchMessage['role']
+  useContentVisibility: boolean
+  children: ReactNode
+  'data-message-id': string
+  'data-testid': string
+}) {
+  const articleRef = useRef<HTMLElement>(null)
+  const canObserve = enabled && typeof IntersectionObserver !== 'undefined'
+  const [nearViewport, setNearViewport] = useState(!canObserve || forceMounted)
+  const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
+  const mounted = forceMounted || !canObserve || nearViewport
+
+  useEffect(() => {
+    if (!canObserve || forceMounted) return
+
+    const article = articleRef.current
+    if (!article) return
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry) return
+        if (!entry.isIntersecting) {
+          const height = article.getBoundingClientRect().height
+          if (height > 0) setRetainedHeight(height)
+        }
+        setNearViewport(entry.isIntersecting)
+      },
+      { rootMargin: MESSAGE_WINDOW_ROOT_MARGIN }
+    )
+    observer.observe(article)
+    return () => observer.disconnect()
+  }, [canObserve, forceMounted])
+
+  const placeholderHeight = Math.ceil(retainedHeight ?? estimatedHeight ?? 220)
+  return (
+    <article
+      ref={articleRef}
+      className={cn(
+        'min-w-0',
+        useContentVisibility && '[content-visibility:auto]',
+        messageRole === 'user' && 'flex justify-end'
+      )}
+      style={
+        mounted
+          ? useContentVisibility
+            ? getMessageContainmentStyle(estimatedHeight)
+            : undefined
+          : { minHeight: placeholderHeight }
+      }
+      {...attributes}
+    >
+      {mounted ? children : null}
+    </article>
+  )
+}
 
 function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSProperties {
   return {
