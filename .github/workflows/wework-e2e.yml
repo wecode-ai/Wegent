@@ -169,6 +169,7 @@ jobs:
           CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
         run: |
           test -x "$CODEX_BIN"
+          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop:plugins
           xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop
           xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop:cloud
 
