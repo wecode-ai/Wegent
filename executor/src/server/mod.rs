@@ -1760,6 +1760,11 @@ fn has_read_access(path: &Path) -> bool {
     attributes != INVALID_FILE_ATTRIBUTES
 }
 
+#[cfg(unix)]
+fn has_read_access(path: &Path) -> bool {
+    std::fs::OpenOptions::new().read(true).open(path).is_ok()
+}
+
 #[cfg(not(any(unix, windows)))]
 fn has_read_access(_path: &Path) -> bool {
     true
