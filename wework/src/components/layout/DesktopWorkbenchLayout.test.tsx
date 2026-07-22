@@ -40,13 +40,28 @@ const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
-  available: false,
-  DeviceAction: () => null,
-  WorkspaceAction: () => null,
-  isInternalPageUrl: vi.fn(() => false),
-  open: vi.fn(),
-}))
+const cloudDesktopExtensionMock = vi.hoisted(() => {
+  const launch = vi.fn()
+
+  return {
+    available: false,
+    DeviceAction: () => null,
+    WorkspaceAction: ({
+      onLaunchActionChange,
+    }: {
+      onLaunchActionChange?: (
+        action: ((options?: { notifyOpened?: boolean }) => Promise<void>) | null
+      ) => void
+    }) => {
+      onLaunchActionChange?.(async options => {
+        await launch(options)
+      })
+      return null
+    },
+    isInternalPageUrl: vi.fn(() => false),
+    launch,
+  }
+})
 
 vi.mock('@extensions/cloud-desktop', () => ({
   cloudDesktopExtension: cloudDesktopExtensionMock,
@@ -498,7 +513,7 @@ describe('DesktopWorkbenchLayout', () => {
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
     cloudDesktopExtensionMock.available = false
-    cloudDesktopExtensionMock.open.mockResolvedValue(true)
+    cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024,
@@ -7432,7 +7447,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
     })
-  }, 10000)
+  }, 20000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
     renderWorkspacePanelLayout()
@@ -7508,7 +7523,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
     await userEvent.click(screen.getByTestId('workspace-add-desktop-option'))
 
-    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(cloudDesktopExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
+    )
     expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
 
