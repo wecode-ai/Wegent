@@ -6,7 +6,9 @@ sidebar_position: 5
 
 The right workspace displays project files, previews, and change reviews. Local file links in an AI response open the file and can jump to a referenced line.
 
-Press `Command+J` to open the terminal. A project terminal starts in the active project or the task's Git worktree and is preserved when switching tasks.
+Press `Command+J` to open or close the bottom workspace panel. Opening the panel does not create a new terminal automatically. Existing terminals are preserved per task and restored when you return to that task.
+
+Select **+** in the bottom tab bar to choose **Terminal**, **IDE**, or **Desktop**, depending on the active device's capabilities. Terminal starts in the active project or the task's Git worktree. IDE opens in the system default browser. When available, Desktop opens in Wework's built-in browser.
 
 ## Review and undo changes
 
