@@ -45,6 +45,7 @@ impl RuntimeWorkRpcHandler {
                 if archived {
                     link.status = "archived".to_owned();
                     link.running = false;
+                    link.continuable = false;
                 } else if link.status == "archived" {
                     continue;
                 }
@@ -461,6 +462,7 @@ impl RuntimeWorkRpcHandler {
             RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, local_task_id);
         link.status = if archived { "archived" } else { "active" }.to_owned();
         link.running = false;
+        link.continuable = !archived;
         log_runtime_archive_link("runtime task payload created pending link", &link, archived);
         Ok(link)
     }
@@ -572,6 +574,8 @@ impl RuntimeWorkRpcHandler {
         if local_active {
             link.status = "running".to_owned();
             link.running = true;
+            link.thread_status = "active".to_owned();
+            link.turn_status = Some("inProgress".to_owned());
         }
         Some(link)
     }
@@ -759,6 +763,14 @@ impl RuntimeWorkRpcHandler {
             }
             link.status = status.to_owned();
             link.running = status == "running";
+            link.thread_status = if link.running { "active" } else { "idle" }.to_owned();
+            link.turn_status = match status {
+                "running" => Some("inProgress".to_owned()),
+                "done" => Some("completed".to_owned()),
+                "cancelled" => Some("interrupted".to_owned()),
+                "failed" => Some("failed".to_owned()),
+                _ => link.turn_status.clone(),
+            };
             link.updated_at = now_ms();
             if status != "running" {
                 link.completed_at = Some(link.updated_at);

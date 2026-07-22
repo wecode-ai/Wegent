@@ -938,6 +938,31 @@ async function verifyBackgroundTaskWindowLifecycle({
       `${JSON.stringify({ appProcessId: app.pid, stages: sleepInhibitorEvidence }, null, 2)}\n`
     )
   }
+
+  setPhase('completed-task-reopen')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes(runningTaskTestId) &&
+      snapshot.testIds.includes('send-message-button'),
+    'The completed task became busy again after reopening its continuable conversation',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('05-completed-task-reopened-idle.png')
+  )
 }
 
 async function attachAndSendOnlyFile(control, composerSelector) {
