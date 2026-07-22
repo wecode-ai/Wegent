@@ -29,6 +29,7 @@ export interface TrayMenuTaskGroups {
   hasRunningTasks: boolean
   showRunningStatus: boolean
   runningCount: number
+  activeTaskCount: number
   unreadCount: number
   pinned: TrayMenuTaskItem[]
   pinnedMore: TrayMenuTaskItem[]
@@ -48,6 +49,7 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
   hasRunningTasks: false,
   showRunningStatus: false,
   runningCount: 0,
+  activeTaskCount: 0,
   unreadCount: 0,
   pinned: [],
   pinnedMore: [],
@@ -149,7 +151,8 @@ export function buildTrayMenuTaskGroups(
 ): TrayMenuTaskGroups {
   const { reminders, showUnread = true, showRunning = true } = options
   const items = collectRuntimeTaskItems(runtimeWork)
-  const running = showRunning ? items.filter(({ task }) => task.running) : []
+  const activeTasks = items.filter(({ task }) => task.running)
+  const running = showRunning ? activeTasks : []
   const unread =
     showUnread && reminders
       ? items.filter(({ workspace, task }) =>
@@ -170,6 +173,7 @@ export function buildTrayMenuTaskGroups(
     hasRunningTasks: showRunning ? (reminders?.hasRunningTasks ?? running.length > 0) : false,
     showRunningStatus: showRunning,
     runningCount: running.length,
+    activeTaskCount: activeTasks.length,
     unreadCount: showUnread ? (reminders?.unreadCount ?? unread.length) : 0,
     pinned: pinnedTasks.visible,
     pinnedMore: pinnedTasks.more,

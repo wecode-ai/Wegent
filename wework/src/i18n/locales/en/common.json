@@ -910,6 +910,8 @@
     "general_settings_close_to_tray": "Keep running after closing the main window",
     "general_settings_background_description": "Closing the main window does not stop running tasks. Tasks continue in the background, and you can double-click the system tray icon to return to the main window.",
     "general_settings_background_disabled_description": "Closing the main window exits the app and interrupts running tasks.",
+    "general_settings_prevent_sleep_while_tasks_running": "Prevent sleep while tasks are running",
+    "general_settings_prevent_sleep_while_tasks_running_description": "Prevent idle system sleep while any task is running, then restore the system's normal sleep policy after all tasks finish.",
     "general_settings_system_tray_title": "System tray",
     "general_settings_task_completion_notifications": "Send a system notification when a task completes",
     "general_settings_task_completion_notifications_description": "Send an operating system notification through the system notification plugin when a background task completes.",
