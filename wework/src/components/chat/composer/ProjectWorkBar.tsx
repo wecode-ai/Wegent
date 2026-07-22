@@ -83,6 +83,7 @@ interface ProjectWorkBarProps {
   menuClassName?: string
   emptyLabel?: string
   projectMenuOpenSignal?: number
+  externalMenuOpenSignal?: number
   projectMenuAnchorElement?: HTMLElement | null
 }
 
@@ -115,6 +116,7 @@ export function ProjectWorkBar({
   menuClassName,
   emptyLabel,
   projectMenuOpenSignal,
+  externalMenuOpenSignal,
   projectMenuAnchorElement = null,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
@@ -124,6 +126,7 @@ export function ProjectWorkBar({
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
   const executionModeButtonRef = useRef<HTMLButtonElement>(null)
   const handledProjectMenuOpenSignalRef = useRef<number | undefined>(undefined)
+  const handledExternalMenuOpenSignalRef = useRef<number | undefined>(undefined)
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -404,6 +407,16 @@ export function ProjectWorkBar({
     setExternalMenuAnchorElement(isMobile ? null : projectMenuAnchorElement)
     setOpen(true)
   }, [closeExecutionModeMenu, isMobile, projectMenuAnchorElement, projectMenuOpenSignal])
+
+  useEffect(() => {
+    if (!externalMenuOpenSignal) return
+    if (handledExternalMenuOpenSignalRef.current === externalMenuOpenSignal) return
+
+    handledExternalMenuOpenSignalRef.current = externalMenuOpenSignal
+    closeExecutionModeMenu()
+    setExternalMenuAnchorElement(null)
+    setOpen(true)
+  }, [closeExecutionModeMenu, externalMenuOpenSignal])
 
   const handleSelectProject = (projectId: number) => {
     const option = projectWorkspaceOptionByProjectId.get(projectId)

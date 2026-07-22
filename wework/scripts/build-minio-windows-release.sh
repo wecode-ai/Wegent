@@ -13,6 +13,8 @@ EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
 EXPLICIT_VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL+x}"
 EXPLICIT_VITE_WEGENT_BACKEND_URL_VALUE="${VITE_WEGENT_BACKEND_URL:-}"
+EXPLICIT_VITE_WEGENT_SOCKET_URL="${VITE_WEGENT_SOCKET_URL+x}"
+EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE="${VITE_WEGENT_SOCKET_URL:-}"
 
 for ENV_FILE in "$PROJECT_DIR/.env" "$WEWORK_DIR/.env.production"; do
   if [ -f "$ENV_FILE" ]; then
@@ -32,6 +34,9 @@ if [ -n "$EXPLICIT_VITE_WEGENT_BACKEND_URL" ]; then
   export VITE_WEGENT_BACKEND_URL="$EXPLICIT_VITE_WEGENT_BACKEND_URL_VALUE"
 else
   export VITE_WEGENT_BACKEND_URL="https://wegent.intra.weibo.com/api"
+fi
+if [ -n "$EXPLICIT_VITE_WEGENT_SOCKET_URL" ]; then
+  export VITE_WEGENT_SOCKET_URL="$EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE"
 fi
 
 VERSION=""
@@ -77,7 +82,8 @@ Environment:
   ATTACHMENT_S3_REGION, ATTACHMENT_S3_USE_SSL
   WEWORK_WINDOWS_RELEASE_S3_PREFIX, WEWORK_WINDOWS_RELEASE_OUTPUT_DIR
   WEWORK_WINDOWS_CARGO_TARGET_DIR, WEWORK_UPDATER_KEY_PATH,
-  WEWORK_BRAND_CONFIG
+  WEWORK_BRAND_CONFIG, VITE_API_BASE_URL, VITE_WEGENT_BACKEND_URL,
+  VITE_WEGENT_SOCKET_URL
 
 Example:
   bash wework/scripts/build-minio-windows-release.sh --version 0.1.17 --upload
@@ -124,7 +130,14 @@ config = {
     # The NSIS installer is patched after Tauri builds it, so the release script
     # signs the final installer explicitly instead of keeping Tauri's stale
     # pre-patch updater signature.
-    "bundle": {"createUpdaterArtifacts": False},
+    "bundle": {
+        "createUpdaterArtifacts": False,
+        "resources": [
+            "binaries/codex/x86_64-pc-windows-msvc/**/*",
+            "binaries/codex/legal/**/*",
+            "bundled-hooks/**/*",
+        ],
+    },
     "plugins": {
         "updater": {
             "endpoints": [os.environ["UPDATER_ENDPOINT"]],
@@ -368,6 +381,7 @@ echo "  UPDATE_BASE_URL=$UPDATE_BASE_URL"
 echo "  OUTPUT_DIR=$OUTPUT_DIR"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
+echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
 echo "  UPLOAD=$UPLOAD"
 
 BUILD_ARGS=(

@@ -87,7 +87,7 @@ describe('DesktopSettingsMenu', () => {
 
     expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
     expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
+    expect(screen.getByText('Codex 剩余额度')).toBeInTheDocument()
   })
 
   test('hides logout in local-first app runtime', () => {

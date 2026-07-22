@@ -38,6 +38,18 @@ Run only the cloud-project desktop E2E:
 pnpm --filter wework e2e:desktop:cloud
 ```
 
+Run only the plugin marketplace, install, chat-use, and uninstall flow:
+
+```bash
+pnpm --filter wework e2e:desktop:plugins
+```
+
+Run the desktop streaming-memory regression on macOS:
+
+```bash
+pnpm --filter wework e2e:desktop:memory
+```
+
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
 
 ```bash
@@ -72,7 +84,9 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
 8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
-The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
+The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a send → `apply_patch` → tool result → follow-up lifecycle, while real Codex executes the tool in the isolated workspace.
+
+Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
 The environment needs Rust, Tauri build dependencies, and a real Codex binary. The runner finds `codex` on `PATH` by default; an installed or `prepare:codex`-prepared real binary can also be selected explicitly:
 
@@ -84,12 +98,18 @@ Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built 
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. Only the model Responses API used by Codex is simulated; Backend HTTP and WebSocket APIs must not be mocked. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
+The plugin scenario dynamically creates an isolated local Codex marketplace and a plugin with a Skill under the test-results directory. It then uses the real Tauri WebView, Executor, and Codex app-server to verify marketplace discovery, installation, insertion of the plugin reference into the chat composer, and uninstallation. It neither reads the user's Codex home nor mocks plugin APIs; marketplace data, plugin cache, and installation state remain inside the isolated test directory. Screenshots are retained for all four critical stages, with application, Executor, and UI snapshot diagnostics retained on failure.
+
+The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Tauri WebView. Every 500 milliseconds it samples the aggregate physical footprint of all associated WebKit Web Content processes, writing the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 512 MiB, settled growth after completion to 256 MiB, and continued growth during the settled window to 32 MiB. The first two limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` and `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`.
+
 ## Responses API Mock
 
-`wework/e2e/utils/mock-response-api-server.mjs` provides a real HTTP service that simulates the OpenAI Responses API:
+`wework/e2e/utils/mock-response-api-server.mjs` provides a real HTTP service that validates local-model capability probes:
 
 - `POST /v1/responses`: returns non-streaming Responses API JSON.
 - `POST /v1/responses` with `stream: true`: returns `text/event-stream` events including `response.created`, `response.output_text.delta`, and `response.completed`.
+- `POST /v1/chat/completions`: validates and returns a Chat Completions function tool call.
+- `POST /v1/messages`: validates and returns an Anthropic Messages `tool_use` block.
 - `GET /captured-requests`: reads captured requests.
 - `POST /clear-requests`: clears captured requests.
 - `GET /health`: CI health check.
@@ -155,9 +175,17 @@ Desktop task-flow E2E requires a Linux runner with a graphical session, for exam
 
 ```bash
 pnpm --filter wework prepare:codex
+xvfb-run -a pnpm --filter wework e2e:desktop:plugins
 xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:wecode
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
+```
+
+The memory gate depends on macOS WebKit process association and physical-footprint sampling, so run it separately on a macOS runner:
+
+```bash
+pnpm --filter wework prepare:codex
+pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.

@@ -107,6 +107,7 @@ import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
 import {
+  CLOUD_MODEL_CATALOG_MODEL_ID_OPTION,
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
@@ -665,6 +666,7 @@ function localRuntimeModelConfig(
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
+      tool_profile: localModel.toolProfile,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
       responses_url: requestUrl,
@@ -703,9 +705,11 @@ function localRuntimeModelConfig(
       throw new Error('Cloud model identity is incomplete')
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
+    const catalogModelId = modelOptions?.[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION]?.trim()
     return {
       model: 'openai',
       model_id: modelName,
+      ...(catalogModelId ? { codex_catalog_model_id: catalogModelId } : {}),
       api_format: RESPONSES_API_FORMAT,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
@@ -714,6 +718,7 @@ function localRuntimeModelConfig(
         'X-Wegent-Model-Type': modelType,
         'X-Wegent-Model-Namespace': namespace,
         'X-Wegent-Model-User-Id': resourceUserId,
+        'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
       },
       ...(Number.isFinite(contextWindow) && contextWindow > 0
         ? { model_context_window: contextWindow }

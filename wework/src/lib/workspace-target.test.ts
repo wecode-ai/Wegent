@@ -175,6 +175,45 @@ describe('resolveWorkspaceTarget', () => {
     })
   })
 
+  test('keeps the remote host route for a merged project workspace', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveProjectRuntimeWorkspaceTarget({
+        currentProject: project,
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'local-device',
+                  remoteHostId: 'cloud-device',
+                  workspacePath: '/home/ubuntu/project-alpha',
+                  workspaceSource: 'remote',
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 0,
+        },
+      })
+    ).toMatchObject({
+      deviceId: 'cloud-device',
+      path: '/home/ubuntu/project-alpha',
+      source: 'project',
+      workspaceSource: 'remote',
+    })
+  })
+
   test('resolves runtime task project and workspace from runtime work', () => {
     const project: ProjectWithTasks = {
       id: 12,
@@ -227,6 +266,61 @@ describe('resolveWorkspaceTarget', () => {
         path: '/workspace/worktrees/8/project-alpha',
         source: 'runtime',
         taskId: 'runtime-1',
+      },
+    })
+  })
+
+  test('keeps the remote host route for a merged historical task workspace', () => {
+    const project: ProjectWithTasks = {
+      id: 12,
+      name: 'Wegent',
+      tasks: [],
+    }
+
+    expect(
+      resolveRuntimeWorkspaceContext({
+        currentRuntimeTask: {
+          deviceId: 'local-device',
+          workspacePath: '/home/ubuntu/project-alpha',
+          taskId: 'runtime-1',
+        },
+        projects: [project],
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 12, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  deviceId: 'local-device',
+                  remoteHostId: 'cloud-device',
+                  workspacePath: '/home/ubuntu/project-alpha',
+                  workspaceSource: 'remote',
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-1',
+                      workspacePath: '/home/ubuntu/project-alpha',
+                      title: 'Runtime task',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 1,
+        },
+      })
+    ).toEqual({
+      project,
+      workspaceTarget: {
+        deviceId: 'cloud-device',
+        path: '/home/ubuntu/project-alpha',
+        source: 'runtime',
+        taskId: 'runtime-1',
+        workspaceSource: 'remote',
       },
     })
   })

@@ -1347,7 +1347,7 @@ export function ConnectionsSettingsPage({
         <DesktopTopBar
           testId="settings-sidebar-topbar"
           className={cn(
-            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] bg-transparent pr-2 pl-2',
+            '-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2',
             usesOverlayTitlebar && 'h-[76px] pt-6'
           )}
           left={
@@ -1363,7 +1363,10 @@ export function ConnectionsSettingsPage({
           }
         />
 
-        <nav className="space-y-1 px-1.5">
+        <nav
+          data-testid="settings-sidebar-nav"
+          className="scrollbar-soft min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5"
+        >
           {visibleSettingsNavItems.map((item, index) => {
             const showCategory =
               item.category && visibleSettingsNavItems[index - 1]?.category !== item.category

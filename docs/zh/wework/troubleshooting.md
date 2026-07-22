@@ -18,12 +18,12 @@ sidebar_position: 10
 
 ## Git 克隆失败
 
-| 提示 | 检查内容 |
-| --- | --- |
-| Authentication failed | Git Token 是否有效、是否有仓库权限 |
-| Repository not found | 仓库地址和当前账号权限 |
-| Remote branch not found | 默认分支是否存在 |
-| Could not resolve host / timeout | 执行设备的网络和代理 |
+| 提示                             | 检查内容                           |
+| -------------------------------- | ---------------------------------- |
+| Authentication failed            | Git Token 是否有效、是否有仓库权限 |
+| Repository not found             | 仓库地址和当前账号权限             |
+| Remote branch not found          | 默认分支是否存在                   |
+| Could not resolve host / timeout | 执行设备的网络和代理               |
 
 ## 任务或终端无法运行
 
@@ -31,6 +31,16 @@ sidebar_position: 10
 - 设备提示升级时，先完成升级。
 - 切换任务后，确认终端对应的是当前项目或 Worktree。
 - 重新打开应用后仍失败，可完全退出 Wework 再启动。
+
+### 新任务未出现在侧边栏
+
+开发调试时，可在 Wework Web Inspector 的控制台执行以下命令后复现：
+
+```js
+localStorage.setItem("wework:debug-runtime", "1");
+```
+
+前端日志中的 `[Wework] Runtime sidebar state` 会依次记录 executor 列表结果、状态合并结果，以及侧边栏排序和截断后的任务 ID。当前选中的任务存在于项目任务列表但未进入可见区域时，还会记录 `[Wework] Runtime sidebar selected task is hidden`。诊断完成后执行 `localStorage.removeItem('wework:debug-runtime')` 关闭详细日志。
 
 ## 无法审核或撤销变更
 
@@ -48,4 +58,13 @@ sidebar_position: 10
 
 ## 获取帮助
 
-反馈问题时，请提供 Wework 版本、操作系统、复现步骤、界面错误信息和相关日志。不要在截图或日志中包含 Token、API Key、远程设备启动命令或认证文件内容。
+在发生问题的任务右上角点击 **反馈问题**，选择需要包含的信息，然后点击 **导出诊断包**。Wework 会把诊断包保存到系统下载目录；补充说明是选填项。
+
+默认诊断包包含：
+
+- Wework 和本地执行服务的完整运行日志；
+- 当前任务、设备和运行状态；
+- 当前任务页面截图；
+- Wework 版本、操作系统和处理器架构。
+
+导出前可以取消任意项目。诊断包只在本机生成，不会自动上传。日志中的常见凭证和用户目录会被脱敏，但发送前仍应确认包内没有不希望共享的业务信息。

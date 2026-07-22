@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
-import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse, User } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+  User,
+} from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
@@ -10,6 +16,7 @@ import {
   EMPTY_RUNTIME_WORK,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
+  mergeRuntimeWorkLists,
   nowMs,
   readCachedDeviceList,
   resolveDeviceListWithCache,
@@ -20,7 +27,13 @@ import {
   timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
 import type { WorkbenchAction } from './workbenchReducer'
-import { getRememberedStandaloneDeviceId } from './workbenchRuntimeHelpers'
+import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
+import {
+  getRememberedStandaloneDeviceId,
+  getRuntimeTaskRouteKey,
+  removeRuntimeTasks,
+  runtimeWorkContainsTask,
+} from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 import {
   readCachedRemoteRuntimeWork,
@@ -61,6 +74,36 @@ function createCloudRuntimeStateWithCache(runtimeWork: RuntimeWorkListResponse):
   }
 }
 
+function removeRuntimeTasksFromCloudState(
+  state: CloudRuntimeState,
+  addresses: RuntimeTaskAddress[]
+): CloudRuntimeState {
+  const removeFromSnapshot = (snapshot: CloudRuntimeState['current']) =>
+    snapshot
+      ? {
+          ...snapshot,
+          runtimeWork: removeRuntimeTasks(snapshot.runtimeWork, addresses),
+        }
+      : null
+  return {
+    ...state,
+    availability:
+      state.inFlightRevision == null ? state.availability : state.lastGood ? 'stale' : 'idle',
+    current: removeFromSnapshot(state.current),
+    lastGood: removeFromSnapshot(state.lastGood),
+    inFlightRevision: null,
+  }
+}
+
+function mergeRuntimeTaskAddresses(
+  current: RuntimeTaskAddress[],
+  incoming: RuntimeTaskAddress[]
+): RuntimeTaskAddress[] {
+  const addresses = new Map(current.map(address => [getRuntimeTaskRouteKey(address), address]))
+  incoming.forEach(address => addresses.set(getRuntimeTaskRouteKey(address), address))
+  return [...addresses.values()]
+}
+
 export function useWorkbenchDataRefresh({
   user,
   state,
@@ -86,6 +129,7 @@ export function useWorkbenchDataRefresh({
   const cloudBackgroundApiRef = useRef(services.cloudBackgroundApi)
   const runtimeWorkRef = useRef(state.runtimeWork)
   const devicesRef = useRef(state.devices)
+  const archivedRuntimeTaskAddressesRef = useRef<RuntimeTaskAddress[]>([])
   const cloudWorkStatus = useMemo(
     () => selectCloudWorkStatus(cloudRuntimeState),
     [cloudRuntimeState]
@@ -107,6 +151,7 @@ export function useWorkbenchDataRefresh({
       userId: user.id,
       runtimeWork: initialCachedRemoteRuntimeWork,
     }
+    archivedRuntimeTaskAddressesRef.current = []
     // eslint-disable-next-line react-hooks/set-state-in-effect -- Cached runtime work must switch atomically with the authenticated user.
     updateCloudRuntimeState(
       hasCloudBackgroundApi
@@ -132,6 +177,37 @@ export function useWorkbenchDataRefresh({
     }
   }, [dispatch, hasCloudBackgroundApi, updateCloudRuntimeState])
 
+  const markRuntimeTasksArchived = useCallback(
+    (addresses: RuntimeTaskAddress[]) => {
+      if (addresses.length === 0) return
+      const archivedAddresses = mergeRuntimeTaskAddresses(
+        archivedRuntimeTaskAddressesRef.current,
+        addresses
+      )
+      archivedRuntimeTaskAddressesRef.current = archivedAddresses
+      const runtimeWork = writeCachedRemoteRuntimeWork(
+        user.id,
+        removeRuntimeTasks(cachedRemoteRuntimeWorkRef.current.runtimeWork, archivedAddresses),
+        devicesRef.current
+      )
+      cachedRemoteRuntimeWorkRef.current = { userId: user.id, runtimeWork }
+      updateCloudRuntimeState(
+        removeRuntimeTasksFromCloudState(cloudRuntimeStateRef.current, archivedAddresses)
+      )
+      dispatch({ type: 'runtime_tasks_archived', addresses: archivedAddresses })
+    },
+    [dispatch, updateCloudRuntimeState, user.id]
+  )
+
+  const releaseConfirmedArchivedRuntimeTasks = useCallback(
+    (runtimeWork: RuntimeWorkListResponse) => {
+      archivedRuntimeTaskAddressesRef.current = archivedRuntimeTaskAddressesRef.current.filter(
+        address => runtimeWorkContainsTask(runtimeWork, address)
+      )
+    },
+    []
+  )
+
   const selectVisibleRuntimeWork = useCallback(
     (
       localRuntimeWork: RuntimeWorkListResponse,
@@ -139,7 +215,10 @@ export function useWorkbenchDataRefresh({
       devices?: DeviceInfo[]
     ) => {
       const runtimeWork = selectRuntimeWorkView(localRuntimeWork, nextCloudState, devices)
-      return hasCloudBackgroundApi ? runtimeWork : filterDisconnectedRemoteRuntimeWork(runtimeWork)
+      const visibleRuntimeWork = hasCloudBackgroundApi
+        ? runtimeWork
+        : filterDisconnectedRemoteRuntimeWork(runtimeWork)
+      return removeRuntimeTasks(visibleRuntimeWork, archivedRuntimeTaskAddressesRef.current)
     },
     [hasCloudBackgroundApi]
   )
@@ -187,9 +266,21 @@ export function useWorkbenchDataRefresh({
       if (
         options?.isCancelled?.() ||
         revision == null ||
+        cloudRuntimeStateRef.current.inFlightRevision !== revision ||
         cloudBackgroundApiRef.current !== backgroundApi
       ) {
         return
+      }
+
+      if (runtimeWorkResult?.status === 'fulfilled') {
+        releaseConfirmedArchivedRuntimeTasks(
+          mergeRuntimeWorkLists(baseRuntimeWork, runtimeWorkResult.value, {
+            devices: [
+              ...baseDevices,
+              ...(devicesResult?.status === 'fulfilled' ? devicesResult.value : []),
+            ],
+          })
+        )
       }
 
       const reconciledRuntimeWorkResult =
@@ -198,7 +289,10 @@ export function useWorkbenchDataRefresh({
               status: 'fulfilled' as const,
               value: reconcileCachedRemoteRuntimeWork(
                 cachedRemoteRuntimeWorkRef.current.runtimeWork,
-                runtimeWorkResult.value,
+                removeRuntimeTasks(
+                  runtimeWorkResult.value,
+                  archivedRuntimeTaskAddressesRef.current
+                ),
                 devicesResult?.status === 'fulfilled' ? devicesResult.value : undefined
               ),
             }
@@ -239,6 +333,7 @@ export function useWorkbenchDataRefresh({
       dispatch,
       selectVisibleRuntimeWork,
       services.cloudBackgroundApi,
+      releaseConfirmedArchivedRuntimeTasks,
       updateCloudRuntimeState,
       user.id,
     ]
@@ -350,11 +445,19 @@ export function useWorkbenchDataRefresh({
       selectVisibleDevices(devices, cloudRuntimeStateRef.current)
     )
     const localRuntimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
+    if (runtimeWorkResult && !services.cloudBackgroundApi?.listRuntimeWork) {
+      releaseConfirmedArchivedRuntimeTasks(runtimeWorkResult)
+    }
     const runtimeWork = runtimeWorkResult
       ? selectVisibleRuntimeWork(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
       : hasCloudBackgroundApi
         ? localRuntimeWork
         : filterDisconnectedRemoteRuntimeWork(localRuntimeWork)
+    debugRuntimeSidebarState('refresh-resolved', {
+      source: runtimeWorkResult ? 'executor' : 'current-state',
+      executorTaskIds: summarizeRuntimeWorkTaskIds(runtimeWorkResult ?? null),
+      visibleTaskIds: summarizeRuntimeWorkTaskIds(runtimeWork),
+    })
     dispatch({
       type: 'lists_refreshed',
       projects: state.projects,
@@ -372,7 +475,9 @@ export function useWorkbenchDataRefresh({
     executorClient,
     refreshCloudBackgroundData,
     hasCloudBackgroundApi,
+    releaseConfirmedArchivedRuntimeTasks,
     selectVisibleRuntimeWork,
+    services.cloudBackgroundApi,
     state.projects,
     state.runtimeWork,
     state.standaloneDeviceId,
@@ -432,6 +537,7 @@ export function useWorkbenchDataRefresh({
 
   return {
     cloudWorkStatus,
+    markRuntimeTasksArchived,
     refreshWorkLists,
     refreshDevices,
     getRemoteDeviceStartupCommand,

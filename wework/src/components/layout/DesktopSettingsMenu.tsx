@@ -217,7 +217,7 @@ export function DesktopSettingsMenu({
       <SettingsMenuItem
         testId="usage-menu-button"
         icon={<Clock className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.remaining_usage', '剩余用量')}
+        label={t('workbench.remaining_usage', 'Codex 剩余额度')}
         onClick={handleUsageClick}
         ariaExpanded={isUsageExpanded}
         ariaControls="remaining-usage-panel"

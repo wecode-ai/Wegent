@@ -130,7 +130,10 @@ function isLocalDeviceTarget(
   return device?.device_type === 'local'
 }
 
-function runtimeThreadId(address?: RuntimeTaskAddress | null): string | null {
+export function runtimeThreadId(address?: RuntimeTaskAddress | null): string | null {
+  if (typeof address?.threadId === 'string' && address.threadId.trim()) {
+    return address.threadId
+  }
   const handle = address?.runtimeHandle
   if (!isRecord(handle)) return null
   const threadId = handle.sessionId ?? handle.session_id ?? handle.threadId ?? handle.thread_id
@@ -1012,7 +1015,7 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      const prepared = buildSendPayload(message, undefined, options?.project)
+      const prepared = buildSendPayload(message, options?.attachments, options?.project)
       if (!prepared) {
         reportSendBlocked(
           'Wework default team is not configured',

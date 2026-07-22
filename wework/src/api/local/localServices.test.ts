@@ -834,6 +834,7 @@ describe('createLocalAppServices', () => {
       modelId: 'shared-model',
       modelType: 'user',
       modelOptions: {
+        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
       },
@@ -858,12 +859,14 @@ describe('createLocalAppServices', () => {
           new_session: false,
           model_config: expect.objectContaining({
             model_id: 'shared-model',
+            codex_catalog_model_id: 'gpt-5.6-luna',
             base_url: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
             api_key: 'cloud-login-token',
             default_headers: {
               'X-Wegent-Model-Type': 'user',
               'X-Wegent-Model-Namespace': 'default',
               'X-Wegent-Model-User-Id': '42',
+              'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
             },
           }),
         }),
@@ -1157,6 +1160,7 @@ describe('createLocalAppServices', () => {
           'X-Wegent-Model-Type': 'user',
           'X-Wegent-Model-Namespace': 'default',
           'X-Wegent-Model-User-Id': '42',
+          'X-Wegent-Upstream-Header-Wecode-Action': 'wework',
         },
         runtime_config: {
           codex: {

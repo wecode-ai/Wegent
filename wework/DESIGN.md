@@ -151,7 +151,8 @@ from `8px` through `24px`, in whole-pixel steps. Changing UI size scales every
 UI and heading token by `configuredSize / 14` and rounds each result to the
 nearest pixel. Code size is independent and applies directly to code blocks,
 diffs, editors, and terminals. The increase/decrease-font-size shortcuts step
-both configured values together while respecting their separate limits.
+both configured values together while respecting their separate limits. The
+reset-font-size shortcut restores the default `14px` UI and `12px` code sizes.
 
 Product code must consume the semantic Tailwind sizes, `heading-*` classes,
 `text-chat`, `text-code`, or the corresponding CSS variables. Arbitrary font

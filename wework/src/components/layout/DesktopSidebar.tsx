@@ -124,6 +124,10 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
+import {
+  debugRuntimeSidebarState,
+  warnRuntimeSidebarMismatch,
+} from '@/features/workbench/runtimeSidebarDiagnostics'
 import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 
@@ -1980,6 +1984,34 @@ function ProjectItem({
     prioritizedRuntimeTaskItems,
     runtimeTaskVisibleLimit
   )
+  useEffect(() => {
+    const details = {
+      projectId: project.id,
+      currentTaskId: currentRuntimeTask?.taskId ?? null,
+      visibleLimit: runtimeTaskVisibleLimit,
+      allTaskIds: prioritizedRuntimeTaskItems.map(item => item.task.taskId),
+      visibleTaskIds: visibleRuntimeTaskItems.map(item => item.task.taskId),
+      hiddenTaskIds: prioritizedRuntimeTaskItems
+        .slice(visibleRuntimeTaskItems.length)
+        .map(item => item.task.taskId),
+    }
+    debugRuntimeSidebarState('project-visible-items', details)
+
+    const currentTaskId = currentRuntimeTask?.taskId
+    if (
+      currentTaskId &&
+      prioritizedRuntimeTaskItems.some(item => item.task.taskId === currentTaskId) &&
+      !visibleRuntimeTaskItems.some(item => item.task.taskId === currentTaskId)
+    ) {
+      warnRuntimeSidebarMismatch(details)
+    }
+  }, [
+    currentRuntimeTask?.taskId,
+    prioritizedRuntimeTaskItems,
+    project.id,
+    runtimeTaskVisibleLimit,
+    visibleRuntimeTaskItems,
+  ])
   const projectDeviceState =
     getRuntimeProjectDeviceState(runtimeProjectWork, devices) ??
     getSidebarDeviceState(getProjectDeviceId(project), devices)

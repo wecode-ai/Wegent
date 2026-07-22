@@ -366,6 +366,19 @@ describe('ConnectionsSettingsPage', () => {
     ).toHaveAttribute('data-tauri-drag-region')
   })
 
+  test('keeps the settings navigation scrollable within the sidebar', () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('settings-sidebar-nav')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+  })
+
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
     api.getAllDevices.mockResolvedValue([])
     api.createCloudDevice.mockResolvedValue({
@@ -509,10 +522,16 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'resp_1' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          id: 'resp_1',
+          output: [{ type: 'custom_tool_call', name: 'wework_capability_probe' }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', {
       configurable: true,
@@ -562,10 +581,21 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [{ function: { name: 'wework_capability_probe', arguments: '{}' } }],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
 
@@ -593,7 +623,7 @@ describe('ConnectionsSettingsPage', () => {
         expect.any(Object)
       )
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
         stream: false,
       })
     } finally {
@@ -608,10 +638,15 @@ describe('ConnectionsSettingsPage', () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
     const originalFetch = globalThis.fetch
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      new Response(
+        JSON.stringify({
+          content: [{ type: 'tool_use', name: 'wework_capability_probe', id: 'tool_1', input: {} }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     )
     Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fetchMock })
 
@@ -645,7 +680,7 @@ describe('ConnectionsSettingsPage', () => {
         })
       )
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-        messages: [{ role: 'user', content: 'Reply with ok.' }],
+        messages: [{ role: 'user', content: 'Call the capability probe with value PING.' }],
         stream: false,
       })
     } finally {

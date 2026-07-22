@@ -38,6 +38,18 @@ pnpm --filter wework e2e:desktop:wecode
 pnpm --filter wework e2e:desktop:cloud
 ```
 
+仅运行插件市场、安装、对话使用和卸载链路：
+
+```bash
+pnpm --filter wework e2e:desktop:plugins
+```
+
+在 macOS 上运行桌面流式输出内存回归：
+
+```bash
+pnpm --filter wework e2e:desktop:memory
+```
+
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：
 
 ```bash
@@ -72,7 +84,9 @@ node e2e/utils/mock-response-api-server.mjs
 7. 让模型首次请求确定性失败，点击错误卡中的重试，并校验重试请求和最终回复。
 8. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
-测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动一个 OpenAI Responses 兼容服务，作为 Codex 的自定义模型 provider。该服务会返回确定性的工具调用和最终文本；工具调用仍由真实 Codex 在隔离工作区内执行。
+测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
+
+mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
 运行环境需要 Rust、Tauri 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
 
@@ -84,12 +98,18 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 云端项目场景会启动真实 Backend、Redis 和一个注册为远端设备的真实 Executor，通过真实鉴权、设备 RPC、任务持久化和项目删除接口完成创建项目、执行任务、恢复会话、连续追问与删除项目验证。测试只模拟 Codex 使用的模型 Responses API；不得模拟 Backend HTTP 或 WebSocket 接口。运行该场景需要 Python 3.11、`uv` 和 `redis-server`。
 
+插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
+
+内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 512 MiB、完成后的稳定态增长不超过 256 MiB、稳定期继续增长不超过 32 MiB；前两个阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 调整。
+
 ## Responses API Mock
 
-`wework/e2e/utils/mock-response-api-server.mjs` 提供真实 HTTP 服务，用于模拟 OpenAI Responses API：
+`wework/e2e/utils/mock-response-api-server.mjs` 提供真实 HTTP 服务，用于验证本地模型能力探针请求：
 
 - `POST /v1/responses`：返回非流式 Responses API JSON。
 - `POST /v1/responses` 且 `stream: true`：返回 `text/event-stream`，事件包含 `response.created`、`response.output_text.delta` 和 `response.completed`。
+- `POST /v1/chat/completions`：校验并返回 Chat Completions function tool call。
+- `POST /v1/messages`：校验并返回 Anthropic Messages `tool_use`。
 - `GET /captured-requests`：读取已捕获请求。
 - `POST /clear-requests`：清空捕获请求。
 - `GET /health`：CI health check。
@@ -155,9 +175,17 @@ pnpm --filter wework e2e
 
 ```bash
 pnpm --filter wework prepare:codex
+xvfb-run -a pnpm --filter wework e2e:desktop:plugins
 xvfb-run -a pnpm --filter wework e2e:desktop
 xvfb-run -a pnpm --filter wework e2e:desktop:wecode
 xvfb-run -a pnpm --filter wework e2e:desktop:cloud
+```
+
+内存门禁依赖 macOS 的 WebKit 进程关联和 physical footprint 采样，必须在 macOS runner 上单独运行：
+
+```bash
+pnpm --filter wework prepare:codex
+pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
