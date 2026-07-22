@@ -381,6 +381,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const paneActive = useWorkbenchPaneActive()
+  const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
+    return () => cancelAnimationFrame(frame)
+  }, [paneActive])
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -1845,7 +1850,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           <aside
             data-testid="environment-info-panel-container"
-            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible"
+            className={cn(
+              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              paneActive && environmentInfoTransitionEnabled
+                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                : 'transition-none'
+            )}
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (

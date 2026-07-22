@@ -93,6 +93,7 @@ const RECONNECT_ONLY = process.argv.includes('--reconnect-only')
 const VIEW_IMAGE_ONLY = process.argv.includes('--view-image-only')
 const ATTACHMENT_ONLY_SIDEBAR = process.argv.includes('--attachment-only-sidebar')
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
+const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -100,6 +101,57 @@ const weworkDir = resolve(scriptDir, '..', '..')
 const repoDir = resolve(weworkDir, '..')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
 const resultDir = join(weworkDir, 'test-results', 'desktop-e2e', runId)
+
+const PLUGIN_MARKETPLACE_NAME = 'desktop-e2e-marketplace'
+const PLUGIN_NAME = 'desktop-e2e-plugin'
+const PLUGIN_DISPLAY_NAME = 'Desktop E2E Plugin'
+
+async function createPluginMarketplaceFixture(root) {
+  const marketplaceManifestDir = join(root, '.agents', 'plugins')
+  const pluginRoot = join(root, 'plugins', PLUGIN_NAME)
+  await Promise.all([
+    mkdir(marketplaceManifestDir, { recursive: true }),
+    mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true }),
+    mkdir(join(pluginRoot, 'skills', 'desktop-e2e-skill'), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(
+      join(marketplaceManifestDir, 'marketplace.json'),
+      `${JSON.stringify(
+        {
+          name: PLUGIN_MARKETPLACE_NAME,
+          interface: { displayName: 'Desktop E2E Marketplace' },
+          plugins: [
+            {
+              name: PLUGIN_NAME,
+              source: { source: 'local', path: `./plugins/${PLUGIN_NAME}` },
+            },
+          ],
+        },
+        null,
+        2
+      )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, '.codex-plugin', 'plugin.json'),
+      `${JSON.stringify(
+        {
+          name: PLUGIN_NAME,
+          interface: {
+            displayName: PLUGIN_DISPLAY_NAME,
+            shortDescription: 'Exercises the real Wework plugin lifecycle',
+          },
+        },
+        null,
+        2
+      )}\n`
+    ),
+    writeFile(
+      join(pluginRoot, 'skills', 'desktop-e2e-skill', 'SKILL.md'),
+      `---\nname: desktop-e2e-skill\ndescription: Verifies the installed plugin can be used in chat.\n---\n\nUse this skill to verify the Wework desktop plugin flow.\n`
+    ),
+  ])
+}
 
 function withTimeout(promise, timeoutMs, message) {
   let timeout
@@ -337,6 +389,86 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   assert.ok(dataUrl.startsWith(prefix), 'Desktop screenshot did not return PNG data')
   await writeFile(screenshotPath, Buffer.from(dataUrl.slice(prefix.length), 'base64'))
   return screenshotPath
+}
+
+async function verifyPluginLifecycle(control, marketplacePath) {
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
+  } else {
+    await control.command('click', '[data-testid="plugins-add-marketplace-button"]')
+    await control.command('click', '[data-testid="plugins-add-custom-marketplace-button"]')
+  }
+  await control.command('fill', '[data-testid="plugins-marketplace-path-input"]', {
+    value: marketplacePath,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugins-marketplace-save-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  const marketplaceSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(PLUGIN_DISPLAY_NAME) &&
+      snapshot.testIds.some(testId => testId.startsWith('plugin-marketplace-row-')),
+    'The local plugin marketplace did not expose its plugin'
+  )
+  const rowTestId = marketplaceSnapshot.testIds.find(testId =>
+    testId.startsWith('plugin-marketplace-row-')
+  )
+  assert.ok(rowTestId, 'The plugin marketplace row did not have a stable test id')
+  const pluginId = rowTestId.slice('plugin-marketplace-row-'.length)
+  const installSelector = `[data-testid="plugin-marketplace-install-${pluginId}"]`
+  const actionsSelector = `[data-testid="plugin-marketplace-actions-${pluginId}"]`
+  await captureVerificationScreenshot(control, 'plugins-01-marketplace.png')
+
+  await control.command('click', installSelector)
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The plugin was not shown as installed after the real app-server request'
+  )
+  assert.match(
+    await control.command('getText', installSelector),
+    /Try in chat|在对话中试用/,
+    'The installed plugin did not expose its chat action'
+  )
+  await captureVerificationScreenshot(control, 'plugins-02-installed.png')
+
+  await control.command('click', installSelector)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => snapshot.text.includes(PLUGIN_DISPLAY_NAME),
+    'Trying the installed plugin did not place its reference in the composer',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(control, 'plugins-03-used-in-chat.png')
+
+  await control.command('click', '[data-testid="plugins-button"]')
+  await control.command('waitFor', actionsSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('click', actionsSelector)
+  await control.command('click', `[data-testid="plugin-marketplace-uninstall-${pluginId}"]`)
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(`plugin-marketplace-actions-${pluginId}`),
+    'The plugin remained installed after the uninstall request'
+  )
+  assert.match(
+    await control.command('getText', installSelector),
+    /Install|安装/,
+    'The marketplace did not return to the install state after uninstall'
+  )
+  await captureVerificationScreenshot(control, 'plugins-04-uninstalled.png')
 }
 
 function processIsAlive(processId) {
@@ -2762,6 +2894,7 @@ async function main() {
   const workspacePath = join(resultDir, 'workspace')
   const homePath = join(resultDir, 'home')
   const executorHome = join(resultDir, 'executor-home')
+  const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const appLogPath = join(resultDir, 'app.log')
   const executorLogPath = join(resultDir, 'executor.log')
   await Promise.all([
@@ -2774,6 +2907,7 @@ async function main() {
     join(workspacePath, IMAGE_ARTIFACT_NAME),
     Buffer.from(IMAGE_ARTIFACT_BASE64, 'base64')
   )
+  await createPluginMarketplaceFixture(pluginMarketplacePath)
   await runChecked('git', ['init'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
   await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
@@ -2892,6 +3026,13 @@ async function main() {
     })
     control.failBlockedCloudModels()
     await triggerModelReloadUntilCloudFailure(control)
+
+    if (PLUGINS_ONLY) {
+      phase = 'plugin-lifecycle'
+      await verifyPluginLifecycle(control, pluginMarketplacePath)
+      console.log(`Wework desktop plugin E2E passed. Evidence: ${resultDir}`)
+      return
+    }
 
     if (desktopScenario) {
       phase = 'desktop-extension-scenario'
