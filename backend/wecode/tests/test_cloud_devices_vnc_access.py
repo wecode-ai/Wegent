@@ -16,6 +16,78 @@ def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_vnc_upstream_connection_is_direct_and_uncompressed(mocker):
+    mock_connect = mocker.patch.object(cloud_devices.websockets, "connect")
+
+    connection = cloud_devices._connect_vnc_upstream(
+        "wss://nevis.example.com/vnc",
+        "signature-1",
+    )
+
+    assert connection is mock_connect.return_value
+    mock_connect.assert_called_once_with(
+        "wss://nevis.example.com/vnc",
+        additional_headers={"X-Signature": "signature-1"},
+        compression=None,
+        proxy=None,
+        max_size=None,
+        ping_interval=20,
+        ping_timeout=20,
+        close_timeout=5,
+    )
+
+
+@pytest.mark.asyncio
+async def test_vnc_websocket_proxy_closes_cleanly_when_upstream_fails(
+    test_user: User,
+    mocker,
+    monkeypatch,
+):
+    class FailingUpstreamConnection:
+        async def __aenter__(self):
+            raise RuntimeError("upstream unavailable")
+
+        async def __aexit__(self, _exception_type, _exception, _traceback):
+            return False
+
+    websocket = mocker.MagicMock()
+    websocket.accept = AsyncMock()
+    websocket.close = AsyncMock()
+    db = mocker.MagicMock()
+    mocker.patch(
+        "app.core.security.get_current_user_from_token", return_value=test_user
+    )
+    mocker.patch("app.db.session.SessionLocal", return_value=db)
+    mocker.patch.object(
+        cloud_devices.cloud_device_provider,
+        "get_status",
+        new=AsyncMock(return_value={"cloud_config": {"sandboxId": "sandbox-1"}}),
+    )
+    mocker.patch.object(
+        cloud_devices,
+        "_connect_vnc_upstream",
+        return_value=FailingUpstreamConnection(),
+    )
+    monkeypatch.setattr(
+        cloud_devices.nevis_settings, "NEVIS_BASE_URL", "https://nevis.example.com"
+    )
+    monkeypatch.setattr(cloud_devices.nevis_settings, "NEVIS_MANAGER_ID", "manager-1")
+    monkeypatch.setattr(cloud_devices.nevis_settings, "NEVIS_SIGNATURE", "signature-1")
+
+    await cloud_devices.vnc_websocket_proxy(
+        websocket,
+        "device-1",
+        token="test-token",
+    )
+
+    websocket.accept.assert_awaited_once()
+    websocket.close.assert_awaited_once_with(
+        code=1011,
+        reason="VNC upstream connection failed",
+    )
+    db.close.assert_called_once()
+
+
 def test_admin_can_access_other_users_vnc_config(
     test_client: TestClient,
     test_user: User,
