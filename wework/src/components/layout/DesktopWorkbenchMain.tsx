@@ -473,6 +473,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useLayoutEffect(() => {
     setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
   }, [])
+  useLayoutEffect(() => {
+    if (!paneActive) return
+
+    const workbenchScroll = workbenchScrollRef.current
+    if (workbenchScroll && workbenchScroll.scrollLeft !== 0) {
+      workbenchScroll.scrollLeft = 0
+    }
+  }, [paneActive])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -1569,7 +1577,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           data-testid="desktop-workbench-content"
           className={cn(
             'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
-            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
+            hasConversation ? 'overflow-x-hidden overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}

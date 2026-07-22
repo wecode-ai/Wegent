@@ -63,6 +63,7 @@ export interface ProjectWorkControls {
   currentProject?: ProjectWithTasks | null
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  currentRuntimeDeviceId?: string | null
   selectedDeviceWorkspaceId?: number | null
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode

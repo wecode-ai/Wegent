@@ -398,7 +398,13 @@ async function verifyPluginLifecycle(control, marketplacePath) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
-  const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const initialSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('plugins-add-custom-marketplace-empty-button') ||
+      snapshot.testIds.includes('plugins-add-marketplace-button'),
+    'The plugin marketplace controls did not become ready'
+  )
   if (initialSnapshot.testIds.includes('plugins-add-custom-marketplace-empty-button')) {
     await control.command('click', '[data-testid="plugins-add-custom-marketplace-empty-button"]')
   } else {

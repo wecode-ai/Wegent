@@ -1562,7 +1562,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('overflow-y-auto', 'pt-11')
+    expect(desktopContent).toHaveClass('overflow-x-hidden', 'overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
@@ -7258,6 +7258,19 @@ describe('DesktopWorkbenchLayout', () => {
       expect(terminals).toHaveLength(1)
       expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
     })
+  })
+
+  test('resets cached conversation horizontal scroll when the task becomes active', () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    const activeContent = () =>
+      within(screen.getByTestId('desktop-workbench-main')).getByTestId('desktop-workbench-content')
+
+    activeContent().scrollLeft = 180
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(activeContent().scrollLeft).toBe(0)
   })
 
   test('keeps runtime task terminals past the pane cache limit until the task is archived', async () => {

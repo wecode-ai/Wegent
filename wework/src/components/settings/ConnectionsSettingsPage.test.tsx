@@ -366,6 +366,19 @@ describe('ConnectionsSettingsPage', () => {
     ).toHaveAttribute('data-tauri-drag-region')
   })
 
+  test('keeps the settings navigation scrollable within the sidebar', () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('settings-sidebar-nav')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto'
+    )
+  })
+
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
     api.getAllDevices.mockResolvedValue([])
     api.createCloudDevice.mockResolvedValue({
