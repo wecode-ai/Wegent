@@ -13,9 +13,10 @@ export function VncDesktopButton({ deviceId, disabled, onOpened }: CloudDesktopA
     disabled,
     failureMessage: t(
       'workbench.connection_device_desktop_open_failed',
-      '无法在 Wework 中打开云桌面，请重试'
+      '无法使用系统默认浏览器打开云桌面，请重试'
     ),
     onOpened,
+    target: 'system',
   })
 
   return (

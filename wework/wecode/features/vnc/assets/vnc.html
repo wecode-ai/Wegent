@@ -156,6 +156,29 @@
           return url.toString()
         }
 
+        async function getSessionConfig() {
+          const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
+          if (typeof invoke === 'function') {
+            return invoke('get_vnc_session_config', { sessionId: sessionId })
+          }
+
+          const response = await fetch('/session/' + encodeURIComponent(sessionId), {
+            cache: 'no-store',
+            credentials: 'omit',
+          })
+          if (!response.ok) {
+            var body = await response.json().catch(function () {
+              return null
+            })
+            throw new Error(
+              body && typeof body.error === 'string'
+                ? body.error
+                : 'VNC session is missing or expired'
+            )
+          }
+          return response.json()
+        }
+
         async function connect() {
           showConnecting()
           container.replaceChildren()
@@ -185,13 +208,8 @@
               showError('noVNC 加载失败', false)
               return
             }
-            const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
-            if (typeof invoke !== 'function') {
-              showError('云桌面会话服务不可用', false)
-              return
-            }
             if (!authenticatedWsUrl) {
-              const config = await invoke('get_vnc_session_config', { sessionId: sessionId })
+              const config = await getSessionConfig()
               authenticatedWsUrl = authenticatedWebSocketUrl(config)
             }
 

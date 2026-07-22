@@ -57,6 +57,27 @@ export function buildVncPageUrl({ sandboxId, sessionId }: BuildVncPageUrlOptions
   return pageUrl.toString()
 }
 
+export async function buildExternalVncPageUrl({
+  sandboxId,
+  sessionId,
+}: BuildVncPageUrlOptions): Promise<string> {
+  const bridgeUrl = new URL(await invoke<string>('get_vnc_external_bridge_url'))
+  if (
+    bridgeUrl.protocol !== 'http:' ||
+    bridgeUrl.hostname !== '127.0.0.1' ||
+    !bridgeUrl.port ||
+    bridgeUrl.username ||
+    bridgeUrl.password
+  ) {
+    throw new Error('Invalid VNC external bridge URL')
+  }
+
+  const pageUrl = new URL('/vnc.html', bridgeUrl)
+  pageUrl.searchParams.set('sessionId', sessionId)
+  pageUrl.searchParams.set('sandboxId', sandboxId)
+  return pageUrl.toString()
+}
+
 export function isInternalVncPageUrl(value: string): boolean {
   try {
     const { appBasePath } = getRuntimeConfig()

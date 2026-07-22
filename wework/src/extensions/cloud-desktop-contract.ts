@@ -23,10 +23,13 @@ export interface CloudDesktopWorkspaceActionProps {
   testIdsEnabled?: boolean
 }
 
+export type CloudDesktopOpenTarget = 'embedded' | 'system'
+
 export interface OpenCloudDesktopOptions {
   connection: CloudDesktopConnection
   deviceId: string
   isCurrent: () => boolean
+  target?: CloudDesktopOpenTarget
 }
 
 export interface CloudDesktopExtension {

@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
+import type { CloudDesktopOpenTarget } from '@/extensions/cloud-desktop-contract'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { openCloudDesktop } from './openCloudDesktop'
 
@@ -11,6 +12,7 @@ interface UseCloudDesktopLaunchOptions {
   onBusyChange?: (busy: boolean) => void
   onErrorChange?: (message: string | null) => void
   onOpened: () => void
+  target?: CloudDesktopOpenTarget
 }
 
 interface UseCloudDesktopLaunchResult {
@@ -43,6 +45,7 @@ export function useCloudDesktopLaunch({
   onBusyChange,
   onErrorChange,
   onOpened,
+  target,
 }: UseCloudDesktopLaunchOptions): UseCloudDesktopLaunchResult {
   const cloudConnection = useOptionalCloudConnection()
   const [requestState, setRequestState] = useState<CloudDesktopRequestState | null>(null)
@@ -133,7 +136,7 @@ export function useCloudDesktopLaunch({
       )
     }
 
-    if (!cloudConnection.socketBaseUrl || !cloudConnection.token) {
+    if (!cloudConnection.token || !cloudConnection.socketBaseUrl) {
       setRequestState({ ...requestContext, error: failureMessage, loading: false })
       onErrorChange?.(failureMessage)
       onBusyChange?.(false)
@@ -145,6 +148,7 @@ export function useCloudDesktopLaunch({
         connection: cloudConnection,
         deviceId,
         isCurrent: isCurrentRequest,
+        ...(target ? { target } : {}),
       })
       if (opened && isCurrentRequest()) onOpened()
     } catch (exception) {
@@ -172,6 +176,7 @@ export function useCloudDesktopLaunch({
     onBusyChange,
     onErrorChange,
     onOpened,
+    target,
   ])
 
   return {

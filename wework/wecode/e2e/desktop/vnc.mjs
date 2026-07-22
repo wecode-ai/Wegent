@@ -102,6 +102,7 @@ class VncDesktopScenario {
     this.vncConfigRequests = 0
     this.vncProtocolError = null
     this.vncRfbConnections = 0
+    this.vncStatusRequests = 0
     this.vncSockets = new Set()
     this.server = null
     this.upgradeHandler = null
@@ -130,6 +131,7 @@ class VncDesktopScenario {
       vncConfigRequests: this.vncConfigRequests,
       vncProtocolError: this.vncProtocolError,
       vncRfbConnections: this.vncRfbConnections,
+      vncStatusRequests: this.vncStatusRequests,
     }
   }
 
@@ -151,6 +153,20 @@ class VncDesktopScenario {
           },
         ],
         total: 1,
+      })
+      return true
+    }
+
+    if (request.method === 'GET' && url.pathname === `/api/cloud-devices/${this.deviceId}/status`) {
+      if (request.headers.authorization !== `Bearer ${CLOUD_DEVICE_TOKEN}`) {
+        json(response, 401, { error: 'Desktop E2E VNC authorization is missing' })
+        return true
+      }
+      this.vncStatusRequests += 1
+      json(response, 200, {
+        sandbox_id: CLOUD_DEVICE_SANDBOX_ID,
+        status: 'running',
+        vnc_url: null,
       })
       return true
     }
@@ -246,40 +262,17 @@ class VncDesktopScenario {
     if (buffered.length > 0) handleData(Buffer.alloc(0))
   }
 
-  async waitForConnection(control) {
+  async waitForSystemBrowserDesktopConnection() {
     const startedAt = Date.now()
-    let lastState = null
     while (Date.now() - startedAt < this.uiTimeoutMs) {
-      if (this.vncProtocolError) {
-        throw new Error(`The noVNC RFB handshake failed: ${this.vncProtocolError}`)
-      }
-      if (this.vncRfbConnections === 1) {
-        try {
-          const rawState = await control.command('evalEmbeddedBrowserJson', 'workspace-browser', {
-            timeoutMs: 5_000,
-            value:
-              "({ connected: document.documentElement.dataset.vncConnected ?? '', title: document.title })",
-          })
-          lastState = JSON.parse(rawState)
-          if (
-            lastState?.connected === 'true' &&
-            String(lastState.title ?? '').includes(CLOUD_DEVICE_SANDBOX_ID)
-          ) {
-            return lastState
-          }
-        } catch (error) {
-          lastState = { error: error instanceof Error ? error.message : String(error) }
-        }
-      }
+      if (this.vncProtocolError) throw new Error(this.vncProtocolError)
+      if (this.vncRfbConnections === 1) return
       await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
     }
-    throw new Error(
-      `The native VNC page did not emit its connected state after the authenticated RFB handshake: ${JSON.stringify(lastState)}`
-    )
+    throw new Error('The system browser did not connect to the cloud desktop viewer')
   }
 
   async verify(control) {
-    await control.command('prepareEmbeddedBrowserRelabelRegression', '')
     await control.command('click', '[data-testid="settings-button"]')
     await control.command('click', '[data-testid="settings-menu-button"]')
     await control.command('waitFor', '[data-testid="wework-settings-page"]', {
@@ -291,60 +284,34 @@ class VncDesktopScenario {
       timeoutMs: this.uiTimeoutMs,
     })
     await control.command('click', `[data-testid="connection-vnc-button-${this.deviceId}"]`)
-    await control.command(
-      'waitFor',
-      '[data-testid="right-workspace-browser-tab"][aria-selected="true"]',
-      { timeoutMs: this.uiTimeoutMs }
-    )
-    await control.command('waitFor', '[data-testid="workspace-browser-panel"]:not(.hidden)', {
-      timeoutMs: this.uiTimeoutMs,
-    })
-    await control.command(
-      'waitFor',
-      '[data-testid="workspace-browser-url-input"][value*="/vnc.html?"][value*="sessionId="]:not([value*="token"]):not([value*="wsUrl"])',
-      { timeoutMs: this.uiTimeoutMs }
-    )
-    const vncState = await this.waitForConnection(control)
-    await control.command('waitFor', '[data-testid="right-workspace-browser-tab"]', {
-      text: CLOUD_DEVICE_SANDBOX_ID,
-      timeoutMs: this.uiTimeoutMs,
-    })
+    await this.waitForSystemBrowserDesktopConnection()
     const browserSnapshot = await waitForSnapshot(
       control,
       snapshot => !snapshot.testIds.includes('wework-settings-page'),
-      'Opening the cloud desktop did not leave settings',
+      'Opening the cloud desktop in the system browser did not leave settings',
       this.uiTimeoutMs
     )
     assert.equal(
-      browserSnapshot.testIds.includes('workspace-browser-panel'),
-      true,
-      'Opening the cloud desktop did not show the built-in browser panel'
+      browserSnapshot.testIds.includes('right-workspace-browser-tab'),
+      false,
+      'Opening the cloud desktop unexpectedly created a Wework browser tab'
+    )
+    assert.equal(
+      this.vncStatusRequests,
+      0,
+      'Opening the cloud desktop unexpectedly requested an optional status VNC URL'
     )
     assert.equal(
       this.vncConfigRequests,
       1,
-      'Opening the cloud desktop did not make exactly one real VNC configuration request'
+      'Opening the cloud desktop did not prepare exactly one VNC configuration'
     )
     assert.equal(this.vncProtocolError, null, 'The noVNC RFB handshake failed')
     assert.equal(
       this.vncRfbConnections,
       1,
-      'The native VNC page did not complete exactly one authenticated RFB handshake'
+      'The system browser did not complete the noVNC RFB handshake'
     )
-    assert.equal(vncState.connected, 'true', 'The noVNC connect event did not reveal the desktop')
-    assert.match(
-      vncState.title,
-      new RegExp(CLOUD_DEVICE_SANDBOX_ID),
-      'The connected VNC page did not identify its sandbox'
-    )
-    await control.command('click', '[data-testid="right-workspace-browser-tab-close-button"]')
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('right-workspace-browser-tab'),
-      'The VNC browser tab did not close after verification',
-      this.uiTimeoutMs
-    )
-    await control.command('closeEmbeddedBrowser', 'workspace-browser-regression-owner')
   }
 }
 

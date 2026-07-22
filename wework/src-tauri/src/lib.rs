@@ -3792,6 +3792,11 @@ pub fn run() {
                 log::warn!("Failed to start embedded browser bridge: {error}");
             }
             #[cfg(desktop)]
+            if let Err(error) = wecode::vnc_session::start_vnc_external_bridge(app.handle().clone())
+            {
+                log::warn!("Failed to start VNC external bridge: {error}");
+            }
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -3826,6 +3831,7 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_resume_download,
             embedded_browser::embedded_browser_set_bounds,
+            wecode::vnc_session::get_vnc_external_bridge_url,
             wecode::vnc_session::get_vnc_session_config,
             wecode::vnc_session::prepare_vnc_session,
             local_terminal::close_local_terminal,

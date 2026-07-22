@@ -13,6 +13,7 @@ interface Scenario {
     sandboxId: string
   }
   diagnostics: () => {
+    vncStatusRequests: number
     vncConfigRequests: number
     vncProtocolError: string | null
     vncRfbConnections: number
@@ -147,11 +148,36 @@ describe('Wecode Desktop VNC scenario', () => {
     expect(scenario.diagnostics().vncConfigRequests).toBe(1)
   })
 
+  test('mirrors the real cloud status response without a browser-facing VNC URL', async () => {
+    const scenario = await createScenario()
+    if (!scenario) return
+    const result = response()
+
+    const handled = await scenario.handleHttp(
+      {
+        headers: { authorization: 'Bearer wework-desktop-e2e-cloud-token' },
+        method: 'GET',
+      },
+      result,
+      new URL('http://127.0.0.1/api/cloud-devices/wework-desktop-e2e-cloud-device/status')
+    )
+
+    expect(handled).toBe(true)
+    expect(result.statusCode).toBe(200)
+    expect(JSON.parse(result.body)).toEqual({
+      sandbox_id: 'wework-desktop-e2e-sandbox',
+      status: 'running',
+      vnc_url: null,
+    })
+    expect(scenario.diagnostics().vncStatusRequests).toBe(1)
+  })
+
   test('exposes deterministic protocol diagnostics', async () => {
     const scenario = await createScenario()
     if (!scenario) return
 
     expect(scenario.diagnostics()).toEqual({
+      vncStatusRequests: 0,
       vncConfigRequests: 0,
       vncProtocolError: null,
       vncRfbConnections: 0,

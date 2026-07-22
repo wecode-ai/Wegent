@@ -41,15 +41,15 @@ Executor 启动 Codex 时会注入 relay server 配置。模型调用浏览器�
 
 公开版 Wework 只定义云桌面的扩展契约和不可用时的默认实现，不包含具体远程桌面协议、鉴权接口、代理、页面或第三方客户端资源。工作台和设备设置页只能通过 `src/extensions/cloud-desktop-contract.ts` 使用该能力；默认实现的 `available` 为 `false`，因此不会展示桌面入口。
 
-产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口；具体实现负责连接、异步状态和在内置浏览器中打开页面，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。公共 Wework 只提供不可用的空实现，不应包含具体远程桌面协议、页面或资源。
+产品发行版可以在构建时为 `@extensions/cloud-desktop` 提供实现。通用契约分别通过 `DeviceAction` 和 `WorkspaceAction` 向设置页及项目工作区提供入口；具体实现负责连接、异步状态和为不同入口选择系统或内置浏览器，并通过 `isCurrent` 忽略项目、设备或连接上下文已经变化的异步请求。公共 Wework 只提供不可用的空实现，不应包含具体远程桌面协议、页面或资源。
 
 ### Wecode VNC 实现
 
-Wecode 发行版在“设置 → 连接”和项目工作区中提供云设备桌面入口，两个入口都复用当前 Wework 内置浏览器。扩展先读取 `GET /api/cloud-devices/{device_id}/vnc-config`，再通过 `/vnc-proxy/{device_id}` 建立 noVNC WebSocket 连接。
+Wecode 发行版在“设置 → 连接”和项目工作区中提供云设备桌面入口。设置页入口通过仅监听 `127.0.0.1` 随机端口的 Wecode viewer bridge 在系统默认浏览器中打开；项目工作区入口继续复用 Wework 内置浏览器。两个入口都先读取 `GET /api/cloud-devices/{device_id}/vnc-config`，再通过 `/vnc-proxy/{device_id}` 建立 noVNC WebSocket 连接，不依赖可选的 `/status.vnc_url`。
 
-WebSocket 地址和 Bearer token 不得放入浏览器地址、历史记录或 React 可见路由。扩展调用 `prepare_vnc_session`，把连接信息写入 Tauri Rust 进程中的两分钟内存交接会话；浏览器只打开 `/vnc.html?sessionId=...&sandboxId=...`，页面再通过 `get_vnc_session_config` IPC 读取凭据。两分钟只限制主 WebView 向 VNC 页交接凭据；首次读取后，VNC 页会在自身生命周期内缓存认证 WebSocket 地址，断线重试不受该交接期限限制。完整刷新页面后，如果交接会话已经过期，则必须从云设备入口重新打开桌面。
+WebSocket 地址和 Bearer token 不得放入浏览器地址、历史记录或 React 可见路由。扩展调用 `prepare_vnc_session`，把连接信息写入 Tauri Rust 进程中的两分钟内存交接会话。内置浏览器打开应用内 `/vnc.html?sessionId=...&sandboxId=...`，页面通过 `get_vnc_session_config` IPC 读取凭据；系统浏览器打开 `http://127.0.0.1:<随机端口>/vnc.html?sessionId=...&sandboxId=...`，页面通过同源 `/session/{sessionId}` 读取同一份内存配置。Loopback bridge 校验 Host、禁用 CORS 与缓存，并设置 `no-referrer`，不会把 token 写入页面 URL 或磁盘。两分钟只限制主 WebView 向 VNC 页交接凭据；首次读取后，VNC 页会在自身生命周期内缓存认证 WebSocket 地址，断线重试不受该交接期限限制。完整刷新页面后，如果交接会话已经过期，则必须从云设备入口重新打开桌面。
 
-内部 VNC 页面只在 noVNC 真实连接成功后设置连接标记。断开或连接失败时必须清除该标记，并提供重试状态。为避免凭据或内部页面被导出，VNC 页面不允许使用系统浏览器打开，也不提供网页批注模式。
+VNC 页面只在 noVNC 真实连接成功后设置连接标记。断开或连接失败时必须清除该标记，并提供重试状态。云桌面页面不提供网页批注模式；只有设置页入口允许通过受限 loopback bridge 在系统浏览器打开，应用内 viewer URL 仍不得直接导出。
 
 #### 代码归属与宿主边界
 
@@ -60,13 +60,13 @@ VNC 是 Wecode 发行版能力，不是公共 Wework 内置浏览器的默认能
 - `wework/wecode/extensions/desktop-control.ts` 持有关闭、求值和重命名内置浏览器等 Wecode 桌面自动化动作；公共自动化层只通过 `wework/src/extensions/desktop-control-contract.ts` 委派未处理的命令。
 - `wework/wecode/vitePlugins.mjs` 持有 Wecode 构建插件集合，并在内部加载 VNC 资源插件；公共 `vite.config.ts` 只负责可选加载 Wecode 插件集合，不识别 VNC 文件或资源名称。
 - `wework/wecode/e2e/desktop/` 持有 RFB 模拟服务、VNC HTTP/WebSocket fixture、专用状态和云桌面验证流程。Wecode 包装入口通过 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` 向公共 Desktop E2E 注入可选场景，公共 runner 不直接导入 Wecode。
-- `wework/src-tauri/src/wecode/vnc_session.rs` 持有 VNC 凭据交接、TTL、安全校验和原生单元测试。
+- `wework/src-tauri/src/wecode/vnc_session.rs` 持有 VNC 凭据交接、TTL、安全校验、系统浏览器 loopback viewer bridge 和原生单元测试。
 
 公共 `wework/src/` 只保留与协议无关的云桌面扩展契约、空实现、宿主调用，以及桌面控制扩展契约和委派入口，不实现具体的内置浏览器求值动作。公共组件测试只验证扩展契约接线；实际 VNC 集成断言放在 Wecode feature 测试或 Desktop E2E 中。
 
-`wework/src-tauri/src/lib.rs` 中的 `VncSessionState` 和两个 Tauri command 注册是原生宿主必须保留的静态接线。Backend 的 VNC 配置接口、WebSocket 代理和本文档也不迁入 Wecode。除这些必要接线外，公共 Vite 配置、React 组件、E2E 控制层和测试不得新增 VNC/noVNC/专用 IPC 实现。
+`wework/src-tauri/src/lib.rs` 中的 `VncSessionState`、VNC command 注册和 loopback bridge 启动调用是原生宿主必须保留的静态接线。Backend 的 VNC 配置接口、WebSocket 代理和本文档也不迁入 Wecode。除这些必要接线外，公共 Vite 配置、React 组件、E2E 控制层和测试不得新增 VNC/noVNC/专用 IPC 实现。
 
-迁移只改变代码归属，不改变 URL、IPC 命令名、两分钟交接期限、认证方式、RFB 握手、现有 `data-testid`、错误恢复或内置浏览器行为。验证必须覆盖归属边界测试、VNC feature 单测、公共宿主单测、TypeScript、ESLint、Vite build、Rust 测试和 Desktop E2E。
+修改这些流程时必须保持 IPC command 名、两分钟交接期限、认证方式、RFB 握手、现有 `data-testid`、错误恢复及项目工作区内置浏览器行为。验证必须覆盖归属边界测试、VNC feature 单测、公共宿主单测、TypeScript、ESLint、Vite build、Rust 测试和真实 Desktop E2E；设置页 E2E 还必须确认系统浏览器完成 RFB 握手且 Wework 内没有新建浏览器标签页。
 
 ## 批注流程
 
