@@ -1430,6 +1430,22 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     sendQueuedMessage,
     streamSettled,
   ])
+
+  const loadFullTranscriptForExport = useCallback(async () => {
+    if (!runtimeTaskLoadTarget) return messagesRef.current
+
+    const transcript = await loadRuntimeTranscriptForPaneRef.current(
+      runtimeTaskLoadTarget.address,
+      {
+        includeFullContent: true,
+        refresh: true,
+      }
+    )
+    if (transcript.fullContent !== true) {
+      throw new Error('The complete task transcript is unavailable')
+    }
+    return transcript.messages.length > 0 ? transcript.messages : messagesRef.current
+  }, [runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const sendQueuedMessageAsGuidance = useCallback(
@@ -2259,6 +2275,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     goalDraftActive,
     loadMoreTranscriptBefore,
     loadFullTranscript,
+    loadFullTranscriptForExport,
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,

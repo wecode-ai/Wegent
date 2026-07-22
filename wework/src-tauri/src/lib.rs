@@ -1,6 +1,8 @@
 mod appshots;
 mod desktop_capture;
 mod embedded_browser;
+#[cfg(desktop)]
+mod feedback;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
@@ -3842,6 +3844,8 @@ pub fn run() {
             appshots::open_appshots_permission_settings,
             appshots::take_pending_appshots,
             desktop_capture::capture_main_webview,
+            #[cfg(desktop)]
+            feedback::export_feedback_bundle,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
             embedded_browser::embedded_browser_delete_download,
