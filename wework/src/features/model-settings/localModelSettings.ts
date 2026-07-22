@@ -228,8 +228,8 @@ function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelCo
     typeof catalogEntry?.slug === 'string'
       ? {
           codexCatalogModelId:
-            kimiCatalogModelId ??
-            legacyConfig.codexCatalogModelId ??
+            kimiCatalogModelId ||
+            legacyConfig.codexCatalogModelId ||
             (catalogEntry?.slug as string),
         }
       : {}),
@@ -448,7 +448,7 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     imageGenerationEnabled,
     ...(input.codexCatalogModelId?.trim() || typeof catalogEntry?.slug === 'string'
       ? {
-          codexCatalogModelId: input.codexCatalogModelId?.trim() ?? (catalogEntry?.slug as string),
+          codexCatalogModelId: input.codexCatalogModelId?.trim() || (catalogEntry?.slug as string),
         }
       : {}),
     ...(catalogEntry ? { catalogEntry } : {}),

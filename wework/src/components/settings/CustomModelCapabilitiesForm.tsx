@@ -774,7 +774,9 @@ export function CustomModelCapabilitiesForm({
                               data-testid="local-model-priority-input"
                               type="number"
                               value={numberValue(entry.priority, '10000')}
-                              onChange={event => update({ priority: Number(event.target.value) })}
+                              onChange={event =>
+                                update({ priority: nullableNumber(event.target.value) })
+                              }
                               className={FIELD_CLASS}
                             />
                           </Field>
@@ -792,7 +794,9 @@ export function CustomModelCapabilitiesForm({
                               value={numberValue(entry.effective_context_window_percent, '95')}
                               onChange={event =>
                                 update({
-                                  effective_context_window_percent: Number(event.target.value),
+                                  effective_context_window_percent: nullableNumber(
+                                    event.target.value
+                                  ),
                                 })
                               }
                               className={FIELD_CLASS}
@@ -860,7 +864,7 @@ export function CustomModelCapabilitiesForm({
                                 update({
                                   truncation_policy: {
                                     ...nestedObject(entry.truncation_policy),
-                                    limit: Number(event.target.value),
+                                    limit: nullableNumber(event.target.value),
                                   },
                                 })
                               }

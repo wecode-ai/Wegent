@@ -4,6 +4,11 @@ const apiKey = process.env.KIMI_API_KEY?.trim()
 const baseUrl = (process.env.KIMI_BASE_URL || 'https://api.kimi.com/coding/v1').replace(/\/+$/, '')
 const attempts = Number(process.env.KIMI_PARALLEL_TOOL_ATTEMPTS || '3')
 
+if (!Number.isInteger(attempts) || attempts < 1) {
+  console.error('KIMI_PARALLEL_TOOL_ATTEMPTS must be a positive integer')
+  process.exit(2)
+}
+
 if (!apiKey) {
   console.error('KIMI_API_KEY is required')
   process.exit(2)

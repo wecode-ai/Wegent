@@ -6,6 +6,7 @@ import {
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
+import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -170,6 +171,43 @@ describe('createLocalAppServices', () => {
     expect(models.data).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'local-model:pending-model' })])
     )
+  })
+
+  test('isolates catalog reconciliation failures and throttles retries', async () => {
+    const catalogEntry = createDefaultLocalModelCatalogEntry({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      toolProfile: 'native',
+    })
+    saveLocalModelConfig({
+      id: 'pending-model',
+      displayName: 'Pending model',
+      modelId: 'pending-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogEntry,
+      codexCatalogModelId: String(catalogEntry.slug),
+      catalogReady: false,
+    })
+    const request = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+        version: '1.9.0',
+        runtimeInstanceId: 'runtime-1',
+      }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+    await expect(services.deviceApi.listDevices()).resolves.toHaveLength(1)
+
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('runtime.codex.catalog.custom.write', {
+      models: [expect.objectContaining({ slug: catalogEntry.slug })],
+    })
   })
 
   test('returns Codex provider models in local model list', async () => {

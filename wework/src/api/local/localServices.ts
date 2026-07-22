@@ -129,6 +129,9 @@ const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES = 1024 * 1024 * 2
 const STALE_CODEX_PROVIDER_MODEL_PREFIX = 'codex-provider:'
+const KIMI_K3_CATALOG_MODEL_ID = 'wework-kimi-k3'
+const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max']
+const KIMI_K3_DEFAULT_REASONING_EFFORT = 'low'
 
 export const LOCAL_WORKBENCH_TEAM = {
   id: 0,
@@ -250,7 +253,9 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
 }
 
 function localModelReasoningEfforts(config: LocalModelConfig): string[] {
-  if (config.codexCatalogModelId === 'wework-kimi-k3') return ['low', 'high', 'max']
+  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
+    return KIMI_K3_REASONING_EFFORTS
+  }
   const values = config.catalogEntry?.supported_reasoning_levels
   if (!Array.isArray(values)) return []
   return values.flatMap(value => {
@@ -262,7 +267,9 @@ function localModelReasoningEfforts(config: LocalModelConfig): string[] {
 }
 
 function localModelDefaultReasoningEffort(config: LocalModelConfig): string | null {
-  if (config.codexCatalogModelId === 'wework-kimi-k3') return 'low'
+  if (config.codexCatalogModelId === KIMI_K3_CATALOG_MODEL_ID) {
+    return KIMI_K3_DEFAULT_REASONING_EFFORT
+  }
   const value = config.catalogEntry?.default_reasoning_level
   return typeof value === 'string' ? value : null
 }
@@ -2062,6 +2069,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const subscribe = deps.subscribe ?? subscribeLocalExecutorEvents
   let lastStatus: LocalExecutorStatus | null = null
   let ensurePromise: Promise<LocalExecutorStatus> | null = null
+  let catalogReconciliationKey = ''
+  let catalogReconciliationAttemptedAt = 0
 
   const ensureStatus = async () => {
     if (!ensurePromise) {
@@ -2072,16 +2081,31 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
           const pendingCatalogModels = listLocalModelConfigs().filter(
             model => !model.catalogReady && model.catalogEntry
           )
-          if (pendingCatalogModels.length > 0) {
-            await request('runtime.codex.catalog.custom.write', {
-              models: listLocalModelConfigs().flatMap(model =>
-                model.catalogEntry ? [model.catalogEntry] : []
-              ),
-            })
-            const restart = await request<{
-              restarted?: boolean
-            }>('runtime.codex.app_server.restart', { ifIdle: true })
-            if (restart.restarted) markLocalModelCatalogReady()
+          const reconciliationKey = pendingCatalogModels
+            .map(model => `${status.runtimeInstanceId ?? ''}:${model.id}:${model.updatedAt}`)
+            .sort()
+            .join('|')
+          const now = Date.now()
+          const shouldReconcile =
+            reconciliationKey &&
+            (reconciliationKey !== catalogReconciliationKey ||
+              now - catalogReconciliationAttemptedAt >= 30_000)
+          if (shouldReconcile) {
+            catalogReconciliationKey = reconciliationKey
+            catalogReconciliationAttemptedAt = now
+            try {
+              await request('runtime.codex.catalog.custom.write', {
+                models: listLocalModelConfigs().flatMap(model =>
+                  model.catalogEntry ? [model.catalogEntry] : []
+                ),
+              })
+              const restart = await request<{
+                restarted?: boolean
+              }>('runtime.codex.app_server.restart', { ifIdle: true })
+              if (restart.restarted) markLocalModelCatalogReady()
+            } catch (error) {
+              console.error('Local model catalog reconciliation failed', error)
+            }
           }
           return status
         })
