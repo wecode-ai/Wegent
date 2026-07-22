@@ -50,10 +50,12 @@ pnpm --filter wework e2e:desktop:memory
 pnpm exec vite --host 127.0.0.1 --port 4174 --mode e2e
 ```
 
-同时会启动 Responses API mock：
+同时会启动 Responses API、Sites upstream 和 Connector upstream mock：
 
 ```bash
 node e2e/utils/mock-response-api-server.mjs
+node e2e/utils/mock-sites-upstream-server.mjs
+node e2e/utils/mock-connector-upstream-server.mjs
 ```
 
 配置默认设置：
@@ -62,6 +64,10 @@ node e2e/utils/mock-response-api-server.mjs
 - `VITE_WEWORK_RUNTIME_MODE=backend`
 - `VITE_LOGIN_MODE=password`
 - `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
+- `WEWORK_SITES_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9997`
+- `WEWORK_CONNECTOR_UPSTREAM_MOCK_URL`: `http://127.0.0.1:9996`
+
+三个 mock 的端口都可以通过同名 `*_PORT` 环境变量覆盖：`WEWORK_RESPONSE_API_MOCK_PORT`、`WEWORK_SITES_UPSTREAM_MOCK_PORT` 和 `WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT`。如果覆盖端口，也可以直接传入完整 URL 环境变量给测试进程。
 
 测试不 mock 后端 API。没有启动 Backend 时，登录页 smoke 测试只验证前端能渲染登录入口；需要登录后的业务流程时，CI 必须先启动真实 Backend 和依赖服务。
 
@@ -112,6 +118,105 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 ```text
 http://127.0.0.1:9998/v1
+```
+
+## 外部 Upstream Mock
+
+Wework E2E 还会启动两个本机 loopback upstream mock。它们只替代 Wegent 之外的外部服务，不替代 Wegent Backend、Executor、Codex、`/api/sites`、`/api/apps/installed` 或 connector runtime API。
+
+`wework/e2e/utils/mock-sites-upstream-server.mjs` 模拟 Sites project API：
+
+- `GET /api/v1/projects/search`：返回确定性的项目列表，支持 `username`、`limit`、`sitename` 和 `cursor`。
+- `POST /api/v1/projects/deploy/network`：更新项目内外网状态。
+- `POST /api/v1/projects/update`：更新项目名称。
+- `POST /api/v1/projects/del`：删除项目。
+- `GET /captured-requests`、`POST /clear-requests`、`POST /reset`、`GET /health`：用于断言和重置。
+
+需要通过真实 Backend 覆盖 Sites 链路时，让 Backend 使用下面的环境变量启动。注意这些变量必须传给 Backend 进程；传给 Vite 或 Playwright 页面不会配置 Backend。
+
+```text
+SITES_API_BASE_URL=http://127.0.0.1:9997
+SITES_API_TOKEN=e2e-sites-token
+```
+
+示例：
+
+```bash
+cd backend
+SITES_API_BASE_URL=http://127.0.0.1:9997 \
+SITES_API_TOKEN=e2e-sites-token \
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+`wework/e2e/utils/mock-connector-upstream-server.mjs` 模拟 connector 可连接的外部服务：
+
+- `GET /api/tickets/{id}`：作为 HTTP connector upstream。
+- `POST /mcp`：提供最小 Streamable HTTP MCP JSON-RPC 行为，支持 `initialize`、`tools/list` 和 `tools/call`。
+- `GET /captured-requests`、`POST /clear-requests`、`GET /health`：用于断言和重置。
+
+配置 connector app 时可使用：
+
+```text
+HTTP connector base URL: http://127.0.0.1:9996/api
+MCP URL: http://127.0.0.1:9996/mcp
+```
+
+HTTP connector fixture 可以使用：
+
+```json
+{
+  "slug": "ticket-http",
+  "name": "Ticket HTTP API",
+  "description": "E2E HTTP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "http",
+  "mcp_url": "http://127.0.0.1:9996/api",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["get_ticket"],
+  "http_tools": [
+    {
+      "name": "get_ticket",
+      "description": "Get one mock ticket",
+      "method": "GET",
+      "path": "/tickets/{id}",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "expand": { "type": "boolean" }
+        },
+        "required": ["id"]
+      },
+      "argument_locations": {
+        "id": "path",
+        "expand": "query"
+      }
+    }
+  ]
+}
+```
+
+MCP connector fixture 可以使用：
+
+```json
+{
+  "slug": "docs-mcp",
+  "name": "Docs MCP",
+  "description": "E2E Streamable HTTP MCP connector upstream",
+  "enabled": true,
+  "visibility": "all",
+  "allowed_roles": [],
+  "auth_type": "none",
+  "transport": "streamable-http",
+  "mcp_url": "http://127.0.0.1:9996/mcp",
+  "oauth_scopes": [],
+  "provider_headers": {},
+  "tool_allowlist": ["search_docs"]
+}
 ```
 
 ## 自动化接口

@@ -50,6 +50,7 @@ use super::{
     },
     codex_notifications::codex_notification,
     codex_rollout::rollout_context_usage,
+    connectors::ConnectorRuntime,
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
@@ -277,6 +278,7 @@ pub struct RuntimeWorkRpcHandler {
     worktree_cleanup_generation: Arc<AtomicU64>,
     opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
     hook_service: HookService,
+    connectors: ConnectorRuntime,
 }
 
 struct ActiveTurnCancellation {
@@ -317,9 +319,11 @@ impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
         let codex_binary = codex_binary.into();
         let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+        let codex_app_server = CodexAppServerClient::new(codex_binary);
         let handler = Self {
             device_id: normalize_device_id(device_id.into()),
-            codex_app_server: CodexAppServerClient::new(codex_binary),
+            connectors: ConnectorRuntime::new(codex_app_server.clone()),
+            codex_app_server,
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
@@ -394,6 +398,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.app_server.restart" => self.restart_codex_app_server(payload).await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
+            "runtime.connectors.configure" => self.connectors.configure(payload).await,
+            "runtime.connectors.clear" => self.connectors.clear(payload).await,
+            "runtime.connectors.status" => self.connectors.status().await,
+            "runtime.connectors.tools" => self.connectors.tools().await,
+            "runtime.connectors.call" => self.connectors.call(payload).await,
+            "runtime.connectors.apps.sync" => self.connectors.sync_apps(payload).await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }
