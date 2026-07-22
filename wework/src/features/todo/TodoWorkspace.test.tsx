@@ -5,6 +5,17 @@ import '@/i18n'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import { TodoWorkspace } from './TodoWorkspace'
 
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  }),
+}))
+
 const projects: ProjectWithTasks[] = [
   { id: 7, name: 'Wework' },
   { id: 9, name: 'Agent Runtime' },
@@ -148,6 +159,10 @@ describe('TodoWorkspace V4-01', () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
+    })
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
     })
 
     render(

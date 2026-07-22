@@ -31,10 +31,23 @@ import {
 } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useWindowFocus } from '@/hooks/useWindowFocus'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { TodoWorkspace } from '@/features/todo/TodoWorkspace'
-import { WorkbenchBackground } from '@/features/appearance'
+import {
+  WorkbenchBackground,
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { DesktopAppBrandSwitcher } from './DesktopAppBrandSwitcher'
+import { WindowFrameControls } from './WindowFrameControls'
+import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
+import { useResizableSidebar } from './useResizableSidebar'
+import { WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID } from '@/components/topnav/TitlebarActionsPortal'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -51,6 +64,7 @@ function getPermanentWorktreeError(error: unknown, fallback: string) {
 
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
+  const windowFocused = useWindowFocus()
   const { logout: onLogout } = useAuth()
   const {
     state,
@@ -176,6 +190,13 @@ export function DesktopWorkbenchLayout() {
   } | null>(null)
   const imSessionsRequestSequence = useRef(0)
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
+  const platform = getPlatform()
+  const isTauri = isTauriRuntime()
+  const showWindowsTopBar = isTauri && platform === 'win' && !settingsOpen && !todoOpen
+
+  const appearanceContext = useOptionalAppearance()
+  const appearance = appearanceContext?.appearance ?? defaultAppearance
+  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
 
   useEffect(() => {
     const handlePopState = () => {
@@ -309,6 +330,11 @@ export function DesktopWorkbenchLayout() {
   const collapseSidebar = useCallback(() => {
     updateSidebarCollapsed(true)
   }, [updateSidebarCollapsed])
+
+  const { sidebarWidth, handleResizeStart: handleSidebarResizeStart } = useResizableSidebar({
+    onCollapse: collapseSidebar,
+    onResizeStateChange: setSidebarResizing,
+  })
 
   useDesktopSidebarToggleRequest(() => {
     updateSidebarCollapsed(!effectiveSidebarCollapsed)
@@ -539,6 +565,9 @@ export function DesktopWorkbenchLayout() {
       collapsed={collapsed}
       containerTestId={containerTestId}
       hideResizeHandle={hideResizeHandle}
+      sidebarWidth={sidebarWidth}
+      resizing={sidebarResizing}
+      onResizeStart={handleSidebarResizeStart}
       onResizeCollapse={collapseSidebar}
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
@@ -598,10 +627,71 @@ export function DesktopWorkbenchLayout() {
     />
   )
 
+  const windowsTopBar = showWindowsTopBar ? (
+    <div
+      data-testid="workbench-windows-titlebar"
+      data-tauri-drag-region
+      data-window-focused={windowFocused}
+      className={cn(
+        'relative z-chrome flex h-[38px] w-full shrink-0 items-center overflow-hidden',
+        background.imagePath && background.inSidebar
+          ? 'bg-background/25'
+          : cn(
+              'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+              !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]'
+            )
+      )}
+    >
+      <div
+        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-1 px-1"
+        data-tauri-drag-region={false}
+      >
+        <DesktopWindowControls
+          sidebarCollapsed={effectiveSidebarCollapsed}
+          onToggleSidebar={() => updateSidebarCollapsed(!effectiveSidebarCollapsed)}
+          className="gap-1"
+        />
+        <DesktopAppBrandSwitcher
+          onNavigate={app => navigateTo(app === 'wework' ? '/' : '/app/wegent')}
+        />
+      </div>
+      <div
+        id={WORKBENCH_WINDOWS_TITLEBAR_MIDDLE_PORTAL_ID}
+        data-testid="workbench-windows-titlebar-middle"
+        className={cn(
+          'absolute inset-y-0 overflow-hidden',
+          background.imagePath && background.inSidebar
+            ? 'bg-background/25'
+            : cn(
+                'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150',
+                !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]'
+              )
+        )}
+        style={{
+          left: effectiveSidebarCollapsed ? 0 : sidebarWidth,
+          right: 138,
+        }}
+      />
+      <div
+        className="pointer-events-auto absolute right-0 top-0 z-chrome h-full w-[138px]"
+        data-tauri-drag-region={false}
+      >
+        <WindowFrameControls className="h-full justify-end" />
+      </div>
+    </div>
+  ) : null
+
   return (
-    <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!todoOpen && <WorkbenchBackground />}
-      {!settingsOpen && !todoOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+    <div
+      className={cn(
+        'relative h-full overflow-hidden bg-transparent text-text-primary',
+        showWindowsTopBar ? 'flex flex-col' : 'flex'
+      )}
+    >
+      {windowsTopBar}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {!todoOpen && <WorkbenchBackground />}
+        {!settingsOpen && !todoOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
       {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
         <>
           <div
@@ -616,9 +706,9 @@ export function DesktopWorkbenchLayout() {
             onPointerEnter={openSidebarPreview}
             onPointerLeave={closeSidebarPreview}
             className={cn(
-              'absolute left-0 top-0 z-popover h-full bg-background transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
+              'absolute left-0 top-0 z-popover h-full overflow-hidden rounded-tl-xl transition-transform duration-[180ms] ease-out motion-reduce:transition-none will-change-transform',
               sidebarPreviewOpen
-                ? 'pointer-events-auto translate-x-0 opacity-100 shadow-[6px_0_24px_rgba(15,23,42,0.10)]'
+                ? 'pointer-events-auto translate-x-0 opacity-100'
                 : 'pointer-events-none -translate-x-full opacity-100'
             )}
           >
@@ -682,8 +772,9 @@ export function DesktopWorkbenchLayout() {
           />
         </div>
       </div>
-      <StandaloneBlankProjectDialog
-        open={blankProjectDialogOpen}
+    </div>
+    <StandaloneBlankProjectDialog
+      open={blankProjectDialogOpen}
         devices={state.devices}
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target

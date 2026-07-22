@@ -27,6 +27,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { getPlatform } from '@/lib/platform'
 import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
@@ -148,7 +149,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const { t } = useTranslation('common')
   const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
   const showTabs = visibleTabs.length > 0
-  const renderTabsInTitlebar = isTauriRuntime() && visible && showTabs
+  const platform = getPlatform()
+  const renderTabsInTitlebar = isTauriRuntime() && platform !== 'win' && visible && showTabs
   const browserOpen = openTabs.includes('browser')
   const [browserFaviconUrl, setBrowserFaviconUrl] = useState<string | null>(null)
   const [browserTitle, setBrowserTitle] = useState<string | null>(null)
@@ -276,7 +278,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         renderTabsInTitlebar
           ? 'h-[38px] w-full bg-transparent pl-4 pr-2'
           : cn(
-              'h-10 border-b border-border px-3',
+              'h-10 px-3',
+              platform === 'win' ? '' : 'border-b border-border',
               showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
             )
       )}

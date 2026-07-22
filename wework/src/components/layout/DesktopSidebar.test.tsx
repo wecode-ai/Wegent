@@ -137,6 +137,10 @@ function enableTauri() {
     configurable: true,
     value: {},
   })
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+  })
 }
 
 describe('DesktopSidebar', () => {
@@ -180,6 +184,21 @@ describe('DesktopSidebar', () => {
     act(() => window.dispatchEvent(new Event('blur')))
     expect(sidebar).toHaveAttribute('data-window-focused', 'false')
     expect(sidebar).toHaveClass('bg-[rgb(var(--color-sidebar-unfocused))]')
+  })
+
+  test('removes right border on Windows', () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.0',
+    })
+    renderSidebar()
+    const sidebar = screen.getByTestId('desktop-sidebar')
+    expect(sidebar).not.toHaveClass('border-r')
   })
 
   test('uses the project action model for right click and global-state pinning', async () => {

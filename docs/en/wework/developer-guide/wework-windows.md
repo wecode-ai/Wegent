@@ -56,7 +56,61 @@ npm install -g pnpm
 pnpm install
 ```
 
-### 2. Build the local Executor sidecar
+### 2. Start dev mode with one command
+
+After the prerequisites are installed, run this from the project root:
+
+```powershell
+pnpm --filter wework dev:windows
+```
+
+This command automatically:
+
+- Finds an available port (default `1420`; increments if it is in use).
+- Builds the Windows local Executor sidecar (uses `dev-reload` mode by default, so changes to `executor` source are recompiled automatically).
+- Prepares the Windows Codex binary.
+- Generates a temporary Tauri dev config and starts `tauri dev --target x86_64-pc-windows-msvc`.
+
+To disable executor hot-reload, set this environment variable first:
+
+```powershell
+$env:WEWORK_DISABLE_EXECUTOR_DEV_RELOAD = "1"
+pnpm --filter wework dev:windows
+```
+
+### 3. Speed up development builds (optional)
+
+`pnpm --filter wework dev:windows` automatically uses a shared Cargo target directory so that dependencies compiled in one worktree or one session are reused in the next. It also auto-detects `sccache` and uses it when available.
+
+The cache layout is:
+
+```
+%USERPROFILE%\.cache\wegent\cargo-target\
+  executor-dev\      # dev-reload executor builds
+  executor\          # non-reload executor builds
+  wework-src-tauri\  # Tauri/Cargo builds
+```
+
+You can customize or disable this behavior with environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `WEGENT_CARGO_TARGET_ROOT` | Override the shared cache root directory. |
+| `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` | Keep Cargo artifacts inside each project's `target/` directory instead of the shared cache. |
+| `CARGO_TARGET_DIR` | If you explicitly set this, `dev:windows` will use it for all Cargo builds. |
+| `WEGENT_DISABLE_SCCACHE=1` | Do not auto-detect or use `sccache`. |
+
+To get the fastest rebuilds, install [sccache](https://github.com/mozilla/sccache) and make sure it is on your `PATH`:
+
+```powershell
+cargo install sccache
+```
+
+### 4. Manual steps (optional)
+
+If you prefer to run the steps individually, or want to understand what the `dev:windows` script does internally, follow the commands below.
+
+#### 4.1 Build the local Executor sidecar
 
 ```powershell
 cd executor
@@ -77,7 +131,7 @@ cd wework
 pnpm run build:windows:sidecar
 ```
 
-### 3. Prepare the bundled Codex binary
+#### 4.2 Prepare the bundled Codex binary
 
 ```powershell
 cd wework
@@ -85,7 +139,7 @@ $env:WEWORK_CODEX_TARGET = "x86_64-pc-windows-msvc"
 pnpm run prepare:codex
 ```
 
-### 4. Start the dev mode
+#### 4.3 Start the dev mode
 
 ```powershell
 pnpm exec tauri dev --target x86_64-pc-windows-msvc

@@ -1573,7 +1573,48 @@ async fn cpu_used_pct() -> Option<f64> {
         let idle = second.idle.saturating_sub(first.idle);
         Some(((total.saturating_sub(idle)) as f64 / total as f64) * 100.0)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::FILETIME;
+
+        extern "system" {
+            fn GetSystemTimes(
+                lpIdleTime: *mut FILETIME,
+                lpKernelTime: *mut FILETIME,
+                lpUserTime: *mut FILETIME,
+            ) -> i32;
+        }
+
+        fn filetime_to_u64(ft: FILETIME) -> u64 {
+            ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
+        }
+
+        let mut idle1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut kernel1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut user1 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let ok1 = unsafe { GetSystemTimes(&mut idle1, &mut kernel1, &mut user1) };
+        if ok1 == 0 {
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let mut idle2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut kernel2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut user2 = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let ok2 = unsafe { GetSystemTimes(&mut idle2, &mut kernel2, &mut user2) };
+        if ok2 == 0 {
+            return None;
+        }
+
+        let idle = filetime_to_u64(idle2).saturating_sub(filetime_to_u64(idle1));
+        let kernel = filetime_to_u64(kernel2).saturating_sub(filetime_to_u64(kernel1));
+        let user = filetime_to_u64(user2).saturating_sub(filetime_to_u64(user1));
+        let total = kernel.saturating_add(user);
+        if total == 0 {
+            return Some(0.0);
+        }
+        Some(((total.saturating_sub(idle) as f64 / total as f64) * 100.0).min(100.0))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         None
     }
@@ -1621,7 +1662,27 @@ fn memory_usage_bytes() -> Option<ByteUsage> {
             used: total.saturating_sub(available),
         })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::SystemInformation::{
+            GlobalMemoryStatusEx, MEMORYSTATUSEX,
+        };
+
+        let mut status = std::mem::MaybeUninit::<MEMORYSTATUSEX>::uninit();
+        unsafe {
+            (*status.as_mut_ptr()).dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        }
+        let ok = unsafe { GlobalMemoryStatusEx(status.as_mut_ptr()) };
+        if ok == 0 {
+            return None;
+        }
+        let status = unsafe { status.assume_init() };
+        Some(ByteUsage {
+            total: status.ullTotalPhys,
+            used: status.ullTotalPhys.saturating_sub(status.ullAvailPhys),
+        })
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         None
     }
@@ -1648,6 +1709,38 @@ fn disk_usage_bytes(path: &Path) -> Option<ByteUsage> {
     })
 }
 
+#[cfg(windows)]
+fn disk_usage_bytes(path: &Path) -> Option<ByteUsage> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide_path.push(0);
+    let mut free_bytes_available = 0u64;
+    let mut total_bytes = 0u64;
+    let mut total_free_bytes = 0u64;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide_path.as_ptr(),
+            &mut free_bytes_available,
+            &mut total_bytes,
+            &mut total_free_bytes,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    Some(ByteUsage {
+        total: total_bytes,
+        used: total_bytes.saturating_sub(free_bytes_available),
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn disk_usage_bytes(_path: &Path) -> Option<ByteUsage> {
+    None
+}
+
 #[cfg(unix)]
 fn unsigned_to_u64<T>(value: T) -> u64
 where
@@ -1656,23 +1749,18 @@ where
     value.into()
 }
 
-#[cfg(not(unix))]
-fn disk_usage_bytes(_path: &Path) -> Option<ByteUsage> {
-    None
-}
-
-#[cfg(unix)]
+#[cfg(windows)]
 fn has_read_access(path: &Path) -> bool {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES};
 
-    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
-        return true;
-    };
-    unsafe { libc::access(c_path.as_ptr(), libc::R_OK) == 0 }
+    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide_path.push(0);
+    let attributes = unsafe { GetFileAttributesW(wide_path.as_ptr()) };
+    attributes != INVALID_FILE_ATTRIBUTES
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn has_read_access(_path: &Path) -> bool {
     true
 }

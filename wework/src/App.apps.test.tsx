@@ -4,6 +4,17 @@ import './i18n'
 import App from './App'
 import { saveStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
 
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: () => ({
+    startDragging: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    onResized: vi.fn().mockResolvedValue(vi.fn()),
+  }),
+}))
+
 vi.mock('@/features/auth/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
@@ -81,6 +92,10 @@ function enableTauri() {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {
     configurable: true,
     value: {},
+  })
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
   })
 }
 
