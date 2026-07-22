@@ -2079,7 +2079,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         .then(async status => {
           lastStatus = status
           reconcileLocalModelCatalogRuntime(status.runtimeInstanceId)
-          const pendingCatalogModels = listLocalModelConfigs().filter(
+          const catalogModels = listLocalModelConfigs().filter(model => model.catalogEntry)
+          const pendingCatalogModels = catalogModels.filter(
             model => !model.catalogReady && model.catalogEntry
           )
           const reconciliationKey = pendingCatalogModels
@@ -2096,14 +2097,14 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
             catalogReconciliationAttemptedAt = now
             try {
               await request('runtime.codex.catalog.custom.write', {
-                models: listLocalModelConfigs().flatMap(model =>
+                models: catalogModels.flatMap(model =>
                   model.catalogEntry ? [model.catalogEntry] : []
                 ),
               })
               const restart = await request<{
                 restarted?: boolean
               }>('runtime.codex.app_server.restart', { ifIdle: true })
-              if (restart.restarted) markLocalModelCatalogReady()
+              if (restart.restarted) markLocalModelCatalogReady(pendingCatalogModels)
             } catch (error) {
               console.error('Local model catalog reconciliation failed', error)
             }

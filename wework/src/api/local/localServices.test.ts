@@ -42,6 +42,7 @@ describe('createLocalAppServices', () => {
       group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      catalogReady: true,
     })
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.codex.models.list') {
@@ -1006,6 +1007,7 @@ describe('createLocalAppServices', () => {
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
       contextWindow: 128000,
+      catalogReady: true,
     })
     saveLocalModelConfig({
       id: 'lmstudio',
@@ -1015,6 +1017,7 @@ describe('createLocalAppServices', () => {
       apiKey: 'real-key',
       webSearchMode: 'cached',
       imageGenerationEnabled: true,
+      catalogReady: true,
     })
     saveLocalModelConfig({
       id: 'custom',
@@ -1022,6 +1025,7 @@ describe('createLocalAppServices', () => {
       modelId: 'custom-model',
       baseUrl: 'http://localhost:9876/api',
       requestPath: '/respond',
+      catalogReady: true,
     })
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({

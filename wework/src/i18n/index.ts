@@ -11,6 +11,11 @@ import enSites from './locales/en/sites.json'
 import zhSites from './locales/zh-CN/sites.json'
 import enHooks from './locales/en/hooks.json'
 import zhHooks from './locales/zh-CN/hooks.json'
+import { extensionI18nResources } from '@extensions/i18n'
+
+const extensionNamespaces = Array.from(
+  new Set(Object.values(extensionI18nResources).flatMap(resources => Object.keys(resources ?? {})))
+)
 
 i18n
   .use(LanguageDetector)
@@ -23,6 +28,7 @@ i18n
         localRuntime: enLocalRuntime,
         sites: enSites,
         hooks: enHooks,
+        ...(extensionI18nResources.en ?? {}),
       },
       'zh-CN': {
         chat: zhChat,
@@ -30,12 +36,14 @@ i18n
         localRuntime: zhLocalRuntime,
         sites: zhSites,
         hooks: zhHooks,
+        ...(extensionI18nResources['zh-CN'] ?? {}),
       },
     },
     lng: 'zh-CN',
     fallbackLng: 'zh-CN',
     supportedLngs: ['zh-CN', 'en'],
     defaultNS: 'common',
+    ns: ['common', 'chat', 'localRuntime', 'sites', 'hooks', ...extensionNamespaces],
     interpolation: { escapeValue: false },
   })
 

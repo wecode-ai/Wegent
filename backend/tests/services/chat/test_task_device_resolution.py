@@ -17,6 +17,7 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.chat.storage.task_manager import TaskCreationParams
 from app.services.chat.task_device_resolution import (
+    ensure_task_device_id,
     resolve_chat_task_device_id,
     resolve_chat_task_dispatch_device_id,
 )
@@ -334,6 +335,41 @@ def test_resolve_chat_task_device_falls_back_to_task_spec(
     )
 
 
+def test_resolve_chat_task_device_ignores_device_for_existing_code_task(
+    test_db: Session,
+    test_user: User,
+):
+    task = _task(
+        task_id=2501,
+        user_id=test_user.id,
+        device_id="polluted-device",
+        task_type="code",
+    )
+    params = TaskCreationParams(
+        message="continue coding",
+        task_type="task",
+        device_id="stale-device",
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
+            task=task,
+        )
+        is None
+    )
+
+
+def test_ensure_task_device_id_rejects_existing_code_task(test_user: User):
+    task = _task(task_id=2501, user_id=test_user.id, task_type="code")
+
+    assert ensure_task_device_id(task, device_id="stale-device") is False
+    assert "device_id" not in task.json["spec"]
+
+
 @pytest.mark.asyncio
 async def test_resolve_chat_dispatch_device_uses_only_online_local_device_when_project_device_is_stale(
     test_db: Session,
@@ -500,6 +536,7 @@ def _task(
     user_id: int,
     project_id: int = 0,
     device_id: str | None = None,
+    task_type: str = "task",
 ) -> TaskResource:
     spec = {
         "title": "Existing task",
@@ -527,7 +564,11 @@ def _task(
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Task",
-            "metadata": {"name": f"task-{task_id}", "namespace": "default"},
+            "metadata": {
+                "name": f"task-{task_id}",
+                "namespace": "default",
+                "labels": {"taskType": task_type},
+            },
             "spec": spec,
             "status": {
                 "state": "Available",

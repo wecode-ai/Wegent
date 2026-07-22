@@ -15,22 +15,56 @@ import {
 import { WorkspacePanelCards as ActualWorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
-const cloudDesktopExtensionMock = vi.hoisted(() => ({
-  available: true,
-  DeviceAction: vi.fn(),
-  WorkspaceAction: vi.fn(({ disabled, onOpened }: { disabled: boolean; onOpened: () => void }) => (
-    <button
-      type="button"
-      data-testid="workspace-desktop-card"
-      disabled={disabled}
-      onClick={onOpened}
-    >
-      桌面
-    </button>
-  )),
-  isInternalPageUrl: vi.fn(() => false),
-  open: vi.fn(),
-}))
+const cloudDesktopExtensionMock = vi.hoisted(() => {
+  const launch = vi.fn()
+
+  return {
+    available: true,
+    DeviceAction: vi.fn(),
+    WorkspaceAction: vi.fn(
+      ({
+        disabled,
+        onBusyChange,
+        onErrorChange,
+        onLaunchActionChange,
+        onOpened,
+      }: {
+        disabled: boolean
+        onBusyChange: (busy: boolean) => void
+        onErrorChange: (message: string | null) => void
+        onLaunchActionChange?: (
+          action: ((options?: { notifyOpened?: boolean }) => Promise<void>) | null
+        ) => void
+        onOpened: () => void
+      }) => {
+        const launchAction = async (options?: { notifyOpened?: boolean }) => {
+          onErrorChange(null)
+          onBusyChange(true)
+          try {
+            const opened = await launch(options)
+            if (opened && options?.notifyOpened !== false) onOpened()
+          } finally {
+            onBusyChange(false)
+          }
+        }
+        onLaunchActionChange?.(launchAction)
+
+        return (
+          <button
+            type="button"
+            data-testid="workspace-desktop-card"
+            disabled={disabled}
+            onClick={() => void launchAction()}
+          >
+            桌面
+          </button>
+        )
+      }
+    ),
+    isInternalPageUrl: vi.fn(() => false),
+    launch,
+  }
+})
 
 vi.mock('@extensions/cloud-desktop', () => ({
   cloudDesktopExtension: cloudDesktopExtensionMock,
@@ -225,7 +259,7 @@ describe('WorkspacePanelCards', () => {
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
     cloudDesktopExtensionMock.available = true
-    cloudDesktopExtensionMock.open.mockResolvedValue(true)
+    cloudDesktopExtensionMock.launch.mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
@@ -395,7 +429,7 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('opens the project desktop in the embedded browser through the cloud extension', async () => {
+  test('opens the project desktop through the cloud extension', async () => {
     const onRequestClose = vi.fn()
     render(
       <WorkspacePanelCards
@@ -407,18 +441,7 @@ describe('WorkspacePanelCards', () => {
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
-    await waitFor(() =>
-      expect(cloudDesktopExtensionMock.open).toHaveBeenCalledWith({
-        connection: {
-          apiBaseUrl: '/api',
-          isConnected: true,
-          socketBaseUrl: undefined,
-          token: 'token-1',
-        },
-        deviceId: 'device-1',
-        isCurrent: expect.any(Function),
-      })
-    )
+    await waitFor(() => expect(cloudDesktopExtensionMock.launch).toHaveBeenCalledWith(undefined))
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
@@ -455,7 +478,7 @@ describe('WorkspacePanelCards', () => {
 
     await act(async () => actions.desktop.run())
 
-    expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(1)
+    expect(cloudDesktopExtensionMock.launch).toHaveBeenCalledWith({ notifyOpened: false })
     expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
     expect(onRequestClose).not.toHaveBeenCalled()
   })

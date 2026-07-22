@@ -2,9 +2,40 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getTaskTargetHref, getTaskTargetPath } from '@/utils/taskRouting'
+import { getTaskTargetHref, getTaskTargetPath, resolveChatPageTaskType } from '@/utils/taskRouting'
 
 describe('taskRouting', () => {
+  it('keeps an existing code task in cloud mode when a device selection is stale', () => {
+    expect(
+      resolveChatPageTaskType({
+        taskId: '5',
+        selectedTask: { id: 5, task_type: 'code' },
+        selectedDeviceId: 'stale-device',
+        isCodeAgentMode: false,
+      })
+    ).toBe('code')
+  })
+
+  it('does not use a stale device while an existing task is loading', () => {
+    expect(
+      resolveChatPageTaskType({
+        taskId: '5',
+        selectedTask: { id: 4, task_type: 'task' },
+        selectedDeviceId: 'stale-device',
+        isCodeAgentMode: true,
+      })
+    ).toBe('code')
+  })
+
+  it('uses the selected device for a new task', () => {
+    expect(
+      resolveChatPageTaskType({
+        selectedDeviceId: 'device-1',
+        isCodeAgentMode: false,
+      })
+    ).toBe('task')
+  })
+
   it('routes knowledge tasks with knowledge base context to the notebook entry', () => {
     expect(
       getTaskTargetHref({

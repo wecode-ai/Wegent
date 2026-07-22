@@ -30,6 +30,9 @@ def resolve_chat_task_device_id(
 ) -> str | None:
     """Resolve the device used to dispatch a chat task."""
 
+    if extract_task_type(task) == "code":
+        return None
+
     explicit_device_id = _clean_string(params.device_id)
     if explicit_device_id:
         return resolve_local_executor_device_id(
@@ -227,12 +230,30 @@ def extract_task_device_id(task: TaskResource | None) -> str | None:
     return _clean_string(spec.get("device_id"))
 
 
+def extract_task_type(task: TaskResource | None) -> str | None:
+    """Extract the persisted task type label."""
+
+    task_json = getattr(task, "json", None)
+    if not isinstance(task_json, dict):
+        return None
+    metadata = task_json.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    labels = metadata.get("labels")
+    if not isinstance(labels, dict):
+        return None
+    return _clean_string(labels.get("taskType"))
+
+
 def ensure_task_device_id(
     task: TaskResource,
     *,
     device_id: str | None,
 ) -> bool:
     """Persist a resolved device id on a task that does not already have one."""
+
+    if extract_task_type(task) == "code":
+        return False
 
     resolved_device_id = _clean_string(device_id)
     if not resolved_device_id or extract_task_device_id(task):

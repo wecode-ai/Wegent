@@ -857,6 +857,16 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn restart_codex_app_server(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let expected_models = crate::server::codex_model_catalog::custom_model_slugs();
+        self.restart_codex_app_server_with_expected_models(payload, expected_models)
+            .await
+    }
+
+    async fn restart_codex_app_server_with_expected_models(
+        &self,
+        payload: Value,
+        expected_models: Vec<String>,
+    ) -> Result<Value, AppIpcError> {
         let active_task_count = self
             .active_codex_turns
             .lock()
@@ -874,7 +884,6 @@ impl RuntimeWorkRpcHandler {
         self.codex_app_server.restart().await;
         crate::server::codex_model_catalog::invalidate_models_cache()
             .map_err(|error| AppIpcError::new("codex_cache_invalidation_failed", error))?;
-        let expected_models = crate::server::codex_model_catalog::custom_model_slugs();
         if !expected_models.is_empty() {
             let mut loaded = false;
             for _ in 0..20 {
@@ -5979,13 +5988,10 @@ mod tests {
 
     #[tokio::test]
     async fn codex_app_server_restart_rpc_returns_success() {
-        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let handler = RuntimeWorkRpcHandler::new("device-1", "unused-codex-binary");
 
         let result = handler
-            .handle_runtime_rpc(json!({
-                "method": "runtime.codex.app_server.restart",
-                "payload": {"ifIdle": true}
-            }))
+            .restart_codex_app_server_with_expected_models(json!({"ifIdle": true}), Vec::new())
             .await
             .expect("restart should return success");
 

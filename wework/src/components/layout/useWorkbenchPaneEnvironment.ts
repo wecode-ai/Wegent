@@ -57,8 +57,8 @@ export function useWorkbenchPaneEnvironment({
     createEnvironmentBranch,
   } = useWorkbenchPaneContext()
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
-    additions: '+0',
-    deletions: '-0',
+    additions: '',
+    deletions: '',
     executionTarget: 'local',
   })
   const [workspaceTarget, setWorkspaceTarget] = useState<WorkspaceTarget | null>(null)
@@ -128,7 +128,7 @@ export function useWorkbenchPaneEnvironment({
     environmentInfo.deviceId === activeWorkspaceTarget.deviceId
   )
   const isGitProject = environmentMatchesActiveWorkspace
-    ? !environmentInfo.error && environmentInfo.branchName !== undefined
+    ? environmentInfo.isGitRepository !== false
     : Boolean(workspaceProject && isGitWorkspaceProject(workspaceProject))
   const workspaceProjectKey = workspaceProject ? String(workspaceProject.id) : ''
   const activeConversationProjectKey = activeConversationProject
@@ -142,6 +142,8 @@ export function useWorkbenchPaneEnvironment({
   const environmentContextRef = useRef({ workspaceProject, activeWorkspaceTarget })
   const hasEnvironmentProject = Boolean(workspaceProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
+  const gitActionsAvailable =
+    !environmentMatchesActiveWorkspace || environmentInfo.isGitRepository !== false
 
   useEffect(() => {
     environmentContextRef.current = { workspaceProject, activeWorkspaceTarget }
@@ -234,7 +236,19 @@ export function useWorkbenchPaneEnvironment({
       }
 
       if (showLoading) {
-        setEnvironmentInfo(info => ({ ...info, loading: true }))
+        setEnvironmentInfo(info =>
+          info.workspacePath === activeWorkspaceTarget?.path &&
+          info.deviceId === activeWorkspaceTarget?.deviceId
+            ? { ...info, loading: true }
+            : {
+                additions: '',
+                deletions: '',
+                executionTarget: info.executionTarget,
+                deviceId: activeWorkspaceTarget?.deviceId,
+                workspacePath: activeWorkspaceTarget?.path,
+                loading: true,
+              }
+        )
       }
       try {
         const {
@@ -272,6 +286,8 @@ export function useWorkbenchPaneEnvironment({
       }
     },
     [
+      activeWorkspaceTarget?.deviceId,
+      activeWorkspaceTarget?.path,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
       state.devices,
@@ -398,17 +414,19 @@ export function useWorkbenchPaneEnvironment({
       branchName: environmentInfo.branchName,
       branchLoading: environmentInfo.loading,
       onRefreshBranch: undefined,
-      onListBranches: activeWorkspaceTarget ? listPaneEnvironmentBranches : undefined,
-      onCheckoutBranch: checkoutPaneEnvironmentBranch,
-      onCreateBranch: createPaneEnvironmentBranch,
+      onListBranches:
+        activeWorkspaceTarget && gitActionsAvailable ? listPaneEnvironmentBranches : undefined,
+      onCheckoutBranch: gitActionsAvailable ? checkoutPaneEnvironmentBranch : undefined,
+      onCreateBranch: gitActionsAvailable ? createPaneEnvironmentBranch : undefined,
     },
     refreshEnvironmentInfo,
     commitEnvironmentChanges: commitPaneEnvironmentChanges,
     commitAndPushEnvironmentChanges: commitAndPushPaneEnvironmentChanges,
     pushEnvironmentChanges: pushPaneEnvironmentChanges,
-    loadEnvironmentDiff: activeWorkspaceTarget
-      ? (target, mode) => loadEnvironmentDiff(workspaceProject, target, mode)
-      : undefined,
+    loadEnvironmentDiff:
+      activeWorkspaceTarget && gitActionsAvailable
+        ? (target, mode) => loadEnvironmentDiff(workspaceProject, target, mode)
+        : undefined,
     listEnvironmentBranches: listPaneEnvironmentBranches,
     checkoutEnvironmentBranch: checkoutPaneEnvironmentBranch,
     createEnvironmentBranch: createPaneEnvironmentBranch,
