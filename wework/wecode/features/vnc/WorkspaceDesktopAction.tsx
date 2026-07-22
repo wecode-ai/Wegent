@@ -1,10 +1,12 @@
 import { Loader2, Monitor } from 'lucide-react'
+import { useEffect } from 'react'
 
 import type { CloudDesktopWorkspaceActionProps } from '@/extensions/cloud-desktop-contract'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useCloudDesktopLaunch } from './useCloudDesktopLaunch'
 
 export function WorkspaceDesktopAction({
+  onLaunchActionChange,
   testIdsEnabled = true,
   ...props
 }: CloudDesktopWorkspaceActionProps) {
@@ -13,6 +15,11 @@ export function WorkspaceDesktopAction({
     ...props,
     failureMessage: t('open_project_desktop_failed', '启动失败'),
   })
+
+  useEffect(() => {
+    onLaunchActionChange?.(launch.open)
+    return () => onLaunchActionChange?.(null)
+  }, [launch.open, onLaunchActionChange])
 
   return (
     <button
