@@ -541,7 +541,7 @@ fn decrypt_sensitive_data(token: &str) -> Option<String> {
         );
         return None;
     };
-    if iv.as_bytes().len() != 16 {
+    if iv.len() != 16 {
         log_executor_event(
             "git token decryption configuration error",
             &[("reason", "invalid_GIT_TOKEN_AES_IV_length".to_owned())],
