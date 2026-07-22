@@ -63,6 +63,8 @@ export type LocalModelSettingsEventConfig = Omit<LocalModelConfig, 'apiKey'> & {
   apiKeyConfigured: boolean
 }
 
+export type LocalModelCatalogSnapshot = Pick<LocalModelConfig, 'id' | 'updatedAt'>
+
 export const LOCAL_MODEL_SETTINGS_STORAGE_KEY = 'wework.localModelSettings.v1'
 export const LOCAL_MODEL_SETTINGS_CHANGED_EVENT = 'wework:local-model-settings-changed'
 export const LOCAL_MODEL_NAME_PREFIX = 'local-model:'
@@ -394,6 +396,14 @@ export function createLocalModelConfigId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}`
 }
 
+function nextLocalModelUpdatedAt(previous?: LocalModelConfig): string {
+  const previousTimestamp = previous ? Date.parse(previous.updatedAt) : Number.NaN
+  const timestamp = Number.isFinite(previousTimestamp)
+    ? Math.max(Date.now(), previousTimestamp + 1)
+    : Date.now()
+  return new Date(timestamp).toISOString()
+}
+
 export function listLocalModelConfigs(): LocalModelConfig[] {
   return readStoredConfigs()
 }
@@ -416,16 +426,27 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const isCustomProvider =
     (input.providerProfileId ?? previous?.providerProfileId ?? 'custom') === 'custom'
   const catalogEntry =
-    input.catalogEntry ??
-    previous?.catalogEntry ??
-    (isCustomProvider
-      ? createDefaultLocalModelCatalogEntry({
-          id,
-          displayName,
-          toolProfile,
-          contextWindow,
-        })
-      : undefined)
+    input.catalogEntry === undefined
+      ? (previous?.catalogEntry ??
+        (isCustomProvider
+          ? createDefaultLocalModelCatalogEntry({
+              id,
+              displayName,
+              toolProfile,
+              contextWindow,
+            })
+          : undefined))
+      : (input.catalogEntry ?? undefined)
+  const catalogChanged =
+    Boolean(catalogEntry) && JSON.stringify(catalogEntry) !== JSON.stringify(previous?.catalogEntry)
+  const shouldClearPendingRuntimeInstanceId =
+    input.catalogEntry !== undefined || (input.providerProfileId !== undefined && !isCustomProvider)
+  const pendingRuntimeInstanceId =
+    input.catalogPendingRuntimeInstanceId !== undefined
+      ? input.catalogPendingRuntimeInstanceId?.trim() || undefined
+      : shouldClearPendingRuntimeInstanceId
+        ? undefined
+        : previous?.catalogPendingRuntimeInstanceId
   const webSearchMode = normalizeLocalModelWebSearchMode(
     input.webSearchMode ?? previous?.webSearchMode
   )
@@ -452,12 +473,14 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
         }
       : {}),
     ...(catalogEntry ? { catalogEntry } : {}),
-    catalogReady: input.catalogReady ?? previous?.catalogReady ?? true,
-    ...(input.catalogPendingRuntimeInstanceId?.trim()
-      ? { catalogPendingRuntimeInstanceId: input.catalogPendingRuntimeInstanceId.trim() }
+    catalogReady:
+      input.catalogReady ??
+      (!catalogEntry ? true : catalogChanged ? false : (previous?.catalogReady ?? false)),
+    ...(pendingRuntimeInstanceId
+      ? { catalogPendingRuntimeInstanceId: pendingRuntimeInstanceId }
       : {}),
     enabled: input.enabled ?? previous?.enabled ?? true,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nextLocalModelUpdatedAt(previous),
   }
   const index = existing.findIndex(config => config.id === id)
   const configs =
@@ -466,8 +489,10 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   return next
 }
 
-export function markLocalModelCatalogReady(): void {
+export function markLocalModelCatalogReady(snapshot: readonly LocalModelCatalogSnapshot[]): void {
+  const writtenVersions = new Map(snapshot.map(model => [model.id, model.updatedAt]))
   const configs = readStoredConfigs().map(config => {
+    if (writtenVersions.get(config.id) !== config.updatedAt) return config
     const rest = { ...config }
     delete rest.catalogPendingRuntimeInstanceId
     return { ...rest, catalogReady: true }
