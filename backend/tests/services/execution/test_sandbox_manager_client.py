@@ -53,6 +53,111 @@ async def test_create_sandbox_uses_plural_sandboxes_endpoint():
 
 
 @pytest.mark.asyncio
+async def test_create_sandbox_restores_archived_task_workspace():
+    """Sandbox creation should restore task archives when available."""
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "sandbox_id": "1385",
+        "container_name": "wegent-task-test",
+        "executor_namespace": "sandbox-ns",
+        "base_url": "http://127.0.0.1:10001",
+        "metadata": {"task_id": 1385, "skip_git_clone": True},
+    }
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post.return_value = response
+
+    db = MagicMock()
+    restore_task = SimpleNamespace(id=1385)
+
+    with (
+        patch(
+            "app.core.config.settings",
+            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+        ),
+        patch("httpx.AsyncClient", return_value=client),
+        patch("app.services.execution.SessionLocal", return_value=db),
+        patch(
+            "app.services.execution.sandbox_workspace_archive_service.prepare_restore_metadata",
+            return_value=({"task_id": 1385, "skip_git_clone": True}, restore_task),
+        ) as prepare_mock,
+        patch(
+            "app.services.execution.sandbox_workspace_archive_service.restore_sandbox_after_create",
+            AsyncMock(return_value=True),
+        ) as restore_mock,
+    ):
+        sandbox, error = await get_executor_runtime_client().create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=2,
+            user_name="user7",
+            metadata={"task_id": 1385},
+        )
+
+    assert error is None
+    assert sandbox.metadata == {"task_id": 1385, "skip_git_clone": True}
+    prepare_mock.assert_called_once_with(db, {"task_id": 1385})
+    restore_mock.assert_awaited_once_with(db, restore_task, sandbox)
+    client.post.assert_awaited_once()
+    assert client.post.await_args.kwargs["json"]["metadata"] == {
+        "task_id": 1385,
+        "skip_git_clone": True,
+    }
+    db.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_sandbox_continues_when_restore_raises():
+    """Unexpected restore failures should not fail sandbox creation."""
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "sandbox_id": "1385",
+        "container_name": "wegent-task-test",
+        "executor_namespace": "sandbox-ns",
+        "base_url": "http://127.0.0.1:10001",
+        "metadata": {"task_id": 1385, "skip_git_clone": True},
+    }
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post.return_value = response
+
+    db = MagicMock()
+    restore_task = SimpleNamespace(id=1385)
+
+    with (
+        patch(
+            "app.core.config.settings",
+            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+        ),
+        patch("httpx.AsyncClient", return_value=client),
+        patch("app.services.execution.SessionLocal", return_value=db),
+        patch(
+            "app.services.execution.sandbox_workspace_archive_service.prepare_restore_metadata",
+            return_value=({"task_id": 1385, "skip_git_clone": True}, restore_task),
+        ),
+        patch(
+            "app.services.execution.sandbox_workspace_archive_service.restore_sandbox_after_create",
+            AsyncMock(side_effect=RuntimeError("restore failed")),
+        ),
+    ):
+        sandbox, error = await get_executor_runtime_client().create_sandbox(
+            shell_type="ClaudeCode",
+            user_id=2,
+            user_name="user7",
+            metadata={"task_id": 1385},
+        )
+
+    assert error is None
+    assert sandbox.sandbox_id == "1385"
+    db.close.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_prepare_executor_uses_prepare_endpoint():
     """Executor preparation should call the dedicated prepare endpoint."""
     response = MagicMock()
@@ -155,6 +260,10 @@ async def test_delete_sandbox_uses_task_scoped_endpoint():
             SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
         ),
         patch("httpx.AsyncClient", return_value=client),
+        patch(
+            "app.services.execution.sandbox_workspace_archive_service.archive_sandbox_before_delete",
+            AsyncMock(return_value=None),
+        ),
     ):
         success, error = await get_executor_runtime_client().delete_sandbox("1385")
 
@@ -165,6 +274,40 @@ async def test_delete_sandbox_uses_task_scoped_endpoint():
         client.delete.await_args.args[0]
         == "http://localhost:8001/executor-manager/sandboxes/1385"
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_sandbox_archives_workspace_before_delete():
+    """Sandbox termination should attempt workspace archive before deletion."""
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.delete.return_value = response
+
+    db = MagicMock()
+
+    with (
+        patch(
+            "app.core.config.settings",
+            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+        ),
+        patch("httpx.AsyncClient", return_value=client),
+        patch("app.services.execution.SessionLocal", return_value=db),
+        patch(
+            "app.services.execution.sandbox_workspace_archive_service.archive_sandbox_before_delete",
+            AsyncMock(return_value=SimpleNamespace(storageKey="archive")),
+        ) as archive_mock,
+    ):
+        success, error = await get_executor_runtime_client().delete_sandbox("1385")
+
+    assert success is True
+    assert error is None
+    archive_mock.assert_awaited_once_with(db, "1385")
+    client.delete.assert_awaited_once()
+    db.close.assert_called_once()
 
 
 @pytest.mark.asyncio
