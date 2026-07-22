@@ -17,6 +17,8 @@ governance phase:
 
 from __future__ import annotations
 
+import logging
+import time
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +33,8 @@ from langchain_core.messages import (
 )
 
 from chat_shell.compression.token_counter import TokenCounter
+
+logger = logging.getLogger(__name__)
 
 SUMMARY_PREFIX = "[COMPACT SUMMARY]"
 SUMMARY_COMPACTED_FLAG = "compacted"
@@ -155,8 +159,18 @@ class SummaryCompactor:
         working_messages = list(messages)
         removed = 0
         current_user = self._find_current_user_message(working_messages)
+        logger.info(
+            "[SummaryCompact] compact() start: messages=%d "
+            "max_compact_input_tokens=%s",
+            len(working_messages),
+            self._max_compact_input_tokens,
+        )
 
+        attempt = 0
         while True:
+            attempt += 1
+            trim_started = time.perf_counter()
+            trim_removed = 0
             while self._is_compact_prompt_over_limit(working_messages):
                 if not self._remove_oldest_history_item(
                     working_messages,
@@ -167,6 +181,18 @@ class SummaryCompactor:
                         "remaining floor still exceeds the compact-task input budget."
                     )
                 removed += 1
+                trim_removed += 1
+            if trim_removed:
+                logger.info(
+                    "[SummaryCompact] trim pass done: attempt=%d "
+                    "removed_this_pass=%d removed_total=%d remaining_messages=%d "
+                    "elapsed_ms=%.1f",
+                    attempt,
+                    trim_removed,
+                    removed,
+                    len(working_messages),
+                    (time.perf_counter() - trim_started) * 1000,
+                )
             try:
                 summary_body = await self._generate_summary(
                     self._sanitize_tool_message_sequence(working_messages)
@@ -199,7 +225,31 @@ class SummaryCompactor:
             *messages,
             HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
         ]
-        result = await self._llm.ainvoke(prompt_messages)
+        prompt_tokens = self._token_counter.count_messages(
+            [_message_to_counter_dict(message) for message in prompt_messages]
+        )
+        logger.info(
+            "[SummaryCompact] issuing summary request: messages=%d counted_tokens=%d",
+            len(prompt_messages),
+            prompt_tokens,
+        )
+        request_started = time.perf_counter()
+        try:
+            result = await self._llm.ainvoke(prompt_messages)
+        except BaseException as exc:
+            # BaseException so a CancelledError (task/timeout cancellation) is
+            # surfaced here rather than vanishing silently at the hang point.
+            logger.warning(
+                "[SummaryCompact] summary request ended after %.1fms: %s: %s",
+                (time.perf_counter() - request_started) * 1000,
+                type(exc).__name__,
+                exc,
+            )
+            raise
+        logger.info(
+            "[SummaryCompact] summary request returned in %.1fms",
+            (time.perf_counter() - request_started) * 1000,
+        )
         summary_text = _extract_text(result).strip()
         if not summary_text:
             raise SummaryCompactNotApplicable(

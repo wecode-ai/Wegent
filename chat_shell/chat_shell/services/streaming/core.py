@@ -589,8 +589,10 @@ class StreamingCore:
     async def handle_error(self, error: Exception) -> None:
         """Handle streaming error."""
         logger.exception(
-            "[STREAMING] subtask=%s error",
+            "[STREAMING] subtask=%s error type=%s repr=%r",
             self.state.subtask_id,
+            type(error).__name__,
+            error,
         )
 
         from shared.utils.error_classifier import classify_error, format_error_message
