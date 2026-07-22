@@ -546,6 +546,10 @@ function normalizeRuntimeTaskSummary(
     modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
     modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
   const goalStatus = runtimeGoalStatusValue(taskRecord.goalStatus ?? taskRecord.goal_status)
+  const threadStatus = stringValue(taskRecord.threadStatus ?? taskRecord.thread_status)
+  const turnStatus = stringValue(taskRecord.turnStatus ?? taskRecord.turn_status)
+  const continuableValue = taskRecord.continuable
+  const continuable = typeof continuableValue === 'boolean' ? continuableValue : undefined
 
   const normalized = {
     ...taskRecord,
@@ -563,6 +567,9 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(goalStatus ? { goalStatus } : {}),
+    ...(threadStatus ? { threadStatus } : {}),
+    ...(turnStatus ? { turnStatus } : {}),
+    ...(continuable !== undefined ? { continuable } : {}),
   }
 
   return normalized as RuntimeTaskSummary

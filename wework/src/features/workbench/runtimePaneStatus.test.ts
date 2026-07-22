@@ -89,6 +89,7 @@ describe('runtime pane status', () => {
     expect(getRuntimePaneTaskExecution(runtimeWorkWithoutRunningState, runtimeAddress)).toEqual({
       known: false,
       running: false,
+      continuable: true,
       status: null,
     })
   })
@@ -113,7 +114,7 @@ describe('runtime pane status', () => {
       messages: [],
       sendPhase: 'submitting',
       currentRuntimeTask: runtimeAddress,
-      taskExecution: { known: false, running: false, status: null },
+      taskExecution: { known: false, running: false, continuable: false, status: null },
     })
 
     expect(status.isSubmitting).toBe(true)
@@ -126,7 +127,7 @@ describe('runtime pane status', () => {
       messages: [assistantMessage('failed')],
       sendPhase: 'awaiting_assistant',
       currentRuntimeTask: runtimeAddress,
-      taskExecution: { known: true, running: false, status: 'failed' },
+      taskExecution: { known: true, running: false, continuable: true, status: 'failed' },
     })
 
     expect(status.isAwaitingAssistant).toBe(true)
@@ -143,7 +144,12 @@ describe('runtime pane status', () => {
       taskExecution,
     })
 
-    expect(status.taskExecution).toEqual({ known: true, running: false, status: 'done' })
+    expect(status.taskExecution).toEqual({
+      known: true,
+      running: false,
+      continuable: true,
+      status: 'done',
+    })
     expect(status.activeAssistantMessage).toBeNull()
     expect(status.isAssistantStreaming).toBe(false)
     expect(status.isBusy).toBe(false)
@@ -159,10 +165,32 @@ describe('runtime pane status', () => {
       taskExecution,
     })
 
-    expect(status.taskExecution).toEqual({ known: true, running: false, status: 'active' })
+    expect(status.taskExecution).toEqual({
+      known: true,
+      running: false,
+      continuable: true,
+      status: 'active',
+    })
     expect(status.activeAssistantMessage).toBeNull()
     expect(status.isAssistantStreaming).toBe(false)
     expect(status.isBusy).toBe(false)
     expect(status.canSendQueuedMessage).toBe(true)
+  })
+
+  test('keeps conversation continuation separate from turn execution', () => {
+    const work = runtimeWork(false, 'done')
+    work.chats[0].tasks[0].continuable = false
+    const taskExecution = getRuntimePaneTaskExecution(work, runtimeAddress)
+    const status = deriveRuntimePaneStatus({
+      messages: [assistantMessage('done')],
+      sendPhase: 'idle',
+      currentRuntimeTask: runtimeAddress,
+      taskExecution,
+    })
+
+    expect(status.taskExecution.running).toBe(false)
+    expect(status.taskExecution.continuable).toBe(false)
+    expect(status.isBusy).toBe(false)
+    expect(status.canSendQueuedMessage).toBe(false)
   })
 })

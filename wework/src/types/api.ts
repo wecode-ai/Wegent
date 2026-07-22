@@ -354,6 +354,9 @@ export interface RuntimeTaskSummary {
   updatedAt?: string | number | null
   completedAt?: string | number | null
   running?: boolean
+  continuable?: boolean
+  threadStatus?: 'notLoaded' | 'idle' | 'systemError' | 'active' | string
+  turnStatus?: 'inProgress' | 'completed' | 'interrupted' | 'failed' | null
   pinned?: boolean
   pinnedOrder?: number | null
   sidebarOrder?: number | null
