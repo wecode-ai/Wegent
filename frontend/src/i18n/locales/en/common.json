@@ -1285,6 +1285,8 @@
     "modality_text": "Text",
     "modality_image": "Image",
     "modality_video": "Video",
+    "modality_separator": ", ",
+    "token_unit": "Tokens",
     "model_limits": "Model limits",
     "thinking_config": "Thinking Config",
     "thinking_config_hint": "Provider-native thinking/reasoning JSON config. Passed through to the LLM API as-is. Leave empty to disable.",

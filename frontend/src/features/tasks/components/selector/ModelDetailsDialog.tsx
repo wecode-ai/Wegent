@@ -25,15 +25,19 @@ interface ModelDetailsBodyProps {
   model: Model
 }
 
-function formatTokenCount(value: number | null | undefined, unavailable: string): string {
+function formatTokenCount(
+  value: number | null | undefined,
+  unavailable: string,
+  tokenUnit: string
+): string {
   if (value == null) return unavailable
   if (value >= 1_000_000) {
-    return `${Number((value / 1_000_000).toFixed(2))}M Tokens`
+    return `${Number((value / 1_000_000).toFixed(2))}M ${tokenUnit}`
   }
   if (value >= 1_000) {
-    return `${Number((value / 1_000).toFixed(1))}K Tokens`
+    return `${Number((value / 1_000).toFixed(1))}K ${tokenUnit}`
   }
-  return `${value} Tokens`
+  return `${value} ${tokenUnit}`
 }
 
 function formatCostIndex(value: number | null | undefined, unavailable: string): string {
@@ -44,6 +48,8 @@ function formatCostIndex(value: number | null | undefined, unavailable: string):
 export function ModelDetailsBody({ model }: ModelDetailsBodyProps) {
   const { t } = useTranslation('common')
   const unavailable = t('models.details_unavailable')
+  const tokenUnit = t('models.token_unit')
+  const modalitySeparator = t('models.modality_separator')
   const capabilities = getModelCapabilities(model)
   const inputTypes = [
     t('models.modality_text'),
@@ -68,7 +74,7 @@ export function ModelDetailsBody({ model }: ModelDetailsBodyProps) {
         <dl className="mt-2 space-y-2 text-sm">
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">{t('models.input_type')}</dt>
-            <dd className="text-right text-text-primary">{inputTypes.join('、')}</dd>
+            <dd className="text-right text-text-primary">{inputTypes.join(modalitySeparator)}</dd>
           </div>
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">{t('models.output_type')}</dt>
@@ -83,13 +89,13 @@ export function ModelDetailsBody({ model }: ModelDetailsBodyProps) {
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">{t('models.context_window')}</dt>
             <dd data-testid="model-details-context-window" className="text-text-primary">
-              {formatTokenCount(model.contextWindow, unavailable)}
+              {formatTokenCount(model.contextWindow, unavailable, tokenUnit)}
             </dd>
           </div>
           <div className="flex items-start justify-between gap-4">
             <dt className="text-text-muted">{t('models.max_output_tokens')}</dt>
             <dd data-testid="model-details-max-output" className="text-text-primary">
-              {formatTokenCount(model.maxOutputTokens, unavailable)}
+              {formatTokenCount(model.maxOutputTokens, unavailable, tokenUnit)}
             </dd>
           </div>
         </dl>

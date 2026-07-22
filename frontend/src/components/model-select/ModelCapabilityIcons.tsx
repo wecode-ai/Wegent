@@ -26,6 +26,7 @@ export function supportsVideoUnderstanding(model: GroupableModel): boolean {
 
 export function ModelCapabilityIcons({ model, className }: ModelCapabilityIconsProps) {
   const { t } = useTranslation()
+  const capabilitySeparator = t('common:models.modality_separator')
   const capabilities = [
     supportsImageUnderstanding(model) && {
       key: 'image',
@@ -52,7 +53,7 @@ export function ModelCapabilityIcons({ model, className }: ModelCapabilityIconsP
     <TooltipProvider>
       <span className={cn('inline-flex shrink-0 items-center gap-1', className)}>
         <span className="sr-only">
-          {capabilities.map(capability => capability.label).join('、')}
+          {capabilities.map(capability => capability.label).join(capabilitySeparator)}
         </span>
         {capabilities.map(capability => {
           const Icon = capability.icon

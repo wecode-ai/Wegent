@@ -1285,6 +1285,8 @@
     "modality_text": "文本",
     "modality_image": "图片",
     "modality_video": "视频",
+    "modality_separator": "、",
+    "token_unit": "Token",
     "model_limits": "模型限制",
     "thinking_config": "思考配置",
     "thinking_config_hint": "供应商原生的思考/推理 JSON 配置，将原样传递给 LLM API。留空则不启用。",

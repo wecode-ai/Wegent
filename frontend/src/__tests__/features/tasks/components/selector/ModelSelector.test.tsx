@@ -45,6 +45,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'models.modality_text': '文本',
         'models.modality_image': '图片',
         'models.modality_video': '视频',
+        'models.modality_separator': '、',
+        'models.token_unit': 'Tokens',
         'models.image_understanding': '图片理解',
         'models.video_understanding': '视频理解',
         'models.model_limits': '模型限制',
@@ -382,7 +384,9 @@ describe('ModelSelector', () => {
 
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelOption.parentElement).toHaveClass('text-primary')
-    expect(screen.getByTestId('model-special-option-__default__')).toHaveClass('bg-primary/10')
+    const defaultOption = screen.getByTestId('model-special-option-__default__')
+    expect(defaultOption).toHaveClass('bg-primary/10')
+    expect(defaultOption.querySelector('.lucide-check')).not.toBeInTheDocument()
   })
 
   it('covers the information action with the selected row background', async () => {

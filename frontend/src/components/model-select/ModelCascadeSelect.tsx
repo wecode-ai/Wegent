@@ -194,12 +194,12 @@ export function ModelCascadeContent<T extends GroupableModel>({
         data-testid={`model-special-option-${sanitizeTestId(option.key)}`}
         onClick={() => onSelectSpecialOption?.(option.key)}
         className={cn(
-          'flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left',
+          'flex w-full items-center px-3 py-2.5 text-left',
           'hover:bg-hover focus:bg-hover focus:outline-none',
           isSelected && 'bg-primary/10 text-primary'
         )}
       >
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-text-primary">
             {option.label}
           </span>
@@ -207,7 +207,6 @@ export function ModelCascadeContent<T extends GroupableModel>({
             <span className="block truncate text-xs text-text-muted">{option.description}</span>
           )}
         </span>
-        <Check className={cn('h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')} />
       </button>
     )
   }
