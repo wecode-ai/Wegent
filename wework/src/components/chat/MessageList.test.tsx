@@ -12,11 +12,15 @@ const tauriCoreMock = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
 }))
 const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
+const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 vi.mock('@/lib/external-links', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/external-links')>()),
   openExternalUrl: openExternalUrlMock,
+}))
+vi.mock('@/lib/embedded-browser', () => ({
+  requestEmbeddedBrowserOpen: requestEmbeddedBrowserOpenMock,
 }))
 
 describe('MessageList', () => {
@@ -2073,6 +2077,75 @@ describe('MessageList', () => {
     expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('opens local HTML file links in the Wework built-in browser', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-html-file-link',
+            role: 'assistant',
+            content: '[trend.html](/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+  })
+
+  test('treats local filesystem paths encoded as Tauri URLs as file links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-tauri-file-link',
+            role: 'assistant',
+            content: '[report](tauri://localhost/Users/dev/workspace/report.md)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/workspace/report.md')
+  })
+
+  test('opens Tauri-encoded local HTML paths in the Wework built-in browser', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-tauri-html-file-link',
+            role: 'assistant',
+            content: '[trend](tauri://localhost/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
   })
 
   test('removes angle brackets from assistant file link destinations', () => {

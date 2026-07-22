@@ -1,8 +1,8 @@
-import { File, FileDiff, Globe2, Loader2, Monitor, SquareTerminal } from 'lucide-react'
+import { File, FileDiff, Globe2, Loader2, SquareTerminal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cloudDesktopExtension } from '@extensions/cloud-desktop'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import type { CloudDesktopLaunchAction } from '@/extensions/cloud-desktop-contract'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -114,7 +114,6 @@ export function WorkspacePanelCards({
   workspaceSessionApi,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
-  const cloudConnection = useOptionalCloudConnection()
   const testId = useCallback(
     (value: string) => (testIdsEnabled ? value : undefined),
     [testIdsEnabled]
@@ -233,7 +232,7 @@ export function WorkspacePanelCards({
         preferLocalTerminal ? 'local' : 'configured',
       ].join(':')
     : ''
-  const latestProjectKeyRef = useRef(projectKey)
+  const cloudDesktopLaunchActionRef = useRef<CloudDesktopLaunchAction | null>(null)
   const availableTools =
     toolAvailability.projectKey === projectKey ? toolAvailability.tools : createAvailableTools()
   const error = toolError.projectKey === projectKey ? toolError.message : null
@@ -244,10 +243,6 @@ export function WorkspacePanelCards({
     terminalSessions[0] ??
     null
   const activeTerminalTitle = getTerminalSessionLabel(activeTerminalSession)
-
-  useEffect(() => {
-    latestProjectKeyRef.current = projectKey
-  }, [projectKey])
 
   useEffect(() => {
     terminalSessionsRef.current = terminalSessions
@@ -661,58 +656,23 @@ export function WorkspacePanelCards({
     ]
   )
 
-  const handleDesktopClick = useCallback(
-    async (closePanelOnSuccess = true) => {
-      if (
-        loadingTool ||
-        !cloudDesktopExtension.available ||
-        !cloudToolsAvailable ||
-        !activeWorkspaceDeviceId ||
-        projectDevice?.status !== 'online'
-      ) {
-        return
-      }
-
-      setLoadingToolState({ tool: 'extension', projectKey })
-      setProjectError(null)
-      try {
-        const opened = await cloudDesktopExtension.open({
-          connection: {
-            apiBaseUrl: cloudConnection.apiBaseUrl,
-            isConnected: cloudConnection.isConnected,
-            socketBaseUrl: cloudConnection.socketBaseUrl,
-            token: cloudConnection.token,
-          },
-          deviceId: activeWorkspaceDeviceId,
-          isCurrent: () => latestProjectKeyRef.current === projectKey,
-        })
-        if (opened && closePanelOnSuccess) {
-          onRequestClose?.()
-        }
-      } catch (e) {
-        console.error('Failed to open project desktop:', e)
-        setProjectError(getSessionStartErrorMessage())
-      } finally {
-        setLoadingToolState(current =>
-          current?.tool === 'extension' && current.projectKey === projectKey ? null : current
-        )
-      }
+  const handleDesktopBusyChange = useCallback(
+    (busy: boolean) => {
+      setLoadingToolState(current => {
+        if (busy) return { tool: 'extension', projectKey }
+        return current?.tool === 'extension' && current.projectKey === projectKey ? null : current
+      })
     },
-    [
-      activeWorkspaceDeviceId,
-      cloudConnection.apiBaseUrl,
-      cloudConnection.isConnected,
-      cloudConnection.socketBaseUrl,
-      cloudConnection.token,
-      cloudToolsAvailable,
-      getSessionStartErrorMessage,
-      loadingTool,
-      onRequestClose,
-      projectDevice?.status,
-      projectKey,
-      setProjectError,
-    ]
+    [projectKey]
   )
+
+  const handleDesktopOpened = useCallback(() => {
+    onRequestClose?.()
+  }, [onRequestClose])
+
+  const handleDesktopLaunchActionChange = useCallback((action: CloudDesktopLaunchAction | null) => {
+    cloudDesktopLaunchActionRef.current = action
+  }, [])
 
   const menuActions = useMemo<WorkspacePanelMenuActions>(
     () => ({
@@ -731,7 +691,9 @@ export function WorkspacePanelCards({
           cloudToolsAvailable && cloudDesktopExtension.available && activeWorkspaceDeviceId
         ),
         disabled: toolsDisabled || projectDevice?.status !== 'online',
-        run: () => handleDesktopClick(false),
+        run: async () => {
+          await cloudDesktopLaunchActionRef.current?.({ notifyOpened: false })
+        },
       },
     }),
     [
@@ -739,7 +701,6 @@ export function WorkspacePanelCards({
       availableTools.ide,
       availableTools.terminal,
       cloudToolsAvailable,
-      handleDesktopClick,
       handleIdeClick,
       projectDevice?.status,
       projectIdeAvailable,
@@ -966,25 +927,16 @@ export function WorkspacePanelCards({
                     {cloudToolsAvailable &&
                       cloudDesktopExtension.available &&
                       activeWorkspaceDeviceId && (
-                        <button
-                          type="button"
-                          data-testid={testId('workspace-desktop-card')}
-                          onClick={() => void handleDesktopClick()}
+                        <cloudDesktopExtension.WorkspaceAction
+                          contextKey={projectKey}
+                          deviceId={activeWorkspaceDeviceId}
                           disabled={toolsDisabled || projectDevice?.status !== 'online'}
-                          className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {loadingTool === 'extension' ? (
-                            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
-                          ) : (
-                            <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
-                          )}
-                          <span className="text-sm font-semibold text-text-primary">
-                            {t('workbench.desktop', '桌面')}
-                          </span>
-                          <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                            {t('workbench.open_project_desktop', '打开项目桌面')}
-                          </span>
-                        </button>
+                          onBusyChange={handleDesktopBusyChange}
+                          onErrorChange={setProjectError}
+                          onLaunchActionChange={handleDesktopLaunchActionChange}
+                          onOpened={handleDesktopOpened}
+                          testIdsEnabled={testIdsEnabled}
+                        />
                       )}
                   </>
                 )}

@@ -81,6 +81,7 @@ async fn runtime_prepare_fork_transfer_returns_git_workspace_package_metadata() 
                 "workspacePath": "/tmp/project",
                 "taskId": "thread-1",
                 "transferId": "transfer-1",
+                "uploadUrl": "https://storage.example/upload",
                 "workspaceTransfer": "git_workspace",
                 "directHosts": ["127.0.0.1"]
             }
@@ -95,6 +96,14 @@ async fn runtime_prepare_fork_transfer_returns_git_workspace_package_metadata() 
     assert_eq!(result["package"]["runtimeHandle"]["threadId"], "thread-1");
     assert_eq!(result["package"]["archive"]["mode"], "git_workspace");
     assert_eq!(result["package"]["archive"]["transferId"], "transfer-1");
+    assert_eq!(
+        result["package"]["archive"]["uploadUrl"],
+        "https://storage.example/upload"
+    );
+    assert_eq!(
+        result["package"]["archive"]["directHosts"],
+        json!(["127.0.0.1"])
+    );
     assert_eq!(
         result["package"]["archive"]["requiresWorkspaceRestore"],
         true
