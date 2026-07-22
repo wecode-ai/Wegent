@@ -652,6 +652,7 @@ describe('workbenchReducer', () => {
             tasks: [
               {
                 taskId: 'task-1',
+                threadId: 'direct-thread-id',
                 workspacePath: '/Users/me/chat',
                 title: 'Chat',
                 runtime: 'codex',
@@ -669,6 +670,7 @@ describe('workbenchReducer', () => {
     expect(refreshed.currentRuntimeTask).toEqual({
       deviceId: 'device-uuid',
       taskId: 'task-1',
+      threadId: 'direct-thread-id',
       workspacePath: '/Users/me/chat',
       runtimeHandle: {
         threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',

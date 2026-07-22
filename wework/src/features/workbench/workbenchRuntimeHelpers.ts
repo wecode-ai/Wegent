@@ -138,6 +138,7 @@ function runtimeTaskAddressFromWorkspace(
     taskId: task.taskId,
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
     ...(task.taskId ? { taskId: task.taskId } : {}),
+    ...(task.threadId ? { threadId: task.threadId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
