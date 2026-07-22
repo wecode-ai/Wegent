@@ -4665,7 +4665,7 @@ describe('DesktopWorkbenchLayout', () => {
         right: '0px',
       })
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-        width: 'calc(100% - 420px)',
+        width: 'calc(100% - 420px - 0px - 5rem)',
       })
       expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
         'after:bg-transparent'

@@ -3046,7 +3046,7 @@ export function DesktopSidebar({
             <div
               data-testid="desktop-sidebar-chrome-controls"
               className={cn(
-                'absolute top-0 z-chrome flex h-[38px] items-center gap-1',
+                'absolute top-0 z-chrome flex h-[38px] items-center gap-7',
                 MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS
               )}
             >

@@ -535,7 +535,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [currentRuntimeTask, environmentInfoDocked, onEnvironmentInfoOverlayOpenChange, paneActive])
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
-  const rightPanelTabBarWidth = rightPanelOpen ? rightPanelShellWidth : '0px'
+  const rightPanelTabBarRightOffset = getPlatform() === 'mac' ? '0px' : '138px'
+  const rightPanelTabBarWidth = rightPanelOpen
+    ? `calc(100% - ${rightSplitChatWidth}px - ${rightPanelTabBarRightOffset} - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+    : '0px'
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
     const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
     const permittedTabs = canBrowseFiles
@@ -1426,7 +1429,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
+            'relative z-0 flex h-full shrink-0 items-center gap-7 pr-1',
             platform === 'mac' && MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
           )}
         >

@@ -652,7 +652,7 @@ export function DesktopWorkbenchLayout() {
       )}
     >
       <div
-        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-1 px-1"
+        className="pointer-events-auto absolute left-0 top-0 z-chrome flex h-full items-center gap-7 px-1"
         data-tauri-drag-region={false}
       >
         <DesktopWindowControls

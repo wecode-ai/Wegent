@@ -423,6 +423,11 @@ describe('LocalRuntimeInitializer', () => {
       .mockRejectedValueOnce(new Error('stdio unavailable'))
       .mockResolvedValueOnce({ running: true, ready: true, deviceId: 'local-device' })
 
+    Object.defineProperty(navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    })
+
     render(
       <LocalRuntimeInitializer>
         <div data-testid="main-app">Main app</div>
