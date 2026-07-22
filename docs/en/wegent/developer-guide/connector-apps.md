@@ -65,6 +65,8 @@ The current version has no Connector OAuth callback and does not require a third
 
 ## API layers
 
+The paths below use the default `API_PREFIX=/api`; replace `/api` with your deployment's configured API prefix when it differs.
+
 - `/api/admin/connector-apps`: administrator catalog CRUD.
 - `/api/connector-apps`: current-user visible catalog. The `connection` field in the response is a frontend-compatibility projection and does not map to a `connector_connections` row.
 - `/api/apps/list`, `/api/apps/read`, `/api/apps/installed`: Wework/Codex app projections.

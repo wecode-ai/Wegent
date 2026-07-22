@@ -65,6 +65,8 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 
 ## API 分层
 
+以下路径使用默认 `API_PREFIX=/api`；如果部署配置了其他 API 前缀，请替换为实际值。
+
 - `/api/admin/connector-apps`：管理员目录 CRUD。
 - `/api/connector-apps`：当前用户可见目录；响应中的 `connection` 字段只是兼容前端的数据投影，不对应 `connector_connections` 数据行。
 - `/api/apps/list`、`/api/apps/read`、`/api/apps/installed`：Wework/Codex app 投影。
