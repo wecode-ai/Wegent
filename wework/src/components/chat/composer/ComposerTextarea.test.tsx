@@ -200,8 +200,8 @@ describe('ComposerTextarea', () => {
       )
     }
 
-    render(<Harness />)
-    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+    const view = render(<Harness />)
+    let editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
     act(() => {
       editor.value = '@'
       editor.focus()
@@ -216,8 +216,12 @@ describe('ComposerTextarea', () => {
     expect(onSetGoal).toHaveBeenCalledOnce()
     await waitFor(() => expect(screen.queryByTestId('mention-plan-action')).not.toBeInTheDocument())
 
+    // Use a fresh editor for the second independent action. Reopening the same
+    // async mention menu can race with the previous menu's dismissal under load.
+    view.unmount()
+    render(<Harness />)
+    editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
     act(() => {
-      editor.blur()
       editor.value = '@'
       editor.focus()
     })

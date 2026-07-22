@@ -665,6 +665,7 @@ function localRuntimeModelConfig(
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
       upstream_api_format: localModel.apiFormat,
+      tool_profile: localModel.toolProfile,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
       responses_url: requestUrl,

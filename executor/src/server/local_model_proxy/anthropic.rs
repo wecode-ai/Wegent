@@ -210,6 +210,62 @@ where
     chat::chat_sse_to_responses(anthropic_to_chat_stream(state).fuse(), context)
 }
 
+pub(super) fn anthropic_response_to_chat(response: &Value) -> Value {
+    let mut text = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls = Vec::new();
+    for block in response
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => text.push_str(block.get("text").and_then(Value::as_str).unwrap_or("")),
+            Some("thinking") => {
+                reasoning.push_str(block.get("thinking").and_then(Value::as_str).unwrap_or(""))
+            }
+            Some("tool_use") => tool_calls.push(json!({
+                "id": block.get("id").cloned().unwrap_or(Value::Null),
+                "type": "function",
+                "function": {
+                    "name": block.get("name").cloned().unwrap_or(Value::Null),
+                    "arguments": serde_json::to_string(
+                        block.get("input").unwrap_or(&Value::Null)
+                    ).unwrap_or_else(|_| "{}".to_owned())
+                }
+            })),
+            _ => {}
+        }
+    }
+    let mut message = json!({
+        "role": "assistant",
+        "content": if text.is_empty() { Value::Null } else { Value::String(text) }
+    });
+    if !reasoning.is_empty() {
+        message["reasoning_content"] = Value::String(reasoning);
+    }
+    if !tool_calls.is_empty() {
+        message["tool_calls"] = Value::Array(tool_calls);
+    }
+    let stop_reason = response
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("end_turn");
+    json!({
+        "id": response.get("id").cloned().unwrap_or_else(|| json!("msg_wework_anthropic")),
+        "model": response.get("model").cloned().unwrap_or(Value::Null),
+        "choices": [{
+            "message": message,
+            "finish_reason": if stop_reason == "max_tokens" { "length" } else if stop_reason == "tool_use" { "tool_calls" } else { "stop" }
+        }],
+        "usage": {
+            "prompt_tokens": response.pointer("/usage/input_tokens").cloned().unwrap_or_else(|| json!(0)),
+            "completion_tokens": response.pointer("/usage/output_tokens").cloned().unwrap_or_else(|| json!(0))
+        }
+    })
+}
+
 fn anthropic_to_chat_stream<S, E>(
     state: AnthropicStreamState<S>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>>
@@ -373,6 +429,27 @@ mod tests {
         assert_eq!(converted["tools"][0]["name"], "apply_patch");
     }
 
+    #[test]
+    fn preserves_friendly_apply_patch_failure_guidance() {
+        let input = json!({
+            "model": "kimi-for-coding",
+            "input": [
+                {"type": "custom_tool_call", "call_id": "call_1", "name": "apply_patch", "input": "*** Begin Patch"},
+                {"type": "custom_tool_call_output", "call_id": "call_1", "output": "apply_patch verification failed: Invalid Add File Line: raw text"}
+            ],
+            "tools": [{"type": "custom", "name": "apply_patch"}]
+        });
+
+        let (converted, _) = responses_to_anthropic(&input).expect("request should convert");
+        let output = converted["messages"][1]["content"][0]["content"]
+            .as_str()
+            .expect("tool result should contain text");
+
+        assert!(output.contains("every file-content line must start with `+`"));
+        assert!(output.contains("Correct new-file example:"));
+        assert!(output.contains("call `apply_patch` again"));
+    }
+
     #[tokio::test]
     async fn converts_anthropic_text_and_tool_stream() {
         let events = [
@@ -404,5 +481,34 @@ mod tests {
         assert!(output.contains("response.output_text.delta"));
         assert!(output.contains("response.custom_tool_call_input.done"));
         assert!(output.contains("\"input_tokens\":10"));
+    }
+
+    #[tokio::test]
+    async fn normalizes_anthropic_apply_patch_alias_and_fence() {
+        let events = [
+            json!({"type":"message_start","message":{"id":"msg_1","model":"kimi-for-coding","usage":{"input_tokens":1}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"apply_patch","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"content\":\"```patch\\n*** Update File: a.txt\\n@@\\n-old\\n+new\\n```\"}"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}),
+        ];
+        let source = futures_util::stream::iter(
+            events
+                .into_iter()
+                .map(|event| Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n")))),
+        );
+        let output = anthropic_sse_to_responses(source, {
+            let input = json!({"tools": [{"type": "custom", "name": "apply_patch"}]});
+            chat::responses_to_chat(&input).expect("context").1
+        })
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .map(Result::unwrap)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .collect::<String>();
+
+        assert!(output.contains("*** Begin Patch\\n*** Update File: a.txt"));
+        assert!(output.contains("+new\\n*** End Patch"));
+        assert!(!output.contains("```patch"));
     }
 }

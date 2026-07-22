@@ -169,7 +169,11 @@ fn current_codex_model_provider_from_config(config_response: &Value) -> CodexMod
         .unwrap_or_default();
     let current_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
-        .unwrap_or_else(|| CODEX_OFFICIAL_PROVIDER_ID.to_owned());
+        .filter(|provider| {
+            provider != crate::server::codex_model_catalog::PROVIDER_ID
+                && provider != "wework-catalog"
+        })
+        .unwrap_or_else(crate::agents::configured_inference_model_provider);
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -5707,6 +5711,22 @@ mod tests {
         assert_eq!(provider.display_name, "CodeX");
         assert_eq!(provider.kind, "official");
         assert!(provider.current);
+    }
+
+    #[test]
+    fn current_codex_model_provider_hides_internal_catalog_provider() {
+        let provider = current_codex_model_provider_from_config(&json!({
+            "config": {
+                "model_provider": "wework-catalog",
+                "model_providers": {
+                    "wework-catalog": {"name": "Wework model catalog"}
+                }
+            }
+        }));
+
+        assert_eq!(provider.id, "openai");
+        assert_eq!(provider.display_name, "CodeX");
+        assert_eq!(provider.kind, "official");
     }
 
     #[test]
