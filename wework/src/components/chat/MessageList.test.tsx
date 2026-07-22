@@ -326,6 +326,48 @@ describe('MessageList', () => {
     }
   })
 
+  test('unmounts distant Tauri message contents and restores them near the viewport', async () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    const callbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        callbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1200px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+
+    render(
+      <MessageList
+        messages={Array.from({ length: 6 }, (_, index) => ({
+          id: `assistant-windowed-${index}`,
+          role: 'assistant' as const,
+          content: `message ${index}`,
+          status: 'done' as const,
+          createdAt: `2026-06-11T10:00:0${index}Z`,
+        }))}
+      />
+    )
+
+    const articles = screen.getAllByTestId('message-assistant')
+    expect(articles[0]).toBeEmptyDOMElement()
+    expect(articles[1]).toBeEmptyDOMElement()
+    expect(articles[2]).toHaveTextContent('message 2')
+    expect(callbacks).toHaveLength(2)
+
+    await act(async () => {
+      callbacks[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as never)
+    })
+
+    expect(articles[0]).toHaveTextContent('message 0')
+  })
+
   test('keeps message row containment during a plain text click', () => {
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
     getSelectionSpy.mockReturnValue({

@@ -84,6 +84,7 @@ import {
   WorkbenchPaneActiveOnly,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneStack'
+import { clearPersistentProcessingExpansions } from '@/components/chat/blocks/processingExpansionState'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import {
   formatEnvironmentReviewErrorMessage,
@@ -125,7 +126,7 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
-const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 20
+const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const TEMPORARY_CHAT_PANEL_DEFAULT_WIDTH = 420
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
@@ -264,16 +265,23 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const [environmentInfoPinned, setEnvironmentInfoPinned] = useState(true)
   const [environmentInfoOverlayOpen, setEnvironmentInfoOverlayOpen] = useState(false)
   const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
+  const [browserPinnedPaneKeys, setBrowserPinnedPaneKeys] = useState<string[]>([])
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
   const validRuntimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
   const prunedPaneKeys = useMemo(
-    () => terminalPinnedPaneKeys.filter(key => !validRuntimePaneKeySet.has(key)),
-    [terminalPinnedPaneKeys, validRuntimePaneKeySet]
+    () =>
+      [...terminalPinnedPaneKeys, ...browserPinnedPaneKeys].filter(
+        key => key.startsWith('runtime:') && !validRuntimePaneKeySet.has(key)
+      ),
+    [browserPinnedPaneKeys, terminalPinnedPaneKeys, validRuntimePaneKeySet]
   )
-  const pinnedPaneKeys = runtimePaneKeys
+  const pinnedPaneKeys = useMemo(
+    () => Array.from(new Set([...terminalPinnedPaneKeys, ...browserPinnedPaneKeys])),
+    [browserPinnedPaneKeys, terminalPinnedPaneKeys]
+  )
   const pinTerminalPane = useCallback((paneKey: string) => {
     setTerminalPinnedPaneKeys(current =>
       current.includes(paneKey) ? current : [...current, paneKey]
@@ -281,6 +289,14 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   }, [])
   const unpinTerminalPane = useCallback((paneKey: string) => {
     setTerminalPinnedPaneKeys(current => current.filter(key => key !== paneKey))
+  }, [])
+  const pinBrowserPane = useCallback((paneKey: string) => {
+    setBrowserPinnedPaneKeys(current =>
+      current.includes(paneKey) ? current : [...current, paneKey]
+    )
+  }, [])
+  const unpinBrowserPane = useCallback((paneKey: string) => {
+    setBrowserPinnedPaneKeys(current => current.filter(key => key !== paneKey))
   }, [])
 
   const paneStack = (
@@ -304,6 +320,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           onEnvironmentInfoOverlayOpenChange={setEnvironmentInfoOverlayOpen}
           onTerminalPanePinned={pinTerminalPane}
           onTerminalPaneUnpinned={unpinTerminalPane}
+          onBrowserPanePinned={pinBrowserPane}
+          onBrowserPaneUnpinned={unpinBrowserPane}
         />
       )}
     />
@@ -339,6 +357,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onEnvironmentInfoOverlayOpenChange,
   onTerminalPanePinned,
   onTerminalPaneUnpinned,
+  onBrowserPanePinned,
+  onBrowserPaneUnpinned,
 }: {
   pane: WorkbenchPaneIdentity
   workbenchVisible: boolean
@@ -352,6 +372,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onEnvironmentInfoOverlayOpenChange: (open: boolean) => void
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
+  onBrowserPanePinned: (paneKey: string) => void
+  onBrowserPaneUnpinned: (paneKey: string) => void
 }) {
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const appearanceContext = useOptionalAppearance()
@@ -383,6 +405,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
   const paneActive = useWorkbenchPaneActive()
+  useEffect(() => {
+    if (!paneActive) clearPersistentProcessingExpansions()
+  }, [paneActive])
   const [environmentInfoTransitionEnabled, setEnvironmentInfoTransitionEnabled] = useState(false)
   useEffect(() => {
     const frame = requestAnimationFrame(() => setEnvironmentInfoTransitionEnabled(paneActive))
@@ -561,6 +586,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : [...permittedTabs, rightPanelView]
   }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
+  const hasPersistentRightPanelResource = rightPanelTabs.some(
+    tab => tab === 'browser' || tab === 'terminal'
+  )
+  useEffect(() => {
+    if (hasPersistentRightPanelResource) {
+      onBrowserPanePinned(paneKey)
+    } else {
+      onBrowserPaneUnpinned(paneKey)
+    }
+    return () => onBrowserPaneUnpinned(paneKey)
+  }, [hasPersistentRightPanelResource, onBrowserPanePinned, onBrowserPaneUnpinned, paneKey])
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
@@ -749,7 +785,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setBottomPanelOpenByKey(current => {
         const currentOpen = current[bottomPanelWorkspaceKey] ?? false
         const nextOpen = typeof next === 'function' ? next(currentOpen) : next
-        if (nextOpen && currentRuntimeTask) {
+        if (nextOpen) {
           onTerminalPanePinned(paneKey)
         }
         if (currentOpen === nextOpen) return current
@@ -758,7 +794,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [
       bottomPanelWorkspaceKey,
-      currentRuntimeTask,
       onTerminalPanePinned,
       paneKey,
       rememberActiveBottomPanelContext,
@@ -1292,10 +1327,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [setBottomPanelOpenByKey]
   )
   const handleTerminalTabsEmpty = useCallback(() => {
-    if (currentRuntimeTask) {
-      onTerminalPaneUnpinned(paneKey)
-    }
-  }, [currentRuntimeTask, onTerminalPaneUnpinned, paneKey])
+    onTerminalPaneUnpinned(paneKey)
+  }, [onTerminalPaneUnpinned, paneKey])
 
   useEffect(() => {
     const handleOpenTerminal = () => {
@@ -1605,7 +1638,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           style={{ width: chatColumnWidth }}
         >
-          {isBootstrapping ? (
+          {!paneActive ? null : isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
           ) : hasConversation ? (
             <div className="relative min-h-0 min-w-0 flex-1">
