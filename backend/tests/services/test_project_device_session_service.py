@@ -641,3 +641,63 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
 
     assert result["url"] == "http://10.1.2.3:17888/s/session-123/?token=short"
     assert result["transport"] == "url"
+
+
+@pytest.mark.asyncio
+async def test_cloud_device_session_service_uses_runtime_transfer_host(
+    monkeypatch,
+):
+    """Cloud IDE URLs should use the host advertised by the online executor."""
+    from app.services.device import session_service
+
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "http://localhost:17888/s/session-123/?token=short",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "code_server",
+    }
+    device_kind = SimpleNamespace(
+        json={
+            "spec": {
+                "deviceType": "cloud",
+                "cloudConfig": {"sandboxId": "sandbox-123"},
+            }
+        }
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "socket_id": "socket-123",
+                "runtime_transfer_host": "10.2.3.4",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: device_kind,
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+    monkeypatch.setattr(
+        session_service,
+        "_get_cloud_device_provider",
+        lambda: (_ for _ in ()).throw(ModuleNotFoundError("wecode")),
+    )
+
+    result = await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="code_server",
+        path="/repo",
+    )
+
+    assert result["url"] == "http://10.2.3.4:17888/s/session-123/?token=short"
+    assert result["transport"] == "url"
