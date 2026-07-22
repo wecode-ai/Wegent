@@ -1852,6 +1852,7 @@ function AssistantMessage({
                 content={visibleContent}
                 isStreaming={isStreaming}
                 onOpenFile={openFileFromLink}
+                fileChanges={message.fileChanges}
               />
             </div>
           ) : null}

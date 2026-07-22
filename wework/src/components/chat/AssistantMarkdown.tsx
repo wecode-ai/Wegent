@@ -15,9 +15,12 @@ import {
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
+import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
+import { joinDevicePath } from '@/lib/device-workspace-path'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import type { TurnFileChangesSummary } from '@/types/api'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -36,15 +39,20 @@ interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
   onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  fileChanges?: TurnFileChangesSummary
 }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   content,
   isStreaming = false,
   onOpenFile,
+  fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
-  const displayContent = prepareAssistantMarkdownContent(bufferedContent)
+  const contentParts = useMemo(
+    () => splitCodexInlineVisualizations(bufferedContent),
+    [bufferedContent]
+  )
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -129,20 +137,75 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 
   return (
     <div className="assistant-markdown min-w-0 max-w-full break-words">
-      <Streamdown
-        mode={isStreaming ? 'streaming' : 'static'}
-        isAnimating={isStreaming}
-        controls={false}
-        linkSafety={{ enabled: false }}
-        lineNumbers={false}
-        urlTransform={url => url}
-        components={components}
-      >
-        {displayContent}
-      </Streamdown>
+      {contentParts.map((part, index) =>
+        part.kind === 'visualization' ? (
+          <CodexInlineVisualization
+            key={`${part.file}-${index}`}
+            file={part.file}
+            fileChanges={fileChanges}
+          />
+        ) : (
+          <Streamdown
+            key={`markdown-${index}`}
+            mode={isStreaming ? 'streaming' : 'static'}
+            isAnimating={isStreaming}
+            controls={false}
+            linkSafety={{ enabled: false }}
+            lineNumbers={false}
+            urlTransform={url => url}
+            components={components}
+          >
+            {prepareAssistantMarkdownContent(part.content)}
+          </Streamdown>
+        )
+      )}
     </div>
   )
 }, areAssistantMarkdownPropsEqual)
+
+function CodexInlineVisualization({
+  file,
+  fileChanges,
+}: {
+  file: string
+  fileChanges?: TurnFileChangesSummary
+}) {
+  const sourcePath = inlineVisualizationPath(file, fileChanges)
+  const sourceUrl = sourcePath ? localHtmlBrowserUrl(sourcePath) : null
+
+  if (!sourceUrl) return null
+
+  return (
+    <div
+      data-scroll-anchor
+      data-testid="codex-inline-visualization"
+      className="mb-3 overflow-hidden rounded-xl border border-border bg-background"
+    >
+      <iframe
+        title={file}
+        src={sourceUrl}
+        sandbox="allow-scripts"
+        className="h-[480px] w-full border-0 bg-background"
+        data-testid="codex-inline-visualization-frame"
+      />
+    </div>
+  )
+}
+
+function inlineVisualizationPath(
+  file: string,
+  fileChanges?: TurnFileChangesSummary
+): string | null {
+  if (!fileChanges || fileChanges.status !== 'active') return null
+  const matchingFile = fileChanges.files.find(change => change.path.replace(/\\/g, '/') === file)
+  if (!matchingFile || matchingFile.change_type === 'deleted') return null
+
+  try {
+    return joinDevicePath(fileChanges.workspace_path, file)
+  } catch {
+    return null
+  }
+}
 
 function MarkdownCode({
   className,
@@ -178,7 +241,11 @@ function areAssistantMarkdownPropsEqual(
   previous: AssistantMarkdownProps,
   next: AssistantMarkdownProps
 ): boolean {
-  return previous.content === next.content && previous.isStreaming === next.isStreaming
+  return (
+    previous.content === next.content &&
+    previous.isStreaming === next.isStreaming &&
+    previous.fileChanges === next.fileChanges
+  )
 }
 
 function prepareAssistantMarkdownContent(content: string): string {

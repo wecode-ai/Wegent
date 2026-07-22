@@ -24,6 +24,52 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('renders a generated Codex inline visualization from the changed workspace file', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-inline-visualization',
+            role: 'assistant',
+            content: [
+              '已生成折线图。',
+              '',
+              '::codex-inline-vis{file="weekly-values-line-chart.html"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-07-23T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-inline-visualization',
+              device_id: 'device-1',
+              workspace_path: '/Users/dev/workspace',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: 'weekly-values-line-chart.html',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成折线图。')).toBeInTheDocument()
+    expect(screen.queryByText('::codex-inline-vis')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/dev/workspace/weekly-values-line-chart.html'
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
