@@ -1,9 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { Check, FileArchive, Loader2, X } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 
 interface FeedbackSelection {
   runtimeLogs: boolean
@@ -19,7 +20,7 @@ interface FeedbackExportResult {
 
 interface TaskFeedbackDialogProps {
   open: boolean
-  taskContext: Record<string, unknown>
+  getTaskContext: () => Promise<Record<string, unknown>>
   onClose: () => void
 }
 
@@ -30,21 +31,23 @@ const initialSelection: FeedbackSelection = {
   systemInfo: true,
 }
 
-export function TaskFeedbackDialog({ open, taskContext, onClose }: TaskFeedbackDialogProps) {
+export function TaskFeedbackDialog({ open, getTaskContext, onClose }: TaskFeedbackDialogProps) {
   if (!open) return null
-  return <TaskFeedbackDialogContent taskContext={taskContext} onClose={onClose} />
+  return <TaskFeedbackDialogContent getTaskContext={getTaskContext} onClose={onClose} />
 }
 
 function TaskFeedbackDialogContent({
-  taskContext,
+  getTaskContext,
   onClose,
 }: Omit<TaskFeedbackDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const [selection, setSelection] = useState(initialSelection)
   const [note, setNote] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [capturingScreenshot, setCapturingScreenshot] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<FeedbackExportResult | null>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const hasSelection = Object.values(selection).some(Boolean)
 
   useEscapeKey(exporting ? () => undefined : onClose)
@@ -53,9 +56,22 @@ function TaskFeedbackDialogContent({
     setExporting(true)
     setError(null)
     try {
-      const screenshotDataUrl = selection.screenshot
-        ? await invoke<string>('capture_main_webview').catch(() => null)
-        : null
+      const taskContext = selection.taskInfo ? await getTaskContext() : null
+      let screenshotDataUrl: string | null = null
+      if (selection.screenshot) {
+        const overlay = overlayRef.current
+        overlay?.style.setProperty('visibility', 'hidden')
+        setCapturingScreenshot(true)
+        await waitForScreenshotPaint()
+        try {
+          screenshotDataUrl = await invoke<string>('capture_main_webview')
+        } catch {
+          screenshotDataUrl = null
+        } finally {
+          overlay?.style.removeProperty('visibility')
+          setCapturingScreenshot(false)
+        }
+      }
       const exported = await invoke<FeedbackExportResult>('export_feedback_bundle', {
         request: {
           destination: null,
@@ -82,8 +98,13 @@ function TaskFeedbackDialogContent({
 
   return createPortal(
     <div
+      ref={overlayRef}
       data-testid="task-feedback-dialog-overlay"
-      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      aria-hidden={capturingScreenshot || undefined}
+      className={cn(
+        'fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4',
+        capturingScreenshot && 'invisible'
+      )}
     >
       <div
         role="dialog"
@@ -106,7 +127,7 @@ function TaskFeedbackDialogContent({
             onClick={onClose}
             disabled={exporting}
             className="flex h-8 min-w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
-            aria-label={t('workbench.cancel')}
+            aria-label={t('workbench.close_dialog')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -202,4 +223,8 @@ function TaskFeedbackDialogContent({
     </div>,
     document.body
   )
+}
+
+function waitForScreenshotPaint(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, 500))
 }

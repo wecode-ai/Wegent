@@ -1986,12 +1986,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <TaskFeedbackDialog
           open={feedbackDialogOpen}
           onClose={() => setFeedbackDialogOpen(false)}
-          taskContext={{
-            taskId: currentRuntimeTask?.taskId ?? null,
-            deviceId: currentRuntimeTask?.deviceId ?? null,
-            workspacePath: currentRuntimeTask?.workspacePath ?? null,
-            title: runtimeTaskTitle ?? null,
-            status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
+          getTaskContext={async () => {
+            const messages = await paneSession.loadFullTranscriptForExport()
+            return {
+              task: {
+                taskId: currentRuntimeTask?.taskId ?? null,
+                deviceId: currentRuntimeTask?.deviceId ?? null,
+                threadId: currentRuntimeTask?.threadId ?? null,
+                workspacePath: currentRuntimeTask?.workspacePath ?? null,
+                title:
+                  runtimeTaskTitle ?? messages.find(message => message.role === 'user')?.content,
+                status: findRuntimeTask(runtimeWork, currentRuntimeTask)?.status ?? null,
+              },
+              conversation: {
+                messages,
+                queuedMessages: paneSession.queuedMessages,
+                guidanceMessages: paneSession.guidanceMessages,
+                turnNavigation: paneSession.turnNavigation,
+              },
+              runtime: {
+                status: paneSession.status,
+                goal: paneSession.goal,
+                taskPlan: paneSession.taskPlan,
+                subagentStatuses: paneSession.subagentStatuses,
+              },
+            }
           }}
         />
         <TransientNotice

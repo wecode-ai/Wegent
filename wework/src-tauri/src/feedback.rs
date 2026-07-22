@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use zip::write::SimpleFileOptions;
@@ -49,7 +50,7 @@ struct LogManifestEntry {
     source_bytes: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_feedback_bundle(
     app: tauri::AppHandle,
     request: FeedbackExportRequest,
@@ -69,6 +70,7 @@ pub fn export_feedback_bundle(
 
     let file = File::create(&destination)
         .map_err(|error| format!("Failed to create feedback bundle: {error}"))?;
+    let mut incomplete_archive = IncompleteArchive::new(destination.clone());
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let mut included = Vec::new();
@@ -110,10 +112,11 @@ pub fn export_feedback_bundle(
 
     if request.include_task_info {
         included.push("taskInfo");
-        if let Some(context) = request.task_context {
+        if let Some(mut context) = request.task_context {
+            redact_json_value(&mut context);
             let content = serde_json::to_string_pretty(&context)
                 .map_err(|error| format!("Failed to serialize task information: {error}"))?;
-            write_zip_text(&mut zip, "context/task.json", &redact(&content), options)?;
+            write_zip_text(&mut zip, "context/task.json", &content, options)?;
         }
     }
 
@@ -174,11 +177,38 @@ pub fn export_feedback_bundle(
     )?;
     zip.finish()
         .map_err(|error| format!("Failed to finish feedback bundle: {error}"))?;
+    incomplete_archive.complete();
 
     Ok(FeedbackExportResult {
         report_id,
         path: destination.to_string_lossy().to_string(),
     })
+}
+
+struct IncompleteArchive {
+    path: PathBuf,
+    completed: bool,
+}
+
+impl IncompleteArchive {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            completed: false,
+        }
+    }
+
+    fn complete(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for IncompleteArchive {
+    fn drop(&mut self) {
+        if !self.completed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 fn collect_logs(
@@ -247,19 +277,68 @@ fn collect_logs(
 }
 
 fn redact(content: &str) -> String {
-    let patterns = [
-        r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,]+",
-        r#"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|cookie)\s*[=:]\s*[\"']?)[^\s,\"']+"#,
-        r"(?i)(https?://[^\s/:]+:)[^@\s]+@",
-    ];
-    let redacted = patterns.iter().fold(content.to_string(), |value, pattern| {
-        Regex::new(pattern)
-            .map(|regex| regex.replace_all(&value, "${1}[REDACTED]").into_owned())
-            .unwrap_or(value)
-    });
+    let redacted = redaction_patterns()
+        .iter()
+        .fold(content.to_string(), |value, regex| {
+            regex.replace_all(&value, "${1}[REDACTED]").into_owned()
+        });
     dirs::home_dir()
-        .map(|home| redacted.replace(&home.to_string_lossy().to_string(), "~"))
+        .map(|home| redact_home_path(&redacted, &home.to_string_lossy()))
         .unwrap_or(redacted)
+}
+
+fn redaction_patterns() -> &'static [Regex; 4] {
+    static PATTERNS: OnceLock<[Regex; 4]> = OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        [
+            Regex::new(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,]+")
+                .expect("authorization redaction regex must compile"),
+            Regex::new(
+                r#"(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|password)\s*[=:]\s*[\"']?)[^\s,\"']+"#,
+            )
+            .expect("credential redaction regex must compile"),
+            Regex::new(r"(?i)(cookie\s*[:=]\s*)[^\r\n]+")
+                .expect("cookie redaction regex must compile"),
+            Regex::new(r"(?i)(https?://[^\s/:]+:)[^@\s]+@")
+                .expect("URL user-info redaction regex must compile"),
+        ]
+    });
+    PATTERNS
+        .get()
+        .expect("redaction regexes must be initialized")
+}
+
+fn redact_home_path(content: &str, home: &str) -> String {
+    let escaped_home = home.replace('\\', "\\\\");
+    content.replace(&escaped_home, "~").replace(home, "~")
+}
+
+fn redact_json_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                let normalized_key = key.to_ascii_lowercase().replace(['-', '_'], "");
+                if [
+                    "authorization",
+                    "cookie",
+                    "apikey",
+                    "accesstoken",
+                    "refreshtoken",
+                    "password",
+                ]
+                .iter()
+                .any(|sensitive| normalized_key.contains(sensitive))
+                {
+                    *value = serde_json::Value::String("[REDACTED]".to_string());
+                } else {
+                    redact_json_value(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => values.iter_mut().for_each(redact_json_value),
+        serde_json::Value::String(content) => *content = redact(content),
+        _ => {}
+    }
 }
 
 fn decode_data_url(value: &str) -> Option<Vec<u8>> {
@@ -292,7 +371,7 @@ fn write_zip_bytes(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_data_url, redact};
+    use super::{decode_data_url, redact, redact_home_path, redact_json_value};
 
     #[test]
     fn redacts_credentials_without_removing_surrounding_log_context() {
@@ -314,5 +393,38 @@ mod tests {
             Some(b"hello".to_vec())
         );
         assert_eq!(decode_data_url("https://example.com/image.png"), None);
+    }
+
+    #[test]
+    fn redacts_complete_cookie_headers() {
+        let redacted = redact("Cookie: session=secret; csrf=also-secret\nstatus=401");
+
+        assert_eq!(redacted, "Cookie: [REDACTED]\nstatus=401");
+    }
+
+    #[test]
+    fn redacts_plain_and_json_escaped_windows_home_paths() {
+        let home = r"C:\Users\Alice";
+        let content = r#"{"plain":"C:\Users\Alice\repo","escaped":"C:\\Users\\Alice\\repo"}"#;
+
+        let redacted = redact_home_path(content, home);
+
+        assert!(!redacted.contains("Alice"));
+        assert!(redacted.contains(r#""plain":"~\repo""#));
+        assert!(redacted.contains(r#""escaped":"~\\repo""#));
+    }
+
+    #[test]
+    fn preserves_valid_task_json_while_redacting_sensitive_fields() {
+        let mut context = serde_json::json!({
+            "messages": [{"content": "Cookie: session=secret; csrf=also-secret"}],
+            "authorization": "Bearer secret-token"
+        });
+
+        redact_json_value(&mut context);
+
+        assert_eq!(context["authorization"], "[REDACTED]");
+        assert_eq!(context["messages"][0]["content"], "Cookie: [REDACTED]");
+        assert!(serde_json::to_string(&context).is_ok());
     }
 }
