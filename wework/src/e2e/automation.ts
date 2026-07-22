@@ -193,9 +193,8 @@ function seedDesktopE2ECloudConnection() {
     connectedAt: new Date().toISOString(),
   })
   const localModels =
-    import.meta.env.VITE_WEWORK_E2E_PLUGINS_ONLY === 'true'
-      ? []
-      : [
+    import.meta.env.VITE_WEWORK_E2E_SEED_LOCAL_MODELS === 'true'
+      ? [
           {
             id: 'desktop-e2e-responses',
             displayName: 'Desktop E2E Responses',
@@ -221,6 +220,7 @@ function seedDesktopE2ECloudConnection() {
             requestPath: '/v1/messages',
           },
         ]
+      : []
   for (const model of localModels) {
     saveLocalModelConfig({
       ...model,

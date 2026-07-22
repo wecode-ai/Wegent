@@ -3000,6 +3000,8 @@ async function buildDesktopApp(controlUrl, cloudBackendUrl, cloudToken, appIdent
         VITE_WEWORK_E2E_CLOUD_BACKEND_URL: cloudBackendUrl,
         VITE_WEWORK_E2E_CLOUD_TOKEN: cloudToken,
         VITE_WEWORK_E2E: 'true',
+        VITE_WEWORK_E2E_SEED_LOCAL_MODELS:
+          PLUGINS_ONLY || MEMORY_ONLY || CLOUD_ONLY ? 'false' : 'true',
         VITE_WEWORK_RUNTIME_MODE: 'local-first',
       },
     }
@@ -3319,7 +3321,6 @@ async function main() {
         DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
         DEVICE_SESSION_GATEWAY_PORT: '0',
         VITE_WEWORK_E2E: 'true',
-        VITE_WEWORK_E2E_PLUGINS_ONLY: PLUGINS_ONLY ? 'true' : 'false',
         WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
         WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
