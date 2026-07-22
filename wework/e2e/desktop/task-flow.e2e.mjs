@@ -1889,10 +1889,17 @@ class DesktopE2EServer {
   }
 
   async awaitScenarioRequestCount(scenario, count) {
-    while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    return this.scenarioRequests.get(scenario).at(-1)
+    const waitForCount = (async () => {
+      while ((this.scenarioRequests.get(scenario)?.length ?? 0) < count) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+      }
+      return this.scenarioRequests.get(scenario).at(-1)
+    })()
+    return withTimeout(
+      this.guard(waitForCount),
+      UI_TIMEOUT_MS,
+      `Timed out waiting for ${count} ${scenario} scenario requests`
+    )
   }
 
   releaseInitialToolExecution() {
