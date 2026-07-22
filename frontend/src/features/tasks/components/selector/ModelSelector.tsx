@@ -106,21 +106,6 @@ function getModelSyncKey(model: Model | null): string | null {
   return model ? getModelKey(model) : null
 }
 
-function hasModelDetails(model: Model): boolean {
-  const capabilities = model.modelCapabilities ?? model.config?.modelCapabilities
-  const supportsMedia =
-    capabilities !== null &&
-    typeof capabilities === 'object' &&
-    ('supportsImage' in capabilities || 'supportsVideo' in capabilities)
-
-  return (
-    model.costIndex != null ||
-    model.contextWindow != null ||
-    model.maxOutputTokens != null ||
-    supportsMedia
-  )
-}
-
 interface ModelInformationActionProps {
   model: Model
   label: string
@@ -487,7 +472,7 @@ export default function ModelSelector({
                 ) : null
               }
               renderModelActions={model => {
-                if (modelCategoryType !== 'llm' || !hasModelDetails(model)) return null
+                if (modelCategoryType !== 'llm') return null
 
                 const label = `${t('common:models.view_details')}：${
                   model.displayName || model.name

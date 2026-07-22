@@ -215,11 +215,16 @@ export function ModelCascadeContent<T extends GroupableModel>({
     const modelKey = getModelKey(model)
     const isSelected = selectedModelKey === modelKey
     const groupPath = `${getModelGroupName(model, labels)} / ${getModelSubGroupName(model, labels)}`
+    const modelActions = renderModelActions?.(model)
 
     return (
       <div
         key={modelKey}
-        className={cn('flex w-full items-stretch', isSelected && 'bg-primary/10 text-primary')}
+        className={cn(
+          'w-full items-stretch overflow-hidden',
+          modelActions ? 'grid grid-cols-[minmax(0,1fr)_40px]' : 'flex',
+          isSelected && 'bg-primary/10 text-primary'
+        )}
       >
         <button
           ref={isSelected ? selectedModelOptionRef : undefined}
@@ -235,7 +240,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
               <span
-                className="truncate text-sm font-medium text-text-primary"
+                className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
                 title={getModelDisplayName(model)}
               >
                 {getModelDisplayName(model)}
@@ -248,10 +253,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {renderModelMeta?.(model)}
           </span>
           <Check
-            className={cn('mt-0.5 h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
+            className={cn('h-4 w-4 shrink-0 self-center', isSelected ? 'opacity-100' : 'opacity-0')}
           />
         </button>
-        {renderModelActions?.(model)}
+        {modelActions}
       </div>
     )
   }
@@ -289,12 +294,14 @@ export function ModelCascadeContent<T extends GroupableModel>({
     const modelKey = getModelKey(model)
     const isSelected = selectedModelKey === modelKey
     const groupPath = `${getModelGroupName(model, labels)} / ${getModelSubGroupName(model, labels)}`
+    const modelActions = renderModelActions?.(model)
 
     return (
       <div
         key={modelKey}
         className={cn(
-          'flex w-full items-stretch',
+          'w-full items-stretch overflow-hidden',
+          modelActions ? 'grid grid-cols-[minmax(0,1fr)_40px]' : 'flex',
           isSelected && 'bg-primary/10 text-primary',
           withBorder && 'border-b border-border'
         )}
@@ -312,7 +319,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
               <span
-                className="truncate text-sm font-medium text-text-primary"
+                className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
                 title={getModelDisplayName(model)}
               >
                 {getModelDisplayName(model)}
@@ -325,10 +332,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
             {renderModelMeta?.(model)}
           </span>
           <Check
-            className={cn('mt-0.5 h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
+            className={cn('h-4 w-4 shrink-0 self-center', isSelected ? 'opacity-100' : 'opacity-0')}
           />
         </button>
-        {renderModelActions?.(model)}
+        {modelActions}
       </div>
     )
   }

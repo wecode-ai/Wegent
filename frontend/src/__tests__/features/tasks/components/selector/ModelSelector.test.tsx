@@ -404,14 +404,20 @@ describe('ModelSelector', () => {
 
     const modelOption = await screen.findByTestId('model-option-claude-3-5-sonnet')
     const informationAction = screen.getByTestId('model-info-claude-3-5-sonnet')
+    const selectedIndicator = modelOption.querySelector('svg')
+    const modelTitle = screen.getByTitle('Claude 3.5 Sonnet')
 
     expect(modelOption.parentElement).toBe(informationAction.parentElement)
     expect(modelOption.parentElement).toHaveClass('items-stretch')
+    expect(modelOption.parentElement).toHaveClass('overflow-hidden')
+    expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_40px]')
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
+    expect(modelTitle).toHaveClass('min-w-0', 'flex-1', 'truncate')
+    expect(selectedIndicator).toHaveClass('self-center')
     expect(informationAction).toHaveClass('self-stretch')
   })
 
-  it('does not show an information action when a model has no detail metadata', async () => {
+  it('shows an information action when model detail metadata is unavailable', async () => {
     mockModelSelectionOverrides = {
       filteredModels: [mockAdvancedModel],
     }
@@ -430,7 +436,7 @@ describe('ModelSelector', () => {
     fireEvent.click(screen.getByTestId('model-selector'))
 
     expect(await screen.findByTestId('model-option-claude-opus-4-advanced')).toBeInTheDocument()
-    expect(screen.queryByTestId('model-info-claude-opus-4-advanced')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-info-claude-opus-4-advanced')).toBeInTheDocument()
   })
 
   it('opens model details on mobile without selecting the model', async () => {
