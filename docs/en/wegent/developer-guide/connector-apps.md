@@ -56,7 +56,7 @@ The current version has no Connector OAuth callback and does not require a third
 - Connector App definitions are stored in the `kinds` table with `kind = "ConnectorApp"`, `namespace = "system"`, and `metadata.name` matching the app `slug`.
 - Apps can target MCP upstreams or HTTP API upstreams; the main configuration lives under `Kind.json.spec`.
 - Administrator fixed headers are encrypted into `Kind.json.spec.providerHeadersEncrypted`.
-- The legacy `connector_apps`, `connector_connections`, and `connector_oauth_sessions` tables have been migrated/removed. The current version has no user connection records or OAuth temporary sessions.
+- The current implementation does not introduce separate `connector_apps`, `connector_connections`, or `connector_oauth_sessions` tables, and it has no user connection records or OAuth temporary sessions.
 - Disabling an app immediately removes it from user catalogs and Runtime.
 - Administrators can replace or explicitly clear fixed provider headers; leaving the editor blank preserves the encrypted value.
 - Wework removes generated local Skills for unavailable or disabled apps during the next synchronization.

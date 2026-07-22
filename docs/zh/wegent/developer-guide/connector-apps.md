@@ -56,7 +56,7 @@ GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 - Connector App 定义存储在 `kinds` 表中，`kind = "ConnectorApp"`，`namespace = "system"`，`metadata.name` 对应 app `slug`。
 - App 可声明为 MCP 上游或 HTTP API 上游；主要配置位于 `Kind.json.spec`。
 - 管理员固定请求头加密后存储在 `Kind.json.spec.providerHeadersEncrypted`。
-- 旧版 `connector_apps`、`connector_connections`、`connector_oauth_sessions` 数据表已迁移/移除；当前版本没有用户连接记录和 OAuth 临时会话。
+- 当前实现不引入独立的 `connector_apps`、`connector_connections` 或 `connector_oauth_sessions` 数据表，也没有用户连接记录和 OAuth 临时会话。
 - App 停用后会立即从用户目录和 Runtime 中消失。
 - 管理员可以替换或显式清除固定请求头；留空编辑框默认保留已加密的现值。
 - Wework 会在下一次同步时移除不可见或已停用 App 对应的本地生成 Skill。
