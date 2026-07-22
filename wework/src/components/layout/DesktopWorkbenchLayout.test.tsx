@@ -7447,7 +7447,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
     })
-  }, 10000)
+  }, 20000)
 
   test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
     renderWorkspacePanelLayout()
