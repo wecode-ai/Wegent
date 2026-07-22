@@ -307,12 +307,16 @@ export const MessageList = memo(function MessageList({
       updateSelectionState()
     }
 
+    const handleScroll = () => {
+      updateSelectionState(true)
+    }
+
     document.addEventListener('pointerup', finalizeSelectionUpdate)
     document.addEventListener('pointercancel', finalizeSelectionUpdate)
     document.addEventListener('mouseup', finalizeSelectionUpdate)
     document.addEventListener('keyup', finalizeSelectionUpdate)
     document.addEventListener('selectionchange', scheduleSelectionUpdate)
-    window.addEventListener('scroll', updateSelectionState, true)
+    window.addEventListener('scroll', handleScroll, true)
     window.addEventListener('blur', handleBlur)
 
     return () => {
@@ -321,7 +325,7 @@ export const MessageList = memo(function MessageList({
       document.removeEventListener('mouseup', finalizeSelectionUpdate)
       document.removeEventListener('keyup', finalizeSelectionUpdate)
       document.removeEventListener('selectionchange', scheduleSelectionUpdate)
-      window.removeEventListener('scroll', updateSelectionState, true)
+      window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('blur', handleBlur)
     }
   }, [conversationKey, isTauri, onAddSelectionToConversation, onAskSelectionInSidebar])
