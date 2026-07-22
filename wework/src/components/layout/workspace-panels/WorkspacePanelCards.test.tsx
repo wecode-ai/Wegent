@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
@@ -219,6 +219,7 @@ describe('WorkspacePanelCards', () => {
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
     cloudDesktopExtensionMock.available = true
+    cloudDesktopExtensionMock.open.mockResolvedValue(true)
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('device-1')
     localPathExistsMock.mockResolvedValue(true)
@@ -389,7 +390,7 @@ describe('WorkspacePanelCards', () => {
     expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
-  test('renders the project desktop through the cloud desktop workspace extension', async () => {
+  test('opens the project desktop in the embedded browser through the cloud extension', async () => {
     const onRequestClose = vi.fn()
     render(
       <WorkspacePanelCards
@@ -399,19 +400,84 @@ describe('WorkspacePanelCards', () => {
       />
     )
 
-    expect(cloudDesktopExtensionMock.WorkspaceAction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contextKey: expect.stringContaining('7:device-1'),
-        deviceId: 'device-1',
-        disabled: false,
-      }),
-      undefined
-    )
-
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
+    await waitFor(() =>
+      expect(cloudDesktopExtensionMock.open).toHaveBeenCalledWith({
+        connection: {
+          apiBaseUrl: '/api',
+          isConnected: true,
+          socketBaseUrl: undefined,
+          token: 'token-1',
+        },
+        deviceId: 'device-1',
+        isCurrent: expect.any(Function),
+      })
+    )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
-    expect(cloudDesktopExtensionMock.open).not.toHaveBeenCalled()
+  })
+
+  test('publishes menu actions that keep the current terminal and panel open', async () => {
+    const onRequestClose = vi.fn()
+    const onMenuActionsChange = vi.fn()
+    render(
+      <WorkspacePanelCards
+        currentProject={cloudProject}
+        devices={cloudDevices}
+        onRequestClose={onRequestClose}
+        onMenuActionsChange={onMenuActionsChange}
+      />
+    )
+
+    await waitFor(() => expect(onMenuActionsChange).toHaveBeenCalled())
+    const actions = onMenuActionsChange.mock.lastCall?.[0]
+    expect(actions).toMatchObject({
+      terminal: { visible: true, disabled: false },
+      ide: { visible: true, disabled: false },
+      desktop: { visible: true, disabled: false },
+    })
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
+
+    await act(async () => actions.ide.run())
+
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+    expect(window.open).toHaveBeenCalledWith(
+      'http://localhost/ide',
+      '_blank',
+      'noopener,noreferrer'
+    )
+    expect(onRequestClose).not.toHaveBeenCalled()
+
+    await act(async () => actions.desktop.run())
+
+    expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+    expect(onRequestClose).not.toHaveBeenCalled()
+  })
+
+  test('shows menu action errors without replacing the active terminal', async () => {
+    startProjectCodeServerMock.mockRejectedValueOnce(new Error('IDE unavailable'))
+    const onMenuActionsChange = vi.fn()
+    render(
+      <WorkspacePanelCards
+        currentProject={cloudProject}
+        devices={cloudDevices}
+        onMenuActionsChange={onMenuActionsChange}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await waitFor(() => expect(screen.getByTestId('remote-terminal')).toBeInTheDocument())
+    const actions = onMenuActionsChange.mock.lastCall?.[0]
+
+    await act(async () => actions.ide.run())
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-tool-error')).toHaveTextContent('启动失败')
+    )
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
   })
 
   test('hides the desktop card when the cloud desktop extension is unavailable', () => {

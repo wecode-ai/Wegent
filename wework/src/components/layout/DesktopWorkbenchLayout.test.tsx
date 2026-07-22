@@ -40,6 +40,17 @@ const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+const cloudDesktopExtensionMock = vi.hoisted(() => ({
+  available: false,
+  DeviceAction: () => null,
+  WorkspaceAction: () => null,
+  isInternalPageUrl: vi.fn(() => false),
+  open: vi.fn(),
+}))
+
+vi.mock('@extensions/cloud-desktop', () => ({
+  cloudDesktopExtension: cloudDesktopExtensionMock,
+}))
 
 vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () => ({
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
@@ -400,6 +411,7 @@ const startLocalTerminalMock = vi.mocked(startLocalTerminal)
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
 const startDeviceTerminalSessionMock = vi.fn()
+const startDeviceCodeServerSessionMock = vi.fn()
 const createRemoteTerminalClientMock = vi.fn()
 
 function createDefaultImNotificationSettings() {
@@ -485,6 +497,8 @@ describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
+    cloudDesktopExtensionMock.available = false
+    cloudDesktopExtensionMock.open.mockResolvedValue(true)
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 1024,
@@ -535,6 +549,10 @@ describe('DesktopWorkbenchLayout', () => {
     startCodeServerSessionMock.mockResolvedValue({
       url: 'http://localhost/ide',
       path: '/workspace/projects/github_wegent',
+    })
+    startDeviceCodeServerSessionMock.mockResolvedValue({
+      url: 'http://localhost/ide',
+      path: '/workspace/project',
     })
     startTerminalSessionMock.mockResolvedValue({
       session_id: 'terminal-1',
@@ -905,7 +923,7 @@ describe('DesktopWorkbenchLayout', () => {
           startProjectTerminal: startTerminalSessionMock,
           startProjectCodeServer: startCodeServerSessionMock,
           startDeviceTerminal: startDeviceTerminalSessionMock,
-          startDeviceCodeServer: vi.fn(),
+          startDeviceCodeServer: startDeviceCodeServerSessionMock,
           createRemoteTerminalClient: createRemoteTerminalClientMock,
         },
       },
@@ -7348,7 +7366,20 @@ describe('DesktopWorkbenchLayout', () => {
     })
   }, 10000)
 
+  test('omits the desktop add-menu item when the internal extension is unavailable', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
+
+    const menu = screen.getByTestId('workspace-terminal-new-tab-menu')
+    expect(within(menu).getByTestId('workspace-add-terminal-option')).toBeInTheDocument()
+    expect(within(menu).getByTestId('workspace-add-ide-option')).toBeInTheDocument()
+    expect(within(menu).queryByTestId('workspace-add-desktop-option')).not.toBeInTheDocument()
+  })
+
   test('opens the bottom workspace add menu without replacing the terminal', async () => {
+    cloudDesktopExtensionMock.available = true
     renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
@@ -7381,11 +7412,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-terminal-window')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-tool-launcher')).not.toBeInTheDocument()
     expect(within(menu).getByTestId('workspace-add-terminal-option')).toHaveTextContent('终端')
+    expect(within(menu).getByTestId('workspace-add-ide-option')).toHaveTextContent('IDE')
+    expect(within(menu).getByTestId('workspace-add-desktop-option')).toHaveTextContent('桌面')
     expect(within(menu).queryByTestId('workspace-add-review-option')).not.toBeInTheDocument()
     expect(within(menu).queryByTestId('workspace-add-browser-option')).not.toBeInTheDocument()
     expect(within(menu).queryByTestId('workspace-add-files-option')).not.toBeInTheDocument()
 
-    await userEvent.click(within(menu).getByTestId('workspace-add-terminal-option'))
+    await userEvent.click(within(menu).getByTestId('workspace-add-ide-option'))
+
+    await waitFor(() =>
+      expect(startDeviceCodeServerSessionMock).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/project'
+      )
+    )
+    expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
+    await userEvent.click(screen.getByTestId('workspace-add-desktop-option'))
+
+    await waitFor(() => expect(cloudDesktopExtensionMock.open).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('bottom-workspace-panel')).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByTestId('remote-terminal')).toHaveAttribute('data-session-id', 'terminal-1')
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
+    const terminalMenu = screen.getByTestId('workspace-terminal-new-tab-menu')
+
+    await userEvent.click(within(terminalMenu).getByTestId('workspace-add-terminal-option'))
 
     expect(screen.queryByTestId('workspace-terminal-new-tab-menu')).not.toBeInTheDocument()
     await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledTimes(2))
