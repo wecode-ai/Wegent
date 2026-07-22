@@ -3011,6 +3011,9 @@ export function DesktopSidebar({
     <aside
       data-testid={containerTestId}
       data-window-focused={windowFocused}
+      data-sidebar-translucent={
+        isWindowsTauri && !(background.imagePath && background.inSidebar) ? 'false' : undefined
+      }
       aria-hidden={collapsed}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}

@@ -1,5 +1,6 @@
 import { isTauriRuntime } from './runtime-environment'
 import { navigateTo } from './navigation'
+import { getPlatform } from './platform'
 
 export const OPEN_TERMINAL_COMMAND = 'openTerminal'
 export const OPEN_SETTINGS_COMMAND = 'openSettings'
@@ -76,11 +77,59 @@ export const DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
   },
 ]
 
+const WIN_DEFAULT_KEYBINDINGS: KeybindingCommand[] = [
+  {
+    command: OPEN_TERMINAL_COMMAND,
+    defaultKey: 'Control+J',
+  },
+  {
+    command: OPEN_SETTINGS_COMMAND,
+    defaultKey: 'Control+,',
+  },
+  {
+    command: GO_BACK_COMMAND,
+    defaultKey: 'Control+[',
+    secondaryKeys: ['Mouse Back'],
+  },
+  {
+    command: GO_FORWARD_COMMAND,
+    defaultKey: 'Control+]',
+    secondaryKeys: ['Mouse Forward'],
+  },
+  {
+    command: TOGGLE_SIDEBAR_COMMAND,
+    defaultKey: 'Control+B',
+  },
+  {
+    command: TOGGLE_SIDE_PANEL_COMMAND,
+    defaultKey: 'Alt+Control+B',
+  },
+  {
+    command: TOGGLE_MODEL_SELECTOR_COMMAND,
+    defaultKey: 'Control+Shift+M',
+  },
+  {
+    command: INCREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Control+Plus',
+  },
+  {
+    command: DECREASE_FONT_SIZE_COMMAND,
+    defaultKey: 'Control+Minus',
+  },
+]
+
+export function getDefaultKeybindings(platform = getPlatform()): KeybindingCommand[] {
+  return platform === 'win' ? WIN_DEFAULT_KEYBINDINGS : DEFAULT_KEYBINDINGS
+}
+
 let activeKeybindings = mergeKeybindings([])
 
-export function mergeKeybindings(overrides: KeybindingOverride[]): Record<string, string | null> {
+export function mergeKeybindings(
+  overrides: KeybindingOverride[],
+  platform = getPlatform()
+): Record<string, string | null> {
   const merged = new Map<string, string | null>(
-    DEFAULT_KEYBINDINGS.map(item => [item.command, normalizeKeybinding(item.defaultKey)])
+    getDefaultKeybindings(platform).map(item => [item.command, normalizeKeybinding(item.defaultKey)])
   )
   overrides.forEach(item => {
     if (!item.command) return

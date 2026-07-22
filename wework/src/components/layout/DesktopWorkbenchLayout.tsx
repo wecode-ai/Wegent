@@ -632,6 +632,7 @@ export function DesktopWorkbenchLayout() {
       data-testid="workbench-windows-titlebar"
       data-tauri-drag-region
       data-window-focused={windowFocused}
+      data-sidebar-translucent={background.imagePath && background.inSidebar ? undefined : 'false'}
       className={cn(
         'relative z-chrome flex h-[38px] w-full shrink-0 items-center overflow-hidden',
         background.imagePath && background.inSidebar
