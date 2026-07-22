@@ -4,16 +4,16 @@ sidebar_position: 19
 
 # Connector Apps Architecture and Deployment
 
-Connector Apps let Wework connect to internal systems without changing Codex source code or requiring a ChatGPT login. The upstream may be either an MCP server or an ordinary HTTP API. Responsibilities are separated: Wegent Admin manages definitions and authentication policy, Wegent Backend stores encrypted credentials and adapts upstream protocols, and Executor exposes one local MCP endpoint to Codex. Wework has no Connector settings page; it only synchronizes available capabilities after connecting to Wegent Cloud.
+Connector Apps let Wework connect to internal systems without changing Codex source code or requiring a ChatGPT login. The upstream may be either an MCP server or an ordinary HTTP API. Responsibilities are separated: Wegent Admin manages definitions, visibility, and fixed provider headers, Wegent Backend reads ConnectorApp resources from `kinds` and adapts upstream protocols, and Executor exposes one local MCP endpoint to Codex. Wework has no Connector settings page; it only synchronizes available capabilities after connecting to Wegent Cloud.
 
 ## Runtime flow
 
-1. Under **System Administration → App Connections**, an administrator configures either a remote MCP endpoint or an HTTP API base URL with tool definitions, plus authentication, role visibility, and a tool allowlist.
-2. For an administrator-managed internal system, selecting `none` authentication and configuring encrypted fixed headers makes the app available automatically to allowed roles. Bearer or OAuth apps that require user identity must be authorized through Wegent Web/API first; Wework does not host configuration or authorization UI.
+1. Under **System Administration → App Connections**, an administrator configures either a remote MCP endpoint or an HTTP API base URL with tool definitions, plus role visibility, a tool allowlist, and optional fixed provider headers.
+2. The current version supports `auth_type: none` only. When administrators configure encrypted fixed headers for an internal system, the app becomes available automatically to allowed roles; Wegent does not store user bearer tokens or provide an OAuth authorization flow.
 3. After a user connects Wework to Wegent Cloud, Wework automatically synchronizes Connector Apps and Skills available to that user.
 4. Wework exchanges its cloud session for a 15-minute connector JWT. This token only has the `connectors:invoke` scope and cannot replace a user login token.
-5. Executor registers itself as the ordinary stdio MCP server `wegent_apps`. Codex connects only to this local process and never receives OAuth tokens, bearer tokens, or fixed provider headers.
-6. The `wegent_apps` child process reads the automatically rotated short token from Executor's private directory and calls Wegent Connector Runtime. Backend decrypts credentials and either connects to the upstream Streamable HTTP/SSE MCP server or translates the tool invocation into an ordinary HTTP request.
+5. Executor registers itself as the ordinary stdio MCP server `wegent_apps`. Codex connects only to this local process and never receives fixed provider headers.
+6. The `wegent_apps` child process reads the automatically rotated short token from Executor's private directory and calls Wegent Connector Runtime. Backend decrypts administrator fixed headers and either connects to the upstream Streamable HTTP/SSE MCP server or translates the tool invocation into an ordinary HTTP request.
 7. Every available app gets a Wegent-managed local Skill. The Skill only identifies the app tool namespace, such as `crm__`; it contains neither administrator-provided prose nor credentials.
 
 Tools are exposed as `<app_slug>__<upstream_tool_name>`. The same allowlist is enforced during both tool discovery and invocation, so a caller cannot bypass policy by constructing a tool name directly.
@@ -28,59 +28,46 @@ When the connection protocol is `HTTP API`, the endpoint is an API base URL. Eac
 - `argument_locations`: maps arguments to `path`, `query`, or JSON `body`. Unmapped GET/DELETE arguments become query parameters; arguments for other methods become JSON body fields. Path values are URL encoded.
 - `timeout_seconds`: a per-request timeout between 1 and 120 seconds.
 
-Backend does not follow redirects, preventing credentials from crossing to another host, and limits responses to 1 MB. JSON responses become both MCP text and structured content; non-2xx responses become MCP tool errors. Fixed provider headers, per-user Bearer/OAuth credentials, role visibility, and tool allowlists use the same policy as MCP upstreams.
+Backend does not follow redirects, preventing fixed headers from crossing to another host, and limits responses to 1 MB. JSON responses become both MCP text and structured content; non-2xx responses become MCP tool errors. Fixed provider headers, role visibility, and tool allowlists use the same policy as MCP upstreams.
 
 ## Authentication boundary
 
+Connector currently supports this app authentication mode:
+
 | Type | Use case | Credential location |
 | --- | --- | --- |
-| `none` | The upstream needs no user identity | No user credential |
-| `bearer` | The user provides a personal access token | Encrypted in Wegent Backend |
-| `oauth2` | OAuth 2.0 Authorization Code with PKCE | Encrypted access and refresh tokens in Wegent Backend |
+| `none` | The upstream needs no per-user authorization, or identity is managed centrally by administrators | No user credential; optional administrator fixed headers |
 
-OAuth token endpoints can use `client_secret_post`, `client_secret_basic`, or the public-client method `none`. The confidential-client methods require a client secret; public clients do not store one. Only a SHA-256 digest of OAuth state is stored. The PKCE verifier, client secret, user tokens, and fixed headers are encrypted with `USER_AES_KEY` using AES-256-CBC and an independent random IV per ciphertext. State is single-use; failed or expired authorization must be restarted.
-
-`none` also supports administrator-managed identity for internal systems: an administrator can configure encrypted fixed headers, such as an internal API key, without requiring every user to connect separately. Fixed provider headers and OAuth client secrets are never returned by the administrator API. It only reports whether a secret exists and the configured header names.
+Administrators can configure encrypted fixed headers, such as an internal API key or service token, without requiring every user to connect separately. Fixed provider headers are never returned by the administrator API. It only reports whether headers exist and the configured header names. The current version does not provide `bearer` or `oauth2` user authorization entry points and no longer stores per-user connector tokens.
 
 ## Deployment configuration
 
-Production deployments must provide a dedicated 32-byte `USER_AES_KEY`; a Base64-encoded key with the `base64:` prefix is also supported. Inject it through a secret manager and never commit it. Plan to reauthorize or migrate existing Connector credentials before rotating the key.
+Production deployments must protect the shared sensitive-data encryption settings `GIT_TOKEN_AES_KEY` and `GIT_TOKEN_AES_IV`. Connector Apps use the existing `encrypt_sensitive_data` mechanism to store fixed headers in `Kind.json.spec.providerHeadersEncrypted`. Inject keys through a secret manager and never commit them. Plan a migration for existing encrypted fields before rotating keys.
 
 ```bash
-USER_AES_KEY="base64:$(openssl rand -base64 32)"
+GIT_TOKEN_AES_KEY="$(openssl rand -base64 24 | head -c 32)"
+GIT_TOKEN_AES_IV="$(openssl rand -base64 12 | head -c 16)"
 ```
 
-When Backend is behind a reverse proxy and cannot derive the public callback origin from the request, set:
-
-```bash
-CONNECTOR_OAUTH_CALLBACK_BASE_URL=https://wegent.example.com
-```
-
-With the default `API_PREFIX` of `/api`, the resulting callback is:
-
-```text
-https://wegent.example.com/api/connector-apps/oauth/callback
-```
-
-Register this exact URL with the OAuth provider, replacing `/api` with your deployment's configured API prefix when it differs from the default. Production deployments should use HTTPS. Internal MCP endpoints may use HTTP, but only trusted administrators can configure them and egress should be constrained by network policy.
+The current version has no Connector OAuth callback and does not require a third-party authorization callback URL. Production deployments should use HTTPS. Internal MCP endpoints may use HTTP, but only trusted administrators can configure them and egress should be constrained by network policy.
 
 ## Data and lifecycle
 
-- `connector_apps` stores administrator-published definitions.
-- `connector_connections` stores per-user connections and encrypted credentials.
-- `connector_oauth_sessions` stores short-lived, single-use OAuth state and PKCE sessions.
-- Disabling an app immediately removes it from user catalogs and Runtime and deletes existing user connections; users must authorize it again after re-enabling.
-- Changing the MCP URL, authentication type, or OAuth client configuration deletes existing user connections so old credentials cannot cross into a new security boundary.
+- Connector App definitions are stored in the `kinds` table with `kind = "ConnectorApp"`, `namespace = "system"`, and `metadata.name` matching the app `slug`.
+- Apps can target MCP upstreams or HTTP API upstreams; the main configuration lives under `Kind.json.spec`.
+- Administrator fixed headers are encrypted into `Kind.json.spec.providerHeadersEncrypted`.
+- The legacy `connector_apps`, `connector_connections`, and `connector_oauth_sessions` tables have been migrated/removed. The current version has no user connection records or OAuth temporary sessions.
+- Disabling an app immediately removes it from user catalogs and Runtime.
 - Administrators can replace or explicitly clear fixed provider headers; leaving the editor blank preserves the encrypted value.
-- Deleting a user connection makes Wework remove the generated local Skill during the next synchronization; `none` apps do not depend on user connection records.
-- Deleting a Wegent connection does not automatically call a provider-specific token revocation endpoint. To revoke the grant completely, the user should also revoke it from the provider's account security page.
+- Wework removes generated local Skills for unavailable or disabled apps during the next synchronization.
 - The Connector JWT is written only to a mode-`0600` runtime file in Executor's private directory and never to Codex configuration. The child process reads it again for each request, and an expired token cannot be used.
 - Disconnecting Wework from cloud deletes the runtime token file and removes the `wegent_apps` MCP configuration and generated Skills, while local Codex workflows remain available.
 
 ## API layers
 
 - `/api/admin/connector-apps`: administrator catalog CRUD.
-- `/api/connector-apps`: current-user catalog, authorization, and disconnect operations.
+- `/api/connector-apps`: current-user visible catalog. The `connection` field in the response is a frontend-compatibility projection and does not map to a `connector_connections` row.
+- `/api/apps/list`, `/api/apps/read`, `/api/apps/installed`: Wework/Codex app projections.
 - `/api/connector-runtime/token`: exchanges a normal cloud session for a least-privilege short token.
 - `/api/connector-runtime/tools` and `/call`: accept only connector JWTs and are used by the Executor MCP proxy.
 

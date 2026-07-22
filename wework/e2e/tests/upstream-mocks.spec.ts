@@ -51,32 +51,14 @@ test('serves Sites upstream project API mock responses', async ({ request }) => 
   expect(JSON.stringify(captured)).toContain('/api/v1/projects/deploy/network')
 })
 
-test('serves connector OAuth, HTTP tool, and MCP upstream mock responses', async ({ request }) => {
+test('serves connector HTTP tool and MCP upstream mock responses', async ({ request }) => {
   await request.post(`${connectorUpstreamMockUrl}/clear-requests`)
-
-  const authorizeResponse = await request.get(`${connectorUpstreamMockUrl}/oauth/authorize`, {
-    maxRedirects: 0,
-    params: {
-      response_type: 'code',
-      client_id: 'wegent-client',
-      redirect_uri: `${connectorUpstreamMockUrl}/oauth/callback`,
-      state: 'state-1',
-    },
-  })
-  const tokenResponse = await request.post(`${connectorUpstreamMockUrl}/oauth/token`, {
-    form: {
-      grant_type: 'authorization_code',
-      code: 'provider-code',
-      code_verifier: 'verifier',
-    },
-  })
-  const tokenBody = await tokenResponse.json()
 
   const ticketResponse = await request.get(
     `${connectorUpstreamMockUrl}/api/tickets/T%2F42?expand=true`,
     {
       headers: {
-        Authorization: `Bearer ${tokenBody.access_token}`,
+        Authorization: 'Bearer fixed-provider-token',
         'X-Wegent-Username': 'alice',
       },
     }
@@ -126,15 +108,11 @@ test('serves connector OAuth, HTTP tool, and MCP upstream mock responses', async
     .get(`${connectorUpstreamMockUrl}/captured-requests`)
     .then(res => res.json())
 
-  expect(authorizeResponse.status()).toBe(302)
-  expect(authorizeResponse.headers().location).toContain('state=state-1')
-  expect(tokenResponse.status()).toBe(200)
-  expect(tokenResponse.headers()['access-control-allow-origin']).toBe('*')
-  expect(tokenBody.access_token).toBe('connector-access-token')
   expect(ticketResponse.status()).toBe(200)
   expect(ticketBody).toMatchObject({
     id: 'T/42',
     received_user: 'alice',
+    received_authorization: 'Bearer fixed-provider-token',
   })
   expect(initializeResponse.status()).toBe(200)
   expect(initializeBody.result.serverInfo.name).toBe('wegent-e2e-connector-upstream')
@@ -142,7 +120,7 @@ test('serves connector OAuth, HTTP tool, and MCP upstream mock responses', async
   expect(toolsBody.result.tools.map((tool: { name: string }) => tool.name)).toContain('search_docs')
   expect(callResponse.status()).toBe(200)
   expect(callBody.result.structuredContent.results[0].id).toBe('doc-1')
-  expect(JSON.stringify(captured)).toContain('/oauth/token')
+  expect(JSON.stringify(captured)).not.toContain('/oauth/')
   expect(JSON.stringify(captured)).toContain('/api/tickets/T%2F42')
   expect(JSON.stringify(captured)).toContain('tools/list')
 })

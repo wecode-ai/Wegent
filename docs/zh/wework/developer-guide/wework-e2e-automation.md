@@ -142,8 +142,6 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 `wework/e2e/utils/mock-connector-upstream-server.mjs` 模拟 connector 可连接的外部服务：
 
-- `GET /oauth/authorize`：保留 `state` 并重定向到回调地址。
-- `POST /oauth/token`：返回确定性的 access token 和 refresh token。
 - `GET /api/tickets/{id}`：作为 HTTP connector upstream。
 - `POST /mcp`：提供最小 Streamable HTTP MCP JSON-RPC 行为，支持 `initialize`、`tools/list` 和 `tools/call`。
 - `GET /captured-requests`、`POST /clear-requests`、`GET /health`：用于断言和重置。
@@ -151,8 +149,6 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 配置 connector app 时可使用：
 
 ```text
-OAuth authorization URL: http://127.0.0.1:9996/oauth/authorize
-OAuth token URL: http://127.0.0.1:9996/oauth/token
 HTTP connector base URL: http://127.0.0.1:9996/api
 MCP URL: http://127.0.0.1:9996/mcp
 ```
@@ -214,8 +210,6 @@ MCP connector fixture 可以使用：
   "tool_allowlist": ["search_docs"]
 }
 ```
-
-OAuth connector fixture 使用相同的 MCP URL，并把 `auth_type` 设为 `oauth2`，`oauth_authorization_url` 和 `oauth_token_url` 分别指向 `/oauth/authorize` 与 `/oauth/token`。测试发起授权后，mock 会把原始 `state` 带回回调地址并返回固定 token，便于断言连接状态和 token 加密存储。
 
 ## 自动化接口
 

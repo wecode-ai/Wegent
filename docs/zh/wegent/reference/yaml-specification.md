@@ -21,6 +21,7 @@ sidebar_position: 1
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
 - [📚 KnowledgeBase](#-knowledgebase)
+- [🔌 ConnectorApp](#-connectorapp)
 
 ---
 
@@ -628,6 +629,73 @@ spec:
 | `FAILED`    | 执行失败 |
 | `CANCELLED` | 已取消   |
 | `DELETE`    | 已删除   |
+
+---
+
+## 🔌 ConnectorApp
+
+ConnectorApp 定义管理员发布给 Wework/Codex 使用的外部应用连接。资源存储在 `kinds` 表中，`metadata.name` 对应应用 `slug`，当前使用系统命名空间 `system`。通常应通过 Wegent Web 的“系统管理 → 应用连接”维护，而不是手写 YAML。
+
+### 完整配置示例
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: ConnectorApp
+metadata:
+  name: ticket-api
+  namespace: system
+  displayName: Ticket API
+spec:
+  name: Ticket API
+  description: Search and read internal tickets
+  iconUrl: https://example.com/ticket-icon.png
+  enabled: true
+  visibility: roles
+  allowedRoles:
+    - admin
+  authType: none
+  transport: http
+  mcpUrl: https://tickets.example.com/api
+  providerHeadersEncrypted: "base64-encrypted-json"
+  toolAllowlist:
+    - get_ticket
+  httpTools:
+    - name: get_ticket
+      description: Get one ticket
+      method: GET
+      path: /tickets/{id}
+      input_schema:
+        type: object
+        properties:
+          id:
+            type: string
+        required:
+          - id
+      argument_locations:
+        id: path
+      timeout_seconds: 30
+```
+
+### 字段说明
+
+| 字段                         | 类型    | 必填 | 说明                                                             |
+| ---------------------------- | ------- | ---- | ---------------------------------------------------------------- |
+| `metadata.name`              | string  | 是   | Connector App 的唯一 slug，工具名前缀使用该值                    |
+| `metadata.namespace`         | string  | 是   | 当前使用 `system`                                                |
+| `spec.name`                  | string  | 是   | 展示名称                                                         |
+| `spec.description`           | string  | 否   | 应用描述                                                         |
+| `spec.iconUrl`               | string  | 否   | 图标 URL                                                         |
+| `spec.enabled`               | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                  |
+| `spec.visibility`            | string  | 是   | `all` 或 `roles`                                                 |
+| `spec.allowedRoles`          | array   | 否   | `visibility: roles` 时允许访问的用户角色                         |
+| `spec.authType`              | string  | 是   | 当前仅支持 `none`                                                |
+| `spec.transport`             | string  | 是   | `streamable-http`、`sse` 或 `http`                               |
+| `spec.mcpUrl`                | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                |
+| `spec.providerHeadersEncrypted` | string | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                  |
+| `spec.toolAllowlist`         | array   | 否   | 允许暴露和调用的上游工具名                                       |
+| `spec.httpTools`             | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
+
+`providerHeadersEncrypted` 必须是加密后的 JSON 字符串。管理 API 接收明文 `provider_headers` 后会负责加密；手写 YAML 时不要提交明文 API Key、服务令牌或请求头。
 
 ---
 

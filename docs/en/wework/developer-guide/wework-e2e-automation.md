@@ -142,8 +142,6 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 `wework/e2e/utils/mock-connector-upstream-server.mjs` simulates external services that connector apps can target:
 
-- `GET /oauth/authorize`: preserves `state` and redirects to the callback URL.
-- `POST /oauth/token`: returns deterministic access and refresh tokens.
 - `GET /api/tickets/{id}`: acts as an HTTP connector upstream.
 - `POST /mcp`: provides minimal Streamable HTTP MCP JSON-RPC behavior for `initialize`, `tools/list`, and `tools/call`.
 - `GET /captured-requests`, `POST /clear-requests`, `GET /health`: assertion and reset helpers.
@@ -151,8 +149,6 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 Connector app test data can use:
 
 ```text
-OAuth authorization URL: http://127.0.0.1:9996/oauth/authorize
-OAuth token URL: http://127.0.0.1:9996/oauth/token
 HTTP connector base URL: http://127.0.0.1:9996/api
 MCP URL: http://127.0.0.1:9996/mcp
 ```
@@ -214,8 +210,6 @@ An MCP connector fixture can use:
   "tool_allowlist": ["search_docs"]
 }
 ```
-
-An OAuth connector fixture can use the same MCP URL with `auth_type` set to `oauth2`, and with `oauth_authorization_url` and `oauth_token_url` pointing at `/oauth/authorize` and `/oauth/token`. When the test starts authorization, the mock preserves the original `state`, sends it back to the callback URL, and returns a fixed token so tests can assert connection state and encrypted token storage.
 
 ## Automation Bridge
 

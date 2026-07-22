@@ -1,8 +1,6 @@
 import http from 'node:http'
 
 const PORT = Number.parseInt(process.env.WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT || '9996', 10)
-const DEFAULT_ACCESS_TOKEN = 'connector-access-token'
-const DEFAULT_REFRESH_TOKEN = 'connector-refresh-token'
 
 const capturedRequests = []
 
@@ -35,15 +33,7 @@ function parseJsonBody(body) {
   }
 }
 
-function parseFormBody(body) {
-  return Object.fromEntries(new URLSearchParams(body))
-}
-
 function parsedBody(req, body) {
-  const contentType = req.headers['content-type'] || ''
-  if (String(contentType).includes('application/x-www-form-urlencoded')) {
-    return parseFormBody(body)
-  }
   return parseJsonBody(body)
 }
 
@@ -54,44 +44,6 @@ function capture(req, body) {
     url: req.url || '/',
     headers: req.headers,
     body: parsedBody(req, body),
-  })
-}
-
-function redirectOAuth(req, res) {
-  const url = new URL(req.url || '/', `http://127.0.0.1:${PORT}`)
-  const redirectUri = url.searchParams.get('redirect_uri')
-  const state = url.searchParams.get('state')
-  if (!redirectUri || !state) {
-    writeJson(res, 400, { error: 'redirect_uri and state are required' })
-    return
-  }
-
-  const callback = new URL(redirectUri)
-  callback.searchParams.set('code', 'provider-code')
-  callback.searchParams.set('state', state)
-  res.writeHead(302, corsHeaders({ Location: callback.toString() }))
-  res.end()
-}
-
-function issueOAuthToken(req, res, body) {
-  const payload = parsedBody(req, body) || {}
-  const grantType = payload.grant_type || 'authorization_code'
-  if (grantType === 'refresh_token' && !payload.refresh_token) {
-    writeJson(res, 400, { error: 'refresh_token is required' })
-    return
-  }
-  if (grantType === 'authorization_code' && !payload.code) {
-    writeJson(res, 400, { error: 'code is required' })
-    return
-  }
-
-  writeJson(res, 200, {
-    access_token:
-      grantType === 'refresh_token' ? `${DEFAULT_ACCESS_TOKEN}-refreshed` : DEFAULT_ACCESS_TOKEN,
-    refresh_token: DEFAULT_REFRESH_TOKEN,
-    token_type: 'Bearer',
-    scope: payload.scope || 'docs.read sites.write',
-    expires_in: 3600,
   })
 }
 
@@ -309,16 +261,6 @@ const server = http.createServer((req, res) => {
     }
 
     capture(req, body)
-
-    if (req.url?.startsWith('/oauth/authorize') && req.method === 'GET') {
-      redirectOAuth(req, res)
-      return
-    }
-
-    if (req.url === '/oauth/token' && req.method === 'POST') {
-      issueOAuthToken(req, res, body)
-      return
-    }
 
     if (req.url?.startsWith('/api/tickets/') && req.method === 'GET') {
       handleTicketLookup(req, res)

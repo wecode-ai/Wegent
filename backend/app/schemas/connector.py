@@ -146,20 +146,6 @@ class ConnectorAppWrite(BaseModel):
     def validate_auth_configuration(self) -> "ConnectorAppWrite":
         if self.visibility == "roles" and not self.allowed_roles:
             raise ValueError("allowed_roles is required for role visibility")
-        if self.auth_type == "oauth2" and not all(
-            (
-                self.oauth_authorization_url,
-                self.oauth_token_url,
-                self.oauth_client_id,
-            )
-        ):
-            raise ValueError("OAuth URLs and client ID are required for oauth2")
-        if (
-            self.auth_type == "oauth2"
-            and self.oauth_client_auth_method != "none"
-            and not self.oauth_client_secret
-        ):
-            raise ValueError("OAuth client secret is required for confidential clients")
         if self.transport == "http" and not self.http_tools:
             raise ValueError("http_tools is required for HTTP connectors")
         if self.transport != "http" and self.http_tools:
