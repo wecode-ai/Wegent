@@ -4,6 +4,7 @@ import {
   deleteLocalModelConfig,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  markLocalModelCatalogReady,
   reconcileLocalModelCatalogRuntime,
   saveLocalModelConfig,
 } from './localModelSettings'
@@ -283,6 +284,58 @@ describe('localModelSettings', () => {
     reconcileLocalModelCatalogRuntime('runtime-2')
     expect(listLocalModelConfigs()[0]).toMatchObject({ catalogReady: true })
     expect(listLocalModelConfigs()[0]).not.toHaveProperty('catalogPendingRuntimeInstanceId')
+  })
+
+  test('preserves pending state and honors explicit catalog clearing', () => {
+    const initial = saveLocalModelConfig({
+      id: 'custom-model',
+      modelId: 'custom-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogPendingRuntimeInstanceId: 'runtime-1',
+    })
+    expect(initial.catalogReady).toBe(false)
+
+    const unchanged = saveLocalModelConfig({
+      id: initial.id,
+      modelId: initial.modelId,
+      baseUrl: initial.baseUrl,
+    })
+    expect(unchanged.catalogPendingRuntimeInstanceId).toBe('runtime-1')
+
+    const cleared = saveLocalModelConfig({
+      id: initial.id,
+      providerProfileId: 'kimi-coding',
+      modelId: initial.modelId,
+      baseUrl: initial.baseUrl,
+      catalogEntry: null,
+      catalogPendingRuntimeInstanceId: null,
+    })
+    expect(cleared).not.toHaveProperty('catalogEntry')
+    expect(cleared).not.toHaveProperty('catalogPendingRuntimeInstanceId')
+  })
+
+  test('marks only the catalog snapshot that was written as ready', () => {
+    const written = saveLocalModelConfig({
+      id: 'written-model',
+      modelId: 'written-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+    const concurrent = saveLocalModelConfig({
+      id: 'concurrent-model',
+      modelId: 'concurrent-model',
+      baseUrl: 'http://localhost:11434/v1',
+      catalogReady: false,
+    })
+
+    markLocalModelCatalogReady([written])
+
+    expect(listLocalModelConfigs()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: written.id, catalogReady: true }),
+        expect.objectContaining({ id: concurrent.id, catalogReady: false }),
+      ])
+    )
   })
 
   test('updates, deletes, clears, and emits change events', () => {
