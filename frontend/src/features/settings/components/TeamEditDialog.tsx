@@ -213,6 +213,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     ExternalKnowledgeRef[]
   >([])
   const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
+  const [dialogContent, setDialogContent] = useState<HTMLDivElement | null>(null)
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -923,6 +924,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     <>
       <Dialog open={open} onOpenChange={open => !open && onClose()}>
         <DialogContent
+          ref={setDialogContent}
           className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
           preventOutsideClick={editingBotDrawerVisible}
         >
@@ -1013,6 +1015,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 toast={toast}
                 scope={scope}
                 groupName={groupName}
+                popoverContainer={dialogContent}
               />
             ) : (
               <>
@@ -1065,6 +1068,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   botEditRef={botEditRef}
                   scope={scope}
                   groupName={groupName}
+                  popoverContainer={dialogContent}
                   requireConfirmationMap={requireConfirmationMap}
                   setRequireConfirmationMap={setRequireConfirmationMap}
                   contextPassingMap={contextPassingMap}

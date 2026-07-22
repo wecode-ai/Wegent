@@ -119,6 +119,8 @@ interface BotEditProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   /** Group name when scope is 'group' */
   groupName?: string
+  /** Dialog content that should contain nested popovers. */
+  popoverContainer?: HTMLElement | null
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -136,6 +138,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     hideActions = false,
     scope,
     groupName,
+    popoverContainer,
   },
   ref
 ) => {
@@ -1530,6 +1533,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                             : ['personal', 'group', 'organization']
                         }
                         allowExternalKnowledge={scope !== 'public'}
+                        popoverContainer={popoverContainer}
                       />
                     </div>
                   </div>

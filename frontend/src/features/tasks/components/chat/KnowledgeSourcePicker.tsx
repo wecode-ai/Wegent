@@ -67,6 +67,7 @@ export interface GroupedKnowledgeBaseGroup {
 }
 
 type SourceKey = 'personal' | 'group' | 'organization' | `external:${string}`
+type KnowledgeSourcePickerLayout = 'self-contained' | 'fill-parent'
 
 const INTERNAL_DOCUMENT_PAGE_SIZE = 200
 const DEFAULT_EXTERNAL_SCOPE_ICON = 'cloud'
@@ -83,6 +84,8 @@ interface KnowledgeSourcePickerProps {
   onSelect: (context: ContextItem) => void
   onDeselect: (id: number | string) => void
   onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
+  /** Controls whether the picker owns its height or fills a constrained parent. */
+  layout?: KnowledgeSourcePickerLayout
 }
 
 interface ActiveInternalKnowledgeBase {
@@ -518,6 +521,7 @@ export function KnowledgeSourcePicker({
   onSelect,
   onDeselect,
   onReplaceContexts,
+  layout = 'self-contained',
 }: KnowledgeSourcePickerProps) {
   const { t } = useTranslation('knowledge')
   const { toast } = useToast()
@@ -1446,10 +1450,17 @@ export function KnowledgeSourcePicker({
 
   return (
     <div
-      className="grid min-h-0 grid-cols-1 grid-rows-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,7fr)] overflow-hidden md:grid-cols-[180px_220px_minmax(0,1fr)] md:grid-rows-1"
-      style={{
-        height: 'min(520px, calc(var(--radix-popover-content-available-height) - 72px))',
-      }}
+      className={cn(
+        'grid min-h-0 grid-cols-1 grid-rows-[minmax(0,4fr)_minmax(0,5fr)_minmax(0,7fr)] overflow-hidden md:grid-cols-[180px_220px_minmax(0,1fr)] md:grid-rows-1',
+        layout === 'fill-parent' && 'h-full flex-1'
+      )}
+      style={
+        layout === 'self-contained'
+          ? {
+              height: 'min(520px, calc(var(--radix-popover-content-available-height) - 72px))',
+            }
+          : undefined
+      }
       data-testid="knowledge-source-picker"
     >
       <div className="min-h-0 border-b border-border md:border-b-0 md:border-r">

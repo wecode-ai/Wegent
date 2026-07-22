@@ -90,6 +90,7 @@ interface SimpleTeamEditFormProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  popoverContainer?: HTMLElement | null
 }
 
 function SimpleSection({
@@ -182,6 +183,7 @@ export default function SimpleTeamEditForm({
   toast,
   scope,
   groupName,
+  popoverContainer,
 }: SimpleTeamEditFormProps) {
   const { t } = useTranslation()
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
@@ -507,6 +509,7 @@ export default function SimpleTeamEditForm({
               defaultExternalKnowledgeRefs={defaultExternalKnowledgeRefs}
               onDefaultExternalKnowledgeRefsChange={onDefaultExternalKnowledgeRefsChange}
               allowedSources={['personal', 'group', 'organization']}
+              popoverContainer={popoverContainer}
             />
           </SimpleConfigRow>
 

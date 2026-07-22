@@ -56,11 +56,13 @@ jest.mock('@/features/tasks/components/chat/KnowledgeSourcePicker', () => ({
   KnowledgeSourcePicker: ({
     onSelect,
     onReplaceContexts,
+    layout,
   }: {
     onSelect: (context: ContextItem) => void
     onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
+    layout?: 'self-contained' | 'fill-parent'
   }) => (
-    <div data-testid="mock-knowledge-source-picker">
+    <div data-layout={layout} data-testid="mock-knowledge-source-picker">
       <button
         type="button"
         onClick={() =>
@@ -108,6 +110,58 @@ jest.mock('@/features/tasks/components/chat/KnowledgeSourcePicker', () => ({
 }))
 
 describe('AgentDefaultKnowledgeScopeSelector', () => {
+  it('gives the picker the remaining popover height without a second height owner', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+
+    render(
+      <AgentDefaultKnowledgeScopeSelector
+        defaultKnowledgeBaseRefs={[]}
+        onDefaultKnowledgeBaseRefsChange={jest.fn()}
+        defaultExternalKnowledgeRefs={[]}
+        onDefaultExternalKnowledgeRefsChange={jest.fn()}
+        popoverContainer={popoverContainer}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('agent-default-knowledge-scope-trigger'))
+
+    const popover = await screen.findByTestId('agent-default-knowledge-scope-popover')
+    expect(popoverContainer).toContainElement(popover)
+    expect(popover).toHaveClass('flex', 'flex-col', 'overflow-hidden')
+    expect(popover).toHaveClass('h-[min(556px,var(--radix-popover-content-available-height))]')
+    expect(popover.firstElementChild).toHaveClass(
+      'flex',
+      'min-h-0',
+      'flex-1',
+      'flex-col',
+      'overflow-hidden'
+    )
+    expect(screen.getByTestId('mock-knowledge-source-picker')).toHaveAttribute(
+      'data-layout',
+      'fill-parent'
+    )
+
+    popoverContainer.remove()
+  })
+
+  it('uses the default portal container when no dialog container is supplied', async () => {
+    const { container } = render(
+      <AgentDefaultKnowledgeScopeSelector
+        defaultKnowledgeBaseRefs={[]}
+        onDefaultKnowledgeBaseRefsChange={jest.fn()}
+        defaultExternalKnowledgeRefs={[]}
+        onDefaultExternalKnowledgeRefsChange={jest.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('agent-default-knowledge-scope-trigger'))
+
+    expect(container).not.toContainElement(
+      await screen.findByTestId('agent-default-knowledge-scope-popover')
+    )
+  })
+
   it('aggregates selected defaults and splits save outputs by storage field', async () => {
     const onKnowledgeChange = jest.fn()
     const onExternalChange = jest.fn()
