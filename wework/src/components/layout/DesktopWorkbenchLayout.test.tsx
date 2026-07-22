@@ -6036,6 +6036,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     view.rerender(renderTask(secondTask))
 
+    expect(activePane().getByTestId('environment-info-panel-container')).toHaveClass(
+      'transition-none'
+    )
     await waitFor(() =>
       expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
         'aria-expanded',
