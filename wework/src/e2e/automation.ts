@@ -565,7 +565,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
     case 'performanceSnapshot': {
-      const processMemory = await invoke('get_wework_process_snapshot')
+      const processMemory = navigator.platform.toLowerCase().includes('mac')
+        ? await invoke('get_wework_process_snapshot')
+        : null
       return JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
