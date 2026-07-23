@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -270,3 +272,18 @@ def test_is_context_too_long_error_matches_status_and_chinese():
     assert _is_context_too_long_error(Boom("请求体过大", status=413))
     assert _is_context_too_long_error(Boom("token 数量超过上限"))
     assert not _is_context_too_long_error(Boom("temporary network blip"))
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_times_out():
+    class HangingLLM:
+        async def ainvoke(self, _messages):
+            await asyncio.sleep(5)
+
+    compactor = SummaryCompactor(
+        llm=HangingLLM(),
+        token_counter=TokenCounter(model_name="gpt-4"),
+        request_timeout=0.05,
+    )
+    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+        await compactor._generate_summary([])

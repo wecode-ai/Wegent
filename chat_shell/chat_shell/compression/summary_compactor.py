@@ -17,6 +17,7 @@ governance phase:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from copy import deepcopy
@@ -157,11 +158,13 @@ class SummaryCompactor:
         token_counter: TokenCounter,
         recent_user_token_limit: int = DEFAULT_RECENT_USER_TOKEN_LIMIT,
         max_compact_input_tokens: int | None = None,
+        request_timeout: float | None = None,
     ) -> None:
         self._llm = llm
         self._token_counter = token_counter
         self._recent_user_token_limit = recent_user_token_limit
         self._max_compact_input_tokens = max_compact_input_tokens
+        self._request_timeout = request_timeout
 
     async def compact(
         self,
@@ -248,7 +251,11 @@ class SummaryCompactor:
         )
         request_started = time.perf_counter()
         try:
-            result = await self._llm.ainvoke(prompt_messages)
+            if self._request_timeout is not None:
+                async with asyncio.timeout(self._request_timeout):
+                    result = await self._llm.ainvoke(prompt_messages)
+            else:
+                result = await self._llm.ainvoke(prompt_messages)
         except BaseException as exc:
             # BaseException so a CancelledError (task/timeout cancellation) is
             # surfaced here rather than vanishing silently at the hang point.
