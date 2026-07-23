@@ -66,6 +66,8 @@ export function useWorkbenchPaneEnvironment({
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const environmentInfoRequestSequence = useRef(0)
   const previousEnvironmentRefreshActive = useRef(false)
+  const devicesRef = useRef(state.devices)
+  devicesRef.current = state.devices
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const runtimeWorkspaceContext = useMemo(
@@ -262,7 +264,7 @@ export function useWorkbenchPaneEnvironment({
           : await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget)
         if (environmentInfoRequestSequence.current === requestId) {
           const actualDevice = findWorkbenchDevice(
-            state.devices,
+            devicesRef.current,
             latestActiveWorkspaceTarget?.deviceId ?? info.deviceId
           )
           setEnvironmentInfo({
@@ -290,7 +292,6 @@ export function useWorkbenchPaneEnvironment({
       activeWorkspaceTarget?.path,
       environmentWorkspaceReady,
       loadEnvironmentInfo,
-      state.devices,
       workspaceTargetError,
       workspaceTargetResolving,
     ]

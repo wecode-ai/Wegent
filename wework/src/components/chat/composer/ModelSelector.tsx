@@ -112,6 +112,8 @@ export function ModelSelector({
   const [activeDesktopSubmenu, setActiveDesktopSubmenu] = useState<DesktopSubmenuTarget | null>(
     null
   )
+  const [activeDesktopFamilyId, setActiveDesktopFamilyId] = useState<string | null>(null)
+  const [desktopFamilyOffset, setDesktopFamilyOffset] = useState(0)
   const [advancedOpen, setAdvancedOpen] = useState(readModelSelectorPowerViewPreference)
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
@@ -136,6 +138,7 @@ export function ModelSelector({
     setOpen(false)
     setMobileQuery('')
     setActiveDesktopSubmenu(null)
+    setActiveDesktopFamilyId(null)
     setPowerSliderInteracting(false)
   }, [setActiveDesktopSubmenu, setMobileQuery, setOpen, setPowerSliderInteracting])
   const handleSelectModelOption = useCallback(
@@ -270,8 +273,13 @@ export function ModelSelector({
     },
     [setActiveDesktopSubmenu]
   )
+  const activateModels = useCallback(() => {
+    setActiveDesktopSubmenu({ type: 'models' })
+    setActiveDesktopFamilyId(null)
+  }, [setActiveDesktopSubmenu, setActiveDesktopFamilyId])
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
+    setActiveDesktopFamilyId(null)
   }, [setActiveDesktopSubmenu])
   const activateMobileFamily = useCallback(
     (familyId: string) => {
@@ -385,6 +393,22 @@ export function ModelSelector({
     activeDesktopSubmenu?.type === 'control'
       ? desktopControls.find(control => control.id === activeDesktopSubmenu.id)
       : undefined
+  const activeDesktopFamily = activeDesktopFamilyId
+    ? familyGroups.find(group => group.config.id === activeDesktopFamilyId)
+    : undefined
+  const desktopFamilySubmenuWidth = SUBMENU_WIDTH
+  const desktopFamilySubmenuLeft = (() => {
+    const modelSubmenuWidth = submenuWidth ?? SUBMENU_WIDTH
+    if (submenuLeft < 0) {
+      return submenuLeft - desktopFamilySubmenuWidth
+    }
+
+    const rightSideLeft = submenuLeft + modelSubmenuWidth
+    const rightSideEdge = desktopMenuLeft + rightSideLeft + desktopFamilySubmenuWidth
+    return rightSideEdge <= getDesktopViewportRightBoundary() - VIEWPORT_MARGIN
+      ? rightSideLeft
+      : -desktopFamilySubmenuWidth
+  })()
 
   useLayoutEffect(() => {
     if (!open || isMobile) return
@@ -523,6 +547,72 @@ export function ModelSelector({
         <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
       </button>
     )
+  }
+
+  function renderDesktopModelOptions(modelsToRender: UnifiedModel[]) {
+    if (modelsToRender.length === 0) {
+      return (
+        <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
+          {t('workbench.no_models', 'No models available')}
+        </div>
+      )
+    }
+
+    return modelsToRender.map(model => {
+      const selected = model.name === selectedModel?.name && model.type === selectedModel?.type
+      const modelDisabled = Boolean(model.compatibilityDisabled)
+      const disabledMessage = modelDisabled
+        ? modelCompatibilityDisabledMessage(model.compatibilityDisabledReason, resolveControlLabel)
+        : undefined
+      return (
+        <button
+          key={`${model.type}:${model.name}`}
+          type="button"
+          data-testid={`model-option-${model.name}`}
+          aria-disabled={modelDisabled}
+          title={disabledMessage}
+          onClick={() => {
+            if (modelDisabled) {
+              onBlockedModelSelect?.(model, disabledMessage)
+              return
+            }
+            handleSelectModel(model)
+          }}
+          className={[
+            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm leading-[18px]',
+            modelDisabled
+              ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
+              : 'text-text-primary hover:bg-muted',
+          ].join(' ')}
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium">
+            {disabledMessage ? (
+              <span className="min-w-0 flex-1 truncate">
+                <span className="block truncate">
+                  {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
+                </span>
+                <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
+                  {disabledMessage}
+                </span>
+              </span>
+            ) : isCloudModel(model) ? (
+              <span className="min-w-0 flex-1 truncate">
+                {getModelDisplayLabel(model, {}, resolveControlLabel)}
+              </span>
+            ) : (
+              getModelDisplayLabel(model, {}, resolveControlLabel)
+            )}
+            {isCloudModel(model) && (
+              <Cloud
+                aria-label={t('workbench.environment_cloud', '云端')}
+                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+              />
+            )}
+          </span>
+          {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
+        </button>
+      )
+    })
   }
 
   function renderMobileControlSection(control: ModelControlConfig) {
@@ -786,10 +876,10 @@ export function ModelSelector({
                       ref={modelButtonRef}
                       type="button"
                       data-testid="model-control-menu-model"
-                      onMouseEnter={() => setActiveDesktopSubmenu({ type: 'models' })}
-                      onPointerEnter={() => setActiveDesktopSubmenu({ type: 'models' })}
-                      onFocus={() => setActiveDesktopSubmenu({ type: 'models' })}
-                      onClick={() => setActiveDesktopSubmenu({ type: 'models' })}
+                      onMouseEnter={activateModels}
+                      onPointerEnter={activateModels}
+                      onFocus={activateModels}
+                      onClick={activateModels}
                       className={cn(
                         'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
                         modelRowActive
@@ -929,75 +1019,60 @@ export function ModelSelector({
                   {t('workbench.model_version', '模型')}
                 </div>
                 <div className="space-y-0.5">
-                  {desktopModels.length === 0 ? (
-                    <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
-                      {t('workbench.no_models', 'No models available')}
-                    </div>
-                  ) : (
-                    desktopModels.map(model => {
-                      const selected =
-                        model.name === selectedModel?.name && model.type === selectedModel?.type
-                      const modelDisabled = Boolean(model.compatibilityDisabled)
-                      const disabledMessage = modelDisabled
-                        ? modelCompatibilityDisabledMessage(
-                            model.compatibilityDisabledReason,
-                            resolveControlLabel
-                          )
-                        : undefined
-                      return (
-                        <button
-                          key={`${model.type}:${model.name}`}
-                          type="button"
-                          data-testid={`model-option-${model.name}`}
-                          aria-disabled={modelDisabled}
-                          title={disabledMessage}
-                          onClick={() => {
-                            if (modelDisabled) {
-                              onBlockedModelSelect?.(model, disabledMessage)
-                              return
-                            }
-                            handleSelectModel(model)
-                          }}
-                          className={[
-                            'flex min-h-8 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm leading-[18px]',
-                            modelDisabled
-                              ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
-                              : 'text-text-primary hover:bg-muted',
-                          ].join(' ')}
-                        >
-                          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium">
-                            {disabledMessage ? (
-                              <span className="min-w-0 flex-1 truncate">
-                                <span className="block truncate">
-                                  {getModelDisplayLabel(
-                                    model,
-                                    selectedModelOptions,
-                                    resolveControlLabel
-                                  )}
-                                </span>
-                                <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
-                                  {disabledMessage}
-                                </span>
-                              </span>
-                            ) : isCloudModel(model) ? (
-                              <span className="min-w-0 flex-1 truncate">
-                                {getModelDisplayLabel(model, {}, resolveControlLabel)}
-                              </span>
-                            ) : (
-                              getModelDisplayLabel(model, {}, resolveControlLabel)
+                  {familyGroups.length <= 1
+                    ? renderDesktopModelOptions(desktopModels)
+                    : familyGroups.map(group => {
+                        const active = activeDesktopFamilyId === group.config.id
+                        return (
+                          <button
+                            key={group.config.id}
+                            type="button"
+                            data-testid={`model-family-${group.config.id}`}
+                            onMouseEnter={event => {
+                              setActiveDesktopFamilyId(group.config.id)
+                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
+                            }}
+                            onPointerEnter={event => {
+                              setActiveDesktopFamilyId(group.config.id)
+                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
+                            }}
+                            onFocus={event => {
+                              setActiveDesktopFamilyId(group.config.id)
+                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
+                            }}
+                            onClick={event => {
+                              setActiveDesktopFamilyId(group.config.id)
+                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
+                            }}
+                            className={cn(
+                              'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
+                              active ? 'bg-muted text-text-primary' : 'hover:bg-muted'
                             )}
-                            {isCloudModel(model) && (
-                              <Cloud
-                                aria-label={t('workbench.environment_cloud', '云端')}
-                                className="h-3.5 w-3.5 shrink-0 text-text-muted"
-                              />
-                            )}
-                          </span>
-                          {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
-                        </button>
-                      )
-                    })
-                  )}
+                          >
+                            <span className="min-w-0 flex-1 truncate">{group.config.label}</span>
+                            <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                          </button>
+                        )
+                      })}
+                </div>
+              </div>
+            ) : null}
+            {activeDesktopSubmenu?.type === 'models' && activeDesktopFamily ? (
+              <div
+                key={`family:${activeDesktopFamily.config.id}`}
+                data-testid="model-selector-family-submenu"
+                data-enter-animation="submenu"
+                style={{ top: submenuOffset + desktopFamilyOffset, left: desktopFamilySubmenuLeft }}
+                className={cn(
+                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                  styles.submenu
+                )}
+              >
+                <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold leading-[18px] text-text-muted">
+                  {activeDesktopFamily.config.label}
+                </div>
+                <div className="space-y-0.5">
+                  {renderDesktopModelOptions(activeDesktopFamily.models)}
                 </div>
               </div>
             ) : null}

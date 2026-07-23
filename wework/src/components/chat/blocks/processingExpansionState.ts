@@ -41,6 +41,12 @@ export function usePersistentProcessingExpansion(
   return [expanded, setPersistentExpanded]
 }
 
+export function clearPersistentProcessingExpansions() {
+  if (expansionStateByKey.size === 0) return
+  expansionStateByKey.clear()
+  emitExpansionStateChange()
+}
+
 function readExpansionState(key: string | undefined, initialValue: boolean): boolean {
   if (!key) return initialValue
   return expansionStateByKey.get(key) ?? initialValue

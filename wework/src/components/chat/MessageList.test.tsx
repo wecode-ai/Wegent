@@ -12,14 +12,64 @@ const tauriCoreMock = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
 }))
 const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
+const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn(() => true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 vi.mock('@/lib/external-links', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/external-links')>()),
   openExternalUrl: openExternalUrlMock,
 }))
+vi.mock('@/lib/embedded-browser', () => ({
+  requestEmbeddedBrowserOpen: requestEmbeddedBrowserOpenMock,
+}))
 
 describe('MessageList', () => {
+  test('renders a generated Codex inline visualization from the changed workspace file', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-inline-visualization',
+            role: 'assistant',
+            content: [
+              '已生成折线图。',
+              '',
+              '::codex-inline-vis{file="weekly-values-line-chart.html"}',
+            ].join('\n'),
+            status: 'done',
+            createdAt: '2026-07-23T10:00:00Z',
+            fileChanges: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-inline-visualization',
+              device_id: 'device-1',
+              workspace_path: '/Users/dev/workspace',
+              file_count: 1,
+              additions: 1,
+              deletions: 0,
+              files: [
+                {
+                  path: 'weekly-values-line-chart.html',
+                  change_type: 'created',
+                  additions: 1,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('已生成折线图。')).toBeInTheDocument()
+    expect(screen.queryByText('::codex-inline-vis')).not.toBeInTheDocument()
+    expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/dev/workspace/weekly-values-line-chart.html'
+    )
+  })
+
   test('offers conversation actions for text selected inside one message body', async () => {
     const onAddSelectionToConversation = vi.fn()
     const onAskSelectionInSidebar = vi.fn()
@@ -320,6 +370,48 @@ describe('MessageList', () => {
     } finally {
       getSelectionSpy.mockRestore()
     }
+  })
+
+  test('unmounts distant Tauri message contents and restores them near the viewport', async () => {
+    tauriCoreMock.isTauri = vi.fn(() => true)
+    const callbacks: IntersectionObserverCallback[] = []
+    class IntersectionObserverMock {
+      constructor(callback: IntersectionObserverCallback) {
+        callbacks.push(callback)
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+      takeRecords = vi.fn(() => [])
+      root = null
+      rootMargin = '1200px 0px'
+      thresholds = [0]
+    }
+    vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
+
+    render(
+      <MessageList
+        messages={Array.from({ length: 6 }, (_, index) => ({
+          id: `assistant-windowed-${index}`,
+          role: 'assistant' as const,
+          content: `message ${index}`,
+          status: 'done' as const,
+          createdAt: `2026-06-11T10:00:0${index}Z`,
+        }))}
+      />
+    )
+
+    const articles = screen.getAllByTestId('message-assistant')
+    expect(articles[0]).toBeEmptyDOMElement()
+    expect(articles[1]).toBeEmptyDOMElement()
+    expect(articles[2]).toHaveTextContent('message 2')
+    expect(callbacks).toHaveLength(2)
+
+    await act(async () => {
+      callbacks[0]([{ isIntersecting: true } as IntersectionObserverEntry], {} as never)
+    })
+
+    expect(articles[0]).toHaveTextContent('message 0')
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -2073,6 +2165,75 @@ describe('MessageList', () => {
     expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('opens local HTML file links in the Wework built-in browser', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-html-file-link',
+            role: 'assistant',
+            content: '[trend.html](/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+  })
+
+  test('treats local filesystem paths encoded as Tauri URLs as file links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-tauri-file-link',
+            role: 'assistant',
+            content: '[report](tauri://localhost/Users/dev/workspace/report.md)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/workspace/report.md')
+  })
+
+  test('opens Tauri-encoded local HTML paths in the Wework built-in browser', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-tauri-html-file-link',
+            role: 'assistant',
+            content: '[trend](tauri://localhost/Users/dev/workspace/trend.html)',
+            status: 'done',
+            createdAt: '2026-07-22T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith(
+      'asset://localhost/Users/dev/workspace/trend.html'
+    )
   })
 
   test('removes angle brackets from assistant file link destinations', () => {

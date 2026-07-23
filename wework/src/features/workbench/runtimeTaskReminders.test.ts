@@ -70,7 +70,7 @@ describe('runtimeTaskReminders', () => {
     expect(snapshot.completedUnreadItems.map(item => item.key)).toEqual([key])
   })
 
-  test('keeps active status tasks in the running key set even without running flag', () => {
+  test('does not treat a continuable idle task as running', () => {
     const activeTask = task({ running: false, status: 'active' })
     const key = getRuntimeTaskReminderItemKey(workspace([activeTask]), activeTask)
 
@@ -80,7 +80,7 @@ describe('runtimeTaskReminders', () => {
       currentRuntimeTask: null,
     })
 
-    expect(snapshot.runningTaskKeys.has(key)).toBe(true)
+    expect(snapshot.runningTaskKeys.has(key)).toBe(false)
     expect(snapshot.completedUnreadItems).toEqual([])
   })
 

@@ -1,5 +1,5 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -32,11 +32,7 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
-import {
-  CachedWorkbenchPaneStack,
-  getRuntimeWorkbenchPaneKeys,
-  type WorkbenchPaneIdentity,
-} from './workbenchPaneStack'
+import { CachedWorkbenchPaneStack, type WorkbenchPaneIdentity } from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
@@ -63,18 +59,12 @@ export function MobileWorkbenchLayout() {
     currentProject: state.currentProject,
     standaloneChatKey: state.standaloneChatKey,
   }
-  const pinnedPaneKeys = useMemo(
-    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
-    [state.runtimeWork]
-  )
-
   return (
     <div className="relative h-dvh overflow-hidden bg-background">
       <WorkbenchBackground />
       <CachedWorkbenchPaneStack
         activePane={activePane}
         maxPanes={1}
-        pinnedKeys={pinnedPaneKeys}
         className={background.imagePath && background.inMain ? 'h-dvh bg-background/20' : 'h-dvh'}
         renderPane={renderMobileWorkbenchPane}
       />

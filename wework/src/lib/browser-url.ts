@@ -9,6 +9,10 @@ function matchesTauriAppOrigin(url: URL, appUrl: string | undefined): boolean {
   }
 }
 
+function isLocalAssetUrl(url: URL): boolean {
+  return url.protocol === 'asset:' && url.hostname === 'localhost'
+}
+
 export function normalizeBrowserUrl(value: string, appUrl?: string): string | null {
   const trimmed = value.trim()
   if (!trimmed) return null
@@ -20,6 +24,7 @@ export function normalizeBrowserUrl(value: string, appUrl?: string): string | nu
     if (
       url.protocol !== 'http:' &&
       url.protocol !== 'https:' &&
+      !isLocalAssetUrl(url) &&
       !matchesTauriAppOrigin(url, appUrl)
     ) {
       return null

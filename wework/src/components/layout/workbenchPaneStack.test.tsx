@@ -101,7 +101,42 @@ describe('workbenchPaneStack', () => {
     )
   })
 
-  test('keeps background runtime panes mounted beyond the normal cache limit', async () => {
+  test('evicts the least recently used ordinary pane at the cache limit', async () => {
+    const panes: WorkbenchPaneIdentity[] = [
+      { currentRuntimeTask: { deviceId: 'device-1', taskId: 101 }, currentProject: null },
+      { currentRuntimeTask: { deviceId: 'device-1', taskId: 102 }, currentProject: null },
+      { currentRuntimeTask: { deviceId: 'device-1', taskId: 103 }, currentProject: null },
+    ]
+
+    function RuntimePaneStackProbe() {
+      const [index, setIndex] = useState(0)
+      return (
+        <div>
+          <button type="button" onClick={() => setIndex(1)}>
+            open second
+          </button>
+          <button type="button" onClick={() => setIndex(2)}>
+            open third
+          </button>
+          <CachedWorkbenchPaneStack
+            activePane={panes[index]}
+            maxPanes={2}
+            renderPane={activePane => <RuntimePane pane={activePane} />}
+          />
+        </div>
+      )
+    }
+
+    render(<RuntimePaneStackProbe />)
+    await userEvent.click(screen.getByText('open second'))
+    await userEvent.click(screen.getByText('open third'))
+
+    expect(screen.queryByTestId('runtime-pane-101')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-pane-102')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-pane-103')).toBeInTheDocument()
+  })
+
+  test('keeps resource panes mounted beyond the normal cache limit', async () => {
     const panes: WorkbenchPaneIdentity[] = [
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 101 }, currentProject: null },
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 102 }, currentProject: null },
@@ -156,6 +191,9 @@ describe('workbenchPaneStack', () => {
       const [pane, setPane] = useState<WorkbenchPaneIdentity>(runtimePane)
       return (
         <div>
+          <button type="button" onClick={() => setPane(runtimePane)}>
+            reopen runtime chat
+          </button>
           <button type="button" onClick={() => setPane(standalonePane)}>
             start new chat
           </button>
@@ -169,6 +207,7 @@ describe('workbenchPaneStack', () => {
     }
 
     render(<RuntimePaneStackProbe />)
+    const runtimeMountId = screen.getByTestId('runtime-pane-mount-id').textContent
     expect(screen.getByTestId('runtime-pane-runtime-1')).toBeVisible()
 
     await userEvent.click(screen.getByText('start new chat'))
@@ -181,9 +220,18 @@ describe('workbenchPaneStack', () => {
       .closest('[data-active-workbench-pane]')
 
     expect(standaloneWrapper).toHaveAttribute('data-active-workbench-pane', 'true')
-    expect(standaloneWrapper).toHaveClass('visible')
+    expect(standaloneWrapper).not.toHaveAttribute('hidden')
     expect(runtimeWrapper).toHaveAttribute('data-active-workbench-pane', 'false')
-    expect(runtimeWrapper).toHaveClass('invisible')
+    expect(runtimeWrapper).toHaveAttribute('hidden')
+    expect(screen.getByTestId('runtime-pane-runtime-1')).not.toBeVisible()
+
+    await userEvent.click(screen.getByText('reopen runtime chat'))
+
+    const reopenedRuntimePane = screen.getByTestId('runtime-pane-runtime-1')
+    expect(reopenedRuntimePane).toBeVisible()
+    expect(
+      reopenedRuntimePane.querySelector('[data-testid="runtime-pane-mount-id"]')
+    ).toHaveTextContent(runtimeMountId ?? '')
   })
 
   test('uses standalone chat key to create a fresh new chat pane', async () => {

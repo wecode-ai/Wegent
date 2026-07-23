@@ -281,7 +281,7 @@ async fn runtime_task_list_clears_local_running_state_when_thread_is_missing() {
 }
 
 #[tokio::test]
-async fn runtime_task_list_ignores_local_failed_state_when_codex_thread_is_idle() {
+async fn runtime_task_list_preserves_local_failed_state_when_codex_thread_is_idle() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-local-failed-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -334,8 +334,11 @@ async fn runtime_task_list_ignores_local_failed_state_when_codex_thread_is_idle(
         .find(|task| task["taskId"] == "local-failed-running-rollout")
         .unwrap();
 
-    assert_eq!(locally_failed["status"], "active");
+    assert_eq!(locally_failed["status"], "failed");
     assert_eq!(locally_failed["running"], false);
+    assert_eq!(locally_failed["continuable"], true);
+    assert_eq!(locally_failed["threadStatus"], "idle");
+    assert_eq!(locally_failed["turnStatus"], "failed");
 }
 
 fn write_fake_codex(log_path: &Path) -> PathBuf {

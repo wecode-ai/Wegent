@@ -231,7 +231,6 @@ function ScrollableMessagePaneContent({
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
   const restoringScrollKeyRef = useRef<string | null>(null)
-  const applyingSavedScrollRef = useRef(false)
   const userScrollPausedAutoFollowRef = useRef(false)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
@@ -278,7 +277,7 @@ function ScrollableMessagePaneContent({
   const clearScheduledScrolls = useCallback(() => {
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
     scrollTimersRef.current = []
-    applyingSavedScrollRef.current = false
+    restoringScrollKeyRef.current = null
 
     if (scrollFrameRef.current !== null) {
       cancelAnimationFrame(scrollFrameRef.current)
@@ -426,46 +425,35 @@ function ScrollableMessagePaneContent({
     [saveCurrentScrollPosition]
   )
 
-  const restoreSavedScrollPosition = useCallback(
-    (key: string, options: { clearScheduled?: boolean } = {}) => {
-      const element = activeScrollRefRef.current.current
-      const content = contentRef.current
-      const savedSnapshot = conversationScrollSnapshots.get(key)
-      if (!element || !savedSnapshot) return
+  const restoreSavedScrollPosition = useCallback((key: string) => {
+    const element = activeScrollRefRef.current.current
+    const content = contentRef.current
+    const savedSnapshot = conversationScrollSnapshots.get(key)
+    if (!element || !savedSnapshot) return
 
-      if (options.clearScheduled) {
-        clearScheduledScrolls()
-      }
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
-      const nextScrollTop = Math.min(
-        getRestoredScrollTop(element, content, savedSnapshot),
-        maxScrollTop
-      )
-      applyingSavedScrollRef.current = true
-      if (typeof element.scrollTo === 'function') {
-        element.scrollTo({
-          top: nextScrollTop,
-          behavior: 'auto',
-        })
-      } else {
-        element.scrollTop = nextScrollTop
-      }
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+    const nextScrollTop = Math.min(
+      getRestoredScrollTop(element, content, savedSnapshot),
+      maxScrollTop
+    )
+    if (typeof element.scrollTo === 'function') {
+      element.scrollTo({
+        top: nextScrollTop,
+        behavior: 'auto',
+      })
+    } else {
+      element.scrollTop = nextScrollTop
+    }
 
-      const overflow = element.scrollHeight > element.clientHeight + 8
-      const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
-      const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
-      const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
-      isAtBottomRef.current = isAtBottom
-      userScrollPausedAutoFollowRef.current = !isScrolledToBottom
-      setShowScrollButton(overflow && !isAtBottom)
-      setConversationScrollSnapshot(key, savedSnapshot)
-
-      scheduleScrollTimer(() => {
-        applyingSavedScrollRef.current = false
-      }, 0)
-    },
-    [clearScheduledScrolls, scheduleScrollTimer]
-  )
+    const overflow = element.scrollHeight > element.clientHeight + 8
+    const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
+    const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
+    const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
+    isAtBottomRef.current = isAtBottom
+    userScrollPausedAutoFollowRef.current = !isScrolledToBottom
+    setShowScrollButton(overflow && !isAtBottom)
+    setConversationScrollSnapshot(key, savedSnapshot)
+  }, [])
 
   const scheduleStableRestoreSavedScrollPosition = useCallback(
     (key: string) => {
@@ -474,7 +462,7 @@ function ScrollableMessagePaneContent({
 
       STABLE_SCROLL_DELAYS.forEach(delay => {
         scheduleScrollTimer(() => {
-          restoreSavedScrollPosition(key, { clearScheduled: false })
+          restoreSavedScrollPosition(key)
         }, delay)
       })
 
@@ -609,7 +597,7 @@ function ScrollableMessagePaneContent({
     const resizeObserver = new ResizeObserver(() => {
       const restoringKey = restoringScrollKeyRef.current
       if (restoringKey && restoringKey === currentScrollKey) {
-        restoreSavedScrollPosition(restoringKey, { clearScheduled: false })
+        restoreSavedScrollPosition(restoringKey)
         return
       }
 
@@ -618,7 +606,7 @@ function ScrollableMessagePaneContent({
       }
 
       if (userScrollPausedAutoFollowRef.current && currentScrollKey) {
-        restoreSavedScrollPosition(currentScrollKey, { clearScheduled: false })
+        restoreSavedScrollPosition(currentScrollKey)
         return
       }
 
@@ -654,11 +642,10 @@ function ScrollableMessagePaneContent({
   }, [clearScheduledScrolls])
 
   const handleScroll = useCallback(() => {
-    if (applyingSavedScrollRef.current && restoringScrollKeyRef.current === currentScrollKey) {
+    if (restoringScrollKeyRef.current === currentScrollKey) {
       updateScrollState({ skipSave: true })
       return
     }
-    applyingSavedScrollRef.current = false
     restoringScrollKeyRef.current = null
     updateScrollState({ forceSave: true })
   }, [currentScrollKey, updateScrollState])

@@ -23,9 +23,21 @@ const REQUEST_USER_INPUT_PROMPT =
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
 const REQUEST_USER_INPUT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_REQUEST_INPUT_COMPLETE'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
+const UNSENT_BLANK_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_BLANK_TASK_DRAFT'
+const UNSENT_FIRST_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_FIRST_TASK_DRAFT'
+const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
 const WINDOW_LIFECYCLE_PROMPT =
   'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
 const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
+const WINDOW_LIFECYCLE_SCROLL_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_POSITION_MARKER'
+const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
+  WINDOW_LIFECYCLE_COMPLETION_TEXT,
+  ...Array.from({ length: 24 }, (_, index) =>
+    index === 12
+      ? WINDOW_LIFECYCLE_SCROLL_MARKER
+      : `Persisted transcript verification paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable content '.repeat(8)}`
+  ),
+].join('\n\n')
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -34,12 +46,16 @@ const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
+const CONCURRENT_MEMORY_TASK_COUNT = 10
+const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB ?? 800 * 1024
+)
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 512 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 256 * 1024
 )
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 256 * 1024
+  process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 160 * 1024
 )
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
@@ -109,6 +125,7 @@ const SIDE_CHAT_ATTACHMENT_ONLY = process.argv.includes('--side-chat-attachment-
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
+const CONCURRENT_MEMORY_ONLY = process.argv.includes('--concurrent-memory-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -380,11 +397,116 @@ async function captureMemorySample(control, phase) {
   }
 }
 
+async function captureTotalMemorySample(control, phase) {
+  const snapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+  return {
+    phase,
+    timestamp: snapshot.timestamp,
+    domNodeCount: snapshot.domNodeCount,
+    rssKiB: snapshot.processMemory.groups.reduce((total, group) => total + group.rss_kib, 0),
+    physicalFootprintKiB: snapshot.processMemory.groups.reduce(
+      (total, group) => total + group.physical_footprint_kib,
+      0
+    ),
+    groups: snapshot.processMemory.groups,
+  }
+}
+
+async function verifyConcurrentTaskMemory({ composerSelector, control }) {
+  assert.equal(process.platform, 'darwin', 'Concurrent memory E2E currently requires macOS')
+  control.setScenario('concurrent_memory')
+  const taskRows = []
+
+  for (let index = 1; index <= CONCURRENT_MEMORY_TASK_COUNT; index += 1) {
+    if (index > 1) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+    }
+    const prompt = `WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${index}`
+    await control.command('fill', composerSelector, { value: prompt })
+    await control.command('press', composerSelector, { key: 'Enter' })
+    await control.awaitScenarioRequestCount('concurrent_memory', index)
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+    const nextRow = rows.find(row => !taskRows.includes(row))
+    if (nextRow) taskRows.push(nextRow)
+  }
+
+  assert.equal(
+    control.scenarioRequests.get('concurrent_memory')?.length,
+    CONCURRENT_MEMORY_TASK_COUNT,
+    'The model service did not keep ten task requests running concurrently'
+  )
+  assert.equal(
+    control.concurrentMemoryResponses.length,
+    CONCURRENT_MEMORY_TASK_COUNT,
+    'The model service released a concurrent task stream before memory sampling'
+  )
+  assert.equal(
+    taskRows.length,
+    CONCURRENT_MEMORY_TASK_COUNT,
+    'The sidebar did not expose ten tasks'
+  )
+  await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
+
+  const samples = []
+  for (let index = 0; index < 5; index += 1) {
+    samples.push(await captureTotalMemorySample(control, 'running'))
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  }
+  const peak = samples.reduce((largest, sample) =>
+    sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
+  )
+
+  const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
+    testId.startsWith('project-runtime-tasks-expand-')
+  )
+  if (expandTasksButton) {
+    await control.command('click', `[data-testid="${expandTasksButton}"]`)
+  }
+  await control.command('waitFor', `[data-testid="${taskRows[0]}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRows[0]}"]`)
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    text: 'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1',
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRows.at(-1)}"]`)
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    text: `WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${CONCURRENT_MEMORY_TASK_COUNT}`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  await writeFile(
+    join(resultDir, 'concurrent-memory.json'),
+    `${JSON.stringify(
+      {
+        taskCount: CONCURRENT_MEMORY_TASK_COUNT,
+        limitPhysicalFootprintKiB: CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
+        peak,
+        samples,
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
+  assert.ok(
+    peak.physicalFootprintKiB < CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
+    `Wework physical footprint reached ${peak.physicalFootprintKiB} KiB with ten concurrent tasks`
+  )
+  control.releaseConcurrentMemoryResponses()
+}
+
 async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
   control.setScenario('memory')
   const samples = [await captureMemorySample(control, 'baseline')]
+  await captureVerificationScreenshot(control, 'memory-01-baseline.png')
   await sendPromptUntilScenarioRequest(control, composerSelector, MEMORY_PROMPT, 'memory')
+  await captureVerificationScreenshot(control, 'memory-02-streaming.png')
 
   let completed = false
   const startedAt = Date.now()
@@ -395,6 +517,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     completed = snapshot.text.includes(MEMORY_COMPLETION_TEXT)
   }
   assert.equal(completed, true, 'The memory E2E response did not complete')
+  await captureVerificationScreenshot(control, 'memory-03-completed.png')
 
   for (let index = 0; index < 5; index += 1) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
@@ -408,6 +531,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const settledSamples = samples.filter(sample => sample.phase === 'settled')
   const settled = settledSamples.at(-1)
   assert.ok(settled, 'The memory E2E did not capture settled samples')
+  await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledDriftKiB = settled.physicalFootprintKiB - settledSamples[0].physicalFootprintKiB
@@ -438,7 +562,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     `WebContent settled physical footprint grew by ${settledGrowthKiB} KiB`
   )
   assert.ok(
-    settledDriftKiB <= 32 * 1024,
+    settledDriftKiB <= 16 * 1024,
     `WebContent kept growing after completion by ${settledDriftKiB} KiB`
   )
 }
@@ -694,6 +818,22 @@ async function sendPromptUntilScenarioRequest(control, selector, prompt, scenari
   )
 }
 
+async function revealGroupedModelOption(control, targetOptionId) {
+  const menu = JSON.parse(await control.command('snapshot', 'body'))
+  const familyTestIds = menu.testIds.filter(testId => testId.startsWith('model-family-'))
+
+  for (const familyTestId of familyTestIds) {
+    await control.command('hover', `[data-testid="${familyTestId}"]`, {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
+    const familyMenu = JSON.parse(await control.command('snapshot', 'body'))
+    if (familyMenu.testIds.includes(targetOptionId)) return true
+  }
+
+  return false
+}
+
 async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LABEL) {
   const selectedModelText = await control.command(
     'waitFor',
@@ -726,17 +866,15 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
     optionVisible = menu.testIds.includes(targetOptionId)
+    if (!optionVisible) {
+      optionVisible = await revealGroupedModelOption(control, targetOptionId)
+    }
   }
 
   assert.ok(optionVisible, `Model option ${modelId} did not become visible`)
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
-  for (const localModel of LOCAL_MODEL_CASES) {
-    await control.command('waitFor', `[data-testid="model-option-${localModel.optionId}"]`, {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-  }
   await control.command('click', `[data-testid="model-option-${modelId}"]`)
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     text: modelLabel,
@@ -939,6 +1077,70 @@ async function verifyBackgroundTaskWindowLifecycle({
       `${JSON.stringify({ appProcessId: app.pid, stages: sleepInhibitorEvidence }, null, 2)}\n`
     )
   }
+
+  setPhase('completed-task-reopen')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
+      !snapshot.testIds.includes('pause-response-button') &&
+      !snapshot.testIds.includes(runningTaskTestId) &&
+      snapshot.testIds.includes('send-message-button'),
+    'The completed task became busy again after reopening its continuable conversation',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('05-completed-task-reopened-idle.png')
+  )
+
+  setPhase('completed-task-scroll-position')
+  const middleParagraphSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]:nth-of-type(14)`
+  await control.command('scrollIntoView', middleParagraphSelector)
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('06-task-middle-position-before-switch.png')
+  )
+
+  control.setScenario('fresh_chat')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: FRESH_CHAT_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('07-switched-to-new-task.png')
+  )
+
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', middleParagraphSelector, {
+    text: WINDOW_LIFECYCLE_SCROLL_MARKER,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
+  )
 }
 
 async function attachAndSendOnlyFile(control, composerSelector) {
@@ -1723,6 +1925,7 @@ class DesktopE2EServer {
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.memoryStage = 'initial'
+    this.concurrentMemoryResponses = []
     this.cloudModelStage = 'initial'
     this.toolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
@@ -1900,6 +2103,7 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'memory',
+        'concurrent_memory',
         'side_chat_attachment',
         'cloud_initial',
         'cloud_follow_up',
@@ -1975,6 +2179,12 @@ class DesktopE2EServer {
 
   releaseWindowLifecycleResponse() {
     this.releaseWindowLifecycle()
+  }
+
+  releaseConcurrentMemoryResponses() {
+    for (const { response, stream } of this.concurrentMemoryResponses.splice(0)) {
+      response.end(createSse(stream.finish))
+    }
   }
 
   async command(action, selector, options = {}) {
@@ -2286,6 +2496,37 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'concurrent_memory') {
+      const requestNumber = (this.scenarioRequests.get('concurrent_memory')?.length ?? 0) + 1
+      this.recordScenarioRequest('concurrent_memory', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(`WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${requestNumber}`),
+        `Concurrent memory request ${requestNumber} did not contain its UI prompt`
+      )
+      const stream = streamingTextEvents(responseId, `Concurrent task ${requestNumber} completed.`)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      response.write(
+        createSse([
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: `Concurrent task ${requestNumber} is running.`,
+            offset: 0,
+          },
+        ])
+      )
+      this.concurrentMemoryResponses.push({ response, stream })
+      return
+    }
+
     if (this.scenario === 'memory' && this.memoryStage === 'initial') {
       this.recordScenarioRequest('memory', modelRequest)
       assert.ok(
@@ -2394,7 +2635,7 @@ class DesktopE2EServer {
       await this.windowLifecycleRelease
       response.end(
         createSse([
-          assistantMessage(WINDOW_LIFECYCLE_COMPLETION_TEXT),
+          assistantMessage(WINDOW_LIFECYCLE_COMPLETION_RESPONSE),
           responseCompleted(responseId),
         ])
       )
@@ -3736,6 +3977,14 @@ async function main() {
       return
     }
 
+    if (CONCURRENT_MEMORY_ONLY) {
+      phase = 'concurrent-memory'
+      await selectE2EModel(control)
+      await verifyConcurrentTaskMemory({ composerSelector, control })
+      console.log(`Wework concurrent memory E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
     if (MEMORY_ONLY) {
       phase = 'memory-growth'
       await selectE2EModel(control)
@@ -4009,6 +4258,27 @@ async function main() {
       testId.startsWith('runtime-local-task-row-')
     )
     assert.ok(taskRowTestId, 'The completed task row was not found')
+
+    phase = 'blank-task-draft-restoration'
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('fill', composerSelector, { value: UNSENT_BLANK_TASK_DRAFT })
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await waitForControlValue(
+      control,
+      composerSelector,
+      UNSENT_BLANK_TASK_DRAFT,
+      'The blank task lost its unsent composer draft after switching tasks'
+    )
+    await control.command('fill', composerSelector, { value: '' })
+
     if (!REQUEST_INPUT_ONLY) {
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', composerSelector, {
@@ -4204,6 +4474,11 @@ async function main() {
 
     phase = 'fresh-chat'
     control.setScenario('fresh_chat')
+    const taskRowsBeforeFreshChat = new Set(
+      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+        testId.startsWith('runtime-local-task-row-')
+      )
+    )
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -4220,6 +4495,41 @@ async function main() {
       text: FRESH_CHAT_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    phase = 'task-draft-isolation'
+    const secondTaskSnapshot = await waitForSnapshot(
+      control,
+      snapshot =>
+        snapshot.testIds.some(
+          testId =>
+            testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
+        ),
+      'The second task was not available for task draft isolation'
+    )
+    const secondTaskRowTestId = secondTaskSnapshot.testIds.find(
+      testId => testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeFreshChat.has(testId)
+    )
+    assert.ok(secondTaskRowTestId, 'The second task row was not found')
+    await control.command('fill', composerSelector, { value: UNSENT_SECOND_TASK_DRAFT })
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await control.command('fill', composerSelector, { value: UNSENT_FIRST_TASK_DRAFT })
+    await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+    await waitForControlValue(
+      control,
+      composerSelector,
+      UNSENT_SECOND_TASK_DRAFT,
+      'The second task lost its unsent composer draft after switching tasks'
+    )
+    await control.command('click', `[data-testid="${taskRowTestId}"]`)
+    await waitForControlValue(
+      control,
+      composerSelector,
+      UNSENT_FIRST_TASK_DRAFT,
+      'The first task lost its unsent composer draft after switching tasks'
+    )
+    await control.command('fill', composerSelector, { value: '' })
+    await control.command('click', `[data-testid="${secondTaskRowTestId}"]`)
+    await control.command('fill', composerSelector, { value: '' })
 
     phase = 'standalone-new-task-state'
     await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')

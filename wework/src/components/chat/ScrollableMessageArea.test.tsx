@@ -815,8 +815,11 @@ describe('ScrollableMessageArea', () => {
     rerender(<ScrollableMessageArea conversationKey="conversation-a" messages={[messageA]} />)
 
     act(() => {
-      vi.runOnlyPendingTimers()
+      vi.advanceTimersByTime(0)
     })
+    scroller.scrollTop = 37
+    fireEvent.scroll(scroller)
+    flushScheduledTimers()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 180.5,
@@ -1268,7 +1271,7 @@ describe('ScrollableMessageArea', () => {
       createdAt: '2026-05-29T00:00:00.000Z',
     }
     const { rerender } = render(
-      <ScrollableMessageArea conversationKey={1} messages={[streamingMessage]} />
+      <ScrollableMessageArea conversationKey="pinned-stream" messages={[streamingMessage]} />
     )
 
     const scroller = screen.getByTestId('chat-message-scroll-area')
@@ -1295,7 +1298,7 @@ describe('ScrollableMessageArea', () => {
 
     rerender(
       <ScrollableMessageArea
-        conversationKey={1}
+        conversationKey="pinned-stream"
         messages={[
           {
             ...streamingMessage,

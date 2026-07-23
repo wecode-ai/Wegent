@@ -2277,7 +2277,7 @@ describe('ChatInput', () => {
     expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
-  test('flattens model families while keeping controls from the selected GPT model', async () => {
+  test('nests models by family while keeping controls from the selected GPT model', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -2322,8 +2322,13 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
-    expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-claude')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-claude-opus')).not.toBeInTheDocument()
+
+    await userEvent.hover(screen.getByTestId('model-family-gpt'))
     expect(screen.getByTestId('model-option-overseas-gpt-5.5')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-claude-opus')).not.toBeInTheDocument()
     await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-reasoning-auto')).not.toBeInTheDocument()

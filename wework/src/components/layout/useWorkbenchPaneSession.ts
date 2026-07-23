@@ -425,6 +425,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [refreshWorkLists])
 
   useEffect(() => {
+    if (!paneActive && !paneStatus.isBusy) {
+      loadedRuntimeTranscriptKeyRef.current = null
+      displayedTranscriptIdentityRef.current = null
+      dispatchMessages({ type: 'reset', messages: [] })
+      setTranscriptHasMoreBefore(false)
+      setTranscriptBeforeCursor(null)
+      setTranscriptFullContent(false)
+      setLoadedTranscriptRanges([])
+      setTurnNavigation([])
+    }
+  }, [dispatchMessages, paneActive, paneStatus.isBusy])
+
+  useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       commitThreadGoal(null)
       setGoalContinuation(null)
@@ -479,10 +492,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [commitThreadGoal, getRuntimeGoal, runtimeTaskLoadTarget])
 
   useEffect(() => {
+    if (!paneActive) return
     if (!runtimeTaskLoadTarget) {
-      // Keep the loaded transcript key and range metadata while the pane is on a blank
-      // chat. The pane intentionally keeps the previous runtime DOM alive, so returning
-      // to the same task should not reload and reset the transcript tree.
       setTranscriptLoading(false)
       setTranscriptLoadingMoreBefore(false)
       return
@@ -593,7 +604,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [dispatchMessages, markRuntimeTaskSettled, markRuntimeTaskStarted, runtimeTaskLoadTarget])
+  }, [
+    dispatchMessages,
+    markRuntimeTaskSettled,
+    markRuntimeTaskStarted,
+    paneActive,
+    runtimeTaskLoadTarget,
+  ])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
