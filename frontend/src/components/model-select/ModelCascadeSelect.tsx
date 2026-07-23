@@ -195,9 +195,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
         aria-pressed={isSelected}
         onClick={() => onSelectSpecialOption?.(option.key)}
         className={cn(
-          'flex w-full items-center px-3 py-2.5 text-left',
-          'hover:bg-hover focus:bg-hover focus:outline-none',
-          isSelected && 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
+          'flex w-full items-center px-3 py-2.5 text-left transition-colors focus:outline-none',
+          isSelected
+            ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
+            : 'hover:bg-hover focus:bg-hover'
         )}
       >
         <span className="min-w-0 flex-1">
@@ -222,11 +223,13 @@ export function ModelCascadeContent<T extends GroupableModel>({
       <div
         key={modelKey}
         className={cn(
-          'w-full items-stretch overflow-hidden',
+          'w-full items-stretch overflow-hidden transition-colors',
           modelActions
             ? 'grid grid-cols-[minmax(0,1fr)_auto_32px]'
             : 'grid grid-cols-[minmax(0,1fr)_auto]',
-          isSelected && 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
+          isSelected
+            ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
+            : 'hover:bg-hover focus-within:bg-hover'
         )}
       >
         <button
@@ -236,10 +239,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           data-testid={`model-option-${sanitizeTestId(model.name)}`}
           aria-pressed={isSelected}
           onClick={() => onSelectModel(model)}
-          className={cn(
-            'flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left',
-            'hover:bg-hover focus:bg-hover focus:outline-none'
-          )}
+          className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left focus:outline-none"
         >
           <span className="min-w-0 flex-1">
             <span

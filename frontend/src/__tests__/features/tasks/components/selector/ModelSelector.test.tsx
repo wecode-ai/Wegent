@@ -385,10 +385,41 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelOption.parentElement).toHaveClass('text-primary')
     expect(modelOption.parentElement).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
+    expect(modelOption.parentElement).not.toHaveClass('hover:bg-hover', 'focus-within:bg-hover')
     const defaultOption = screen.getByTestId('model-special-option-__default__')
     expect(defaultOption).toHaveClass('bg-primary/10')
     expect(defaultOption).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
+    expect(defaultOption).not.toHaveClass('hover:bg-hover', 'focus:bg-hover')
     expect(defaultOption.querySelector('.lucide-check')).not.toBeInTheDocument()
+  })
+
+  it('highlights the full unselected model row on hover and keyboard focus', async () => {
+    mockModelSelectionOverrides = {
+      selectedModel: null,
+      filteredModels: [mockModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    const modelOption = await screen.findByTestId('model-option-claude-3-5-sonnet')
+
+    expect(modelOption.parentElement).toHaveClass(
+      'hover:bg-hover',
+      'focus-within:bg-hover',
+      'transition-colors'
+    )
+    expect(modelOption).not.toHaveClass('hover:bg-hover', 'focus:bg-hover')
   })
 
   it('covers the information action with the selected row background', async () => {
