@@ -121,7 +121,7 @@ const mockModel: Model = {
   type: 'shared' as Model['type'],
   contextWindow: 1048576,
   maxOutputTokens: 131072,
-  costIndex: 50,
+  costIndex: '50',
   modelCapabilities: {
     supportsImage: true,
     supportsVideo: true,

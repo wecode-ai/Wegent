@@ -33,14 +33,15 @@ function formatTokenCount(
   return `${value} ${tokenUnit}`
 }
 
-function formatCostIndex(value: number): string {
-  return `${Number(value.toFixed(1))}x`
+function formatCostIndex(value: string): string {
+  return Number.isFinite(Number(value)) ? `${value}x` : value
 }
 
 export function ModelInformationContent({ model }: ModelInformationContentProps) {
   const { t } = useTranslation('common')
   const unavailable = t('models.details_unavailable')
   const tokenUnit = t('models.token_unit')
+  const costIndex = model.costIndex?.trim()
   const capabilities = getModelCapabilities(model)
   const inputModalities: ModelModality[] = [
     'text',
@@ -50,7 +51,7 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
 
   return (
     <div className="space-y-5 pt-1">
-      {model.costIndex != null && (
+      {costIndex && (
         <section className="rounded-lg bg-surface px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-1 text-sm font-medium text-text-primary">
@@ -71,8 +72,11 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
                 </span>
               </span>
             </div>
-            <div data-testid="model-details-cost-index" className="text-lg font-semibold">
-              {formatCostIndex(model.costIndex)}
+            <div
+              data-testid="model-details-cost-index"
+              className="min-w-0 break-all text-right text-lg font-semibold"
+            >
+              {formatCostIndex(costIndex)}
             </div>
           </div>
         </section>
