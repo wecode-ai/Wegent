@@ -420,8 +420,12 @@ describe('ModelSelector', () => {
     expect(modelOption).toHaveClass('flex', 'items-center', 'gap-3', 'px-3')
     expect(modelTitle).toHaveClass('block', 'truncate')
     expect(modelTitle).not.toHaveClass('flex-1')
-    expect(screen.getByTitle('图片理解').querySelector('.lucide-image')).toBeInTheDocument()
-    expect(screen.getByTitle('视频理解').querySelector('.lucide-video')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '图片理解' }).querySelector('.lucide-image')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '视频理解' }).querySelector('.lucide-video')
+    ).toBeInTheDocument()
     expect(modelOption.querySelector('.lucide-check')).not.toBeInTheDocument()
     expect(informationAction).toHaveClass('self-stretch', 'items-center', 'w-10', 'md:w-8')
     expect(informationAction).not.toHaveClass('pt-3')
@@ -449,7 +453,7 @@ describe('ModelSelector', () => {
     expect(screen.getByTestId('model-info-claude-opus-4-advanced')).toBeInTheDocument()
   })
 
-  it('opens model details on mobile without selecting the model', async () => {
+  it('does not show model information on mobile', async () => {
     const externalSetSelectedModel = jest.fn()
     mockIsMobile = true
     mockModelSelectionOverrides = {
@@ -468,15 +472,8 @@ describe('ModelSelector', () => {
     )
 
     fireEvent.click(screen.getByTestId('model-selector'))
-    fireEvent.click(await screen.findByTestId('model-info-claude-3-5-sonnet'))
-
-    expect(await screen.findByTestId('model-details-dialog')).toHaveTextContent(
-      'claude-3-5-sonnet-20241022'
-    )
-    expect(screen.getByTestId('model-details-cost-index')).toHaveTextContent('50x')
-    expect(screen.getByTestId('model-details-context-window')).toHaveTextContent('1.05M Tokens')
-    expect(screen.getByTestId('model-details-max-output')).toHaveTextContent('131.1K Tokens')
-    expect(screen.getByText('文本、图片、视频')).toBeInTheDocument()
+    expect(await screen.findByTestId('model-option-claude-3-5-sonnet')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-info-claude-3-5-sonnet')).not.toBeInTheDocument()
     expect(externalSetSelectedModel).not.toHaveBeenCalled()
   })
 

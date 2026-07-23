@@ -29,6 +29,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { EyeIcon, EyeSlashIcon, BeakerIcon } from '@heroicons/react/24/outline'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { getModelCapabilities } from '@/lib/model-capabilities'
 import {
   modelApis,
   ModelCRD,
@@ -310,7 +311,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
-            modelCapabilities: model.spec.modelCapabilities,
+            modelCapabilities: getModelCapabilities({
+              modelCapabilities: model.spec.modelCapabilities,
+              config: model.spec.modelConfig,
+            }),
             videoConfig: model.spec.videoConfig,
             imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),

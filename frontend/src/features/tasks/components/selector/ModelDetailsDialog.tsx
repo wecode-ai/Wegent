@@ -5,21 +5,9 @@
 'use client'
 
 import React from 'react'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
-
-interface ModelDetailsDialogProps {
-  model: Model | null
-  onOpenChange: (open: boolean) => void
-}
 
 interface ModelDetailsBodyProps {
   model: Model
@@ -101,27 +89,5 @@ export function ModelDetailsBody({ model }: ModelDetailsBodyProps) {
         </dl>
       </section>
     </div>
-  )
-}
-
-export function ModelDetailsDialog({ model, onOpenChange }: ModelDetailsDialogProps) {
-  const { t } = useTranslation('common')
-
-  if (!model) return null
-
-  const unavailable = t('models.details_unavailable')
-  return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent data-testid="model-details-dialog" className="w-[calc(100%-24px)] max-w-md">
-        <DialogHeader>
-          <DialogTitle>{model.displayName || model.name}</DialogTitle>
-          <DialogDescription>
-            {t('models.model_id')}：{model.modelId || unavailable}
-          </DialogDescription>
-        </DialogHeader>
-
-        <ModelDetailsBody model={model} />
-      </DialogContent>
-    </Dialog>
   )
 }
