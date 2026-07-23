@@ -515,7 +515,6 @@
     "environment_local": "Local",
     "environment_cloud": "Cloud",
     "environment_cloud_device": "Cloud device",
-    "composer_execution_device_label": "Runs on {{location}} · {{device}}",
     "environment_execution_target": "Location",
     "environment_device": "Device",
     "environment_device_unknown": "Unknown device",

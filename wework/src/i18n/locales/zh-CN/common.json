@@ -515,7 +515,6 @@
     "environment_local": "本地",
     "environment_cloud": "云端",
     "environment_cloud_device": "云设备",
-    "composer_execution_device_label": "运行于{{location}} · {{device}}",
     "environment_execution_target": "位置",
     "environment_device": "设备",
     "environment_device_unknown": "未知设备",
