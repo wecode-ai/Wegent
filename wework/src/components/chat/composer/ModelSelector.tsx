@@ -95,7 +95,6 @@ export function ModelSelector({
   const desktopMenuWrapperRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
   const submenuPanelRef = useRef<HTMLDivElement>(null)
-  const familySubmenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const modelButtonRef = useRef<HTMLButtonElement>(null)
@@ -113,9 +112,6 @@ export function ModelSelector({
   const [activeDesktopSubmenu, setActiveDesktopSubmenu] = useState<DesktopSubmenuTarget | null>(
     null
   )
-  const [activeDesktopFamilyId, setActiveDesktopFamilyId] = useState<string | null>(null)
-  const [desktopFamilyOffset, setDesktopFamilyOffset] = useState(0)
-  const [desktopFamilyTop, setDesktopFamilyTop] = useState(0)
   const [advancedOpen, setAdvancedOpen] = useState(readModelSelectorPowerViewPreference)
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
@@ -140,7 +136,6 @@ export function ModelSelector({
     setOpen(false)
     setMobileQuery('')
     setActiveDesktopSubmenu(null)
-    setActiveDesktopFamilyId(null)
     setPowerSliderInteracting(false)
   }, [setActiveDesktopSubmenu, setMobileQuery, setOpen, setPowerSliderInteracting])
   const handleSelectModelOption = useCallback(
@@ -277,11 +272,9 @@ export function ModelSelector({
   )
   const activateModels = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'models' })
-    setActiveDesktopFamilyId(null)
-  }, [setActiveDesktopSubmenu, setActiveDesktopFamilyId])
+  }, [setActiveDesktopSubmenu])
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
-    setActiveDesktopFamilyId(null)
   }, [setActiveDesktopSubmenu])
   const activateMobileFamily = useCallback(
     (familyId: string) => {
@@ -395,39 +388,6 @@ export function ModelSelector({
     activeDesktopSubmenu?.type === 'control'
       ? desktopControls.find(control => control.id === activeDesktopSubmenu.id)
       : undefined
-  const activeDesktopFamily = activeDesktopFamilyId
-    ? familyGroups.find(group => group.config.id === activeDesktopFamilyId)
-    : undefined
-  const desktopFamilySubmenuWidth = SUBMENU_WIDTH
-  const desktopFamilySubmenuLeft = (() => {
-    const modelSubmenuWidth = submenuWidth ?? SUBMENU_WIDTH
-    if (submenuLeft < 0) {
-      return submenuLeft - desktopFamilySubmenuWidth
-    }
-
-    const rightSideLeft = submenuLeft + modelSubmenuWidth
-    const rightSideEdge = desktopMenuLeft + rightSideLeft + desktopFamilySubmenuWidth
-    return rightSideEdge <= getDesktopViewportRightBoundary() - VIEWPORT_MARGIN
-      ? rightSideLeft
-      : -desktopFamilySubmenuWidth
-  })()
-
-  useLayoutEffect(() => {
-    if (!open || isMobile || !activeDesktopFamily) return
-
-    const familySubmenu = familySubmenuPanelRef.current
-    if (!familySubmenu) return
-
-    const submenuHeight = Math.min(
-      familySubmenu.scrollHeight || familySubmenu.getBoundingClientRect().height,
-      SUBMENU_MAX_HEIGHT,
-      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP)
-    )
-    const preferredTop = submenuOffset + desktopFamilyOffset
-    const minTop = DESKTOP_MENU_VIEWPORT_TOP - desktopMenuTop
-    const maxTop = window.innerHeight - VIEWPORT_MARGIN - submenuHeight - desktopMenuTop
-    setDesktopFamilyTop(Math.round(Math.max(minTop, Math.min(preferredTop, maxTop))))
-  }, [activeDesktopFamily, desktopFamilyOffset, desktopMenuTop, isMobile, open, submenuOffset])
 
   useLayoutEffect(() => {
     if (!open || isMobile) return
@@ -1030,7 +990,7 @@ export function ModelSelector({
                 data-enter-animation="submenu"
                 style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
                   styles.submenu
                 )}
               >
@@ -1040,59 +1000,14 @@ export function ModelSelector({
                 <div className="space-y-0.5">
                   {familyGroups.length <= 1
                     ? renderDesktopModelOptions(desktopModels)
-                    : familyGroups.map(group => {
-                        const active = activeDesktopFamilyId === group.config.id
-                        return (
-                          <button
-                            key={group.config.id}
-                            type="button"
-                            data-testid={`model-family-${group.config.id}`}
-                            onMouseEnter={event => {
-                              setActiveDesktopFamilyId(group.config.id)
-                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
-                            }}
-                            onPointerEnter={event => {
-                              setActiveDesktopFamilyId(group.config.id)
-                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
-                            }}
-                            onFocus={event => {
-                              setActiveDesktopFamilyId(group.config.id)
-                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
-                            }}
-                            onClick={event => {
-                              setActiveDesktopFamilyId(group.config.id)
-                              setDesktopFamilyOffset(event.currentTarget.offsetTop)
-                            }}
-                            className={cn(
-                              'flex h-8 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium leading-[18px]',
-                              active ? 'bg-muted text-text-primary' : 'hover:bg-muted'
-                            )}
-                          >
-                            <span className="min-w-0 flex-1 truncate">{group.config.label}</span>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                          </button>
-                        )
-                      })}
-                </div>
-              </div>
-            ) : null}
-            {activeDesktopSubmenu?.type === 'models' && activeDesktopFamily ? (
-              <div
-                key={`family:${activeDesktopFamily.config.id}`}
-                ref={familySubmenuPanelRef}
-                data-testid="model-selector-family-submenu"
-                data-enter-animation="submenu"
-                style={{ top: desktopFamilyTop, left: desktopFamilySubmenuLeft }}
-                className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-                  styles.submenu
-                )}
-              >
-                <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold leading-[18px] text-text-muted">
-                  {activeDesktopFamily.config.label}
-                </div>
-                <div className="space-y-0.5">
-                  {renderDesktopModelOptions(activeDesktopFamily.models)}
+                    : familyGroups.map(group => (
+                        <div key={group.config.id} className="pb-1 last:pb-0">
+                          <div className="px-3 pb-1 pt-2 text-xs font-medium text-text-muted first:pt-0">
+                            {group.config.label}
+                          </div>
+                          {renderDesktopModelOptions(group.models)}
+                        </div>
+                      ))}
                 </div>
               </div>
             ) : null}

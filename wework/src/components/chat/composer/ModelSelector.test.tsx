@@ -172,7 +172,7 @@ describe('ModelSelector desktop layout', () => {
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
   })
 
-  test('shows family entries before model options when there are multiple families', async () => {
+  test('shows models from every family in the second-level menu', async () => {
     createShellElement({ hidden: true })
 
     render(
@@ -189,92 +189,11 @@ describe('ModelSelector desktop layout', () => {
     fireEvent.click(screen.getByTestId('model-selector-button'))
     fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
-    expect(await screen.findByTestId('model-family-codex-official')).toHaveTextContent('我的CodeX')
-    expect(screen.getByTestId('model-family-claude')).toBeInTheDocument()
-    expect(screen.getByTestId('model-selector-submenu')).not.toHaveClass('min-h-48')
-    expect(screen.queryByTestId(`model-option-${SAMPLE_MODEL.name}`)).not.toBeInTheDocument()
-
-    fireEvent.mouseEnter(screen.getByTestId('model-family-claude'))
-
-    const familySubmenu = await screen.findByTestId('model-selector-family-submenu')
-    expect(familySubmenu).toHaveTextContent('Claude')
-    expect(familySubmenu).not.toHaveClass('min-h-48')
+    const submenu = await screen.findByTestId('model-selector-submenu')
+    expect(submenu).toHaveTextContent('我的CodeX')
+    expect(submenu).toHaveTextContent('Claude')
     expect(screen.getByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)).toBeInTheDocument()
-    expect(screen.queryByTestId(`model-option-${SAMPLE_MODEL.name}`)).not.toBeInTheDocument()
-  })
-
-  test('keeps the family model submenu above the viewport bottom', async () => {
-    createShellElement({ hidden: true })
-    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
-    const originalScrollHeight = Object.getOwnPropertyDescriptor(
-      HTMLElement.prototype,
-      'scrollHeight'
-    )
-    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
-      if (this.getAttribute('data-testid') === 'model-selector-menu') {
-        return {
-          top: 600,
-          left: 600,
-          right: 856,
-          bottom: 856,
-          width: 256,
-          height: 256,
-          x: 600,
-          y: 600,
-          toJSON: () => {},
-        } as DOMRect
-      }
-      if (this.getAttribute('data-testid') === 'model-selector-family-submenu') {
-        return {
-          top: 800,
-          left: 888,
-          right: 1176,
-          bottom: 1040,
-          width: 288,
-          height: 240,
-          x: 888,
-          y: 800,
-          toJSON: () => {},
-        } as DOMRect
-      }
-      return originalGetBoundingClientRect.call(this)
-    }
-    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
-      configurable: true,
-      get() {
-        return this.getAttribute('data-testid') === 'model-selector-family-submenu' ? 240 : 0
-      },
-    })
-
-    try {
-      render(
-        <ModelSelector
-          models={[SAMPLE_MODEL, SECOND_FAMILY_MODEL]}
-          selectedModel={SAMPLE_MODEL}
-          selectedModelOptions={{}}
-          disabled={false}
-          onSelectModel={vi.fn()}
-          onSelectModelOption={vi.fn()}
-        />
-      )
-
-      fireEvent.click(screen.getByTestId('model-selector-button'))
-      fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
-      fireEvent.mouseEnter(await screen.findByTestId('model-family-claude'))
-
-      const familySubmenu = await screen.findByTestId('model-selector-family-submenu')
-      const wrapper = screen.getByTestId('model-selector-menu').parentElement
-      await waitFor(() => {
-        expect(
-          parseInt(wrapper!.style.top, 10) + parseInt(familySubmenu.style.top, 10) + 240
-        ).toBeLessThanOrEqual(WINDOW_INNER_HEIGHT - 16)
-      })
-    } finally {
-      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect
-      if (originalScrollHeight) {
-        Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight)
-      }
-    }
+    expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
   })
 
   test('caps the trigger width when maxClosedWidth is provided', () => {
