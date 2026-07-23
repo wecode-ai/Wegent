@@ -10,6 +10,8 @@ Include the goal, scope, constraints, and acceptance criteria. For complex work,
 
 Add files, images, code locations, or an Appshot to the composer when they clarify the task. Type `/` to select an available Skill.
 
+After you send a local image, Wework keeps its preview in the message. The image remains available when you reopen Wework or return to the conversation after switching away. If the original local file is deleted, the preview cannot be restored.
+
 ## Models and devices
 
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.
