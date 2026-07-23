@@ -324,6 +324,9 @@ jobs:
           chmod 0755 dist/wegent-executor
           dist/wegent-executor --version
 
+      - name: Build bundled code statistics hook
+        run: wework/src-tauri/hook-plugins/codex-code-statistics/build-target.sh "${{ matrix.rust_target }}"
+
       - name: Prepare bundled Codex
         working-directory: wework
         env:
@@ -606,6 +609,10 @@ jobs:
           New-Item -ItemType Directory -Force ../wework/src-tauri/binaries | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/wegent-executor.exe ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe
           & ../wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe --version
+
+      - name: Build bundled code statistics hook
+        shell: pwsh
+        run: ./wework/src-tauri/hook-plugins/codex-code-statistics/build-target.ps1 -RustTarget x86_64-pc-windows-msvc
 
       - name: Prepare bundled Codex
         working-directory: wework
