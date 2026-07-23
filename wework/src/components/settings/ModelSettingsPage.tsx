@@ -1230,6 +1230,19 @@ function LocalModelSettingsSection({
                     className={LOCAL_MODEL_FIELD_CLASS}
                   />
                 </label>
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_group_label', '分组（可选）')}
+                  <input
+                    data-testid="local-model-group-input"
+                    value={form.group}
+                    onChange={event => updateForm({ group: event.target.value })}
+                    placeholder={t(
+                      'workbench.local_model_group_optional_placeholder',
+                      '留空则归入自定义模型'
+                    )}
+                    className={LOCAL_MODEL_FIELD_CLASS}
+                  />
+                </label>
                 <button
                   type="button"
                   data-testid="local-model-provider-advanced-toggle"

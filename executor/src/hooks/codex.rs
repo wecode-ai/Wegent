@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use serde_json::Value;
 use thiserror::Error;
 
-use super::model::{HookEventName, PostToolUseInput};
+use super::model::{HookEventName, HookUser, PostToolUseInput};
 
 #[derive(Debug, Clone)]
 pub struct CodexHookContext {
+    pub user: HookUser,
     pub session_id: String,
     pub turn_id: String,
     pub cwd: PathBuf,
@@ -50,6 +51,7 @@ pub fn post_tool_use_from_notification(
         string(params.get("agentType").or_else(|| params.get("agent_type"))).map(ToOwned::to_owned);
     let raw_item = Value::Object(item.clone());
     Ok(Some(PostToolUseInput {
+        user: context.user.clone(),
         session_id: context.session_id.clone(),
         turn_id: context.turn_id.clone(),
         agent_id,
@@ -81,6 +83,10 @@ mod tests {
 
     fn context() -> CodexHookContext {
         CodexHookContext {
+            user: HookUser {
+                id: Some("7".to_owned()),
+                name: "alice".to_owned(),
+            },
             session_id: "thread-1".to_owned(),
             turn_id: "turn-1".to_owned(),
             cwd: PathBuf::from("/workspace"),
@@ -100,6 +106,7 @@ mod tests {
         assert_eq!(input.tool_name, "apply_patch");
         assert_eq!(input.tool_use_id, "call-1");
         assert_eq!(input.session_id, "thread-1");
+        assert_eq!(input.user.name, "alice");
     }
 
     #[test]

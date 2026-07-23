@@ -170,7 +170,7 @@ export function buildTrayMenuTaskGroups(
     runningMore: runningTasks.more,
     unread: unreadTasks.visible,
     unreadMore: unreadTasks.more,
-    hasRunningTasks: showRunning ? (reminders?.hasRunningTasks ?? running.length > 0) : false,
+    hasRunningTasks: showRunning && activeTasks.length > 0,
     showRunningStatus: showRunning,
     runningCount: running.length,
     activeTaskCount: activeTasks.length,

@@ -38,16 +38,16 @@ Run only the plugin marketplace, install, chat-use, and uninstall flow:
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-Run the desktop streaming-memory regression on macOS:
+Run the desktop memory regression on macOS, including streaming growth and the whole-process check with 10 concurrent tasks:
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
 ```
 
-Run the whole-process memory regression with 10 concurrently executing tasks:
+Run only the regression that keeps “Thinking” below already-visible streaming assistant text and removes it after completion:
 
 ```bash
-pnpm --filter wework e2e:desktop:concurrent-memory
+pnpm --filter wework e2e:desktop:streaming-text
 ```
 
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
@@ -91,6 +91,8 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 8. Dynamically loads a product scenario when `WEWORK_E2E_DESKTOP_SCENARIO_MODULE` is set. The public runner supplies only HTTP, WebSocket, control, and diagnostic lifecycles; it contains no concrete product protocol or assertions.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback model service implementing OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages. Each interface runs a send → `apply_patch` → tool result → follow-up lifecycle, while real Codex executes the tool in the isolated workspace.
+
+`e2e:desktop:streaming-text` runs an isolated streaming-message state regression through a scenario module. It uses the real Tauri WebView, Executor, and Codex app-server while a loopback Responses SSE keeps a partial reply active. The test verifies that “Thinking” appears below the visible reply and disappears after the response is released. It retains screenshots for the ready, streaming, and completed stages; its scenario-specific Codex configuration disables plugin extensions to isolate direct message streaming.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 

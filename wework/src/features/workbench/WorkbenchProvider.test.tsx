@@ -650,6 +650,9 @@ function ProjectSendProbe() {
       <button type="button" onClick={() => workbench.startNewChat()}>
         start new chat
       </button>
+      <button type="button" onClick={() => workbench.startNewProjectChat(7)}>
+        start new project chat
+      </button>
       <button type="button" onClick={() => workbench.startStandaloneChat()}>
         start standalone chat
       </button>
@@ -3740,7 +3743,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
   })
 
-  test('starts a fresh project pane after creating a runtime task in the same project', async () => {
+  test('returns to the committed project pane after creating a runtime task', async () => {
     const initialRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -3813,7 +3816,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
     expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
     expect(screen.getByTestId('runtime-pane-standalone-chat-key')).toHaveTextContent(
-      String(previousBlankChatKey + 1)
+      String(previousBlankChatKey)
     )
   })
 
@@ -6122,6 +6125,41 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
     expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
     expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
+  })
+
+  test('keeps blank chat draft when starting a project chat from a runtime task', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'message runtime-a' }],
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    const blankChatKey = screen.getByTestId('standalone-chat-key').textContent
+
+    await userEvent.click(screen.getByText('open project runtime task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-a'
+      )
+    )
+    await userEvent.click(screen.getByText('start new project chat'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    )
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent(blankChatKey ?? '')
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
   })
 
   test('starts standalone chat with a fresh blank draft scope', async () => {

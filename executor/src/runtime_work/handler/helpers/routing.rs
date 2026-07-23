@@ -4,9 +4,18 @@ fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
     }
     link.status = "active".to_owned();
     link.running = false;
+    link.thread_status = "idle".to_owned();
+    if link
+        .turn_status
+        .as_deref()
+        .is_some_and(runtime_status_is_running)
+    {
+        link.turn_status = Some("completed".to_owned());
+    }
     link.updated_at = now_ms();
     true
 }
+
 fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
     if !link.running || !is_codex_runtime(&link.runtime) {
         return false;

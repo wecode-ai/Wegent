@@ -84,6 +84,12 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 - `MessageList` 和 `ToolBlocksDisplay` 只能渲染当前预览内容和截断提示；仅用 CSS 折叠隐藏完整内容不算释放内存。
 - 右侧临时聊天必须复用同一套 reducer 与 stream action 批处理，不能为临时线程单独累积完整输出。
 
+## Transcript 合并顺序
+
+分页加载或刷新 runtime transcript 时，服务端返回的 `messageIndex` 是已持久化消息的主顺序。当前 pane 中还可能存在尚未带 `messageIndex` 的本地 user 或 streaming assistant 消息；合并逻辑必须用这些消息在现有列表中的前后已持久化消息作为锚点，保留其相对位置。不能把所有无序号消息统一排到 transcript 末尾，否则先前发送的用户消息会在刷新或加载历史页后沉到对话底部。
+
+加载较早页面或补中间 gap 时，带 `messageIndex` 的消息仍按服务端序号排序；同一锚点之间的本地消息保持 pane 中已有的稳定顺序。消息去重只使用稳定 message id，不根据内容、角色或 subtask 猜测身份。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
@@ -111,7 +117,7 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
 
-修改该链路后运行 `pnpm --dir wework e2e:desktop:side-chat-attachment`。该场景会建立真实主线程，断言右栏约为 `420px`，在右栏上传并发送附件，并确认主 composer 始终没有继承右栏附件；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
+修改该链路后运行 `pnpm --dir wework e2e:desktop`。主桌面场景会断言右栏约为 `420px`，在右栏上传并发送附件，并确认主 composer 始终没有继承右栏附件；关键阶段截图写入 `wework/test-results/desktop-e2e/<run-id>/`。
 
 ## 顶层页面切换
 

@@ -171,6 +171,7 @@ export function WorkbenchProvider({
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,
         token: cloudConnection.token,
+        user: cloudConnection.user ?? user,
       }),
     [
       cloudConnection.apiBaseUrl,
@@ -179,7 +180,9 @@ export function WorkbenchProvider({
       cloudConnection.socketBaseUrl,
       cloudConnection.socketPath,
       cloudConnection.token,
+      cloudConnection.user,
       services,
+      user,
     ]
   )
   const executorClient = useMemo(() => {
@@ -206,16 +209,7 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
-  const currentRuntimeTaskRunning = useMemo(
-    () =>
-      authoritativeRuntimeTaskRunning ||
-      (state.currentRuntimeTask !== null &&
-        state.activeRuntimeTasks.some(
-          address =>
-            getRuntimeTaskRouteKey(address) === getRuntimeTaskRouteKey(state.currentRuntimeTask!)
-        )),
-    [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
-  )
+  const currentRuntimeTaskRunning = authoritativeRuntimeTaskRunning
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,
@@ -927,7 +921,6 @@ export function WorkbenchProvider({
         type: 'project_workspace_selected',
         project,
         deviceWorkspaceId,
-        startFreshChat: true,
       })
       navigateTo('/')
       requestNewChatComposerFocus()

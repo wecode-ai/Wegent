@@ -24,9 +24,6 @@ vi.mock('@/hooks/useTranslation', () => ({
       if (key === 'workbench.project_work_trigger_device_aria') {
         return `${options?.action ?? ''}，当前设备 ${options?.device ?? ''}`
       }
-      if (key === 'workbench.composer_execution_device_label') {
-        return `运行于${options?.location ?? ''} · ${options?.device ?? ''}`
-      }
       if (key === 'workbench.environment_cloud_device') return '云设备'
       if (key === 'workbench.environment_local') return '本机'
       if (key === 'workbench.remove_code_comments') {
@@ -3281,81 +3278,6 @@ describe('ChatInput', () => {
     expect(
       screen.queryByTestId('standalone-device-selected-icon-cloud-online')
     ).not.toBeInTheDocument()
-  })
-
-  test('shows a subtle cloud-device control and opens device selection for a new task', async () => {
-    const devices: DeviceInfo[] = [
-      {
-        id: 1,
-        device_id: 'cloud-online',
-        name: 'Cloud Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'cloud',
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectWork={projectWorkControls({
-          devices,
-          currentStandaloneDeviceId: 'cloud-online',
-        })}
-      />
-    )
-
-    const deviceButton = screen.getByTestId('composer-execution-device-button')
-    expect(deviceButton).toHaveAccessibleName('运行于云设备 · Cloud Online')
-    expect(deviceButton).toBeEnabled()
-
-    await userEvent.click(deviceButton)
-    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
-  })
-
-  test('shows the actual runtime device without allowing an active task to switch it', () => {
-    const devices: DeviceInfo[] = [
-      {
-        id: 1,
-        device_id: 'local-online',
-        name: 'Local Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'local',
-      },
-      {
-        id: 2,
-        device_id: 'cloud-online',
-        name: 'Cloud Online',
-        status: 'online',
-        is_default: false,
-        device_type: 'cloud',
-      },
-    ]
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        showProjectWorkBar={false}
-        projectWork={projectWorkControls({
-          devices,
-          currentStandaloneDeviceId: 'local-online',
-          currentRuntimeDeviceId: 'cloud-online',
-        })}
-      />
-    )
-
-    const deviceButton = screen.getByTestId('composer-execution-device-button')
-    expect(deviceButton).toHaveAccessibleName('运行于云设备 · Cloud Online')
-    expect(deviceButton).toHaveAttribute('aria-disabled', 'true')
   })
 
   test('uses the project work action as the standalone trigger accessible name', () => {

@@ -1264,6 +1264,7 @@ pub async fn embedded_browser_open(
             .user_agent(EMBEDDED_BROWSER_USER_AGENT)
             .data_directory(data_directory)
             .data_store_identifier(EMBEDDED_BROWSER_DATA_STORE_ID)
+            .devtools(true)
             .accept_first_mouse(true)
             .on_page_load(move |_webview, payload| {
                 if matches!(payload.event(), PageLoadEvent::Finished) {

@@ -38,16 +38,16 @@ pnpm --filter wework e2e:desktop:cloud
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-在 macOS 上运行桌面流式输出内存回归：
+在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
 ```
 
-运行 10 个任务同时执行的整机内存回归：
+仅验证助手已有流式文本时，其下方持续显示“正在思考”，并在响应完成后消失：
 
 ```bash
-pnpm --filter wework e2e:desktop:concurrent-memory
+pnpm --filter wework e2e:desktop:streaming-text
 ```
 
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：
@@ -91,6 +91,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 8. 如果设置了 `WEWORK_E2E_DESKTOP_SCENARIO_MODULE`，动态加载产品场景；公共 runner 只提供 HTTP、WebSocket、控制和诊断生命周期，不包含具体产品协议或断言。
 
 测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动模型服务，分别实现 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。每种接口都会执行“发送 → `apply_patch` → 工具结果回传 → 追问”，工具调用仍由真实 Codex 在隔离工作区内执行。
+
+`e2e:desktop:streaming-text` 通过场景模块运行独立的流式消息状态回归。它使用真实 Tauri WebView、Executor 和 Codex app-server，通过 loopback Responses SSE 保持部分回复处于运行状态，验证“正在思考”位于可见回复下方，并在释放响应后消失。该场景会保存就绪、流式和完成三个阶段的截图；场景专用 Codex 配置会关闭插件扩展，以隔离验证消息直出链路。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 

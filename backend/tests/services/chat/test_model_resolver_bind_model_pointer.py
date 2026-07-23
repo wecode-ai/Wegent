@@ -227,6 +227,56 @@ class TestExtractModelConfigExplicitErrors:
         assert result["model_id"] == "claude-3-5-sonnet"
         assert result["model"] == "claude"
 
+    @_DECRYPT_PATCH
+    def test_legacy_model_capabilities_are_normalized(self, _decrypt):
+        spec = {
+            "modelConfig": {
+                "env": {
+                    "api_key": "sk-test",
+                    "model_id": "gemini-test",
+                    "model": "gemini",
+                },
+                "modelCapabilities": {
+                    "supportsImage": True,
+                    "supportsVideo": True,
+                },
+            }
+        }
+
+        result = _extract_model_config(spec)
+
+        assert result["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": True,
+        }
+
+    @_DECRYPT_PATCH
+    def test_canonical_model_capabilities_override_legacy_config(self, _decrypt):
+        spec = {
+            "modelConfig": {
+                "env": {
+                    "api_key": "sk-test",
+                    "model_id": "gemini-test",
+                    "model": "gemini",
+                },
+                "modelCapabilities": {
+                    "supportsImage": False,
+                    "supportsVideo": True,
+                },
+            },
+            "modelCapabilities": {
+                "supportsImage": True,
+                "supportsVideo": False,
+            },
+        }
+
+        result = _extract_model_config(spec)
+
+        assert result["modelCapabilities"] == {
+            "supportsImage": True,
+            "supportsVideo": False,
+        }
+
     def test_unresolved_bind_model_raises(self):
         spec = {
             "modelConfig": {

@@ -190,7 +190,7 @@ describe('ModelSelector desktop layout', () => {
     fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
     const submenu = await screen.findByTestId('model-selector-submenu')
-    expect(submenu).toHaveTextContent('我的 CodeX')
+    expect(submenu).toHaveTextContent('我的CodeX')
     expect(submenu).toHaveTextContent('Claude')
     expect(screen.getByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)).toBeInTheDocument()
     expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()

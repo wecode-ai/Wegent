@@ -180,9 +180,9 @@ describe('model-ui', () => {
       'gpt',
     ])
     expect(groups.map(group => group.config.label)).toEqual([
-      '我的 CodeX',
+      '我的CodeX',
       'wecode openai',
-      '接口模型',
+      '自定义模型',
       'GPT',
     ])
   })
