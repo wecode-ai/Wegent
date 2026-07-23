@@ -33,6 +33,10 @@ from app.models.subtask_context import (
 )
 from app.models.user import User
 from app.services.auth.internal_service_token import verify_internal_service_token
+from app.services.chat.compaction_checkpoint import (
+    apply_checkpoint_limit,
+    scope_to_latest_checkpoint,
+)
 from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.services.task_fork_history import task_fork_history_resolver
@@ -842,6 +846,10 @@ async def get_chat_history(
         None, description="Only return messages before this ID"
     ),
     is_group_chat: bool = Query(False, description="Whether this is a group chat"),
+    from_latest_compaction: bool = Query(
+        False,
+        description="Return history from the latest summary-compaction checkpoint",
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -890,8 +898,11 @@ async def get_chat_history(
     subtasks = [
         item.subtask for item in items if item.subtask.status in history_statuses
     ]
-    if limit is not None and limit > 0:
-        subtasks = subtasks[-limit:]
+    if from_latest_compaction:
+        subtasks, _ckpt_idx = scope_to_latest_checkpoint(subtasks)
+    subtasks = apply_checkpoint_limit(
+        subtasks, limit=limit, from_latest_compaction=from_latest_compaction
+    )
 
     # Convert to message format with full context loading
     messages = [

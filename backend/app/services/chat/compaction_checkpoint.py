@@ -49,3 +49,23 @@ def scope_to_latest_checkpoint(subtasks: list[Any]) -> tuple[list[Any], int | No
     if latest is None:
         return subtasks, None
     return subtasks[latest:], latest
+
+
+def apply_checkpoint_limit(
+    subtasks: list[Any],
+    *,
+    limit: int | None,
+    from_latest_compaction: bool,
+) -> list[Any]:
+    """Apply ``limit`` without ever dropping the checkpoint subtask (index 0).
+
+    When scoping from a checkpoint, the first subtask is the checkpoint chain and
+    must always be returned; ``limit`` only bounds the turns after it. Otherwise
+    this is the plain "most recent N subtasks" behaviour.
+    """
+    if not limit or limit <= 0:
+        return subtasks
+    if from_latest_compaction and subtasks:
+        head, tail = subtasks[:1], subtasks[1:]
+        return head if limit <= 1 else head + tail[-(limit - 1) :]
+    return subtasks[-limit:]

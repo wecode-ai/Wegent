@@ -102,3 +102,35 @@ def test_checkpoint_chain_preserves_summary_and_suffix():
     assert roles == ["user", "user", "assistant", "tool", "assistant"]
     assert ckpt.result["messages_chain"][2]["tool_calls"][0]["id"] == "t1"
     assert ckpt.result["messages_chain"][3]["tool_call_id"] == "t1"
+
+
+def test_from_latest_compaction_limit_keeps_checkpoint():
+    from app.services.chat.compaction_checkpoint import (
+        apply_checkpoint_limit,
+        scope_to_latest_checkpoint,
+    )
+
+    def st(i, is_ckpt=False):
+        chain = [{"role": "assistant", "content": f"t{i}"}]
+        if is_ckpt:
+            chain = [
+                {
+                    "role": "user",
+                    "content": "[COMPACT SUMMARY]",
+                    "additional_kwargs": {"summary_compacted": True},
+                },
+            ]
+        node = _assistant(i, chain)
+        node.is_ckpt = is_ckpt
+        return node
+
+    subtasks = [st(0), st(1, True), st(2), st(3), st(4)]
+
+    scoped, idx = scope_to_latest_checkpoint(subtasks)
+    assert idx == 1
+
+    # limit=2 must keep the checkpoint (index 0 of scoped) + last (limit-1) tail.
+    kept = apply_checkpoint_limit(scoped, limit=2, from_latest_compaction=True)
+    assert kept[0].is_ckpt is True
+    assert kept[-1].message_id == 4
+    assert len(kept) == 2
