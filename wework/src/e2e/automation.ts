@@ -22,6 +22,7 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
+import { getRuntimeConversationCacheStats } from '@/features/workbench/runtimeConversationCache'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -259,6 +260,27 @@ function desktopControlElementText(selector: string): string {
     .map(element => element.textContent?.trim() ?? '')
     .filter(Boolean)
     .join('\n')
+}
+
+function desktopControlElementMetrics(selector: string): string {
+  const elements = findDesktopControlElements(selector)
+  if (elements.length === 0) throw new Error(`Unable to find selector "${selector}"`)
+
+  return JSON.stringify(
+    elements.map(element => {
+      const rect = element.getBoundingClientRect()
+      return {
+        clientHeight: element.clientHeight,
+        clientWidth: element.clientWidth,
+        height: rect.height,
+        scrollHeight: element.scrollHeight,
+        scrollLeft: element.scrollLeft,
+        scrollTop: element.scrollTop,
+        scrollWidth: element.scrollWidth,
+        width: rect.width,
+      }
+    })
+  )
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -547,6 +569,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify({
         timestamp: Date.now(),
         domNodeCount: document.getElementsByTagName('*').length,
+        runtimeConversationCache: getRuntimeConversationCacheStats(),
         processMemory,
       })
     }
@@ -563,6 +586,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector)
+    case 'getElementMetrics':
+      return desktopControlElementMetrics(command.selector)
     case 'getStyle': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -604,6 +629,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'scrollIntoView': {
       const element = findDesktopControlElements(command.selector)[0]
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.scrollIntoView({ block: 'center', inline: 'nearest' })
+      return element.textContent?.trim() ?? ''
+    }
+    case 'scrollIntoViewAsUser': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.dispatchEvent(
+        new WheelEvent('wheel', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          deltaY: -120,
+        })
+      )
       element.scrollIntoView({ block: 'center', inline: 'nearest' })
       return element.textContent?.trim() ?? ''
     }

@@ -145,7 +145,7 @@ describe('trayNavigation', () => {
         hasRunningTasks: false,
         showRunningStatus: false,
         runningCount: 0,
-        activeTaskCount: 0,
+        activeTaskCount: null,
         unreadCount: 0,
         pinned: [],
         pinnedMore: [],

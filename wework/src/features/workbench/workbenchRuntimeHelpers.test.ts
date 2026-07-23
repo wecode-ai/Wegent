@@ -4,6 +4,7 @@ import {
   MAX_RUNTIME_TASK_TITLE_LENGTH,
   projectTaskAddresses,
   readLastProjectId,
+  removeRuntimeTasks,
   truncateRuntimeTaskTitle,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -91,6 +92,38 @@ describe('workbenchRuntimeHelpers', () => {
         },
       },
     ])
+  })
+
+  test('removes an archived device task even when its workspace path was normalized', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'device-1',
+          workspacePath: '/home/user/Documents/Codex/task',
+          available: true,
+          tasks: [
+            {
+              taskId: 'standalone-chat',
+              workspacePath: '/home/user/Documents/Codex/task',
+              title: 'Standalone chat',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+
+    expect(
+      removeRuntimeTasks(runtimeWork, [
+        {
+          deviceId: 'device-1',
+          taskId: 'standalone-chat',
+          workspacePath: '/workspace/repository',
+        },
+      ]).totalTasks
+    ).toBe(0)
   })
 
   test('stores the last project per user and ignores invalid values', () => {

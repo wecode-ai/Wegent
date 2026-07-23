@@ -29,7 +29,7 @@ export interface TrayMenuTaskGroups {
   hasRunningTasks: boolean
   showRunningStatus: boolean
   runningCount: number
-  activeTaskCount: number
+  activeTaskCount: number | null
   unreadCount: number
   pinned: TrayMenuTaskItem[]
   pinnedMore: TrayMenuTaskItem[]
@@ -49,7 +49,7 @@ export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
   hasRunningTasks: false,
   showRunningStatus: false,
   runningCount: 0,
-  activeTaskCount: 0,
+  activeTaskCount: null,
   unreadCount: 0,
   pinned: [],
   pinnedMore: [],

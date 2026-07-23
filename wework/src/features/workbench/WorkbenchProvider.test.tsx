@@ -23,10 +23,14 @@ import { writeCachedRemoteRuntimeWork } from './remoteRuntimeWorkCache'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
-  CachedWorkbenchPaneStack,
-  WorkbenchPaneActiveOnly,
+  getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
-} from '@/components/layout/workbenchPaneStack'
+} from '@/components/layout/workbenchPaneIdentity'
+import {
+  cacheRuntimeConversationMessages,
+  clearRuntimeConversationCacheForTests,
+  getRuntimeConversationMessages,
+} from './runtimeConversationCache'
 import type {
   Attachment,
   DeviceInfo,
@@ -473,6 +477,30 @@ function WorkbenchProbeSessionProvider({ children }: { children: React.ReactNode
   const routeRuntimeTask = useRuntimeTaskRouteRestoration()
   const currentRuntimeTask = workbenchState.currentRuntimeTask ?? routeRuntimeTask
 
+  return (
+    <WorkbenchProbePaneSession
+      key={getWorkbenchPaneKey({
+        currentRuntimeTask,
+        currentProject: workbenchState.currentProject,
+        standaloneChatKey: workbenchState.standaloneChatKey,
+      })}
+      workbench={workbench}
+      currentRuntimeTask={currentRuntimeTask}
+    >
+      {children}
+    </WorkbenchProbePaneSession>
+  )
+}
+
+function WorkbenchProbePaneSession({
+  children,
+  workbench,
+  currentRuntimeTask,
+}: {
+  children: React.ReactNode
+  workbench: ReturnType<typeof useWorkbench>
+  currentRuntimeTask: RuntimeTaskAddress | null
+}) {
   const paneSession = useWorkbenchPaneSession({
     currentRuntimeTask,
   })
@@ -806,14 +834,17 @@ function RuntimePaneSendProbe() {
       <span data-testid="runtime-pane-standalone-chat-key">
         {workbench.state.standaloneChatKey}
       </span>
-      <CachedWorkbenchPaneStack
-        activePane={{
+      <RuntimePaneStackItem
+        key={getWorkbenchPaneKey({
+          currentRuntimeTask: workbench.state.currentRuntimeTask,
+          currentProject: workbench.state.currentProject,
+          standaloneChatKey: workbench.state.standaloneChatKey,
+        })}
+        pane={{
           currentRuntimeTask: workbench.state.currentRuntimeTask,
           currentProject: workbench.state.currentProject,
           standaloneChatKey: workbench.state.standaloneChatKey,
         }}
-        maxPanes={10}
-        renderPane={pane => <RuntimePaneStackItem pane={pane} />}
       />
     </div>
   )
@@ -826,7 +857,7 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
   })
 
   return (
-    <WorkbenchPaneActiveOnly>
+    <>
       <span data-testid="active-pane-key">
         {pane.currentRuntimeTask
           ? [
@@ -864,7 +895,7 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
         messages={paneSession.messages}
         isWaitingForAssistant={paneSession.status.isWaitingForAssistantIndicator}
       />
-    </WorkbenchPaneActiveOnly>
+    </>
   )
 }
 
@@ -3981,6 +4012,11 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    clearRuntimeConversationCacheForTests()
+  })
+
+  beforeEach(() => {
+    clearRuntimeConversationCacheForTests()
   })
 
   test('opens the runtime route and shows thinking while runtime task creation is pending', async () => {
@@ -4714,6 +4750,20 @@ describe('WorkbenchProvider runtime tasks', () => {
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
+    const archivedAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-worktree',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+    }
+    cacheRuntimeConversationMessages(archivedAddress, [
+      {
+        id: 'cached-assistant',
+        role: 'assistant',
+        content: 'cached archived transcript',
+        status: 'done',
+        createdAt: '2026-07-24T00:00:00.000Z',
+      },
+    ])
 
     renderWorkbench(<ArchiveRuntimeTaskProbe />, services)
 
@@ -4723,6 +4773,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1)
+    expect(getRuntimeConversationMessages(archivedAddress)).toEqual([])
     expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
       deviceId: 'device-1',
       path: '/workspace/worktrees/9/project-alpha',
@@ -4756,14 +4807,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-b')
     )
 
-    archiveRequest.resolve({
-      accepted: true,
-      taskId: 'runtime-worktree',
-      workspacePath: '/workspace/worktrees/9/project-alpha',
-      runtime: 'codex',
+    await act(async () => {
+      archiveRequest.resolve({
+        accepted: true,
+        taskId: 'runtime-worktree',
+        workspacePath: '/workspace/worktrees/9/project-alpha',
+        runtime: 'codex',
+      })
+      await archiveRequest.promise
     })
 
-    await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
     expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-b')
   })
 
@@ -6073,7 +6126,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent('none')
     )
     expect(screen.getByTestId('composer-input')).toHaveTextContent('继续修')
-    expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('user:message runtime-a')
+    expect(screen.getByTestId('follow-up-messages')).toBeEmptyDOMElement()
     await waitFor(() =>
       expect(screen.getByTestId('runtime-attachment-count')).toHaveTextContent('1')
     )
@@ -6095,10 +6148,8 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('follow-up-current-runtime-task')).toHaveTextContent('none')
-    expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('busy')
-    await waitFor(() =>
-      expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('retained stream output')
-    )
+    expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('idle')
+    expect(screen.getByTestId('follow-up-messages')).toBeEmptyDOMElement()
 
     await userEvent.click(screen.getByText('open follow-up runtime a'))
     await waitFor(() =>
@@ -6106,8 +6157,8 @@ describe('WorkbenchProvider runtime tasks', () => {
         'device-1:runtime-a'
       )
     )
-    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('user:message runtime-a')
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('retained stream output')
   })
 
   test('keeps blank chat draft when selecting a project chat context', async () => {

@@ -345,6 +345,33 @@ async function waitForSnapshot(
   throw new Error(message)
 }
 
+async function getElementMetrics(control, selector) {
+  return JSON.parse(await control.command('getElementMetrics', selector))
+}
+
+async function getSingleElementMetrics(control, selector, description) {
+  const metrics = await getElementMetrics(control, selector)
+  assert.equal(metrics.length, 1, `${description} rendered ${metrics.length} matching elements`)
+  return metrics[0]
+}
+
+async function waitForBottomMetrics(control, selector, description, timeoutMs = 1_500) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (distanceFromBottom(metrics) <= 2) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(
+    `${description} remained ${distanceFromBottom(metrics)}px from the bottom after ${timeoutMs}ms`
+  )
+}
+
+function distanceFromBottom(metrics) {
+  return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
 async function openBottomWorkspaceTerminal(control, description) {
   await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
   const snapshot = await waitForSnapshot(
@@ -670,7 +697,7 @@ async function captureVerificationScreenshot(control, name, selector = 'body') {
   let dataUrl
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      dataUrl = await control.command('capture', selector, { timeoutMs: 30_000 })
+      dataUrl = await control.command('capture', selector, { timeoutMs: 90_000 })
       break
     } catch (error) {
       if (attempt === 2) throw error
@@ -971,9 +998,24 @@ async function verifyBackgroundTaskWindowLifecycle({
     'runtime-local-task-row-'
   )
 
+  await getSingleElementMetrics(control, ACTIVE_WORKBENCH_SELECTOR, 'The running conversation pane')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('message-user') &&
+      !snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
+    'Switching away from the running task did not activate a blank pane',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+
   await captureVerificationScreenshot(
     control,
-    lifecycleScreenshotName('01-task-running-before-window-close.png')
+    lifecycleScreenshotName('01-task-running-in-background-before-window-close.png')
   )
 
   if (process.platform === 'darwin') {
@@ -1065,6 +1107,25 @@ async function verifyBackgroundTaskWindowLifecycle({
     )
   }
 
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('message-user') &&
+      !snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
+    'The reopened window did not preserve the active blank pane',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('03-background-task-after-reopen.png')
+  )
+  control.releaseWindowLifecycleResponse()
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(runningTaskTestId),
+    'The background task did not settle while another pane was active'
+  )
   await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1072,39 +1133,25 @@ async function verifyBackgroundTaskWindowLifecycle({
   await waitForSnapshot(
     control,
     snapshot =>
-      snapshot.testIds.includes('message-user') && snapshot.text.includes(WINDOW_LIFECYCLE_PROMPT),
-    'The reopened task did not restore its running user message',
-    UI_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
-  await captureVerificationScreenshot(
-    control,
-    lifecycleScreenshotName('03-running-task-after-reopen.png')
-  )
-  control.releaseWindowLifecycleResponse()
-  await waitForSnapshot(
-    control,
-    snapshot =>
       snapshot.testIds.includes('message-assistant') &&
-      snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT),
-    'The reopened task did not render its completed assistant message',
+      snapshot.text.includes(WINDOW_LIFECYCLE_COMPLETION_TEXT) &&
+      !snapshot.testIds.includes('thinking-indicator'),
+    'Switching to the completed background task did not show its latest settled state',
     UI_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
-  if (process.platform === 'darwin') {
-    await waitForSnapshot(
-      control,
-      snapshot =>
-        !snapshot.testIds.includes('thinking-indicator') &&
-        !snapshot.testIds.includes(runningTaskTestId),
-      'The reopened task did not settle after its persisted transcript completed',
-      UI_TIMEOUT_MS,
-      ACTIVE_WORKBENCH_SELECTOR
-    )
-  }
+  const initiallyOpenedMetrics = await waitForBottomMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The initially opened completed conversation scroll container'
+  )
+  assert.ok(
+    distanceFromBottom(initiallyOpenedMetrics) <= 2,
+    'A previously unopened completed conversation did not open at the bottom'
+  )
   await captureVerificationScreenshot(
     control,
-    lifecycleScreenshotName('04-task-completed-after-reopen.png')
+    lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
   if (process.platform === 'darwin') {
     const processIds = await waitForMacosSleepInhibitor(app.pid, false)
@@ -1140,17 +1187,45 @@ async function verifyBackgroundTaskWindowLifecycle({
     lifecycleScreenshotName('05-completed-task-reopened-idle.png')
   )
 
+  const reopenedBottomMetrics = await waitForBottomMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The reopened bottom-pinned conversation scroll container'
+  )
+  assert.ok(
+    distanceFromBottom(reopenedBottomMetrics) <= 2,
+    'A conversation that was previously at the bottom did not reopen at the bottom'
+  )
+
   setPhase('completed-task-scroll-position')
   const middleParagraphSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]:nth-of-type(14)`
-  await control.command('scrollIntoView', middleParagraphSelector)
+  await control.command('scrollIntoViewAsUser', middleParagraphSelector)
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  const middlePositionBeforeSwitch = await getSingleElementMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The middle-position conversation scroll container before switching'
+  )
+  assert.ok(
+    distanceFromBottom(middlePositionBeforeSwitch) > 100,
+    'The long conversation did not leave the bottom before testing position restoration'
+  )
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('06-task-middle-position-before-switch.png')
   )
 
   control.setScenario('fresh_chat')
-  await control.command('click', '[data-testid="new-chat-button"]')
+  const taskRowsBeforeFreshChat = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command('click', '[data-testid="runtime-chat-section-new-chat-button"]')
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
   await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
   await control.command(
     'waitFor',
@@ -1159,6 +1234,25 @@ async function verifyBackgroundTaskWindowLifecycle({
       text: FRESH_CHAT_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     }
+  )
+  const freshTaskRowTestId = await waitForNewTaskRow(
+    control,
+    taskRowsBeforeFreshChat,
+    'WEWORK_DESKTOP_E2E_FRESH_CHAT'
+  )
+  const shortConversationMetrics = await getSingleElementMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The short conversation scroll container'
+  )
+  assert.ok(
+    shortConversationMetrics.scrollHeight <= shortConversationMetrics.clientHeight + 1,
+    `The short conversation overflowed by ${shortConversationMetrics.scrollHeight - shortConversationMetrics.clientHeight}px`
+  )
+  await getSingleElementMetrics(
+    control,
+    ACTIVE_WORKBENCH_SELECTOR,
+    'The switched conversation pane'
   )
   await captureVerificationScreenshot(
     control,
@@ -1174,9 +1268,55 @@ async function verifyBackgroundTaskWindowLifecycle({
     timeoutMs: UI_TIMEOUT_MS,
   })
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  const middlePositionAfterSwitch = await getSingleElementMetrics(
+    control,
+    '[data-testid="desktop-workbench-content"]',
+    'The middle-position conversation scroll container after switching back'
+  )
+  assert.ok(
+    Math.abs(middlePositionAfterSwitch.scrollTop - middlePositionBeforeSwitch.scrollTop) <= 32,
+    `The middle scroll position moved from ${middlePositionBeforeSwitch.scrollTop}px to ${middlePositionAfterSwitch.scrollTop}px`
+  )
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
+  )
+
+  setPhase('archived-task-cache-eviction')
+  const cacheBeforeArchive = JSON.parse(
+    await control.command('performanceSnapshot', 'body')
+  ).runtimeConversationCache
+  const freshTaskId = freshTaskRowTestId.replace('runtime-local-task-row-', '')
+  await control.command('click', `[data-testid="runtime-local-task-archive-${freshTaskId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-testid="runtime-local-task-archive-toast-${freshTaskId}"]`,
+    {
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes(freshTaskRowTestId),
+    'The archived task remained mounted in the sidebar'
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 3_500))
+  const cacheAfterArchive = JSON.parse(
+    await control.command('performanceSnapshot', 'body')
+  ).runtimeConversationCache
+  assert.ok(
+    cacheAfterArchive.messageEntries < cacheBeforeArchive.messageEntries,
+    `Archiving retained conversation messages (${cacheBeforeArchive.messageEntries} -> ${cacheAfterArchive.messageEntries})`
+  )
+  assert.ok(
+    cacheAfterArchive.scrollSnapshotEntries <= cacheBeforeArchive.scrollSnapshotEntries &&
+      cacheAfterArchive.virtualMeasurementEntries <= cacheBeforeArchive.virtualMeasurementEntries,
+    'Archiving increased retained conversation view state'
+  )
+  await writeFile(
+    join(resultDir, 'conversation-switching-cache-eviction.json'),
+    `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
+    'utf8'
   )
 }
 
