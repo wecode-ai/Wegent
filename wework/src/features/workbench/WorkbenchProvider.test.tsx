@@ -530,6 +530,9 @@ function BootstrapProbe() {
       <span data-testid="startup-ready">{workbench.isStartupReady ? 'ready' : 'loading'}</span>
       <span data-testid="project-count">{workbench.state.projects.length}</span>
       <span data-testid="runtime-total">{workbench.state.runtimeWork?.totalTasks ?? 0}</span>
+      <span data-testid="device-ids">
+        {workbench.state.devices.map(device => device.device_id).join('|')}
+      </span>
     </div>
   )
 }
@@ -1952,6 +1955,34 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('cloud-work-devices-check')).toHaveTextContent('empty')
     expect(screen.getByTestId('cloud-work-error')).toHaveTextContent('')
+  })
+
+  test('publishes cloud devices before a slow runtime-work refresh completes', async () => {
+    const runtimeWork = deferred<RuntimeWorkListResponse>()
+    let runtimeWorkResolved = false
+    void runtimeWork.promise.then(() => {
+      runtimeWorkResolved = true
+    })
+    const services = createWorkbenchServices({
+      cloudBackgroundApi: {
+        listTeams: vi.fn().mockResolvedValue([]),
+        listDevices: vi
+          .fn()
+          .mockResolvedValue([
+            createDevice({ device_id: 'remote-device', device_type: 'remote', is_default: false }),
+          ]),
+        listRuntimeWork: vi.fn(() => runtimeWork.promise),
+      },
+    })
+
+    renderWorkbench(<BootstrapProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('device-ids')).toHaveTextContent('remote-device'))
+    expect(runtimeWorkResolved).toBe(false)
+
+    await act(async () => {
+      runtimeWork.resolve({ projects: [], chats: [], totalTasks: 0 })
+    })
   })
 
   test('restores cached remote task summaries when the device is offline at startup', async () => {

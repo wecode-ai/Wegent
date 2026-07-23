@@ -16,6 +16,7 @@ import {
   EMPTY_RUNTIME_WORK,
   filterDisconnectedRemoteRuntimeWork,
   finishCloudRuntimeSync,
+  mergeDeviceLists,
   mergeRuntimeWorkLists,
   nowMs,
   readCachedDeviceList,
@@ -241,7 +242,26 @@ export function useWorkbenchDataRefresh({
       if (backgroundApi?.listRuntimeWork) activeChecks.push('runtimeWork')
 
       if (activeChecks.length === 0) return
-      if (cloudRuntimeStateRef.current.inFlightRevision != null) return
+      if (cloudRuntimeStateRef.current.inFlightRevision != null) {
+        if (options?.trigger !== 'manual-refresh' || !backgroundApi?.listDevices) return
+        const devicesResult = await timedWorkbenchBootstrapRequest(
+          'cloudDevices',
+          backgroundApi.listDevices()
+        )
+        if (options?.isCancelled?.() || devicesResult.status !== 'fulfilled') return
+        const devices = resolveDeviceListWithCache(
+          mergeDeviceLists(baseDevices, devicesResult.value)
+        )
+        dispatch({
+          type: 'devices_refreshed',
+          devices,
+          standaloneDeviceId: getPreferredStandaloneDeviceId(
+            devices,
+            options?.standaloneDeviceId ?? null
+          ),
+        })
+        return
+      }
 
       const startedState = startCloudRuntimeSync(
         cloudRuntimeStateRef.current,
@@ -251,17 +271,38 @@ export function useWorkbenchDataRefresh({
       updateCloudRuntimeState(startedState)
       const revision = startedState.inFlightRevision
 
-      const [teamsResult, devicesResult, runtimeWorkResult] = await Promise.all([
-        backgroundApi?.listTeams
-          ? timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams())
-          : Promise.resolve(undefined),
-        backgroundApi?.listDevices
-          ? timedWorkbenchBootstrapRequest('cloudDevices', backgroundApi.listDevices())
-          : Promise.resolve(undefined),
-        backgroundApi?.listRuntimeWork
-          ? timedWorkbenchBootstrapRequest('cloudRuntimeWork', backgroundApi.listRuntimeWork())
-          : Promise.resolve(undefined),
-      ])
+      const teamsRequest = backgroundApi?.listTeams
+        ? timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams())
+        : Promise.resolve(undefined)
+      const devicesRequest = backgroundApi?.listDevices
+        ? timedWorkbenchBootstrapRequest('cloudDevices', backgroundApi.listDevices())
+        : Promise.resolve(undefined)
+      const runtimeWorkRequest = backgroundApi?.listRuntimeWork
+        ? timedWorkbenchBootstrapRequest('cloudRuntimeWork', backgroundApi.listRuntimeWork())
+        : Promise.resolve(undefined)
+      const devicesResult = await devicesRequest
+
+      if (
+        !options?.isCancelled?.() &&
+        revision != null &&
+        cloudRuntimeStateRef.current.inFlightRevision === revision &&
+        cloudBackgroundApiRef.current === backgroundApi &&
+        devicesResult?.status === 'fulfilled'
+      ) {
+        const devices = resolveDeviceListWithCache(
+          mergeDeviceLists(baseDevices, devicesResult.value)
+        )
+        dispatch({
+          type: 'devices_refreshed',
+          devices,
+          standaloneDeviceId: getPreferredStandaloneDeviceId(
+            devices,
+            options?.standaloneDeviceId ?? null
+          ),
+        })
+      }
+
+      const [teamsResult, runtimeWorkResult] = await Promise.all([teamsRequest, runtimeWorkRequest])
 
       if (
         options?.isCancelled?.() ||
