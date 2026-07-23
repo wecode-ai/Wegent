@@ -339,24 +339,22 @@ async function waitForSnapshot(
   throw new Error(message)
 }
 
-async function openBottomWorkspaceLauncher(control, description) {
+async function openBottomWorkspaceTerminal(control, description) {
   await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
   const snapshot = await waitForSnapshot(
     control,
-    value => value.testIds.includes('workspace-tool-launcher'),
-    `${description} did not show the workspace tool launcher`,
+    value =>
+      value.testIds.includes('workspace-terminal-window') &&
+      value.testIds.includes('remote-terminal') &&
+      !value.testIds.includes('workspace-tool-launcher'),
+    `${description} did not start the terminal directly`,
     UI_TIMEOUT_MS,
     ACTIVE_WORKBENCH_SELECTOR
   )
-  assert.ok(
-    snapshot.testIds.includes('workspace-terminal-card'),
-    `${description} did not offer Terminal`
-  )
-  assert.ok(snapshot.testIds.includes('workspace-ide-card'), `${description} did not offer IDE`)
   assert.equal(
-    snapshot.testIds.includes('workspace-terminal-window'),
+    snapshot.testIds.includes('workspace-ide-card'),
     false,
-    `${description} started a terminal before Terminal was selected`
+    `${description} exposed IDE in the bottom panel`
   )
   return snapshot
 }
@@ -3587,18 +3585,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'cloud-04-conversation-ready.png')
-  await openBottomWorkspaceLauncher(control, 'The new cloud task')
-  await control.command('click', '[data-testid="workspace-terminal-card"]')
-  await waitForSnapshot(
-    control,
-    value =>
-      value.testIds.includes('workspace-terminal-window') &&
-      value.testIds.includes('remote-terminal') &&
-      !value.testIds.includes('workspace-tool-launcher'),
-    'The new cloud task did not start its terminal after Terminal was selected',
-    UI_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
   await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
   await waitForSnapshot(
@@ -3639,18 +3626,7 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
   })
   await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
 
-  await openBottomWorkspaceLauncher(control, 'The historical cloud task')
-  await control.command('click', '[data-testid="workspace-terminal-card"]')
-  await waitForSnapshot(
-    control,
-    value =>
-      value.testIds.includes('workspace-terminal-window') &&
-      value.testIds.includes('remote-terminal') &&
-      !value.testIds.includes('workspace-tool-launcher'),
-    'The historical cloud task did not start its terminal after Terminal was selected',
-    UI_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await openBottomWorkspaceTerminal(control, 'The historical cloud task')
   await closeBottomWorkspacePanel(control)
   await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
   await waitForSnapshot(
@@ -3670,7 +3646,11 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
     'The bottom workspace add menu did not open'
   )
   assert.ok(addMenuSnapshot.testIds.includes('workspace-add-terminal-option'))
-  assert.ok(addMenuSnapshot.testIds.includes('workspace-add-ide-option'))
+  assert.equal(
+    addMenuSnapshot.testIds.includes('workspace-add-ide-option'),
+    false,
+    'The bottom workspace add menu exposed IDE'
+  )
   assert.equal(
     addMenuSnapshot.testIds.includes('workspace-add-desktop-option'),
     false,

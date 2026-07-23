@@ -14,7 +14,7 @@ import {
 } from '@/lib/local-workspace-openers'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
 import { configuredWorkspacePath } from '@/lib/project-workspace'
-import { getProjectDeviceId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
@@ -98,18 +98,20 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     codeServerProjectDeviceId && (currentProject || workspaceTarget)
   )
   const codeServerDevice = codeServerProjectDeviceId
-    ? devices.find(device => device.device_id === codeServerProjectDeviceId)
+    ? findWorkbenchDevice(devices, codeServerProjectDeviceId)
     : undefined
   const remoteWorkspaceSession = Boolean(
     workspaceTarget?.workspaceSource === 'remote' ||
     (codeServerDevice &&
-      (supportsCloudSessions(codeServerDevice) || supportsRemoteSessions(codeServerDevice)))
+      (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+        supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId)))
   )
   const useDeviceCodeServerSession = Boolean(remoteWorkspaceSession && workspaceTarget)
   const codeServerEnabled = Boolean(
     workspaceSessionApi &&
     codeServerDevice &&
-    (supportsCloudSessions(codeServerDevice) || supportsRemoteSessions(codeServerDevice))
+    (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
+      supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId))
   )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
