@@ -72,10 +72,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
       }
       if (submittedDraft.trim()) {
         draftRef.current = ''
-        setDraftState({ scopeKey, sourceValue: value, draft: '' })
+        setDraftState({ scopeKey, sourceValue: '', draft: '' })
       }
     },
-    [draft, onSubmit, scopeKey, value]
+    [draft, onSubmit, scopeKey]
   )
 
   return <ChatInput {...props} value={draft} onChange={setDraft} onSubmit={handleSubmit} />
