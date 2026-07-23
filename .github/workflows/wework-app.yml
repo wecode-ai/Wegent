@@ -438,6 +438,7 @@ jobs:
           pnpm exec tauri build \
             --target "${{ matrix.rust_target }}" \
             --bundles app,dmg \
+            --features release-devtools \
             --config "$config_override"
 
       - name: Verify and collect release assets
@@ -644,7 +645,7 @@ jobs:
             }
           } | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding utf8
 
-          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --config $configPath
+          pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --features release-devtools --config $configPath
 
       - name: Verify and collect release assets
         id: package
