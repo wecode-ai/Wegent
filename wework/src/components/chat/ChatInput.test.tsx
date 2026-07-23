@@ -15,9 +15,12 @@ vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (
       key: string,
-      options?: string | { action?: string; count?: number; device?: string; location?: string }
+      options?: string | { action?: string; count?: number; device?: string; location?: string },
+      interpolation?: { model?: string }
     ) => {
-      if (typeof options === 'string') return options
+      if (typeof options === 'string') {
+        return interpolation?.model ? options.replace('{{model}}', interpolation.model) : options
+      }
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
       }
@@ -422,6 +425,61 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('interrupt-and-send-option'))
 
     expect(onSubmit).toHaveBeenCalledWith('立即改方向', { interruptWhenBusy: true })
+  })
+
+  test('distinguishes the active model from the next-turn model while streaming', async () => {
+    const activeModel: UnifiedModel = {
+      name: 'local-model:first',
+      type: 'runtime',
+      displayName: 'First Model',
+      isActive: true,
+    }
+    const selectedModel: UnifiedModel = {
+      name: 'local-model:second',
+      type: 'runtime',
+      displayName: 'Second Model',
+      isActive: true,
+    }
+
+    const projectChat = projectChatControls({
+      models: [activeModel, selectedModel],
+      activeModel,
+      selectedModel,
+    })
+    const { rerender } = render(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+        projectChat={projectChat}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Next · Second Model')
+    await userEvent.click(screen.getByTestId('send-mode-menu-button'))
+    expect(screen.getByTestId('guide-current-turn-option')).toHaveTextContent(
+      'Guide current response · First Model'
+    )
+    expect(screen.getByTestId('interrupt-and-send-option')).toHaveTextContent(
+      'Interrupt and use Second Model'
+    )
+
+    rerender(
+      <ChatInput
+        value="换模型继续"
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming={false}
+        projectChat={projectChat}
+      />
+    )
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Second Model')
+    expect(screen.getByTestId('model-selector-button')).not.toHaveTextContent('Next')
   })
 
   test('renders queued messages and guidance controls above the composer', async () => {

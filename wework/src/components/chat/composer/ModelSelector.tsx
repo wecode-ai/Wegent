@@ -77,6 +77,7 @@ export function ModelSelector({
   models,
   selectedModel,
   selectedModelOptions,
+  nextTurn = false,
   disabled,
   onSelectModel,
   onSelectModelAndOptions,
@@ -342,10 +343,13 @@ export function ModelSelector({
 
   useMobileModelSelectorFocus(open, isMobile, mobileCloseButtonRef)
 
-  const buttonLabel =
+  const selectedButtonLabel =
     getSelectedModelDisplayLabel(selectedModel, selectedModelOptions, (key, fallback) =>
       t(key, fallback)
     ) || t('workbench.default_model', 'Default')
+  const buttonLabel = nextTurn
+    ? t('workbench.next_turn_model', 'Next · {{model}}', { model: selectedButtonLabel })
+    : selectedButtonLabel
 
   const controlsAboveFamilies = useMemo(() => {
     const controls = selectedModel
