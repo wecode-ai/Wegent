@@ -37,31 +37,27 @@ from chat_shell.compression.token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_PREFIX = "[COMPACT SUMMARY]"
+SUMMARY_PREFIX = (
+    "[COMPACT SUMMARY] Another model worked on this task and produced the summary "
+    "below. Use it to continue the work and avoid repeating completed steps."
+)
 SUMMARY_COMPACTED_FLAG = "compacted"
 SUMMARY_METADATA_FLAG = "summary_compacted"
 SUMMARY_COMPACT_VERSION = 1
 DEFAULT_RECENT_USER_TOKEN_LIMIT = 20_000
 
-COMPACT_TASK_INSTRUCTION = """You are generating a compact handoff summary for a follow-up model.
+COMPACT_TASK_INSTRUCTION = """You are performing a CONTEXT CHECKPOINT COMPACTION. \
+Create a handoff summary for another model that will resume this task.
 
-Output only the compact summary body in the exact structure below.
-Do not add commentary or markdown outside the structure.
+Include:
+- Current objective and active task
+- Progress and key decisions made so far
+- Important context, constraints, user preferences
+- Critical facts, paths, parameters, and tool findings needed to continue
+- The most important next step
 
-Current objective:
-<current user goal and active task>
-
-Key completed work:
-<important actions already completed>
-
-Important findings:
-<facts, paths, parameters, constraints, tool findings that matter>
-
-Next step:
-<the most important next action to continue the task>
-"""
-
-COMPACT_TASK_FINAL_PROMPT = "Produce the compact summary now."
+Output only the summary. Be concise, structured, and focused on helping the next \
+model seamlessly continue the work."""
 
 
 @dataclass
@@ -236,10 +232,11 @@ class SummaryCompactor:
         )
 
     async def _generate_summary(self, messages: list[BaseMessage]) -> str:
+        # Instruction is the final user turn (recency), so the model summarizes
+        # rather than continuing/answering the last question in the history.
         prompt_messages: list[BaseMessage] = [
-            SystemMessage(content=COMPACT_TASK_INSTRUCTION),
             *messages,
-            HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
+            HumanMessage(content=COMPACT_TASK_INSTRUCTION),
         ]
         prompt_tokens = self._token_counter.count_messages(
             [_message_to_counter_dict(message) for message in prompt_messages]
@@ -299,10 +296,7 @@ class SummaryCompactor:
         framing = self._token_counter.count_messages(
             [
                 _message_to_counter_dict(
-                    SystemMessage(content=COMPACT_TASK_INSTRUCTION)
-                ),
-                _message_to_counter_dict(
-                    HumanMessage(content=COMPACT_TASK_FINAL_PROMPT)
+                    HumanMessage(content=COMPACT_TASK_INSTRUCTION)
                 ),
             ]
         )
@@ -330,23 +324,6 @@ class SummaryCompactor:
 
         messages[:] = [m for i, m in enumerate(messages) if i not in drop]
         return len(drop)
-
-    def _is_compact_prompt_over_limit(self, messages: list[BaseMessage]) -> bool:
-        """Return True when the compact task prompt itself exceeds input budget."""
-        if self._max_compact_input_tokens is None:
-            return False
-        compact_prompt = [
-            SystemMessage(content=COMPACT_TASK_INSTRUCTION),
-            *self._sanitize_tool_message_sequence(messages),
-            HumanMessage(content=COMPACT_TASK_FINAL_PROMPT),
-        ]
-        compact_prompt_dicts = [
-            _message_to_counter_dict(message) for message in compact_prompt
-        ]
-        return (
-            self._token_counter.count_messages(compact_prompt_dicts)
-            > self._max_compact_input_tokens
-        )
 
     def _sanitize_tool_message_sequence(
         self, messages: list[BaseMessage]

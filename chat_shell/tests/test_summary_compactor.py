@@ -53,8 +53,8 @@ async def test_compact_retries_after_context_too_long_by_removing_oldest_history
 
     assert result.removed_history_items == 1
     assert len(llm.calls) == 2
-    first_history = llm.calls[0][1:-1]
-    second_history = llm.calls[1][1:-1]
+    first_history = llm.calls[0][:-1]
+    second_history = llm.calls[1][:-1]
     assert [msg.content for msg in first_history] == [
         "system",
         "old user",
@@ -94,7 +94,7 @@ async def test_compact_continues_trimming_until_only_current_user_floor_remains(
 
     assert result.removed_history_items == 2
     assert len(llm.calls) == 3
-    assert [msg.content for msg in llm.calls[-1][1:-1]] == [
+    assert [msg.content for msg in llm.calls[-1][:-1]] == [
         "system",
         "latest user",
     ]
@@ -287,3 +287,29 @@ async def test_generate_summary_times_out():
     )
     with pytest.raises((asyncio.TimeoutError, TimeoutError)):
         await compactor._generate_summary([])
+
+
+@pytest.mark.asyncio
+async def test_summary_instruction_is_final_turn():
+    from chat_shell.compression.summary_compactor import COMPACT_TASK_INSTRUCTION
+
+    captured = {}
+
+    class CaptureLLM:
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            return AIMessage(content="SUMMARY BODY")
+
+    compactor = SummaryCompactor(
+        llm=CaptureLLM(), token_counter=TokenCounter(model_name="gpt-4")
+    )
+    history = [HumanMessage(content="q1"), AIMessage(content="a1")]
+    body = await compactor._generate_summary(history)
+
+    assert body == "SUMMARY BODY"
+    msgs = captured["messages"]
+    # Instruction is the LAST message and a HumanMessage (recency wins).
+    assert isinstance(msgs[-1], HumanMessage)
+    assert COMPACT_TASK_INSTRUCTION in msgs[-1].content
+    # No leading SystemMessage instruction.
+    assert getattr(msgs[0], "content", "") != COMPACT_TASK_INSTRUCTION
