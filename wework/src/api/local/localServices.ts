@@ -113,6 +113,7 @@ import {
   CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
   CLOUD_MODEL_NAMESPACE_OPTION,
   CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+  CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
 } from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
@@ -755,11 +756,14 @@ function localRuntimeModelConfig(
     }
     const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
     const catalogModelId = modelOptions?.[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION]?.trim()
+    const upstreamApiFormat =
+      modelOptions?.[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] ?? 'openai-responses'
     return {
       model: 'openai',
       model_id: modelName,
       ...(catalogModelId ? { codex_catalog_model_id: catalogModelId } : {}),
       api_format: RESPONSES_API_FORMAT,
+      upstream_api_format: upstreamApiFormat,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: cloudModelGateway.baseUrl,
       api_key: cloudModelGateway.apiKey,

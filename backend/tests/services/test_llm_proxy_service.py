@@ -24,12 +24,14 @@ def _model_kind(
     namespace: str = "default",
     model_id: str = "gpt-4-turbo",
     api_key: str = "sk-test-key",
+    base_url: str = "https://api.example.com/v1",
+    protocol: str = "openai-responses",
     default_headers: dict[str, str] | None = None,
 ) -> Kind:
     model_config: dict[str, object] = {
         "env": {
             "model_id": model_id,
-            "base_url": "https://api.example.com/v1",
+            "base_url": base_url,
             "api_key": api_key,
         }
     }
@@ -48,7 +50,7 @@ def _model_kind(
             "spec": {
                 "provider": "openai",
                 "modelConfig": model_config,
-                "protocol": "openai-responses",
+                "protocol": protocol,
             },
         },
         is_active=True,
@@ -314,3 +316,107 @@ def test_build_codex_runtime_model_config_returns_provider_credentials(
     assert config["base_url"] == "https://api.example.com/v1"
     assert config["api_key"] == "sk-test-key"
     assert "codex_responses_compat_proxy" not in config
+
+
+async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="chat-completions-model",
+        protocol="openai",
+        api_key="sk-chat-key",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"chat-completions-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "text/event-stream"}
+
+    async def fake_aiter_raw():
+        yield b"data: ok\n\n"
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://api.example.com/v1/chat/completions"
+    assert sent_request.headers["Authorization"] == "Bearer sk-chat-key"
+    assert b'"model": "gpt-4-turbo"' in sent_request.content
+
+
+async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
+    test_db, test_user: User
+):
+    model = _model_kind(
+        test_user.id,
+        name="anthropic-model",
+        protocol="claude",
+        api_key="sk-anthropic-key",
+        base_url="https://api.anthropic.com",
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"anthropic-model","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "text/event-stream"}
+
+    async def fake_aiter_raw():
+        yield b"data: ok\n\n"
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient",
+        return_value=client_mock,
+    ):
+        response = await proxy_llm_responses(request_mock, test_db, test_user)
+
+    assert response.status_code == 200
+    sent_request = client_mock.send.call_args[0][0]
+    assert str(sent_request.url) == "https://api.anthropic.com/v1/messages"
+    assert sent_request.headers["x-api-key"] == "sk-anthropic-key"
+    assert sent_request.headers["anthropic-version"] == "2023-06-01"
+    assert "Authorization" not in sent_request.headers

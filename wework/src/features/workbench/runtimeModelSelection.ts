@@ -1,6 +1,7 @@
 import {
+  getCloudModelUpstreamApiFormat,
   resolveModelExecutionSelection,
-  supportsResponsesApi,
+  supportsCloudExecution,
 } from '@/features/cloud-connection/modelExecution'
 import {
   CATALOG_MODEL_ID_CONTROL_ID,
@@ -19,6 +20,7 @@ export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
 export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
 export const CLOUD_MODEL_CATALOG_MODEL_ID_OPTION = 'weworkCloudModelCatalogModelId'
+export const CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = 'weworkCloudModelUpstreamApiFormat'
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -86,7 +88,7 @@ function selectionForModel(model: UnifiedModel): ModelSelectionConfig {
 }
 
 function isCodexCompatibleModel(model: UnifiedModel): boolean {
-  return supportsResponsesApi(model)
+  return supportsCloudExecution(model)
 }
 
 export function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
@@ -146,7 +148,11 @@ export function selectedModelExecutionFields(
     if (catalogModelId) {
       modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = catalogModelId
     }
-     
+    const upstreamApiFormat = getCloudModelUpstreamApiFormat(selectedModel)
+    if (upstreamApiFormat) {
+      modelOptions[CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION] = upstreamApiFormat
+    }
+
     console.log('[wework] selectedModelExecutionFields', {
       modelId: executionModel.modelName,
       modelType: executionModel.modelType,

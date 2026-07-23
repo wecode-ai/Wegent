@@ -16,7 +16,9 @@ Key changes from the original trigger_ai_response:
 - Supports custom ResultEmitter for different output modes (WebSocket, SSE, Callback)
 """
 
+import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException

@@ -52,6 +52,50 @@ PROTECTED_UPSTREAM_HEADER_MARKERS = (
 )
 
 
+def _resolve_upstream_target(
+    model_config: dict[str, Any],
+) -> tuple[str, dict[str, str]]:
+    """Choose the upstream endpoint path and auth headers from model config.
+
+    Supports OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages.
+    Falls back to /responses to preserve previous behavior.
+    """
+    api_format = str(model_config.get("api_format") or "").strip().lower()
+    protocol = str(model_config.get("protocol") or "").strip().lower()
+    wire_api = str(model_config.get("wire_api") or "").strip().lower()
+    provider_api_key = str(model_config.get("api_key") or "").strip()
+
+    is_responses = (
+        api_format == "responses"
+        or protocol == "openai-responses"
+        or wire_api == "responses"
+    )
+    is_chat_completions = (
+        api_format == "chat/completions"
+        or protocol == "openai"
+        or protocol == "openai-chat-completions"
+    )
+    is_anthropic = protocol == "claude" or protocol == "anthropic-messages"
+
+    if is_anthropic:
+        auth_headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
+        if provider_api_key:
+            auth_headers["x-api-key"] = provider_api_key
+        return "/v1/messages", auth_headers
+
+    if is_chat_completions:
+        auth_headers = {}
+        if provider_api_key:
+            auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+        return "/chat/completions", auth_headers
+
+    # Default to Responses (covers is_responses and unknown configs).
+    auth_headers = {}
+    if provider_api_key:
+        auth_headers["Authorization"] = f"Bearer {provider_api_key}"
+    return "/responses", auth_headers
+
+
 def _is_protected_upstream_header(name: str) -> bool:
     normalized = name.strip().lower().replace("_", "-")
     parts = normalized.split("-")
@@ -242,7 +286,6 @@ async def proxy_llm_responses(
     )
 
     provider_base_url = str(model_config.get("base_url") or "").strip()
-    provider_api_key = str(model_config.get("api_key") or "").strip()
     provider_model_id = str(model_config.get("model_id") or "").strip()
     default_headers = model_config.get("default_headers") or {}
     if not provider_base_url or not provider_model_id:
@@ -258,7 +301,8 @@ async def proxy_llm_responses(
 
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
-    upstream_url = f"{provider_base_url.rstrip('/')}/responses"
+    upstream_path, auth_headers = _resolve_upstream_target(model_config)
+    upstream_url = f"{provider_base_url.rstrip('/')}{upstream_path}"
 
     configured_headers = (
         {str(key): str(value) for key, value in default_headers.items()}
@@ -270,9 +314,7 @@ async def proxy_llm_responses(
         configured_headers,
         custom_headers,
     )
-    protocol_headers: dict[str, str] = {}
-    if provider_api_key:
-        protocol_headers["Authorization"] = f"Bearer {provider_api_key}"
+    protocol_headers: dict[str, str] = dict(auth_headers)
     content_type = request.headers.get("content-type")
     if content_type:
         protocol_headers["Content-Type"] = content_type
