@@ -384,8 +384,10 @@ describe('ModelSelector', () => {
 
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelOption.parentElement).toHaveClass('text-primary')
+    expect(modelOption.parentElement).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
     const defaultOption = screen.getByTestId('model-special-option-__default__')
     expect(defaultOption).toHaveClass('bg-primary/10')
+    expect(defaultOption).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
     expect(defaultOption.querySelector('.lucide-check')).not.toBeInTheDocument()
   })
 
@@ -417,6 +419,7 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('overflow-hidden')
     expect(modelOption.parentElement).toHaveClass('grid-cols-[minmax(0,1fr)_auto_32px]')
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
+    expect(modelOption.parentElement).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
     expect(modelOption).toHaveClass('flex', 'items-center', 'gap-3', 'px-3')
     expect(modelTitle).toHaveClass('block', 'truncate')
     expect(modelTitle).not.toHaveClass('flex-1')
