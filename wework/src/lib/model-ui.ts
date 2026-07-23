@@ -188,7 +188,7 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
 
 export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
   { id: 'claude', label: 'Claude', order: 10, controls: [] },
-  { id: 'codex-official', label: 'CodeX', order: 20, controls: OPENAI_RESPONSES_CONTROLS },
+  { id: 'codex-official', label: '我的 CodeX', order: 20, controls: OPENAI_RESPONSES_CONTROLS },
   { id: 'codex-provider', label: 'Provider 模型', order: 30, controls: OPENAI_RESPONSES_CONTROLS },
   { id: 'model-interface', label: '接口模型', order: 40, controls: OPENAI_RESPONSES_CONTROLS },
   {

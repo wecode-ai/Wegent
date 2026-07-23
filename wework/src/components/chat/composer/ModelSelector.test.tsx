@@ -172,7 +172,7 @@ describe('ModelSelector desktop layout', () => {
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
   })
 
-  test('shows family entries before model options when there are multiple families', async () => {
+  test('shows models from every family in the second-level menu', async () => {
     createShellElement({ hidden: true })
 
     render(
@@ -189,16 +189,11 @@ describe('ModelSelector desktop layout', () => {
     fireEvent.click(screen.getByTestId('model-selector-button'))
     fireEvent.mouseEnter(await screen.findByTestId('model-control-menu-model'))
 
-    expect(await screen.findByTestId('model-family-codex-official')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-claude')).toBeInTheDocument()
-    expect(screen.queryByTestId(`model-option-${SAMPLE_MODEL.name}`)).not.toBeInTheDocument()
-
-    fireEvent.mouseEnter(screen.getByTestId('model-family-claude'))
-
-    const familySubmenu = await screen.findByTestId('model-selector-family-submenu')
-    expect(familySubmenu).toHaveTextContent('Claude')
+    const submenu = await screen.findByTestId('model-selector-submenu')
+    expect(submenu).toHaveTextContent('我的 CodeX')
+    expect(submenu).toHaveTextContent('Claude')
     expect(screen.getByTestId(`model-option-${SECOND_FAMILY_MODEL.name}`)).toBeInTheDocument()
-    expect(screen.queryByTestId(`model-option-${SAMPLE_MODEL.name}`)).not.toBeInTheDocument()
+    expect(screen.getByTestId(`model-option-${SAMPLE_MODEL.name}`)).toBeInTheDocument()
   })
 
   test('caps the trigger width when maxClosedWidth is provided', () => {
