@@ -22,6 +22,8 @@ Common macOS shortcuts include:
 
 In **Settings → Models**, click **Add model** and choose a provider first. For Kimi Coding, Wework discovers the provider's models. K3 automatically uses the built-in Codex Catalog profile with a 256K context window and `low` default reasoning effort.
 
+Each custom model has an optional **Group** field that controls how it appears in the model picker. Kimi Coding defaults this field to **Kimi**, but users can edit or clear it. Models without a group appear under **Custom models**.
+
 Choose **Custom** to configure an OpenAI Responses, Chat Completions, or Anthropic Messages-compatible endpoint. Model capabilities use structured controls instead of raw Catalog JSON:
 
 - One context-window field drives both runtime and Catalog configuration.

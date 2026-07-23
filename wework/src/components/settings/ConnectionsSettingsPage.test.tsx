@@ -669,6 +669,10 @@ describe('ConnectionsSettingsPage', () => {
         screen.getByTestId('local-model-provider-select'),
         'kimi-coding'
       )
+      const groupInput = screen.getByTestId('local-model-group-input')
+      expect(groupInput).toHaveValue('Kimi')
+      await userEvent.clear(groupInput)
+      await userEvent.type(groupInput, '月之暗面')
       await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'test-key')
       await userEvent.click(screen.getByTestId('local-model-load-provider-models-button'))
       await waitFor(() =>
@@ -679,6 +683,7 @@ describe('ConnectionsSettingsPage', () => {
       const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
       expect(stored[0]).toMatchObject({
         providerProfileId: 'kimi-coding',
+        group: '月之暗面',
         modelId: 'k3',
         contextWindow: 262_144,
         codexCatalogModelId: 'wework-kimi-k3',

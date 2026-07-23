@@ -6,9 +6,10 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 
 import { DocumentList } from '@/features/knowledge/document/components/DocumentList'
-import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 
 let mockDocuments: KnowledgeDocument[] = []
+let mockFolders: KnowledgeFolder[] = []
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -56,7 +57,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
 
 jest.mock('@/features/knowledge/document/hooks/useFolders', () => ({
   useFolders: () => ({
-    folders: [],
+    folders: mockFolders,
     loading: false,
     createFolder: jest.fn(),
     updateFolder: jest.fn(),
@@ -182,9 +183,26 @@ function createDocument(overrides?: Partial<KnowledgeDocument>): KnowledgeDocume
   }
 }
 
+function createFolder(overrides?: Partial<KnowledgeFolder>): KnowledgeFolder {
+  return {
+    id: 1,
+    kind_id: 1,
+    parent_id: 0,
+    name: 'Reports',
+    document_count: 1,
+    direct_document_count: 1,
+    total_document_count: 1,
+    children: [],
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
 describe('DocumentList summary header', () => {
   beforeEach(() => {
     mockDocuments = []
+    mockFolders = []
   })
 
   it('shows inline summary edit button when manual summary exists after AI failure', () => {
@@ -249,5 +267,21 @@ describe('DocumentList summary header', () => {
 
     expect(screen.getByTestId('batch-move-button')).toBeInTheDocument()
     expect(screen.getByTestId('batch-transfer-button')).toBeInTheDocument()
+  })
+
+  it('hides expand-all when the knowledge base has no folders', () => {
+    mockDocuments = [createDocument()]
+
+    render(<DocumentList knowledgeBase={createKnowledgeBase({ document_count: 1 })} />)
+
+    expect(screen.queryByTestId('expand-all-toggle')).not.toBeInTheDocument()
+  })
+
+  it('shows expand-all when the knowledge base has folders and fewer than 200 documents', () => {
+    mockFolders = [createFolder()]
+
+    render(<DocumentList knowledgeBase={createKnowledgeBase({ document_count: 1 })} />)
+
+    expect(screen.getByTestId('expand-all-toggle')).toBeInTheDocument()
   })
 })

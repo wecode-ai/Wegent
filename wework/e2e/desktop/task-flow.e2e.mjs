@@ -426,10 +426,18 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     await control.command('fill', composerSelector, { value: prompt })
     await control.command('press', composerSelector, { key: 'Enter' })
     await control.awaitScenarioRequestCount('concurrent_memory', index)
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const snapshot = await waitForSnapshot(
+      control,
+      currentSnapshot =>
+        currentSnapshot.testIds.some(
+          testId => testId.startsWith('runtime-local-task-row-') && !taskRows.includes(testId)
+        ),
+      `Concurrent memory task ${index} did not appear in the sidebar`
+    )
     const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
     const nextRow = rows.find(row => !taskRows.includes(row))
-    if (nextRow) taskRows.push(nextRow)
+    assert.ok(nextRow, `Concurrent memory task ${index} did not create a new sidebar row`)
+    taskRows.push(nextRow)
   }
 
   assert.equal(
@@ -2499,8 +2507,9 @@ class DesktopE2EServer {
     if (this.scenario === 'concurrent_memory') {
       const requestNumber = (this.scenarioRequests.get('concurrent_memory')?.length ?? 0) + 1
       this.recordScenarioRequest('concurrent_memory', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(`WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${requestNumber}`),
+      assert.match(
+        JSON.stringify(body),
+        new RegExp(`WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${requestNumber}(?!\\d)`),
         `Concurrent memory request ${requestNumber} did not contain its UI prompt`
       )
       const stream = streamingTextEvents(responseId, `Concurrent task ${requestNumber} completed.`)

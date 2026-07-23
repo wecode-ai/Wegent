@@ -4,25 +4,18 @@
 
 'use client'
 
-import { ImageIcon, Video } from 'lucide-react'
+import { Image, Video } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { getModelCapabilities } from '@/lib/model-capabilities'
+import { MODEL_MODALITY_BADGE_STYLES } from './ModelModalityIcons'
 import type { GroupableModel } from './model-grouping'
-
-interface ModelCapabilities {
-  supportsImage?: boolean
-  supportsVideo?: boolean
-}
 
 interface ModelCapabilityIconsProps {
   model: GroupableModel
   className?: string
-}
-
-function getModelCapabilities(model: GroupableModel): ModelCapabilities {
-  const capabilities = model.config?.modelCapabilities
-  return capabilities && typeof capabilities === 'object' ? (capabilities as ModelCapabilities) : {}
+  showTooltips?: boolean
 }
 
 export function supportsImageUnderstanding(model: GroupableModel): boolean {
@@ -33,57 +26,84 @@ export function supportsVideoUnderstanding(model: GroupableModel): boolean {
   return getModelCapabilities(model).supportsVideo === true
 }
 
-export function ModelCapabilityIcons({ model, className }: ModelCapabilityIconsProps) {
+export function ModelCapabilityIcons({
+  model,
+  className,
+  showTooltips = false,
+}: ModelCapabilityIconsProps) {
   const { t } = useTranslation()
+  const capabilitySeparator = t('common:models.modality_separator')
   const capabilities = [
     supportsImageUnderstanding(model) && {
       key: 'image',
       label: t('common:models.image_understanding', '图片理解'),
-      icon: ImageIcon,
-      className: 'border-sky-100 bg-sky-50 text-sky-600',
+      icon: Image,
+      className: MODEL_MODALITY_BADGE_STYLES.image,
     },
     supportsVideoUnderstanding(model) && {
       key: 'video',
       label: t('common:models.video_understanding', '视频理解'),
       icon: Video,
-      className: 'border-emerald-100 bg-emerald-50 text-emerald-600',
+      className: MODEL_MODALITY_BADGE_STYLES.video,
     },
   ].filter(Boolean) as Array<{
     key: string
     label: string
-    icon: typeof ImageIcon
+    icon: typeof Image
     className: string
   }>
 
-  if (capabilities.length === 0) {
-    return null
-  }
+  if (capabilities.length === 0) return null
 
-  return (
-    <TooltipProvider>
-      <span className={cn('inline-flex shrink-0 items-center gap-1', className)}>
-        {capabilities.map(capability => {
-          const Icon = capability.icon
-
-          return (
-            <Tooltip key={capability.key}>
-              <TooltipTrigger asChild>
-                <span
-                  aria-label={capability.label}
-                  title={capability.label}
-                  className={cn(
-                    'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
-                    capability.className
-                  )}
-                >
-                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{capability.label}</TooltipContent>
-            </Tooltip>
-          )
-        })}
+  const content = (
+    <span className={cn('inline-flex shrink-0 items-center gap-1', className)}>
+      <span className="sr-only">
+        {capabilities.map(capability => capability.label).join(capabilitySeparator)}
       </span>
-    </TooltipProvider>
+      {capabilities.map(capability => {
+        const Icon = capability.icon
+        const iconClassName = cn(
+          'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+          capability.className
+        )
+
+        if (!showTooltips) {
+          return (
+            <span
+              key={capability.key}
+              aria-hidden="true"
+              title={capability.label}
+              className={iconClassName}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+            </span>
+          )
+        }
+
+        return (
+          <Tooltip key={capability.key}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-testid={`model-capability-${capability.key}-${model.name.replace(
+                  /[^a-zA-Z0-9_-]/g,
+                  '-'
+                )}`}
+                aria-label={capability.label}
+                className={cn(
+                  iconClassName,
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary'
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{capability.label}</TooltipContent>
+          </Tooltip>
+        )
+      })}
+    </span>
   )
+
+  return showTooltips ? <TooltipProvider>{content}</TooltipProvider> : content
 }
