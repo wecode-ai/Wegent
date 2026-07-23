@@ -2479,7 +2479,7 @@ struct TrayMenuStatePayload {
     unread_more: Vec<TrayMenuTaskItem>,
     running_count: usize,
     #[serde(default)]
-    active_task_count: Option<usize>,
+    active_task_ids: Option<Vec<String>>,
     #[serde(default)]
     show_running_status: bool,
     #[serde(default)]
@@ -2526,7 +2526,7 @@ impl TrayMenuStatePayload {
             unread: Vec::new(),
             unread_more: Vec::new(),
             running_count: 0,
-            active_task_count: None,
+            active_task_ids: None,
             show_running_status: false,
             unread_count: 0,
             pinned: Vec::new(),
@@ -3358,9 +3358,9 @@ fn update_tray_visual<R: tauri::Runtime>(
 #[cfg(desktop)]
 #[tauri::command]
 fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
-    if let Some(active_task_count) = state.active_task_count {
+    if let Some(active_task_ids) = &state.active_task_ids {
         app.state::<system_sleep::SystemSleepState>()
-            .set_running_count(active_task_count);
+            .set_running_tasks(active_task_ids.clone());
     }
     let menu = build_system_tray_menu(&app, &state)
         .map_err(|error| format!("Failed to build tray menu: {error}"))?;
