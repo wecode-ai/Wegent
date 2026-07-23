@@ -29,3 +29,5 @@ When the composer has only one model group, the model selector displays all mode
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
 Conversations can be continued, renamed, copied to another device, or archived. Project conversations stay under their project; standalone conversations appear in the conversation list.
+
+When you switch away while viewing the bottom of a conversation, Wework preserves its follow-latest state. Returning to a conversation that continued streaming in the background shows its newest content. If you scrolled upward before switching, Wework restores that reading position instead.
