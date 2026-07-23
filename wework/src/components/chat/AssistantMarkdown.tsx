@@ -36,7 +36,7 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-const STATIC_MARKDOWN_ROOT_MARGIN = '800px 0px'
+const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -57,16 +57,16 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
-  const windowStaticMarkdown = isTauriRuntime() && !isStreaming && variant === 'default'
+  const windowMarkdown = isTauriRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
     const parts = splitCodexInlineVisualizations(bufferedContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
-      const chunks = windowStaticMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
+      const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
       const windowed = chunks.length > 1
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
-  }, [bufferedContent, windowStaticMarkdown])
+  }, [bufferedContent, windowMarkdown])
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
@@ -200,10 +200,14 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             fileChanges={fileChanges}
           />
         ) : part.windowed ? (
-          <WindowedStaticMarkdownChunk key={`markdown-${index}`} content={part.content}>
+          <WindowedMarkdownChunk
+            key={`markdown-${index}`}
+            content={part.content}
+            eager={index === 0 || index === contentParts.length - 1}
+          >
             <Streamdown
-              mode="static"
-              isAnimating={false}
+              mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
+              isAnimating={isStreaming && index === contentParts.length - 1}
               controls={false}
               linkSafety={{ enabled: false }}
               lineNumbers={false}
@@ -212,7 +216,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             >
               {prepareAssistantMarkdownContent(part.content)}
             </Streamdown>
-          </WindowedStaticMarkdownChunk>
+          </WindowedMarkdownChunk>
         ) : (
           <Streamdown
             key={`markdown-${index}`}
@@ -232,15 +236,19 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   )
 }, areAssistantMarkdownPropsEqual)
 
-function WindowedStaticMarkdownChunk({
+function WindowedMarkdownChunk({
   content,
+  eager,
   children,
 }: {
   content: string
+  eager: boolean
   children: ReactNode
 }) {
   const chunkRef = useRef<HTMLDivElement>(null)
-  const [nearViewport, setNearViewport] = useState(true)
+  const [nearViewport, setNearViewport] = useState(
+    () => typeof IntersectionObserver === 'undefined' || eager
+  )
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
@@ -258,7 +266,7 @@ function WindowedStaticMarkdownChunk({
         }
         setNearViewport(entry.isIntersecting)
       },
-      { rootMargin: STATIC_MARKDOWN_ROOT_MARGIN }
+      { rootMargin: MARKDOWN_WINDOW_ROOT_MARGIN }
     )
     observer.observe(chunk)
     return () => observer.disconnect()
