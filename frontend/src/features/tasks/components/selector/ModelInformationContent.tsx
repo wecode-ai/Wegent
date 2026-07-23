@@ -5,6 +5,7 @@
 'use client'
 
 import React from 'react'
+import { Info } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
@@ -48,13 +49,23 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
     <div className="space-y-5 pt-1">
       {model.costIndex != null && (
         <section className="rounded-lg bg-surface px-4 py-3">
-          <div className="text-sm font-medium text-text-primary">{t('models.cost_index')}</div>
-          <div data-testid="model-details-cost-index" className="mt-2 text-2xl font-semibold">
-            {formatCostIndex(model.costIndex)}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1 text-sm font-medium text-text-primary">
+              <span>{t('models.cost_index')}</span>
+              <span
+                role="img"
+                data-testid="model-details-cost-index-help"
+                aria-label={t('models.cost_index_description')}
+                title={t('models.cost_index_description')}
+                className="inline-flex h-5 w-5 items-center justify-center text-text-muted"
+              >
+                <Info className="h-3.5 w-3.5" aria-hidden="true" />
+              </span>
+            </div>
+            <div data-testid="model-details-cost-index" className="text-lg font-semibold">
+              {formatCostIndex(model.costIndex)}
+            </div>
           </div>
-          <p className="mt-1 text-xs leading-5 text-text-muted">
-            {t('models.cost_index_description')}
-          </p>
         </section>
       )}
 

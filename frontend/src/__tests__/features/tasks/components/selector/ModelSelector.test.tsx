@@ -37,7 +37,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       const translations: Record<string, string> = {
         'models.model_id': '模型 ID',
         'models.cost_index': '成本指数',
-        'models.cost_index_description': '成本指数说明',
+        'models.cost_index_description': '相对成本，1x 为基准；数值越高成本越高，不代表实际价格。',
         'models.details_unavailable': '暂无信息',
         'models.input_output_types': '输入输出类型',
         'models.input_type': '输入',
@@ -500,6 +500,12 @@ describe('ModelSelector', () => {
     const preview = await screen.findByTestId('model-details-preview')
     expect(preview).toHaveTextContent('claude-3-5-sonnet-20241022')
     expect(preview).toHaveTextContent('50x')
+    expect(preview).not.toHaveTextContent('相对成本，1x 为基准；数值越高成本越高，不代表实际价格。')
+
+    expect(preview.querySelector('[data-testid="model-details-cost-index-help"]')).toHaveAttribute(
+      'title',
+      '相对成本，1x 为基准；数值越高成本越高，不代表实际价格。'
+    )
   })
 
   it('omits the cost index section when the model has no cost index', async () => {
