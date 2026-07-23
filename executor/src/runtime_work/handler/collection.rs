@@ -561,7 +561,8 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
-        let mut link = RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path);
+        let mut link =
+            RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path, local_active);
         if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
@@ -570,12 +571,6 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or_else(Map::new);
             runtime_handle.insert("threadPath".to_owned(), Value::String(path));
             link.runtime_handle = Value::Object(runtime_handle);
-        }
-        if local_active {
-            link.status = "running".to_owned();
-            link.running = true;
-            link.thread_status = "active".to_owned();
-            link.turn_status = Some("inProgress".to_owned());
         }
         Some(link)
     }

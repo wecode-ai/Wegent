@@ -256,6 +256,20 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.recent.map(item => item.title)).toEqual(['Running task', 'Unread task'])
   })
 
+  test('ignores stale reminder running state when executor tasks are idle', () => {
+    const groups = buildTrayMenuTaskGroups(runtimeWork(), {
+      reminders: {
+        unreadTaskKeys: new Set(),
+        unreadCount: 0,
+        hasRunningTasks: true,
+      },
+    })
+
+    expect(groups.hasRunningTasks).toBe(false)
+    expect(groups.runningCount).toBe(0)
+    expect(groups.activeTaskCount).toBe(0)
+  })
+
   test('limits pinned tasks to three and reports more pinned tasks', () => {
     const groups = buildTrayMenuTaskGroups(
       runtimeWork({

@@ -34,7 +34,7 @@ export function WorkbenchPage() {
   )
   const trayTooltip = useMemo(() => {
     const parts = []
-    if (trayRunningEnabled && taskReminders.hasRunningTasks) {
+    if (trayMenuTaskGroups.hasRunningTasks) {
       parts.push(i18nLabel('running'))
     }
     if (trayUnreadEnabled && taskReminders.unreadCount > 0) {
@@ -44,9 +44,8 @@ export function WorkbenchPage() {
     return parts.length > 0 ? parts.join('\n') : null
   }, [
     codexUsage.tooltip,
-    taskReminders.hasRunningTasks,
     taskReminders.unreadCount,
-    trayRunningEnabled,
+    trayMenuTaskGroups.hasRunningTasks,
     trayUnreadEnabled,
     showTrayUsage,
   ])

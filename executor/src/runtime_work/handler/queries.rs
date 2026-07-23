@@ -223,7 +223,7 @@ impl RuntimeWorkRpcHandler {
                 before_cursor: before_cursor.as_deref(),
                 after_cursor: after_cursor.as_deref(),
                 message_count: 0,
-                running: false,
+                running: local_execution_running,
             });
             return Ok(transcript_response(TranscriptResponseInput {
                 local_task_id,
@@ -231,7 +231,7 @@ impl RuntimeWorkRpcHandler {
                 runtime,
                 messages: Vec::new(),
                 context_usage: None,
-                running: false,
+                running: local_execution_running,
                 limit,
                 before_cursor,
                 after_cursor,
@@ -270,7 +270,7 @@ impl RuntimeWorkRpcHandler {
                 local_link.as_ref().map(cached_messages).unwrap_or_default(),
             );
         }
-        let running = codex_thread_has_active_turn(&thread);
+        let running = local_execution_running;
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
