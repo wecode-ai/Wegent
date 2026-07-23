@@ -18,7 +18,7 @@ const MARKER_ROW_HEIGHT_PX = 8
 const MARKER_ROW_GAP_PX = 20 / 9
 const MARKER_HOVER_ROW_HEIGHT_PX = MARKER_ROW_HEIGHT_PX + MARKER_ROW_GAP_PX
 const NAVIGATION_VIEWPORT_PADDING_PX = 48
-const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000]
+const NAVIGATION_SCROLL_SETTLE_DELAYS_MS = [80, 160, 320, 640, 1000, 1600]
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
 const CODEX_REQUEST_MARKER_PATTERN = /^## My request for Codex:\s*$/im
 
@@ -77,20 +77,23 @@ export function MessageTurnNavigation({
     navigationScrollTimersRef.current = []
   }, [])
 
-  const scrollToAnchor = useCallback(
-    (scroller: HTMLDivElement, anchor: HTMLElement, behavior: ScrollBehavior = 'auto') => {
+  const scrollToMessageId = useCallback(
+    (scroller: HTMLDivElement, messageId: string, behavior: ScrollBehavior = 'auto') => {
       clearNavigationScrollTimers()
-      scrollToMessageAnchor(scroller, anchor, behavior)
+      const initialAnchor = findMessageAnchor(contentRef, messageId)
+      if (!initialAnchor) return
+      scrollToMessageAnchor(scroller, initialAnchor, behavior)
 
       NAVIGATION_SCROLL_SETTLE_DELAYS_MS.forEach(delay => {
         const timer = window.setTimeout(() => {
-          if (!anchor.isConnected) return
-          scrollToMarkerTarget(scroller, getMessageAnchorTargetTop(scroller, anchor), 'auto')
+          const currentAnchor = findMessageAnchor(contentRef, messageId)
+          if (!currentAnchor) return
+          scrollToMarkerTarget(scroller, getMessageAnchorTargetTop(scroller, currentAnchor), 'auto')
         }, delay)
         navigationScrollTimersRef.current.push(timer)
       })
     },
-    [clearNavigationScrollTimers]
+    [clearNavigationScrollTimers, contentRef]
   )
 
   const userTurns = useMemo(() => {
@@ -211,7 +214,7 @@ export function MessageTurnNavigation({
     const anchor = targetMessageId ? findMessageAnchor(contentRef, targetMessageId) : null
     if (!scroller || !anchor) return
 
-    scrollToAnchor(scroller, anchor)
+    scrollToMessageId(scroller, targetMessageId)
     setActiveMarkerId(targetMessageId)
     setLoadingMarkerId(current => (current === pendingScrollTarget.navigationId ? null : current))
     setPendingScrollTarget(null)
@@ -222,7 +225,7 @@ export function MessageTurnNavigation({
     onNavigationLoadStateChange,
     pendingScrollTarget,
     scrollRef,
-    scrollToAnchor,
+    scrollToMessageId,
   ])
 
   useEffect(() => {
@@ -284,7 +287,7 @@ export function MessageTurnNavigation({
             finishNavigationLoad(onNavigationLoadStateChange)
           }
         }
-        scrollToAnchor(scroller, currentAnchor, 'smooth')
+        scrollToMessageId(scroller, marker.id, 'smooth')
         setActiveMarkerId(marker.id)
         return
       }
@@ -316,7 +319,7 @@ export function MessageTurnNavigation({
       onLoadTurnNavigationItem,
       onNavigationLoadStateChange,
       scrollRef,
-      scrollToAnchor,
+      scrollToMessageId,
     ]
   )
 
