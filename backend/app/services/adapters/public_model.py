@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Model, Shell
+from app.schemas.kind import Model, ModelSpec, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
@@ -101,6 +101,14 @@ class ModelAdapter:
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
                     cost_index = spec.get("costIndex")
+                    model_config = spec.get("modelConfig")
+                    if isinstance(model_config, dict):
+                        context_window = ModelSpec._model_config_token_limit(
+                            model_config.get("context_window")
+                        )
+                        max_output_tokens = ModelSpec._model_config_token_limit(
+                            model_config.get("max_output_tokens")
+                        )
                     capabilities = normalize_model_capabilities(
                         spec.get("modelCapabilities")
                     )

@@ -228,8 +228,8 @@ class TestModelAggregationService:
         assert model_dict["contextWindow"] == 1000000
         assert model_dict["maxOutputTokens"] == 128000
 
-    def test_top_level_model_limits_are_ignored(self):
-        """Removed top-level limit fields must not override modelConfig."""
+    def test_runtime_config_model_limits_override_legacy_top_level_values(self):
+        """Runtime modelConfig limits take precedence over legacy fields."""
         model_crd = {
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Model",
@@ -249,6 +249,44 @@ class TestModelAggregationService:
 
         assert info["context_window"] == 1000000
         assert info["max_output_tokens"] == 128000
+
+    def test_model_limits_fall_back_to_legacy_top_level_values(self):
+        """Legacy limits remain available when modelConfig omits them."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "legacy-claude", "namespace": "default"},
+            "spec": {
+                "contextWindow": 200000,
+                "maxOutputTokens": 32000,
+                "modelConfig": {},
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["context_window"] == 200000
+        assert info["max_output_tokens"] == 32000
+
+    def test_invalid_legacy_model_limits_are_ignored(self):
+        """Legacy limits must be actual integers rather than coerced values."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "invalid-legacy-limits", "namespace": "default"},
+            "spec": {
+                "contextWindow": True,
+                "maxOutputTokens": "32000",
+                "modelConfig": {},
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["context_window"] is None
+        assert info["max_output_tokens"] is None
 
     def test_unified_model_exposes_runtime_family_without_env(self):
         """Test API model data exposes runtime family without sensitive env."""
@@ -495,6 +533,28 @@ class TestModelAggregationService:
             "supportsImage": True,
             "supportsVideo": False,
         }
+
+    def test_public_model_adapter_extracts_legacy_spec_model_limits(self):
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="legacy-limit-model",
+            namespace="default",
+            json={
+                "spec": {
+                    "modelConfig": {
+                        "context_window": 1000000,
+                        "max_output_tokens": 128000,
+                    }
+                }
+            },
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["contextWindow"] == 1000000
+        assert model_dict["maxOutputTokens"] == 128000
 
     def _create_public_shell(
         self,
