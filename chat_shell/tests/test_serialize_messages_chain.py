@@ -378,3 +378,20 @@ class TestSerializeMessagesChain:
         assert result[0]["content"] == [
             {"type": "reasoning", "reasoning": "thinking..."},
         ]
+
+
+def test_serializer_keeps_checkpoint_retained_user():
+    from langchain_core.messages import HumanMessage
+
+    from chat_shell.agents.graph_builder import _serialize_messages_chain
+
+    msg = HumanMessage(
+        content="retained question",
+        id="ret-1",
+        additional_kwargs={"checkpoint_retained": True},
+    )
+    chain = _serialize_messages_chain([msg])
+    assert len(chain) == 1
+    assert chain[0]["role"] == "user"
+    assert chain[0]["content"] == "retained question"
+    assert chain[0]["additional_kwargs"]["checkpoint_retained"] is True

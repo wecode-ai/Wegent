@@ -313,3 +313,25 @@ async def test_summary_instruction_is_final_turn():
     assert COMPACT_TASK_INSTRUCTION in msgs[-1].content
     # No leading SystemMessage instruction.
     assert getattr(msgs[0], "content", "") != COMPACT_TASK_INSTRUCTION
+
+
+def test_replacement_history_marks_retained_user():
+    compactor = SummaryCompactor(
+        llm=object(), token_counter=TokenCounter(model_name="gpt-4")
+    )
+    history = [HumanMessage(content="keep me")]
+    replacement = compactor._build_replacement_history(
+        history, summary_body="S", preserve_initial_context=False
+    )
+    retained = [
+        m
+        for m in replacement
+        if isinstance(m, HumanMessage)
+        and m.additional_kwargs.get("checkpoint_retained") is True
+    ]
+    assert retained, "retained user message must carry checkpoint_retained"
+    assert retained[0].id, "retained user message must have a fresh id"
+    # The summary message is separate and keeps its summary marker.
+    assert any(
+        m.additional_kwargs.get(SUMMARY_METADATA_FLAG) is True for m in replacement
+    )

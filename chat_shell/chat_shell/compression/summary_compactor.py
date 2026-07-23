@@ -23,6 +23,7 @@ import time
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -43,6 +44,10 @@ SUMMARY_PREFIX = (
 )
 SUMMARY_COMPACTED_FLAG = "compacted"
 SUMMARY_METADATA_FLAG = "summary_compacted"
+# Marks a raw user message retained into the compaction checkpoint. The turn
+# serializer persists messages carrying this flag (see graph_builder), so the
+# checkpoint chain is self-contained ([retained user] + [summary] + [suffix]).
+CHECKPOINT_RETAINED_FLAG = "checkpoint_retained"
 SUMMARY_COMPACT_VERSION = 1
 DEFAULT_RECENT_USER_TOKEN_LIMIT = 20_000
 
@@ -401,6 +406,20 @@ class SummaryCompactor:
         )
         return replacement
 
+    @staticmethod
+    def _clone_retained_user(message: HumanMessage) -> HumanMessage:
+        """Clone a retained user message with a fresh id + checkpoint marker.
+
+        A fresh id keeps the clone out of the turn's input-id set so
+        ``_new_messages_from_state`` treats it as generated-this-turn; the marker
+        makes the turn serializer persist it into ``messages_chain``.
+        """
+        kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+        kwargs[CHECKPOINT_RETAINED_FLAG] = True
+        return HumanMessage(
+            content=message.content, id=str(uuid4()), additional_kwargs=kwargs
+        )
+
     def _select_recent_user_messages(
         self, messages: list[BaseMessage]
     ) -> list[HumanMessage]:
@@ -421,13 +440,13 @@ class SummaryCompactor:
                 break
 
             if message_tokens <= remaining_budget:
-                selected.append(message)
+                selected.append(self._clone_retained_user(message))
                 used_tokens += message_tokens
                 continue
 
             truncated = self._truncate_user_message(message, remaining_budget)
             if truncated is not None:
-                selected.append(truncated)
+                selected.append(self._clone_retained_user(truncated))
                 break
 
         selected.reverse()
