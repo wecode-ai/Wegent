@@ -14,13 +14,15 @@ Add files, images, code locations, or an Appshot to the composer when they clari
 
 The model provides the AI capability; the device determines where files and commands run. Local models run on the local device. Cloud models and devices require a Wegent connection.
 
+When the composer has only one model group, the model selector displays all models in that group directly. When multiple groups are available, choose a group first, then select a model from its expanded submenu.
+
 ## Control a running task
 
-| Action | Shortcut | Use it when |
-| --- | --- | --- |
-| Send after the response | `Enter` | Queue the next instruction |
-| Steer the response | `Command/Ctrl + Enter` | Adjust the current direction |
-| Interrupt and send | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
+| Action                  | Shortcut                       | Use it when                             |
+| ----------------------- | ------------------------------ | --------------------------------------- |
+| Send after the response | `Enter`                        | Queue the next instruction              |
+| Steer the response      | `Command/Ctrl + Enter`         | Adjust the current direction            |
+| Interrupt and send      | `Command/Ctrl + Shift + Enter` | Stop an incorrect direction immediately |
 
 Interrupting stops the current response but does not roll back completed file edits or commands.
 
