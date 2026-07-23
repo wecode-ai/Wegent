@@ -29,6 +29,7 @@
     "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
     "e2e:desktop:plugins": "node e2e/desktop/task-flow.e2e.mjs --plugins-only",
     "e2e:desktop:memory": "node e2e/desktop/task-flow.e2e.mjs --memory-only",
+    "e2e:desktop:streaming-text": "WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
     "ai:verify": "node scripts/ai-verify.mjs",
     "e2e:ui": "playwright test --ui"
   },

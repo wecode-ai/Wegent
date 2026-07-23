@@ -1189,7 +1189,7 @@ describe('MessageList', () => {
     ).toBeInTheDocument()
   })
 
-  test('hides thinking after partial streaming assistant content becomes visible', () => {
+  test('shows thinking after partial streaming assistant content becomes visible', () => {
     render(
       <MessageList
         messages={[
@@ -1206,7 +1206,7 @@ describe('MessageList', () => {
 
     const content = screen.getByTestId('message-assistant').querySelector('p')
     expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('shows only the running block after partial content', () => {
@@ -4026,7 +4026,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -4051,7 +4051,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows full-width processing status without trailing thinking once final text starts streaming', () => {
+  test('shows trailing thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -4068,7 +4068,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('1 秒')
 
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
     expect(status.parentElement).not.toHaveClass('border-b')
@@ -4213,7 +4213,7 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
-  test('collapses tool rows once final text is visible without trailing thinking', () => {
+  test('collapses tool rows and shows trailing thinking once final text is visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -4239,7 +4239,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')

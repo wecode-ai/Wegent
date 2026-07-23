@@ -3362,11 +3362,11 @@ class DesktopE2EServer {
   }
 }
 
-async function writeCodexConfig(codexHome, modelServerUrl) {
+async function writeCodexConfig(codexHome, modelServerUrl, scenarioConfigToml = '') {
   await mkdir(codexHome, { recursive: true })
   await writeFile(
     join(codexHome, 'config.toml'),
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\n`,
     'utf8'
   )
 }
@@ -3750,7 +3750,7 @@ async function main() {
 
   const desktopScenario = await loadDesktopScenario(
     process.env.WEWORK_E2E_DESKTOP_SCENARIO_MODULE,
-    { uiTimeoutMs: UI_TIMEOUT_MS }
+    { resultDir, uiTimeoutMs: UI_TIMEOUT_MS }
   )
   if (DESKTOP_SCENARIO_ONLY && !desktopScenario) {
     throw new Error('Desktop scenario-only mode requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE')
@@ -3790,7 +3790,11 @@ async function main() {
     )
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
-    await writeCodexConfig(join(executorHome, 'codex'), control.url)
+    await writeCodexConfig(
+      join(executorHome, 'codex'),
+      control.url,
+      desktopScenario?.codexConfigToml
+    )
 
     app = spawn(appBinary, [], {
       cwd: weworkDir,
