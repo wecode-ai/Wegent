@@ -1296,6 +1296,7 @@
     "local_model_display_name_label": "Display name",
     "local_model_group_label": "Group",
     "local_model_group_placeholder": "For example: Local inference",
+    "local_model_group_optional_placeholder": "Leave blank to use Custom models",
     "local_model_api_key_label": "API Key",
     "local_model_api_key_placeholder": "Optional",
     "local_model_api_key_replace_placeholder": "Leave blank to keep the saved key",
