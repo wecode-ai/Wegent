@@ -14,9 +14,9 @@ import {
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
 import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
-import { joinDevicePath } from '@/lib/device-workspace-path'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
@@ -34,7 +34,6 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -182,7 +181,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     >
       {contentParts.map((part, index) =>
         part.kind === 'visualization' ? (
-          <CodexInlineVisualization
+          <CodexInlineVisualizationHost
             key={`${part.file}-${index}`}
             file={part.file}
             fileChanges={fileChanges}
@@ -205,50 +204,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     </div>
   )
 }, areAssistantMarkdownPropsEqual)
-
-function CodexInlineVisualization({
-  file,
-  fileChanges,
-}: {
-  file: string
-  fileChanges?: TurnFileChangesSummary
-}) {
-  const sourcePath = inlineVisualizationPath(file, fileChanges)
-  const sourceUrl = sourcePath ? localHtmlBrowserUrl(sourcePath) : null
-
-  if (!sourceUrl) return null
-
-  return (
-    <div
-      data-scroll-anchor
-      data-testid="codex-inline-visualization"
-      className="mb-3 overflow-hidden rounded-xl border border-border bg-background"
-    >
-      <iframe
-        title={file}
-        src={sourceUrl}
-        sandbox="allow-scripts"
-        className="h-[480px] w-full border-0 bg-background"
-        data-testid="codex-inline-visualization-frame"
-      />
-    </div>
-  )
-}
-
-function inlineVisualizationPath(
-  file: string,
-  fileChanges?: TurnFileChangesSummary
-): string | null {
-  if (!fileChanges || fileChanges.status !== 'active') return null
-  const matchingFile = fileChanges.files.find(change => change.path.replace(/\\/g, '/') === file)
-  if (!matchingFile || matchingFile.change_type === 'deleted') return null
-
-  try {
-    return joinDevicePath(fileChanges.workspace_path, file)
-  } catch {
-    return null
-  }
-}
 
 type MarkdownCodeProps = {
   node?: HastElement
