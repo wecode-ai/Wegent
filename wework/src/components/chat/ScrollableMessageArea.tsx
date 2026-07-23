@@ -57,7 +57,7 @@ interface ScrollableMessageAreaProps {
   scrollButtonClassName?: string
   scrollTestId?: string
   externalScrollRef?: RefObject<HTMLDivElement | null>
-  turnNavigationPortalTargetId?: string
+  turnNavigationPortalTarget?: Element | null
   conversationKey?: string | number | null
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
@@ -125,8 +125,8 @@ function areScrollableMessageAreaPropsEqual(
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
     previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
-    previous.turnNavigationPortalTargetId !== next.turnNavigationPortalTargetId
-      ? 'turnNavigationPortalTargetId'
+    previous.turnNavigationPortalTarget !== next.turnNavigationPortalTarget
+      ? 'turnNavigationPortalTarget'
       : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.devices !== next.devices ? 'devices' : null,
@@ -196,7 +196,7 @@ function ScrollableMessagePaneContent({
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
   externalScrollRef,
-  turnNavigationPortalTargetId,
+  turnNavigationPortalTarget,
   conversationKey,
   devices,
   onRetryFailedMessage,
@@ -688,7 +688,7 @@ function ScrollableMessagePaneContent({
         contentRef={contentRef}
         onLoadTurnNavigationItem={onLoadTurnNavigationItem}
         onNavigationLoadStateChange={handleTurnNavigationLoadStateChange}
-        portalTargetId={turnNavigationPortalTargetId}
+        portalTarget={turnNavigationPortalTarget}
       />
       {turnNavigationLoading && (
         <div
