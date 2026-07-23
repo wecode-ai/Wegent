@@ -206,16 +206,7 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
-  const currentRuntimeTaskRunning = useMemo(
-    () =>
-      authoritativeRuntimeTaskRunning ||
-      (state.currentRuntimeTask !== null &&
-        state.activeRuntimeTasks.some(
-          address =>
-            getRuntimeTaskRouteKey(address) === getRuntimeTaskRouteKey(state.currentRuntimeTask!)
-        )),
-    [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
-  )
+  const currentRuntimeTaskRunning = authoritativeRuntimeTaskRunning
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
     runtimeWork: state.runtimeWork,

@@ -118,6 +118,7 @@ function signalProcessGroup(processGroupId, signal) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
+  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -137,11 +138,27 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
+        if (command) return json(response, 200, command)
+
+        const poll = { response, timer: undefined }
+        poll.timer = setTimeout(() => {
+          const index = commandPolls.indexOf(poll)
+          if (index >= 0) commandPolls.splice(index, 1)
           response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+          response.end()
+        }, defaultTimeoutMs)
+        commandPolls.push(poll)
+        response.once('close', () => {
+          const index = commandPolls.indexOf(poll)
+          if (index < 0) return
+          commandPolls.splice(index, 1)
+          clearTimeout(poll.timer)
+        })
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        response.writeHead(204, corsHeaders)
+        return response.end()
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -168,7 +185,14 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const nextCommand = { id, ...command }
+        const poll = commandPolls.shift()
+        if (poll) {
+          clearTimeout(poll.timer)
+          json(poll.response, 200, nextCommand)
+        } else {
+          queue.push(nextCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
