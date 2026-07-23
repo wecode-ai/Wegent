@@ -2,7 +2,11 @@ import {
   resolveModelExecutionSelection,
   supportsResponsesApi,
 } from '@/features/cloud-connection/modelExecution'
-import { getDefaultModelOptions, normalizeModelOptionAliases } from '@/lib/model-ui'
+import {
+  CATALOG_MODEL_ID_CONTROL_ID,
+  getDefaultModelOptions,
+  normalizeModelOptionAliases,
+} from '@/lib/model-ui'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -138,8 +142,9 @@ export function selectedModelExecutionFields(
     if (typeof executionModel.resourceUserId === 'number') {
       modelOptions[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(executionModel.resourceUserId)
     }
-    if (selectedModel.modelId?.trim()) {
-      modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = selectedModel.modelId.trim()
+    const catalogModelId = selectedModelOptions[CATALOG_MODEL_ID_CONTROL_ID]?.trim()
+    if (catalogModelId) {
+      modelOptions[CLOUD_MODEL_CATALOG_MODEL_ID_OPTION] = catalogModelId
     }
     const contextWindow =
       selectedModel.config?.model_context_window ??

@@ -162,7 +162,44 @@ describe('runtimeModelSelection', () => {
         weworkCloudModelNamespace: 'default',
         weworkCloudModelResourceUserId: '42',
         weworkCloudModelContextWindow: '128000',
-        weworkCloudModelCatalogModelId: 'gpt-5.6-luna',
+      },
+    })
+  })
+
+  test('passes selected catalog model id as hidden execution option', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'cloud:user:shared-model',
+      type: 'user',
+      modelId: 'gpt-5.6-luna',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        context_window: 128000,
+        weworkExecution: {
+          source: 'cloud',
+          modelName: 'shared-model',
+          modelType: 'user',
+          modelNamespace: 'default',
+          resourceUserId: 42,
+        },
+      },
+    }
+
+    expect(
+      selectedModelExecutionFields(cloudModel, {
+        catalogModelId: 'gpt-5.6-sol',
+      })
+    ).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        catalogModelId: 'gpt-5.6-sol',
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelContextWindow: '128000',
+        weworkCloudModelCatalogModelId: 'gpt-5.6-sol',
       },
     })
   })

@@ -983,6 +983,15 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: temperature={temperature}"
         )
 
+    # Catalog model id override for Codex-compatible models
+    codex_catalog_model_id = env.get("codex_catalog_model_id") or env.get(
+        "codexCatalogModelId"
+    )
+    if codex_catalog_model_id:
+        logger.info(
+            f"[model_resolver] _extract_model_config: codex_catalog_model_id={codex_catalog_model_id}"
+        )
+
     result = {
         "api_key": api_key,
         "base_url": base_url,
@@ -1006,6 +1015,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     }
     if model_capabilities:
         result["modelCapabilities"] = model_capabilities
+    if codex_catalog_model_id:
+        result["codex_catalog_model_id"] = codex_catalog_model_id
     return result
 
 

@@ -1,4 +1,7 @@
+import { supportsResponsesApi } from '@/features/cloud-connection/modelExecution'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
+
+export const CATALOG_MODEL_ID_CONTROL_ID = 'catalogModelId'
 
 export interface ModelControlOption {
   value: string
@@ -28,6 +31,30 @@ export interface ModelFamilyConfig {
   order: number
   controls: ModelControlConfig[]
 }
+
+const CATALOG_MODEL_OPTIONS: ModelControlOption[] = [
+  {
+    value: '',
+    label: 'Default',
+    labelKey: 'workbench.catalog_model_default',
+    order: 0,
+  },
+  {
+    value: 'gpt-5.6-sol',
+    label: 'GPT 5.6 Sol',
+    order: 10,
+  },
+  {
+    value: 'gpt-5.6-terra',
+    label: 'GPT 5.6 Terra',
+    order: 20,
+  },
+  {
+    value: 'gpt-5.6-luna',
+    label: 'GPT 5.6 Luna',
+    order: 30,
+  },
+]
 
 export type ModelCompatibilityFamily = string
 
@@ -77,6 +104,17 @@ const FAMILY_ORDER = [
 ]
 
 const HIDDEN_MODEL_FAMILIES = new Set(['gemini'])
+
+const CATALOG_MODEL_CONTROL: ModelControlConfig = {
+  id: CATALOG_MODEL_ID_CONTROL_ID,
+  label: 'Catalog model',
+  labelKey: 'workbench.catalog_model_id',
+  defaultValue: '',
+  placement: 'belowModels',
+  scope: 'model',
+  includeInLabel: 'whenNonDefault',
+  options: CATALOG_MODEL_OPTIONS,
+}
 
 const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
   {
@@ -184,6 +222,7 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
       },
     ],
   },
+  CATALOG_MODEL_CONTROL,
 ]
 
 export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
@@ -376,9 +415,10 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
   if (!model) return []
   const metadata = getModelUiMetadata(model)
   const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel)
-  return familyConfig.controls
+  const controls = familyConfig.controls
     .filter(control => {
       if ((control.scope ?? 'family') === 'family') return true
+      if (control.id === CATALOG_MODEL_ID_CONTROL_ID && supportsResponsesApi(model)) return true
       return metadata.supportedControls.has(control.id)
     })
     .map(control => {
@@ -400,6 +440,13 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
         options,
       }
     })
+
+  const hasCatalogControl = controls.some(control => control.id === CATALOG_MODEL_ID_CONTROL_ID)
+  if (!hasCatalogControl && supportsResponsesApi(model)) {
+    controls.push(CATALOG_MODEL_CONTROL)
+  }
+
+  return controls
 }
 
 export function getModelDisplayLabel(

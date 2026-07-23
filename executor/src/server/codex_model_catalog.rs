@@ -31,6 +31,9 @@ pub(crate) const ROUTE: &str = "/v1/codex-router/models";
 pub(crate) const PROVIDER_ID: &str = "wework-router";
 pub(crate) const KIMI_K3_MODEL: &str = "wework-kimi-k3";
 pub(crate) const KIMI_K27_MODEL: &str = "wework-kimi-k2-7";
+const GPT_56_SOL_MODEL: &str = "gpt-5.6-sol";
+const GPT_56_TERRA_MODEL: &str = "gpt-5.6-terra";
+const GPT_56_LUNA_MODEL: &str = "gpt-5.6-luna";
 const UPSTREAM_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_BASE_INSTRUCTIONS: &str =
     include_str!("../../../shared/assets/gptDefaultInstructions.md");
@@ -90,7 +93,13 @@ pub(crate) fn catalog() -> Value {
 }
 
 pub(crate) fn models() -> Vec<Value> {
-    let mut models = vec![kimi_k3_model_entry(), kimi_k27_model_entry()];
+    let mut models = vec![
+        kimi_k3_model_entry(),
+        kimi_k27_model_entry(),
+        gpt_56_sol_model_entry(),
+        gpt_56_terra_model_entry(),
+        gpt_56_luna_model_entry(),
+    ];
     models.extend(read_custom_models());
     models
 }
@@ -260,6 +269,33 @@ fn kimi_k27_model_entry() -> Value {
         Value::String("Kimi K2.7 Code profile for stable agentic coding".to_owned());
     entry["context_window"] = Value::Number(262_144.into());
     entry["max_context_window"] = Value::Number(262_144.into());
+    entry
+}
+
+fn gpt_56_sol_model_entry() -> Value {
+    let mut entry = model_entry(GPT_56_SOL_MODEL, "GPT 5.6 Sol", Some("freeform"));
+    entry["description"] =
+        Value::String("GPT 5.6 Sol profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn gpt_56_terra_model_entry() -> Value {
+    let mut entry = model_entry(GPT_56_TERRA_MODEL, "GPT 5.6 Terra", Some("freeform"));
+    entry["description"] =
+        Value::String("GPT 5.6 Terra profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
+    entry
+}
+
+fn gpt_56_luna_model_entry() -> Value {
+    let mut entry = model_entry(GPT_56_LUNA_MODEL, "GPT 5.6 Luna", Some("freeform"));
+    entry["description"] =
+        Value::String("GPT 5.6 Luna profile for agentic coding".to_owned());
+    entry["context_window"] = Value::Number(272_000.into());
+    entry["max_context_window"] = Value::Number(272_000.into());
     entry
 }
 

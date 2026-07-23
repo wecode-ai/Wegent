@@ -384,7 +384,10 @@ describe('workbench project chat hooks', () => {
     rerender({ scopeKey: 'runtime:local-device:task-1' })
 
     expect(result.current.selectedModel).toEqual(customModel)
-    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+    expect(result.current.selectedModelOptions).toEqual({
+      reasoning: 'high',
+      catalogModelId: '',
+    })
   })
 
   test('waits for selection readiness before restoring configured model', async () => {
