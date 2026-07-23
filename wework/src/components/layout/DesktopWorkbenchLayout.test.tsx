@@ -6910,7 +6910,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
   })
 
-  test('does not reload environment info when runtime work polling keeps the same project workspace target', async () => {
+  test('does not reload environment info when polling keeps the same workspace context', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',
       deletions: '-1',
@@ -6982,6 +6982,7 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentProject: workspaceProject,
+          devices: structuredClone(baseProps.state.devices),
           runtimeWork: structuredClone(runtimeWork),
         }}
       />
