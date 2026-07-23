@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getModelCapabilities } from '@/lib/model-capabilities'
+import { getModelCapabilities, getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
 
 describe('getModelCapabilities', () => {
   it('prefers top-level capabilities over legacy config', () => {
@@ -45,5 +45,28 @@ describe('getModelCapabilities', () => {
         config: { modelCapabilities: ['supportsImage'] },
       })
     ).toEqual({})
+  })
+})
+
+describe('getModelCapabilitiesFromSpec', () => {
+  it('maps legacy modelConfig capabilities for edit forms', () => {
+    expect(
+      getModelCapabilitiesFromSpec({
+        modelConfig: {
+          modelCapabilities: { supportsImage: true, supportsVideo: true },
+        },
+      })
+    ).toEqual({ supportsImage: true, supportsVideo: true })
+  })
+
+  it('prefers canonical spec capabilities during edit migration', () => {
+    expect(
+      getModelCapabilitiesFromSpec({
+        modelCapabilities: { supportsImage: true, supportsVideo: false },
+        modelConfig: {
+          modelCapabilities: { supportsImage: false, supportsVideo: true },
+        },
+      })
+    ).toEqual({ supportsImage: true, supportsVideo: false })
   })
 })

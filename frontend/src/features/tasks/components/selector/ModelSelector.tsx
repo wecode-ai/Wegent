@@ -53,7 +53,7 @@ export type {
 
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
-import { ModelDetailsBody } from './ModelDetailsDialog'
+import { ModelInformationContent } from './ModelInformationContent'
 
 // ============================================================================
 // Types
@@ -142,7 +142,7 @@ function ModelInformationAction({ model, label, unavailableLabel }: ModelInforma
               {model.modelId || unavailableLabel}
             </div>
           </div>
-          <ModelDetailsBody model={model} />
+          <ModelInformationContent model={model} />
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

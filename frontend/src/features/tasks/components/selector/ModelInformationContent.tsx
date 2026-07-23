@@ -9,7 +9,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getModelCapabilities } from '@/lib/model-capabilities'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 
-interface ModelDetailsBodyProps {
+interface ModelInformationContentProps {
   model: Model
 }
 
@@ -33,7 +33,7 @@ function formatCostIndex(value: number | null | undefined, unavailable: string):
   return `${Number(value.toFixed(1))}x`
 }
 
-export function ModelDetailsBody({ model }: ModelDetailsBodyProps) {
+export function ModelInformationContent({ model }: ModelInformationContentProps) {
   const { t } = useTranslation('common')
   const unavailable = t('models.details_unavailable')
   const tokenUnit = t('models.token_unit')

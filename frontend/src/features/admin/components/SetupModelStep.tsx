@@ -23,8 +23,8 @@ import { Loader2, PlusIcon } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis, AdminPublicModel, AdminPublicModelCreate } from '@/apis/admin'
-import { ModelCRD, ModelCategoryType, ModelCapabilities } from '@/apis/models'
-import { getModelCapabilities } from '@/lib/model-capabilities'
+import { ModelCRD, ModelCategoryType } from '@/apis/models'
+import { getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
 import ModelEditDialog, {
   ModelFormData,
   ModelInitialData,
@@ -90,9 +90,9 @@ const SetupModelStep: React.FC = () => {
       contextWindow: modelConfig?.context_window as number | undefined,
       maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
       costIndex: spec?.costIndex as number | undefined,
-      modelCapabilities: getModelCapabilities({
-        modelCapabilities: spec?.modelCapabilities as ModelCapabilities | undefined,
-        config: modelConfig,
+      modelCapabilities: getModelCapabilitiesFromSpec({
+        modelCapabilities: spec?.modelCapabilities,
+        modelConfig,
       }),
     }
   }

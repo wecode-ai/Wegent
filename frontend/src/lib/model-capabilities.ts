@@ -5,8 +5,13 @@
 import type { ModelCapabilities } from '@/apis/models'
 
 export interface ModelCapabilitySource {
-  modelCapabilities?: ModelCapabilities | null
+  modelCapabilities?: unknown
   config?: Record<string, unknown> | null
+}
+
+export interface ModelCapabilitySpecSource {
+  modelCapabilities?: unknown
+  modelConfig?: Record<string, unknown> | null
 }
 
 function normalizeModelCapabilities(value: unknown): ModelCapabilities | null {
@@ -28,4 +33,11 @@ export function getModelCapabilities(model: ModelCapabilitySource): ModelCapabil
   if (capabilities) return capabilities
 
   return normalizeModelCapabilities(model.config?.modelCapabilities) ?? {}
+}
+
+export function getModelCapabilitiesFromSpec(spec: ModelCapabilitySpecSource): ModelCapabilities {
+  return getModelCapabilities({
+    modelCapabilities: spec.modelCapabilities,
+    config: spec.modelConfig,
+  })
 }

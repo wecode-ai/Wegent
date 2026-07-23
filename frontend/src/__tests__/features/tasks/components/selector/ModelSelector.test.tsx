@@ -477,28 +477,6 @@ describe('ModelSelector', () => {
     expect(externalSetSelectedModel).not.toHaveBeenCalled()
   })
 
-  it('does not open a dialog when clicking model information on desktop', async () => {
-    mockModelSelectionOverrides = {
-      filteredModels: [mockModel],
-    }
-
-    render(
-      <ModelSelector
-        selectedModel={null}
-        setSelectedModel={jest.fn()}
-        forceOverride={false}
-        setForceOverride={jest.fn()}
-        selectedTeam={null}
-        disabled={false}
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('model-selector'))
-    fireEvent.click(await screen.findByTestId('model-info-claude-3-5-sonnet'))
-
-    expect(screen.queryByTestId('model-details-dialog')).not.toBeInTheDocument()
-  })
-
   it('shows full model details in a non-modal layer when hovering', async () => {
     const user = userEvent.setup()
     mockModelSelectionOverrides = {
@@ -522,6 +500,5 @@ describe('ModelSelector', () => {
     const preview = await screen.findByTestId('model-details-preview')
     expect(preview).toHaveTextContent('claude-3-5-sonnet-20241022')
     expect(preview).toHaveTextContent('50x')
-    expect(screen.queryByTestId('model-details-dialog')).not.toBeInTheDocument()
   })
 })
