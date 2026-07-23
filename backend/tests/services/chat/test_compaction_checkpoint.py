@@ -134,3 +134,39 @@ def test_from_latest_compaction_limit_keeps_checkpoint():
     assert kept[0].is_ckpt is True
     assert kept[-1].message_id == 4
     assert len(kept) == 2
+
+
+def test_resolve_history_subtasks_is_single_pipeline(monkeypatch):
+    from app.services.chat import compaction_checkpoint as cc
+
+    def st(i, is_ckpt=False):
+        chain = [{"role": "assistant", "content": f"t{i}"}]
+        if is_ckpt:
+            chain = [
+                {
+                    "role": "user",
+                    "content": "[COMPACT SUMMARY]",
+                    "additional_kwargs": {"summary_compacted": True},
+                }
+            ]
+        return _assistant(i, chain)
+
+    items = [
+        SimpleNamespace(subtask=st(0)),
+        SimpleNamespace(subtask=st(1, True)),
+        SimpleNamespace(subtask=st(2)),
+    ]
+    monkeypatch.setattr(
+        cc.task_fork_history_resolver, "resolve_for_task", lambda *a, **k: items
+    )
+
+    out = cc.resolve_history_subtasks(
+        db=None,
+        task_id=1,
+        user_id=1,
+        before_message_id=None,
+        limit=None,
+        from_latest_compaction=True,
+        statuses=None,
+    )
+    assert [s.message_id for s in out] == [1, 2]

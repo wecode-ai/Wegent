@@ -14,6 +14,13 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.subtask import SubtaskRole, SubtaskStatus
+from app.services.task_fork_history import task_fork_history_resolver
+
+_DEFAULT_STATUSES = (
+    SubtaskStatus.COMPLETED,
+    SubtaskStatus.CANCELLED,
+    SubtaskStatus.FAILED,
+)
 
 
 def subtask_has_summary_checkpoint(subtask: Any) -> bool:
@@ -69,3 +76,30 @@ def apply_checkpoint_limit(
         head, tail = subtasks[:1], subtasks[1:]
         return head if limit <= 1 else head + tail[-(limit - 1) :]
     return subtasks[-limit:]
+
+
+def resolve_history_subtasks(
+    *,
+    db,
+    task_id,
+    user_id,
+    before_message_id=None,
+    limit=None,
+    from_latest_compaction=False,
+    statuses=None,
+) -> list[Any]:
+    """Single resolve -> status-filter -> checkpoint-scope -> limit pipeline.
+
+    Used by both the HTTP history endpoint and the package-mode loader so fork,
+    ``before_message_id``, ``limit``, and checkpoint semantics stay identical.
+    """
+    statuses = tuple(statuses) if statuses else _DEFAULT_STATUSES
+    items = task_fork_history_resolver.resolve_for_task(
+        db, task_id=task_id, user_id=user_id, before_message_id=before_message_id
+    )
+    subtasks = [item.subtask for item in items if item.subtask.status in statuses]
+    if from_latest_compaction:
+        subtasks, _idx = scope_to_latest_checkpoint(subtasks)
+    return apply_checkpoint_limit(
+        subtasks, limit=limit, from_latest_compaction=from_latest_compaction
+    )

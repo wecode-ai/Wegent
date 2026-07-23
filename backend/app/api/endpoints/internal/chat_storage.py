@@ -33,13 +33,9 @@ from app.models.subtask_context import (
 )
 from app.models.user import User
 from app.services.auth.internal_service_token import verify_internal_service_token
-from app.services.chat.compaction_checkpoint import (
-    apply_checkpoint_limit,
-    scope_to_latest_checkpoint,
-)
+from app.services.chat.compaction_checkpoint import resolve_history_subtasks
 from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
-from app.services.task_fork_history import task_fork_history_resolver
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
@@ -889,19 +885,14 @@ async def get_chat_history(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    items = task_fork_history_resolver.resolve_for_task(
-        db,
+    subtasks = resolve_history_subtasks(
+        db=db,
         task_id=task_id,
         user_id=task.user_id,
         before_message_id=before_message_id,
-    )
-    subtasks = [
-        item.subtask for item in items if item.subtask.status in history_statuses
-    ]
-    if from_latest_compaction:
-        subtasks, _ckpt_idx = scope_to_latest_checkpoint(subtasks)
-    subtasks = apply_checkpoint_limit(
-        subtasks, limit=limit, from_latest_compaction=from_latest_compaction
+        limit=limit,
+        from_latest_compaction=from_latest_compaction,
+        statuses=history_statuses,
     )
 
     # Convert to message format with full context loading
