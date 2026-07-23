@@ -525,6 +525,9 @@ describe('ModelSelector', () => {
     expect(
       preview.querySelector('[data-testid="model-modality-output-text"] .lucide-type')
     ).toBeInTheDocument()
+    const inputImageModality = preview.querySelector('[data-testid="model-modality-input-image"]')
+    expect(inputImageModality).not.toHaveClass('rounded-full', 'border', 'bg-sky-50')
+    expect(inputImageModality?.querySelector('.lucide-image')).toHaveClass('h-4', 'w-4')
   })
 
   it('omits the cost index section when the model has no cost index', async () => {
