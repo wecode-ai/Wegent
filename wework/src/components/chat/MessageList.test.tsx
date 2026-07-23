@@ -2925,6 +2925,42 @@ describe('MessageList', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  test('restores historical image previews from persisted local paths', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+
+    const attachment: Attachment = {
+      id: -1,
+      filename: 'historical.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-06-26T15:33:00.000+08:00',
+      local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'historical-image',
+            role: 'user',
+            content: '查看历史图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-06-26T15:33:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'asset://localhost/Users/me/.wegent-executor/workspace/attachments/draft/42/historical.png'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   test('downloads local path image attachments through the Tauri native command', async () => {
     vi.stubGlobal('fetch', vi.fn())
     tauriCoreMock.isTauri = vi.fn(() => true)
