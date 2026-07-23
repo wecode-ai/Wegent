@@ -46,6 +46,10 @@ const RECONNECT_PROMPT = 'WEWORK_DESKTOP_E2E_RECONNECT: recover after the stream
 const RECONNECT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RECONNECT_COMPLETE'
 const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the report.'
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
+const CONCURRENT_MEMORY_TASK_COUNT = 10
+const CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB = Number(
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB ?? 800 * 1024
+)
 const MEMORY_SAMPLE_INTERVAL_MS = 500
 const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB ?? 256 * 1024
@@ -121,6 +125,7 @@ const SIDE_CHAT_ATTACHMENT_ONLY = process.argv.includes('--side-chat-attachment-
 const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
+const CONCURRENT_MEMORY_ONLY = process.argv.includes('--concurrent-memory-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -390,6 +395,109 @@ async function captureMemorySample(control, phase) {
     physicalFootprintKiB: webContent.physical_footprint_kib,
     pids: webContent.pids,
   }
+}
+
+async function captureTotalMemorySample(control, phase) {
+  const snapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
+  return {
+    phase,
+    timestamp: snapshot.timestamp,
+    domNodeCount: snapshot.domNodeCount,
+    rssKiB: snapshot.processMemory.groups.reduce((total, group) => total + group.rss_kib, 0),
+    physicalFootprintKiB: snapshot.processMemory.groups.reduce(
+      (total, group) => total + group.physical_footprint_kib,
+      0
+    ),
+    groups: snapshot.processMemory.groups,
+  }
+}
+
+async function verifyConcurrentTaskMemory({ composerSelector, control }) {
+  assert.equal(process.platform, 'darwin', 'Concurrent memory E2E currently requires macOS')
+  control.setScenario('concurrent_memory')
+  const taskRows = []
+
+  for (let index = 1; index <= CONCURRENT_MEMORY_TASK_COUNT; index += 1) {
+    if (index > 1) {
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+    }
+    const prompt = `WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${index}`
+    await control.command('fill', composerSelector, { value: prompt })
+    await control.command('press', composerSelector, { key: 'Enter' })
+    await control.awaitScenarioRequestCount('concurrent_memory', index)
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const rows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+    const nextRow = rows.find(row => !taskRows.includes(row))
+    if (nextRow) taskRows.push(nextRow)
+  }
+
+  assert.equal(
+    control.scenarioRequests.get('concurrent_memory')?.length,
+    CONCURRENT_MEMORY_TASK_COUNT,
+    'The model service did not keep ten task requests running concurrently'
+  )
+  assert.equal(
+    control.concurrentMemoryResponses.length,
+    CONCURRENT_MEMORY_TASK_COUNT,
+    'The model service released a concurrent task stream before memory sampling'
+  )
+  assert.equal(
+    taskRows.length,
+    CONCURRENT_MEMORY_TASK_COUNT,
+    'The sidebar did not expose ten tasks'
+  )
+  await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
+
+  const samples = []
+  for (let index = 0; index < 5; index += 1) {
+    samples.push(await captureTotalMemorySample(control, 'running'))
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  }
+  const peak = samples.reduce((largest, sample) =>
+    sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
+  )
+
+  const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
+    testId.startsWith('project-runtime-tasks-expand-')
+  )
+  if (expandTasksButton) {
+    await control.command('click', `[data-testid="${expandTasksButton}"]`)
+  }
+  await control.command('waitFor', `[data-testid="${taskRows[0]}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRows[0]}"]`)
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    text: 'WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_1',
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', `[data-testid="${taskRows.at(-1)}"]`)
+  await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, {
+    text: `WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${CONCURRENT_MEMORY_TASK_COUNT}`,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+
+  await writeFile(
+    join(resultDir, 'concurrent-memory.json'),
+    `${JSON.stringify(
+      {
+        taskCount: CONCURRENT_MEMORY_TASK_COUNT,
+        limitPhysicalFootprintKiB: CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
+        peak,
+        samples,
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
+  )
+  assert.ok(
+    peak.physicalFootprintKiB < CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB,
+    `Wework physical footprint reached ${peak.physicalFootprintKiB} KiB with ten concurrent tasks`
+  )
+  control.releaseConcurrentMemoryResponses()
 }
 
 async function verifyMemoryGrowth({ composerSelector, control }) {
@@ -1817,6 +1925,7 @@ class DesktopE2EServer {
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.memoryStage = 'initial'
+    this.concurrentMemoryResponses = []
     this.cloudModelStage = 'initial'
     this.toolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
@@ -1994,6 +2103,7 @@ class DesktopE2EServer {
         'fresh_chat',
         'attachment_only',
         'memory',
+        'concurrent_memory',
         'side_chat_attachment',
         'cloud_initial',
         'cloud_follow_up',
@@ -2069,6 +2179,12 @@ class DesktopE2EServer {
 
   releaseWindowLifecycleResponse() {
     this.releaseWindowLifecycle()
+  }
+
+  releaseConcurrentMemoryResponses() {
+    for (const { response, stream } of this.concurrentMemoryResponses.splice(0)) {
+      response.end(createSse(stream.finish))
+    }
   }
 
   async command(action, selector, options = {}) {
@@ -2377,6 +2493,37 @@ class DesktopE2EServer {
         assistantMessage(COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (this.scenario === 'concurrent_memory') {
+      const requestNumber = (this.scenarioRequests.get('concurrent_memory')?.length ?? 0) + 1
+      this.recordScenarioRequest('concurrent_memory', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(`WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${requestNumber}`),
+        `Concurrent memory request ${requestNumber} did not contain its UI prompt`
+      )
+      const stream = streamingTextEvents(responseId, `Concurrent task ${requestNumber} completed.`)
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      response.write(
+        createSse([
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: `Concurrent task ${requestNumber} is running.`,
+            offset: 0,
+          },
+        ])
+      )
+      this.concurrentMemoryResponses.push({ response, stream })
       return
     }
 
@@ -3827,6 +3974,14 @@ async function main() {
       phase = 'attachment-only-sidebar'
       await verifyAttachmentOnlySidebarLifecycle({ appIdentifier, composerSelector, control })
       console.log(`Wework attachment-only sidebar E2E passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (CONCURRENT_MEMORY_ONLY) {
+      phase = 'concurrent-memory'
+      await selectE2EModel(control)
+      await verifyConcurrentTaskMemory({ composerSelector, control })
+      console.log(`Wework concurrent memory E2E passed. Evidence: ${resultDir}`)
       return
     }
 

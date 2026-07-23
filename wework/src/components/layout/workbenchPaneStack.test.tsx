@@ -191,6 +191,9 @@ describe('workbenchPaneStack', () => {
       const [pane, setPane] = useState<WorkbenchPaneIdentity>(runtimePane)
       return (
         <div>
+          <button type="button" onClick={() => setPane(runtimePane)}>
+            reopen runtime chat
+          </button>
           <button type="button" onClick={() => setPane(standalonePane)}>
             start new chat
           </button>
@@ -204,6 +207,7 @@ describe('workbenchPaneStack', () => {
     }
 
     render(<RuntimePaneStackProbe />)
+    const runtimeMountId = screen.getByTestId('runtime-pane-mount-id').textContent
     expect(screen.getByTestId('runtime-pane-runtime-1')).toBeVisible()
 
     await userEvent.click(screen.getByText('start new chat'))
@@ -216,9 +220,18 @@ describe('workbenchPaneStack', () => {
       .closest('[data-active-workbench-pane]')
 
     expect(standaloneWrapper).toHaveAttribute('data-active-workbench-pane', 'true')
-    expect(standaloneWrapper).toHaveClass('visible')
+    expect(standaloneWrapper).not.toHaveAttribute('hidden')
     expect(runtimeWrapper).toHaveAttribute('data-active-workbench-pane', 'false')
-    expect(runtimeWrapper).toHaveClass('invisible')
+    expect(runtimeWrapper).toHaveAttribute('hidden')
+    expect(screen.getByTestId('runtime-pane-runtime-1')).not.toBeVisible()
+
+    await userEvent.click(screen.getByText('reopen runtime chat'))
+
+    const reopenedRuntimePane = screen.getByTestId('runtime-pane-runtime-1')
+    expect(reopenedRuntimePane).toBeVisible()
+    expect(
+      reopenedRuntimePane.querySelector('[data-testid="runtime-pane-mount-id"]')
+    ).toHaveTextContent(runtimeMountId ?? '')
   })
 
   test('uses standalone chat key to create a fresh new chat pane', async () => {
