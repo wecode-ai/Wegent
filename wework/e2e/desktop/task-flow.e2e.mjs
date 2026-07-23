@@ -458,6 +458,18 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText) {
   throw new Error(`The sidebar did not expose a task row for ${expectedText}`)
 }
 
+async function waitForBlankConversation(control, composerSelector) {
+  await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('message-user') && !snapshot.testIds.includes('message-assistant'),
+    'The new task did not activate a blank conversation before input',
+    UI_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
 async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Concurrent memory E2E currently requires macOS')
   control.setScenario('concurrent_memory')
@@ -470,8 +482,8 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   for (let index = 1; index <= CONCURRENT_MEMORY_TASK_COUNT; index += 1) {
     if (index > 1) {
       await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', composerSelector, { timeoutMs: UI_TIMEOUT_MS })
     }
+    await waitForBlankConversation(control, composerSelector)
     const prompt = `WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${index}`
     await control.command('fill', composerSelector, { value: prompt })
     await control.command('press', composerSelector, { key: 'Enter' })
@@ -487,8 +499,12 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     'The model service did not keep ten task requests running concurrently'
   )
   assert.equal(
-    control.concurrentMemoryResponses.length,
+    control.concurrentMemoryTaskNumbers.size,
     CONCURRENT_MEMORY_TASK_COUNT,
+    'The model service did not receive ten unique concurrent task prompts'
+  )
+  assert.ok(
+    control.concurrentMemoryResponses.length >= CONCURRENT_MEMORY_TASK_COUNT,
     'The model service released a concurrent task stream before memory sampling'
   )
   assert.equal(
@@ -506,7 +522,6 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
-  const peakDomNodeCount = Math.max(...samples.map(sample => sample.domNodeCount))
 
   const sidebarSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   const expandTasksButton = sidebarSnapshot.testIds.find(testId =>
@@ -589,6 +604,7 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
+  const peakDomNodeCount = Math.max(...samples.map(sample => sample.domNodeCount))
   const settledSamples = samples.filter(sample => sample.phase === 'settled')
   const settled = settledSamples.at(-1)
   assert.ok(settled, 'The memory E2E did not capture settled samples')
@@ -2158,6 +2174,7 @@ class DesktopE2EServer {
     this.modelStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
+    this.concurrentMemoryTaskNumbers = new Set()
     this.cloudModelStage = 'initial'
     this.toolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
@@ -2729,14 +2746,18 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'concurrent_memory') {
-      const requestNumber = (this.scenarioRequests.get('concurrent_memory')?.length ?? 0) + 1
-      this.recordScenarioRequest('concurrent_memory', modelRequest)
-      assert.match(
-        JSON.stringify(body),
-        new RegExp(`WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_${requestNumber}(?!\\d)`),
-        `Concurrent memory request ${requestNumber} did not contain its UI prompt`
+      const promptMatch = JSON.stringify(body).match(/WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_(\d+)/)
+      assert.ok(promptMatch, 'Concurrent memory request did not contain a task UI prompt')
+      const taskNumber = Number(promptMatch[1])
+      assert.ok(
+        taskNumber >= 1 && taskNumber <= CONCURRENT_MEMORY_TASK_COUNT,
+        `Concurrent memory request contained invalid task number ${taskNumber}`
       )
-      const stream = streamingTextEvents(responseId, `Concurrent task ${requestNumber} completed.`)
+      if (!this.concurrentMemoryTaskNumbers.has(taskNumber)) {
+        this.concurrentMemoryTaskNumbers.add(taskNumber)
+        this.recordScenarioRequest('concurrent_memory', modelRequest)
+      }
+      const stream = streamingTextEvents(responseId, `Concurrent task ${taskNumber} completed.`)
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
@@ -2751,7 +2772,7 @@ class DesktopE2EServer {
             item_id: stream.itemId,
             output_index: 0,
             content_index: 0,
-            delta: `Concurrent task ${requestNumber} is running.`,
+            delta: `Concurrent task ${taskNumber} is running.`,
             offset: 0,
           },
         ])
