@@ -106,7 +106,7 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 插件场景会在测试结果目录动态创建隔离的本地 Codex marketplace 和带 Skill 的插件，然后通过真实 Tauri WebView、Executor 与 Codex app-server 验证市场展示、安装、在对话编辑器中插入插件引用及卸载。场景不访问个人 Codex home，也不 mock 插件 API；市场、插件缓存和安装状态都随测试结果目录清理。四个关键阶段会保留截图，失败时同时保留应用、Executor 和 UI 快照诊断。
 
-内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint，并将采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 512 MiB、完成后的稳定态增长不超过 256 MiB、稳定期继续增长不超过 32 MiB；前两个阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 调整。
+内存场景仅支持 macOS。它会通过真实 Codex 工具调用执行一个开发任务，再向真实 Tauri WebView 流式发送包含 Markdown、表格和 TypeScript 代码的长回复。测试先每秒采样基线，直到最近三个样本的范围不超过 8 MiB 或达到 10 个样本，并使用最近三个样本的中位数作为基线；流式期间每 500 毫秒采集 Wework 关联的全部 WebKit Web Content 进程的聚合 physical footprint；响应完成后再次每秒采样，直到同样的收敛条件成立或达到 20 个样本，并使用最近三个样本的中位数计算稳定态增长。截图在所有内存采样完成后生成，避免图像捕获影响门禁。采样、DOM 节点数和汇总指标写入 `memory-growth.json`；门禁不包含 Wework 主进程。默认门禁为峰值增长不超过 256 MiB、完成后的稳定态增长不超过 160 MiB、稳定期继续增长不超过 16 MiB；前两个阈值可分别通过 `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB` 和 `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB` 调整。
 
 并发内存场景同样仅支持 macOS。它会创建并同时保持 10 个 Responses 流，采集 Wework 主进程、WebKit Web Content/GPU/Networking、Executor 和 Codex app-server 的进程组 physical footprint，并将证据写入 `concurrent-memory.json`。门禁要求整个进程组峰值低于 800 MiB，可通过 `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB` 调整；场景还会在首尾任务之间切换，并等待各自的 prompt 内容重新出现。
 

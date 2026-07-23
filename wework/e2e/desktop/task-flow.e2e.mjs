@@ -57,6 +57,12 @@ const MEMORY_MAX_PEAK_GROWTH_KIB = Number(
 const MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
   process.env.WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 160 * 1024
 )
+const MEMORY_MIN_BASELINE_SAMPLES = 5
+const MEMORY_MAX_BASELINE_SAMPLES = 10
+const MEMORY_MIN_SETTLED_SAMPLES = 5
+const MEMORY_MAX_SETTLED_SAMPLES = 20
+const MEMORY_SETTLED_WINDOW_SIZE = 3
+const MEMORY_SETTLED_RANGE_KIB = 8 * 1024
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
@@ -511,38 +517,45 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
 async function verifyMemoryGrowth({ composerSelector, control }) {
   assert.equal(process.platform, 'darwin', 'Desktop memory E2E currently requires macOS')
   control.setScenario('memory')
-  const samples = [await captureMemorySample(control, 'baseline')]
-  await captureVerificationScreenshot(control, 'memory-01-baseline.png')
+  const baselineSamples = await captureConvergedMemorySamples(
+    control,
+    'baseline',
+    MEMORY_MIN_BASELINE_SAMPLES,
+    MEMORY_MAX_BASELINE_SAMPLES
+  )
+  const baseline = medianMemorySample(baselineSamples.slice(-MEMORY_SETTLED_WINDOW_SIZE))
+  assert.ok(baseline, 'The memory E2E did not capture baseline samples')
+  const workloadSamples = []
   await sendPromptUntilScenarioRequest(control, composerSelector, MEMORY_PROMPT, 'memory')
-  await captureVerificationScreenshot(control, 'memory-02-streaming.png')
 
   let completed = false
   const startedAt = Date.now()
   while (!completed && Date.now() - startedAt < UI_TIMEOUT_MS) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, MEMORY_SAMPLE_INTERVAL_MS))
-    samples.push(await captureMemorySample(control, 'streaming'))
+    workloadSamples.push(await captureMemorySample(control, 'streaming'))
     const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
     completed = snapshot.text.includes(MEMORY_COMPLETION_TEXT)
   }
   assert.equal(completed, true, 'The memory E2E response did not complete')
-  await captureVerificationScreenshot(control, 'memory-03-completed.png')
 
-  for (let index = 0; index < 5; index += 1) {
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
-    samples.push(await captureMemorySample(control, 'settled'))
-  }
+  const settledSamples = await captureConvergedMemorySamples(
+    control,
+    'settled',
+    MEMORY_MIN_SETTLED_SAMPLES,
+    MEMORY_MAX_SETTLED_SAMPLES
+  )
+  workloadSamples.push(...settledSamples)
 
-  const baseline = samples[0]
-  const peak = samples.reduce((largest, sample) =>
+  const peak = workloadSamples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
-  const settledSamples = samples.filter(sample => sample.phase === 'settled')
-  const settled = settledSamples.at(-1)
+  const settledWindow = settledSamples.slice(-MEMORY_SETTLED_WINDOW_SIZE)
+  const settled = medianMemorySample(settledWindow)
   assert.ok(settled, 'The memory E2E did not capture settled samples')
-  await captureVerificationScreenshot(control, 'memory-04-settled.png')
   const peakGrowthKiB = peak.physicalFootprintKiB - baseline.physicalFootprintKiB
   const settledGrowthKiB = settled.physicalFootprintKiB - baseline.physicalFootprintKiB
-  const settledDriftKiB = settled.physicalFootprintKiB - settledSamples[0].physicalFootprintKiB
+  const settledDriftKiB =
+    settledSamples.at(-1).physicalFootprintKiB - settledSamples[0].physicalFootprintKiB
 
   await writeFile(
     join(resultDir, 'memory-growth.json'),
@@ -552,14 +565,23 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
           maxPeakGrowthKiB: MEMORY_MAX_PEAK_GROWTH_KIB,
           maxSettledGrowthKiB: MEMORY_MAX_SETTLED_GROWTH_KIB,
         },
-        summary: { peakGrowthKiB, settledGrowthKiB, settledDriftKiB },
-        samples,
+        summary: {
+          peakGrowthKiB,
+          settledGrowthKiB,
+          settledDriftKiB,
+          baselineSampleCount: baselineSamples.length,
+          baselineConverged: memorySamplesConverged(baselineSamples),
+          settledSampleCount: settledSamples.length,
+          settledConverged: memorySamplesConverged(settledSamples),
+        },
+        samples: [...baselineSamples, ...workloadSamples],
       },
       null,
       2
     )}\n`,
     'utf8'
   )
+  await captureVerificationScreenshot(control, 'memory-04-settled.png')
 
   assert.ok(
     peakGrowthKiB <= MEMORY_MAX_PEAK_GROWTH_KIB,
@@ -573,6 +595,32 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
     settledDriftKiB <= 16 * 1024,
     `WebContent kept growing after completion by ${settledDriftKiB} KiB`
   )
+}
+
+async function captureConvergedMemorySamples(control, phase, minimumSamples, maximumSamples) {
+  const samples = []
+  while (samples.length < maximumSamples) {
+    if (samples.length > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    }
+    samples.push(await captureMemorySample(control, phase))
+    if (samples.length >= minimumSamples && memorySamplesConverged(samples)) break
+  }
+  return samples
+}
+
+function memorySamplesConverged(samples) {
+  if (samples.length < MEMORY_SETTLED_WINDOW_SIZE) return false
+  const window = samples.slice(-MEMORY_SETTLED_WINDOW_SIZE)
+  const footprints = window.map(sample => sample.physicalFootprintKiB)
+  return Math.max(...footprints) - Math.min(...footprints) <= MEMORY_SETTLED_RANGE_KIB
+}
+
+function medianMemorySample(samples) {
+  if (samples.length === 0) return null
+  return [...samples].sort((left, right) => left.physicalFootprintKiB - right.physicalFootprintKiB)[
+    Math.floor(samples.length / 2)
+  ]
 }
 
 async function waitForScenarioRequestCount(control, scenario, expectedCount) {
