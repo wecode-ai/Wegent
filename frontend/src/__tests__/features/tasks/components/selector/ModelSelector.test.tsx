@@ -500,11 +500,18 @@ describe('ModelSelector', () => {
     const preview = await screen.findByTestId('model-details-preview')
     expect(preview).toHaveTextContent('claude-3-5-sonnet-20241022')
     expect(preview).toHaveTextContent('50x')
-    expect(preview).not.toHaveTextContent('相对成本，1x 为基准；数值越高成本越高，不代表实际价格。')
 
-    expect(preview.querySelector('[data-testid="model-details-cost-index-help"]')).toHaveAttribute(
-      'title',
+    const costIndexTooltip = preview.querySelector(
+      '[data-testid="model-details-cost-index-tooltip"]'
+    )
+    expect(costIndexTooltip).toHaveTextContent(
       '相对成本，1x 为基准；数值越高成本越高，不代表实际价格。'
+    )
+    expect(costIndexTooltip).toHaveClass(
+      'invisible',
+      'opacity-0',
+      'group-hover:visible',
+      'group-hover:opacity-100'
     )
   })
 

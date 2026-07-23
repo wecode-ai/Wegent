@@ -134,7 +134,7 @@ function ModelInformationAction({ model, label, unavailableLabel }: ModelInforma
           align="start"
           sideOffset={8}
           data-testid="model-details-preview"
-          className="w-[420px] max-w-[calc(100vw-32px)] rounded-lg bg-base p-5 text-text-primary"
+          className="w-[420px] max-w-[calc(100vw-32px)] overflow-visible rounded-lg bg-base p-5 text-text-primary"
         >
           <div className="mb-4">
             <div className="truncate text-lg font-semibold">{model.displayName || model.name}</div>

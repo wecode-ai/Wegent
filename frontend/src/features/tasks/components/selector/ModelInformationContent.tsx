@@ -56,10 +56,16 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
                 role="img"
                 data-testid="model-details-cost-index-help"
                 aria-label={t('models.cost_index_description')}
-                title={t('models.cost_index_description')}
-                className="inline-flex h-5 w-5 items-center justify-center text-text-muted"
+                className="group relative inline-flex h-5 w-5 cursor-help items-center justify-center text-text-muted"
               >
                 <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                <span
+                  aria-hidden="true"
+                  data-testid="model-details-cost-index-tooltip"
+                  className="invisible pointer-events-none absolute left-1/2 top-full z-[60] mt-1 w-72 -translate-x-1/2 rounded-md border border-border bg-tooltip px-3 py-1.5 text-xs font-normal leading-5 text-tooltip-foreground opacity-0 shadow-md transition-opacity group-hover:visible group-hover:opacity-100"
+                >
+                  {t('models.cost_index_description')}
+                </span>
               </span>
             </div>
             <div data-testid="model-details-cost-index" className="text-lg font-semibold">
