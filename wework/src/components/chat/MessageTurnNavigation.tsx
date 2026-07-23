@@ -212,7 +212,7 @@ export function MessageTurnNavigation({
     const scroller = scrollRef.current
     const targetMessageId = findLoadedNavigationMessageId(messages, pendingScrollTarget)
     const anchor = targetMessageId ? findMessageAnchor(contentRef, targetMessageId) : null
-    if (!scroller || !anchor) return
+    if (!scroller || !targetMessageId || !anchor) return
 
     scrollToMessageId(scroller, targetMessageId)
     setActiveMarkerId(targetMessageId)
