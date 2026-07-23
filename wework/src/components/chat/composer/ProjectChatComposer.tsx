@@ -30,6 +30,7 @@ interface ProjectChatComposerProps {
   placeholder: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
   isModelSelectionReady: boolean
@@ -77,6 +78,7 @@ export function ProjectChatComposer({
   placeholder,
   models,
   selectedModel,
+  activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
   isModelSelectionReady,
@@ -267,6 +269,7 @@ export function ProjectChatComposer({
           disabled={disabled}
           models={models}
           selectedModel={selectedModel}
+          activeModel={activeModel}
           selectedModelOptions={selectedModelOptions}
           modelSelectorOpenSignal={modelSelectorOpenSignal}
           isModelSelectionReady={isModelSelectionReady}

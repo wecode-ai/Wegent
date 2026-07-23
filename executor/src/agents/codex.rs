@@ -897,6 +897,14 @@ async fn run_codex_app_server_turn_on_shared_client(
             .map(str::to_owned);
         let resuming_thread = resume_thread_id.is_some();
         let forking_thread = fork_thread_id.is_some();
+        if direct_thread_id.is_none() {
+            if let Some(thread_id) = resume_thread_id.as_deref() {
+                // Codex ignores thread/resume configuration overrides while this client remains
+                // subscribed to the loaded thread. Release our idle subscription so a changed
+                // custom model provider can be applied during resume; the resume subscribes again.
+                client.unsubscribe_thread(thread_id).await;
+            }
+        }
         let thread_id = if let Some(thread_id) = direct_thread_id {
             state.set_root_thread_id(thread_id.clone());
             let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);

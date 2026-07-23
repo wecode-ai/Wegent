@@ -16,6 +16,7 @@ interface ComposerToolbarProps {
   disabled?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
   isModelSelectionReady: boolean
@@ -46,6 +47,7 @@ export function ComposerToolbar({
   disabled = false,
   models,
   selectedModel,
+  activeModel,
   selectedModelOptions,
   modelSelectorOpenSignal,
   isModelSelectionReady,
@@ -70,6 +72,15 @@ export function ComposerToolbar({
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
   const [compact, setCompact] = useState(false)
+  const modelChangePending = Boolean(
+    activeModel &&
+    (!selectedModel ||
+      activeModel.name !== selectedModel.name ||
+      activeModel.type !== selectedModel.type)
+  )
+  const activeModelLabel = activeModel?.displayName || activeModel?.name
+  const selectedModelLabel =
+    selectedModel?.displayName || selectedModel?.name || t('workbench.default_model', 'Default')
 
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current
@@ -125,6 +136,7 @@ export function ComposerToolbar({
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
+            nextTurn={isStreaming && modelChangePending}
             openSignal={modelSelectorOpenSignal}
             disabled={disabled}
             onSelectModel={onSelectModel}
@@ -170,13 +182,31 @@ export function ComposerToolbar({
                   onSelect: () => onSubmit(),
                 },
                 {
-                  label: t('workbench.guide_current_turn', '引导当前回复'),
+                  label:
+                    modelChangePending && activeModelLabel
+                      ? t(
+                          'workbench.guide_current_turn_with_model',
+                          'Guide current response · {{model}}',
+                          {
+                            model: activeModelLabel,
+                          }
+                        )
+                      : t('workbench.guide_current_turn', '引导当前回复'),
                   icon: CornerDownRight,
                   testId: 'guide-current-turn-option',
                   onSelect: () => onSubmit({ guideWhenBusy: true }),
                 },
                 {
-                  label: t('workbench.interrupt_and_send', '打断并立即发送'),
+                  label:
+                    modelChangePending && selectedModelLabel
+                      ? t(
+                          'workbench.interrupt_and_send_with_model',
+                          'Interrupt and use {{model}}',
+                          {
+                            model: selectedModelLabel,
+                          }
+                        )
+                      : t('workbench.interrupt_and_send', '打断并立即发送'),
                   icon: Zap,
                   testId: 'interrupt-and-send-option',
                   onSelect: () => onSubmit({ interruptWhenBusy: true }),

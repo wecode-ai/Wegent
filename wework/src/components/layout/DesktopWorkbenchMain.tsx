@@ -401,6 +401,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const paneKey = getWorkbenchPaneKey(pane)
+  const [turnNavigationPortalTarget, setTurnNavigationPortalTarget] =
+    useState<HTMLDivElement | null>(null)
   const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
     currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
   )
@@ -1628,6 +1630,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       </WorkbenchPaneActiveOnly>
       <div className="relative flex min-h-0 flex-1 overflow-visible">
         <div
+          ref={setTurnNavigationPortalTarget}
+          data-testid="message-turn-navigation-overlay"
+          className={cn(
+            'pointer-events-none absolute bottom-0 left-0 z-popover',
+            showPageTopBar ? 'top-11' : 'top-0'
+          )}
+          style={{ width: chatColumnWidth }}
+        />
+        <div
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
@@ -1662,6 +1673,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 className="h-full"
                 scrollTestId="desktop-chat-scroll"
                 externalScrollRef={workbenchScrollRef}
+                turnNavigationPortalTarget={turnNavigationPortalTarget}
                 scrollerClassName="overflow-visible scrollbar-none"
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,

@@ -1408,6 +1408,15 @@ function createLocalRuntimeSendPayload(
     ...payload,
     taskId,
     address: normalizedAddress,
+    ...(normalizedData.modelId
+      ? {
+          modelSelection: {
+            modelName: normalizedData.modelId,
+            modelType: normalizedData.modelType ?? null,
+            options: normalizedData.modelOptions ?? {},
+          },
+        }
+      : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
       taskId,

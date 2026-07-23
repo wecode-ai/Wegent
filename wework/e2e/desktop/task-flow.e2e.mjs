@@ -92,6 +92,12 @@ const LOCAL_MODEL_CASES = [
     modelId: 'desktop-e2e-anthropic-model',
   },
 ]
+const LOCAL_MODEL_SWITCH_INITIAL_PROMPT =
+  'WEWORK_LOCAL_MODEL_SWITCH_INITIAL: establish context with the first custom model.'
+const LOCAL_MODEL_SWITCH_INITIAL_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_INITIAL_COMPLETE'
+const LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT =
+  'WEWORK_LOCAL_MODEL_SWITCH_FOLLOW_UP: continue this conversation with the second custom model.'
+const LOCAL_MODEL_SWITCH_COMPLETE = 'WEWORK_LOCAL_MODEL_SWITCH_COMPLETE'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
@@ -2874,6 +2880,29 @@ class DesktopE2EServer {
 
     this.assertLocalRequestEnvelope(model, body, headers)
 
+    if (state.stage === 'model_switch_source') {
+      assert.ok(
+        serialized.includes(LOCAL_MODEL_SWITCH_INITIAL_PROMPT),
+        'The first custom model did not receive the model-switch initial prompt'
+      )
+      state.stage = 'model_switch_source_complete'
+      this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_INITIAL_COMPLETE)
+      return
+    }
+    if (state.stage === 'model_switch_target') {
+      assert.ok(
+        serialized.includes(LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT),
+        'The second custom model did not receive the follow-up after switching models'
+      )
+      assert.ok(
+        serialized.includes(LOCAL_MODEL_SWITCH_INITIAL_COMPLETE),
+        'The switched custom model did not preserve the earlier conversation context'
+      )
+      state.stage = 'model_switch_target_complete'
+      this.writeLocalAssistantMessage(response, model, LOCAL_MODEL_SWITCH_COMPLETE)
+      return
+    }
+
     if (state.stage === 'initial' && serialized.includes(initialPrompt)) {
       this.assertLocalConversation(model, body, {
         includes: [initialPrompt],
@@ -4322,6 +4351,78 @@ async function main() {
         JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
         'The follow-up request did not preserve the user prompt'
       )
+
+      phase = 'local-model-switch-same-conversation'
+      const sourceModel = LOCAL_MODEL_CASES[0]
+      const targetModel = LOCAL_MODEL_CASES[1]
+      control.localProtocolStates.set(sourceModel.protocol, {
+        stage: 'model_switch_source',
+        requests: [],
+      })
+      control.localProtocolStates.set(targetModel.protocol, {
+        stage: 'model_switch_target',
+        requests: [],
+      })
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', composerSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, sourceModel.optionId, sourceModel.label)
+      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, targetModel.optionId, targetModel.label)
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: targetModel.label,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      const pendingModelLabel = await control.command(
+        'getText',
+        '[data-testid="model-selector-button"]'
+      )
+      assert.doesNotMatch(
+        pendingModelLabel,
+        /下一轮|Next/,
+        'An idle conversation incorrectly marked the selected model as next-turn only'
+      )
+      await prepareCompletedTurnScreenshot(control)
+      await captureVerificationScreenshot(control, 'model-switch-01-selected.png')
+      await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: LOCAL_MODEL_SWITCH_COMPLETE,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      const sourceSwitchState = control.localProtocolStates.get(sourceModel.protocol)
+      const targetSwitchState = control.localProtocolStates.get(targetModel.protocol)
+      assert.equal(
+        sourceSwitchState?.requests.length,
+        1,
+        'The old custom model received the follow-up after switching'
+      )
+      assert.equal(
+        targetSwitchState?.stage,
+        'model_switch_target_complete',
+        'The new custom model did not complete the same-conversation follow-up'
+      )
+      await control.command('waitFor', '[data-testid="model-selector-button"]', {
+        text: targetModel.label,
+        timeoutMs: UI_TIMEOUT_MS,
+      })
+      const appliedModelLabel = await control.command(
+        'getText',
+        '[data-testid="model-selector-button"]'
+      )
+      assert.doesNotMatch(
+        appliedModelLabel,
+        /下一轮|Next/,
+        'The applied custom model remained incorrectly marked as next-turn only'
+      )
+      await prepareCompletedTurnScreenshot(control)
+      await captureVerificationScreenshot(control, 'model-switch-02-completed.png')
+      control.localProtocolStates.set(sourceModel.protocol, { stage: 'initial', requests: [] })
+      control.localProtocolStates.set(targetModel.protocol, { stage: 'initial', requests: [] })
 
       for (const [index, localModel] of LOCAL_MODEL_CASES.entries()) {
         phase = `local-model-${localModel.protocol}-initial`

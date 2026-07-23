@@ -430,6 +430,10 @@ export function WorkbenchProvider({
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,
   })
+  const activeModel = useMemo(
+    () => findModelForSelection(modelSelection.models, modelSelectionConfig),
+    [modelSelection.models, modelSelectionConfig]
+  )
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,
@@ -1303,6 +1307,7 @@ export function WorkbenchProvider({
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
@@ -1349,6 +1354,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
+      activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.setSelectedModel,
@@ -1369,6 +1375,7 @@ export function WorkbenchProvider({
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      activeModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
@@ -1414,6 +1421,7 @@ export function WorkbenchProvider({
       listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
+      activeModel,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       modelSelection.setSelectedModel,

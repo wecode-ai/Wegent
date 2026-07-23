@@ -123,7 +123,9 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     "model_config": {
                         "model": "openai",
                         "model_id": "gpt-5.5",
-                        "api_format": "responses"
+                        "api_format": "responses",
+                        "base_url": "https://first-model.example.com/v1",
+                        "api_key": "first-key"
                     }
                 }
             }
@@ -177,6 +179,8 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                         "model_id": "gpt-4.1",
                         "api_format": "responses",
                         "protocol": "openai-responses",
+                        "base_url": "https://second-model.example.com/v1",
+                        "api_key": "second-key",
                         "reasoning": {
                             "effort": "extra_high",
                             "summary": "concise"
@@ -202,6 +206,15 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     wait_for_turn_count(&log_path, 2).await;
 
     let calls = read_json_lines(&log_path);
+    let unsubscribe_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/unsubscribe")
+        .expect("send should release the loaded thread before changing providers");
+    let resume_index = calls
+        .iter()
+        .position(|call| call["method"] == "thread/resume")
+        .expect("send should resume the existing thread");
+    assert!(unsubscribe_index < resume_index);
     let resume = calls
         .iter()
         .find(|call| call["method"] == "thread/resume")
@@ -718,7 +731,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
             .iter()
             .filter(|call| call["method"] == "thread/unsubscribe")
             .count(),
-        0
+        1
     );
 
     let archived = handler
@@ -732,7 +745,7 @@ async fn runtime_tasks_keep_thread_subscription_until_archive() {
         .await
         .expect("archive should succeed");
     assert_eq!(archived["success"], true);
-    wait_for_method_count(&log_path, "thread/unsubscribe", 1).await;
+    wait_for_method_count(&log_path, "thread/unsubscribe", 2).await;
 }
 
 #[tokio::test]

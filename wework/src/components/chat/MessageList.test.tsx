@@ -49,7 +49,7 @@ describe('MessageList', () => {
               deletions: 0,
               files: [
                 {
-                  path: 'weekly-values-line-chart.html',
+                  path: '.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html',
                   change_type: 'created',
                   additions: 1,
                   deletions: 0,
@@ -66,7 +66,7 @@ describe('MessageList', () => {
     expect(screen.queryByText('::codex-inline-vis')).not.toBeInTheDocument()
     expect(screen.getByTestId('codex-inline-visualization-frame')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/dev/workspace/weekly-values-line-chart.html'
+      'asset://localhost/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html'
     )
   })
 

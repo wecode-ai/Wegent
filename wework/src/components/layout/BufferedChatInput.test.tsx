@@ -23,6 +23,26 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('restores submitted text when it is externally returned for editing', async () => {
+    const onSubmit = vi.fn()
+    const props = {
+      onChange: vi.fn(),
+      onSubmit,
+      disabled: false,
+    }
+    const { rerender } = render(<BufferedChatInput {...props} value="queued message" />)
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(onSubmit).toHaveBeenCalledWith('queued message')
+
+    rerender(<BufferedChatInput {...props} value="" />)
+    rerender(<BufferedChatInput {...props} value="queued message" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveValue('queued message')
+    })
+  })
+
   test('appends an insertion without replacing the buffered draft', async () => {
     const props = {
       value: '',
