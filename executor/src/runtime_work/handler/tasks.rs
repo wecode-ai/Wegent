@@ -522,6 +522,7 @@ impl RuntimeWorkRpcHandler {
             link.turn_status = Some("inProgress".to_owned());
             link.ephemeral = link.ephemeral || request.ephemeral;
             link.updated_at = now_ms();
+            set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
             if let Some(message) = message.clone() {
                 append_runtime_handle_message(&mut link.runtime_handle, message);
             }
@@ -537,6 +538,7 @@ impl RuntimeWorkRpcHandler {
         );
         link.thread_id = Some(thread_id.to_owned());
         link.ephemeral = request.ephemeral;
+        set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
         if let Some(message) = message {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }

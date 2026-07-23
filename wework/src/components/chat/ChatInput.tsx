@@ -34,6 +34,7 @@ export interface ProjectChatControls {
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
+  activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
   trialTemplates?: PluginPathComponent[]
@@ -383,6 +384,7 @@ export function ChatInput({
           {...composerProps}
           models={controls.models}
           selectedModel={controls.selectedModel}
+          activeModel={controls.activeModel}
           selectedModelOptions={controls.selectedModelOptions}
           modelSelectorOpenSignal={controls.modelSelectorOpenSignal}
           isModelSelectionReady={controls.isModelSelectionReady ?? true}
@@ -479,6 +481,7 @@ export function ChatInput({
         onListLocalApps={controls.listLocalApps}
         models={controls.models}
         selectedModel={controls.selectedModel}
+        activeModel={controls.activeModel}
         selectedModelOptions={controls.selectedModelOptions}
         onSelectModel={controls.setSelectedModel}
         onBlockedModelSelect={controls.onBlockedModelSelect}
