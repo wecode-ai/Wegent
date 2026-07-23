@@ -3747,6 +3747,19 @@ async function verifyCloudProjectFlow(control, cloudEnvironment, workspacePath) 
 
   await control.command('click', '[data-testid="projects-create-button"]')
   await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  const remoteDialogSnapshot = await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('standalone-remote-device-select') ||
+      snapshot.testIds.includes('refresh-remote-devices-button'),
+    'The remote device dialog exposed neither a connected device nor its refresh action'
+  )
+  if (!remoteDialogSnapshot.testIds.includes('standalone-remote-device-select')) {
+    await control.command('clickWhenEnabled', '[data-testid="refresh-remote-devices-button"]')
+  }
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: UI_TIMEOUT_MS,
   })
