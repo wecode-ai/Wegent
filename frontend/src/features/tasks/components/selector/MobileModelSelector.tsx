@@ -13,7 +13,6 @@ import { paths } from '@/config/paths'
 import { Tag } from '@/components/ui/tag'
 import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
-import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import {
   buildModelCascadeGroups,
   getModelDisplayName,
