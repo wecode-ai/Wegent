@@ -29,11 +29,6 @@
     "e2e:desktop:cloud": "node e2e/desktop/task-flow.e2e.mjs --cloud-only",
     "e2e:desktop:plugins": "node e2e/desktop/task-flow.e2e.mjs --plugins-only",
     "e2e:desktop:memory": "node e2e/desktop/task-flow.e2e.mjs --memory-only",
-    "e2e:desktop:concurrent-memory": "node e2e/desktop/task-flow.e2e.mjs --concurrent-memory-only",
-    "e2e:desktop:lifecycle": "node e2e/desktop/task-flow.e2e.mjs --lifecycle-only",
-    "e2e:desktop:reconnect": "node e2e/desktop/task-flow.e2e.mjs --reconnect-only",
-    "e2e:desktop:attachment-only-sidebar": "node e2e/desktop/task-flow.e2e.mjs --attachment-only-sidebar",
-    "e2e:desktop:side-chat-attachment": "node e2e/desktop/task-flow.e2e.mjs --side-chat-attachment-only",
     "ai:verify": "node scripts/ai-verify.mjs",
     "e2e:ui": "playwright test --ui"
   },

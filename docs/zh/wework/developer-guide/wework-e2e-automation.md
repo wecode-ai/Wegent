@@ -38,16 +38,10 @@ pnpm --filter wework e2e:desktop:cloud
 pnpm --filter wework e2e:desktop:plugins
 ```
 
-在 macOS 上运行桌面流式输出内存回归：
+在 macOS 上运行桌面内存回归，包括流式输出增长和 10 个并发任务的整机内存检查：
 
 ```bash
 pnpm --filter wework e2e:desktop:memory
-```
-
-运行 10 个任务同时执行的整机内存回归：
-
-```bash
-pnpm --filter wework e2e:desktop:concurrent-memory
 ```
 
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：

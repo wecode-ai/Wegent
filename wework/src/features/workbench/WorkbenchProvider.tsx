@@ -927,7 +927,6 @@ export function WorkbenchProvider({
         type: 'project_workspace_selected',
         project,
         deviceWorkspaceId,
-        startFreshChat: true,
       })
       navigateTo('/')
       requestNewChatComposerFocus()

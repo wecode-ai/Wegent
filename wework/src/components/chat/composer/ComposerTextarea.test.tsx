@@ -3,6 +3,7 @@ import { createRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { LocalDeviceSkill } from '@/types/api'
 import type { WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
+import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { ComposerTextarea } from './ComposerTextarea'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
@@ -26,6 +27,41 @@ describe('ComposerTextarea', () => {
   beforeEach(() => {
     nativeWorkspacePickerMocks.open.mockReset()
     nativeWorkspacePickerMocks.open.mockResolvedValue([])
+  })
+
+  test('places the caret at the end when returning to a restored new-chat draft', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const value = 'restored draft'
+
+    render(
+      <ComposerTextarea
+        value={value}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        canSend
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+
+    const editor = screen.getByTestId('chat-message-input')
+    const textNode = editor.querySelector('p')?.firstChild
+    expect(textNode).not.toBeNull()
+    act(() => {
+      const range = document.createRange()
+      range.setStart(textNode!, 0)
+      range.collapse(true)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+      window.dispatchEvent(new Event(WORKBENCH_NEW_CHAT_FOCUS_EVENT))
+    })
+
+    await waitFor(() => {
+      expect(editor).toHaveFocus()
+      expect(window.getSelection()?.anchorOffset).toBe(value.length)
+    })
   })
 
   test('uses the interrupt send mode for Command-Shift-Enter', () => {

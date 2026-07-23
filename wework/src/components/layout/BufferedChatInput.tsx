@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
-import { parseComposerMentions } from '@/components/chat/composer/composerMentions'
 
 export interface BufferedChatInputInsertion {
   id: number
@@ -58,9 +57,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     (nextDraft: string) => {
       draftRef.current = nextDraft
       setDraftState({ scopeKey, sourceValue: value, draft: nextDraft })
-      if (parseComposerMentions(nextDraft).length > 0) {
-        onChange(nextDraft)
-      }
+      onChange(nextDraft)
     },
     [onChange, scopeKey, value]
   )

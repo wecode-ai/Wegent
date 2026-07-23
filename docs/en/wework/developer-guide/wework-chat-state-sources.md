@@ -113,7 +113,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --dir wework e2e:desktop:side-chat-attachment`. The scenario creates a real main thread, asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, and verifies that the main composer never inherits that attachment. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, and verifies that the main composer never inherits that attachment. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 
