@@ -198,7 +198,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
           'flex w-full items-center px-3 py-2.5 text-left transition-colors focus:outline-none',
           isSelected
             ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
-            : 'hover:bg-hover focus:bg-hover'
+            : 'hover:bg-primary/10 focus:bg-primary/10'
         )}
       >
         <span className="min-w-0 flex-1">
@@ -229,7 +229,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
             : 'grid grid-cols-[minmax(0,1fr)_auto]',
           isSelected
             ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
-            : 'hover:bg-hover focus-within:bg-hover'
+            : 'hover:bg-primary/10 focus-within:bg-primary/10'
         )}
       >
         <button

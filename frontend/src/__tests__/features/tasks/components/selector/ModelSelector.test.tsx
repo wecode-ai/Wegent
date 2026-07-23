@@ -385,11 +385,14 @@ describe('ModelSelector', () => {
     expect(modelOption.parentElement).toHaveClass('bg-primary/10')
     expect(modelOption.parentElement).toHaveClass('text-primary')
     expect(modelOption.parentElement).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
-    expect(modelOption.parentElement).not.toHaveClass('hover:bg-hover', 'focus-within:bg-hover')
+    expect(modelOption.parentElement).not.toHaveClass(
+      'hover:bg-primary/10',
+      'focus-within:bg-primary/10'
+    )
     const defaultOption = screen.getByTestId('model-special-option-__default__')
     expect(defaultOption).toHaveClass('bg-primary/10')
     expect(defaultOption).toHaveClass('ring-1', 'ring-inset', 'ring-primary/40')
-    expect(defaultOption).not.toHaveClass('hover:bg-hover', 'focus:bg-hover')
+    expect(defaultOption).not.toHaveClass('hover:bg-primary/10', 'focus:bg-primary/10')
     expect(defaultOption.querySelector('.lucide-check')).not.toBeInTheDocument()
   })
 
@@ -415,8 +418,8 @@ describe('ModelSelector', () => {
     const modelOption = await screen.findByTestId('model-option-claude-3-5-sonnet')
 
     expect(modelOption.parentElement).toHaveClass(
-      'hover:bg-hover',
-      'focus-within:bg-hover',
+      'hover:bg-primary/10',
+      'focus-within:bg-primary/10',
       'transition-colors'
     )
     expect(modelOption).not.toHaveClass('hover:bg-hover', 'focus:bg-hover')
