@@ -95,6 +95,7 @@ export function ModelSelector({
   const desktopMenuWrapperRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
   const submenuPanelRef = useRef<HTMLDivElement>(null)
+  const familySubmenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const modelButtonRef = useRef<HTMLButtonElement>(null)
@@ -114,6 +115,7 @@ export function ModelSelector({
   )
   const [activeDesktopFamilyId, setActiveDesktopFamilyId] = useState<string | null>(null)
   const [desktopFamilyOffset, setDesktopFamilyOffset] = useState(0)
+  const [desktopFamilyTop, setDesktopFamilyTop] = useState(0)
   const [advancedOpen, setAdvancedOpen] = useState(readModelSelectorPowerViewPreference)
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
@@ -409,6 +411,23 @@ export function ModelSelector({
       ? rightSideLeft
       : -desktopFamilySubmenuWidth
   })()
+
+  useLayoutEffect(() => {
+    if (!open || isMobile || !activeDesktopFamily) return
+
+    const familySubmenu = familySubmenuPanelRef.current
+    if (!familySubmenu) return
+
+    const submenuHeight = Math.min(
+      familySubmenu.scrollHeight || familySubmenu.getBoundingClientRect().height,
+      SUBMENU_MAX_HEIGHT,
+      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP)
+    )
+    const preferredTop = submenuOffset + desktopFamilyOffset
+    const minTop = DESKTOP_MENU_VIEWPORT_TOP - desktopMenuTop
+    const maxTop = window.innerHeight - VIEWPORT_MARGIN - submenuHeight - desktopMenuTop
+    setDesktopFamilyTop(Math.round(Math.max(minTop, Math.min(preferredTop, maxTop))))
+  }, [activeDesktopFamily, desktopFamilyOffset, desktopMenuTop, isMobile, open, submenuOffset])
 
   useLayoutEffect(() => {
     if (!open || isMobile) return
@@ -1011,7 +1030,7 @@ export function ModelSelector({
                 data-enter-animation="submenu"
                 style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
                   styles.submenu
                 )}
               >
@@ -1060,11 +1079,12 @@ export function ModelSelector({
             {activeDesktopSubmenu?.type === 'models' && activeDesktopFamily ? (
               <div
                 key={`family:${activeDesktopFamily.config.id}`}
+                ref={familySubmenuPanelRef}
                 data-testid="model-selector-family-submenu"
                 data-enter-animation="submenu"
-                style={{ top: submenuOffset + desktopFamilyOffset, left: desktopFamilySubmenuLeft }}
+                style={{ top: desktopFamilyTop, left: desktopFamilySubmenuLeft }}
                 className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
                   styles.submenu
                 )}
               >
