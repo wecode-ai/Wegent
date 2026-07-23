@@ -34,4 +34,60 @@ describe('mergeRuntimeTranscriptMessages', () => {
 
     expect(merged.map(item => item.id)).toEqual(['server', 'live'])
   })
+
+  test('keeps a local user message between its persisted transcript neighbors', () => {
+    const merged = mergeRuntimeTranscriptMessages(
+      [
+        message({ id: 'older', runtimeMessageIndex: 0 }),
+        message({ id: 'newer-assistant', runtimeMessageIndex: 3 }),
+      ],
+      [
+        message({ id: 'user', role: 'user', runtimeMessageIndex: 1 }),
+        message({ id: 'local-user', role: 'user', runtimeMessageIndex: undefined }),
+        message({ id: 'newer-assistant', runtimeMessageIndex: 3 }),
+      ]
+    )
+
+    expect(merged.map(item => item.id)).toEqual(['older', 'user', 'local-user', 'newer-assistant'])
+  })
+
+  test('appends messages after the last transcript anchor in their existing order', () => {
+    const merged = mergeRuntimeTranscriptMessages(
+      [message({ id: 'persisted', runtimeMessageIndex: 0 })],
+      [
+        message({ id: 'persisted', runtimeMessageIndex: 0 }),
+        message({ id: 'local-user', role: 'user', runtimeMessageIndex: undefined }),
+        message({ id: 'streaming-assistant', runtimeMessageIndex: undefined }),
+      ]
+    )
+
+    expect(merged.map(item => item.id)).toEqual(['persisted', 'local-user', 'streaming-assistant'])
+  })
+
+  test('sorts a transcript page loaded into a gap between existing pages', () => {
+    const merged = mergeRuntimeTranscriptMessages(
+      [
+        message({ id: 'middle-1', runtimeMessageIndex: 2 }),
+        message({ id: 'middle-2', runtimeMessageIndex: 3 }),
+      ],
+      [
+        message({ id: 'older', runtimeMessageIndex: 0 }),
+        message({ id: 'newer', runtimeMessageIndex: 5 }),
+      ]
+    )
+
+    expect(merged.map(item => item.id)).toEqual(['older', 'middle-1', 'middle-2', 'newer'])
+  })
+
+  test('preserves existing order when no messages have persisted indexes', () => {
+    const merged = mergeRuntimeTranscriptMessages(
+      [],
+      [
+        message({ id: 'user', role: 'user', runtimeMessageIndex: undefined }),
+        message({ id: 'assistant', runtimeMessageIndex: undefined }),
+      ]
+    )
+
+    expect(merged.map(item => item.id)).toEqual(['user', 'assistant'])
+  })
 })

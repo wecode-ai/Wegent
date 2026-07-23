@@ -238,7 +238,7 @@ if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
 if [ -n "$BRAND_CONFIG" ] || [ "$RELEASE_DEVTOOLS" = "1" ] || [ -n "$TAURI_CONFIG_PATH" ]; then
-  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.XXXXXX.json")"
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.build.json.XXXXXX")"
   wework_prepare_brand_config "$WEWORK_DIR" "$BRAND_CONFIG" "${RELEASE_DEVTOOLS:-0}" "$CONFIG_OVERRIDE" "$TAURI_CONFIG_PATH"
   if [ -f "$CONFIG_OVERRIDE.namespace" ]; then
     export WEWORK_EXECUTOR_NAMESPACE="$(<"$CONFIG_OVERRIDE.namespace")"

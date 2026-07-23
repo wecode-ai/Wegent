@@ -86,6 +86,12 @@ The Wework chat UI must not keep complete long-running output in React state. `W
 - `MessageList` and `ToolBlocksDisplay` may only render the current preview and truncation notice; hiding complete content with CSS does not count as releasing memory.
 - Right-side temporary chats must reuse the same reducer and stream-action batching path instead of accumulating full output for temporary threads.
 
+## Transcript Merge Order
+
+When a runtime transcript page is loaded or refreshed, the server-provided `messageIndex` defines the primary order of persisted messages. The current pane may also contain local user or streaming assistant messages that do not have a `messageIndex` yet. Merge logic must anchor those messages between their nearest persisted neighbors in the existing list and preserve their relative position. It must not move every unindexed message to the end of the transcript, because that makes an earlier user message fall to the bottom after a refresh or historical-page load.
+
+When loading an older page or filling a middle gap, indexed messages remain ordered by the server index, while local messages sharing an anchor keep their stable pane order. Deduplication uses only stable message ids and must not infer identity from content, role, or subtask.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
@@ -113,7 +119,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --dir wework e2e:desktop:side-chat-attachment`. The scenario creates a real main thread, asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, and verifies that the main composer never inherits that attachment. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --dir wework e2e:desktop`. The main desktop scenario asserts an approximately `420px` side panel, uploads and sends an attachment from the side chat, and verifies that the main composer never inherits that attachment. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 

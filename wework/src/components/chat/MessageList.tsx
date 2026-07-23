@@ -1734,7 +1734,7 @@ function AssistantMessage({
     !message.runtimeGuidanceSplitBefore &&
     !message.runtimeGuidanceContinuation
   const shouldShowThinking = shouldShowAssistantThinkingIndicator({
-    isAssistantRunning,
+    isStreaming,
     hasProcessingDisplayBlock: hasProcessingDisplayBlock(displayBlocks),
     hasVisibleContent,
   })
@@ -1856,6 +1856,7 @@ function AssistantMessage({
               />
             </div>
           ) : null}
+          {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -2073,15 +2074,15 @@ function hasProcessingDisplayBlock(blocks: ProcessingBlock[]): boolean {
 }
 
 function shouldShowAssistantThinkingIndicator({
-  isAssistantRunning,
+  isStreaming,
   hasProcessingDisplayBlock,
   hasVisibleContent,
 }: {
-  isAssistantRunning: boolean
+  isStreaming: boolean
   hasProcessingDisplayBlock: boolean
   hasVisibleContent: boolean
 }): boolean {
-  return isAssistantRunning && !hasProcessingDisplayBlock && !hasVisibleContent
+  return isStreaming && (!hasProcessingDisplayBlock || hasVisibleContent)
 }
 
 function AssistantErrorCard({

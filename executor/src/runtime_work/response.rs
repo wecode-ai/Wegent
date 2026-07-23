@@ -119,6 +119,7 @@ impl RuntimeTaskLink {
         thread: &Value,
         local_link: Option<RuntimeTaskLink>,
         workspace_path: String,
+        execution_running: bool,
     ) -> Self {
         let thread_id = string_field(thread, "id").unwrap_or_default();
         let local_archived = local_link
@@ -139,11 +140,25 @@ impl RuntimeTaskLink {
         ) {
             git_info.insert("currentBranch".to_owned(), Value::String(current_branch));
         }
-        let running = !local_archived && codex_thread_is_active(thread);
-        let status = merged_task_status(thread, local_link.as_ref(), running, local_archived);
-        let thread_status =
+        let running = !local_archived && execution_running;
+        let mut status = merged_task_status(thread, local_link.as_ref(), running, local_archived);
+        let mut thread_status =
             codex_thread_status_type(thread).unwrap_or_else(|| "notLoaded".to_owned());
-        let turn_status = task_turn_status(thread, local_link.as_ref(), running);
+        let mut turn_status = task_turn_status(thread, local_link.as_ref(), running);
+        if !running {
+            if runtime_status_is_running(&status) {
+                status = "active".to_owned();
+            }
+            if runtime_status_is_running(&thread_status) {
+                thread_status = "idle".to_owned();
+            }
+            if turn_status
+                .as_deref()
+                .is_some_and(runtime_status_is_running)
+            {
+                turn_status = Some("completed".to_owned());
+            }
+        }
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -787,13 +802,11 @@ fn normalize_codex_turn_status(status: String) -> String {
     }
 }
 
-pub(super) fn codex_thread_is_active(thread: &Value) -> bool {
-    codex_thread_status_type(thread).is_some_and(|status| {
-        matches!(
-            status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-            "active" | "running" | "inprogress"
-        )
-    })
+pub(super) fn runtime_status_is_running(status: &str) -> bool {
+    matches!(
+        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
+        "active" | "running" | "inprogress" | "busy" | "pending"
+    )
 }
 
 fn codex_thread_status_type(thread: &Value) -> Option<String> {
@@ -858,6 +871,7 @@ mod tests {
             }),
             None,
             "/workspace/project".to_owned(),
+            false,
         );
 
         let workspaces = workspace_response(vec![task], Vec::new());
@@ -905,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_active_thread_drives_task_running() {
+    fn executor_execution_state_drives_task_running() {
         let link = RuntimeTaskLink::from_thread_metadata(
             &json!({
                 "id": "thread-1",
@@ -914,6 +928,7 @@ mod tests {
             }),
             None,
             "/workspace/project".to_owned(),
+            true,
         );
 
         assert_eq!(link.status, "running");
@@ -934,6 +949,7 @@ mod tests {
             }),
             Some(local_link),
             "/workspace/project".to_owned(),
+            true,
         );
 
         assert_eq!(link.completed_at, Some(1_780_000_000_000));
@@ -949,6 +965,7 @@ mod tests {
             }),
             None,
             "/workspace/project".to_owned(),
+            false,
         );
 
         assert_eq!(link.completed_at, Some(1_780_000_100_000));
@@ -972,6 +989,7 @@ mod tests {
             }),
             Some(local_link),
             "/workspace/project".to_owned(),
+            false,
         );
 
         assert_eq!(link.status, "active");
@@ -1000,6 +1018,7 @@ mod tests {
                 }),
                 Some(local_link),
                 "/workspace/project".to_owned(),
+                false,
             );
 
             assert_eq!(link.status, task_status);
@@ -1021,6 +1040,7 @@ mod tests {
             }),
             None,
             "/workspace/project".to_owned(),
+            true,
         );
         let payload = local_task_json(link);
 

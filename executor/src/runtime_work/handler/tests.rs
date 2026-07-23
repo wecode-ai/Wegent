@@ -557,6 +557,47 @@ fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
 }
 
 #[test]
+fn task_list_running_state_comes_from_executor_memory() {
+    let index_path = temp_runtime_work_index_path("authoritative-running-state");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let thread = json!({
+        "id": "thread-1",
+        "cwd": "/tmp/project",
+        "status": {"type": "active"},
+        "turns": [{"status": "inProgress"}]
+    });
+
+    let idle_link = handler
+        .link_from_thread(&thread)
+        .expect("active Codex thread should produce a task link");
+
+    assert!(!idle_link.running);
+    assert_eq!(idle_link.status, "active");
+    assert_eq!(idle_link.thread_status, "idle");
+    assert_eq!(idle_link.turn_status.as_deref(), Some("completed"));
+
+    handler.upsert_local_task(RuntimeTaskLink {
+        local_task_id: "task-1".to_owned(),
+        thread_id: Some("thread-1".to_owned()),
+        workspace_path: "/tmp/project".to_owned(),
+        ..RuntimeTaskLink::default()
+    });
+    handler.mark_active_local_task("task-1");
+
+    let running_link = handler
+        .link_from_thread(&thread)
+        .expect("executor-owned task should produce a task link");
+
+    assert!(running_link.running);
+    assert_eq!(running_link.status, "running");
+    assert_eq!(running_link.thread_status, "active");
+    assert_eq!(running_link.turn_status.as_deref(), Some("inProgress"));
+
+    let _ = fs::remove_file(index_path);
+}
+
+#[test]
 fn active_local_task_skips_global_notification_route() {
     let (event_tx, mut event_rx) = broadcast::channel(8);
     let index_path = temp_runtime_work_index_path("active-local-task-route");

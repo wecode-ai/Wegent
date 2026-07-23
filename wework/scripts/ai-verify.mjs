@@ -99,6 +99,16 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
+export function takeWritableCommandPoll(commandPolls) {
+  let poll = commandPolls.shift()
+  while (poll) {
+    clearTimeout(poll.timer)
+    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
+    poll = commandPolls.shift()
+  }
+  return undefined
+}
+
 async function stopOwnedSessionProcesses(session) {
   if (!Number.isInteger(session.launcherPid)) return
   await signalProcessGroup(session.launcherPid, 'TERM')
@@ -118,6 +128,7 @@ function signalProcessGroup(processGroupId, signal) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
+  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -137,11 +148,28 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
-        if (!command) {
+        if (command) return json(response, 200, command)
+
+        const poll = { response, timer: undefined, closed: false }
+        poll.timer = setTimeout(() => {
+          const index = commandPolls.indexOf(poll)
+          if (index >= 0) commandPolls.splice(index, 1)
           response.writeHead(204, corsHeaders)
-          return response.end()
-        }
-        return json(response, 200, command)
+          response.end()
+        }, defaultTimeoutMs)
+        commandPolls.push(poll)
+        response.once('close', () => {
+          poll.closed = true
+          const index = commandPolls.indexOf(poll)
+          if (index < 0) return
+          commandPolls.splice(index, 1)
+          clearTimeout(poll.timer)
+        })
+        return
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        response.writeHead(204, corsHeaders)
+        return response.end()
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -168,7 +196,13 @@ async function runServer(sessionPath, token) {
         const result = new Promise((resolvePromise, reject) =>
           pending.set(id, { resolve: resolvePromise, reject })
         )
-        queue.push({ id, ...command })
+        const nextCommand = { id, ...command }
+        const poll = takeWritableCommandPoll(commandPolls)
+        if (poll) {
+          json(poll.response, 200, nextCommand)
+        } else {
+          queue.push(nextCommand)
+        }
         try {
           return json(response, 200, {
             ok: true,
@@ -391,7 +425,9 @@ async function main() {
   console.log(typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2))
 }
 
-main().catch(error => {
-  console.error(`ai:verify: ${error.message ?? error}`)
-  process.exitCode = 1
-})
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`ai:verify: ${error.message ?? error}`)
+    process.exitCode = 1
+  })
+}
