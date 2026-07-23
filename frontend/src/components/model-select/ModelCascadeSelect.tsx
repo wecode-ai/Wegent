@@ -304,7 +304,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
         key={modelKey}
         className={cn(
           'w-full items-stretch overflow-hidden',
-          modelActions ? 'grid grid-cols-[minmax(0,1fr)_40px]' : 'flex',
+          modelActions ? 'grid grid-cols-[minmax(0,1fr)_44px]' : 'flex',
           isSelected && 'bg-primary/10 text-primary',
           withBorder && 'border-b border-border'
         )}

@@ -183,6 +183,27 @@ describe('ModelCascadeContent', () => {
     expect(screen.getByTestId('model-option-model-a')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('reserves a 44px mobile column for model actions', () => {
+    render(
+      <ModelCascadeContent
+        models={[models[0]]}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        renderModelActions={() => <button type="button">Model action</button>}
+        variant="mobile"
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-mobile-primary-group-Primary-One'))
+    fireEvent.click(screen.getByTestId('model-mobile-secondary-group-Secondary-One'))
+
+    expect(screen.getByTestId('model-mobile-option-model-a').parentElement).toHaveClass(
+      'grid-cols-[minmax(0,1fr)_44px]'
+    )
+  })
+
   it('shows keyboard-accessible image and video capability tooltips in model rows', async () => {
     const capableModel: GroupableModel = {
       ...models[0],

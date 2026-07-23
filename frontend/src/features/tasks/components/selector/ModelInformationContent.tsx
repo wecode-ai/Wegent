@@ -28,8 +28,7 @@ function formatTokenCount(
   return `${value} ${tokenUnit}`
 }
 
-function formatCostIndex(value: number | null | undefined, unavailable: string): string {
-  if (value == null) return unavailable
+function formatCostIndex(value: number): string {
   return `${Number(value.toFixed(1))}x`
 }
 
@@ -47,15 +46,17 @@ export function ModelInformationContent({ model }: ModelInformationContentProps)
 
   return (
     <div className="space-y-5 pt-1">
-      <section className="rounded-lg bg-surface px-4 py-3">
-        <div className="text-sm font-medium text-text-primary">{t('models.cost_index')}</div>
-        <div data-testid="model-details-cost-index" className="mt-2 text-2xl font-semibold">
-          {formatCostIndex(model.costIndex, unavailable)}
-        </div>
-        <p className="mt-1 text-xs leading-5 text-text-muted">
-          {t('models.cost_index_description')}
-        </p>
-      </section>
+      {model.costIndex != null && (
+        <section className="rounded-lg bg-surface px-4 py-3">
+          <div className="text-sm font-medium text-text-primary">{t('models.cost_index')}</div>
+          <div data-testid="model-details-cost-index" className="mt-2 text-2xl font-semibold">
+            {formatCostIndex(model.costIndex)}
+          </div>
+          <p className="mt-1 text-xs leading-5 text-text-muted">
+            {t('models.cost_index_description')}
+          </p>
+        </section>
+      )}
 
       <section>
         <h3 className="text-sm font-medium text-text-primary">{t('models.input_output_types')}</h3>

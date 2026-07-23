@@ -427,7 +427,7 @@ describe('ModelSelector', () => {
       screen.getByRole('button', { name: '视频理解' }).querySelector('.lucide-video')
     ).toBeInTheDocument()
     expect(modelOption.querySelector('.lucide-check')).not.toBeInTheDocument()
-    expect(informationAction).toHaveClass('self-stretch', 'items-center', 'w-10', 'md:w-8')
+    expect(informationAction).toHaveClass('self-stretch', 'items-center', 'w-11', 'md:w-8')
     expect(informationAction).not.toHaveClass('pt-3')
   })
 
@@ -500,5 +500,30 @@ describe('ModelSelector', () => {
     const preview = await screen.findByTestId('model-details-preview')
     expect(preview).toHaveTextContent('claude-3-5-sonnet-20241022')
     expect(preview).toHaveTextContent('50x')
+  })
+
+  it('omits the cost index section when the model has no cost index', async () => {
+    const user = userEvent.setup()
+    mockModelSelectionOverrides = {
+      filteredModels: [mockAdvancedModel],
+    }
+
+    render(
+      <ModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+    await user.hover(await screen.findByTestId('model-info-claude-opus-4-advanced'))
+
+    expect(await screen.findByTestId('model-details-preview')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-details-cost-index')).not.toBeInTheDocument()
+    expect(screen.queryByText('成本指数')).not.toBeInTheDocument()
   })
 })
