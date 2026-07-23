@@ -24,6 +24,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { adminApis, AdminPublicModel, AdminPublicModelCreate } from '@/apis/admin'
 import { ModelCRD, ModelCategoryType } from '@/apis/models'
+import { getModelCapabilitiesFromSpec } from '@/lib/model-capabilities'
 import ModelEditDialog, {
   ModelFormData,
   ModelInitialData,
@@ -86,8 +87,13 @@ const SetupModelStep: React.FC = () => {
       baseUrl: (env?.base_url as string) || '',
       customHeaders: env?.custom_headers as Record<string, string>,
       protocol: spec?.protocol as string,
-      contextWindow: spec?.contextWindow as number | undefined,
-      maxOutputTokens: spec?.maxOutputTokens as number | undefined,
+      contextWindow: modelConfig?.context_window as number | undefined,
+      maxOutputTokens: modelConfig?.max_output_tokens as number | undefined,
+      costIndex: spec?.costIndex as number | undefined,
+      modelCapabilities: getModelCapabilitiesFromSpec({
+        modelCapabilities: spec?.modelCapabilities,
+        modelConfig,
+      }),
     }
   }
 

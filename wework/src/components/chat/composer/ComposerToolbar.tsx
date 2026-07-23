@@ -1,13 +1,4 @@
-import {
-  ArrowUp,
-  ChevronDown,
-  ClipboardList,
-  Clock3,
-  Cloud,
-  CornerDownRight,
-  Laptop,
-  Zap,
-} from 'lucide-react'
+import { ArrowUp, ChevronDown, ClipboardList, Clock3, CornerDownRight, Zap } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { ComposerSubmitOptions } from './ComposerTextarea'
@@ -45,12 +36,6 @@ interface ComposerToolbarProps {
   onPause?: () => void
   onQuickPhraseSelect: (phrase: QuickPhrase) => void
   onSubmit: (options?: ComposerSubmitOptions) => void
-  executionDevice?: {
-    kind: 'cloud' | 'local'
-    label: string
-    selectable: boolean
-    onSelect?: () => void
-  }
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -81,7 +66,6 @@ export function ComposerToolbar({
   onPause,
   onQuickPhraseSelect,
   onSubmit,
-  executionDevice,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -131,23 +115,6 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-1.5">
-        {executionDevice && (
-          <button
-            type="button"
-            data-testid="composer-execution-device-button"
-            onClick={executionDevice.onSelect}
-            aria-disabled={!executionDevice.selectable}
-            title={executionDevice.label}
-            aria-label={executionDevice.label}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-muted hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 aria-disabled:cursor-default aria-disabled:hover:bg-transparent aria-disabled:hover:text-text-muted"
-          >
-            {executionDevice.kind === 'cloud' ? (
-              <Cloud className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <Laptop className="h-4 w-4" aria-hidden="true" />
-            )}
-          </button>
-        )}
         <ContextUsageIndicator
           usage={contextUsage}
           disabled={disabled}

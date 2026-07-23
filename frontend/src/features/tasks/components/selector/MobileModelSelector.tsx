@@ -13,6 +13,7 @@ import { paths } from '@/config/paths'
 import { Tag } from '@/components/ui/tag'
 import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
+import { ModelCapabilityIcons } from '@/components/model-select/ModelCapabilityIcons'
 import {
   buildModelCascadeGroups,
   getModelDisplayName,
@@ -200,6 +201,7 @@ export default function MobileModelSelector({
     <button
       type="button"
       data-testid="mobile-model-default-option"
+      aria-pressed={modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME}
       onClick={() => {
         modelSelection.selectDefaultModel()
         setIsOpen(false)
@@ -238,6 +240,7 @@ export default function MobileModelSelector({
         key={getModelKey(model)}
         type="button"
         data-testid={`mobile-model-option-${model.name.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
+        aria-pressed={isSelected}
         onClick={() => handleModelSelect(model)}
         className={cn(
           'flex min-h-[44px] w-full items-center justify-between px-4 py-3 text-left',
