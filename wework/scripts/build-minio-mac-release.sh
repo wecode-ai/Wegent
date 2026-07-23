@@ -44,7 +44,7 @@ VERSION=""
 RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
-S3_PREFIX="${WEWORK_RELEASE_S3_PREFIX:-wework/macos}"
+S3_PREFIX="${WEWORK_RELEASE_S3_PREFIX:-}"
 DEFAULT_OUTPUT_DIR="$WEWORK_DIR/src-tauri/target/release/minio-update"
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
@@ -64,7 +64,7 @@ Options:
   --notes <text>            Release notes. Default: "Wework <version>".
   --endpoint <url>          S3 API endpoint. Defaults to ATTACHMENT_S3_ENDPOINT.
   --bucket <name>           S3 bucket. Defaults to ATTACHMENT_S3_BUCKET.
-  --prefix <path>           Object prefix. Default: wework/macos.
+  --prefix <path>           Object prefix. Defaults by target architecture.
   --output-dir <path>       Local artifact directory.
   --macos-build-target <target>
                             Default: aarch64-apple-darwin.
@@ -77,7 +77,9 @@ Environment:
   ATTACHMENT_S3_ENDPOINT, ATTACHMENT_S3_BUCKET
   ATTACHMENT_S3_ACCESS_KEY, ATTACHMENT_S3_SECRET_KEY
   ATTACHMENT_S3_REGION, ATTACHMENT_S3_USE_SSL
-  WEWORK_RELEASE_S3_PREFIX, WEWORK_RELEASE_OUTPUT_DIR, WEWORK_UPDATER_KEY_PATH,
+  WEWORK_RELEASE_S3_PREFIX, WEWORK_MAC_ARM64_RELEASE_S3_PREFIX,
+  WEWORK_MAC_X64_RELEASE_S3_PREFIX, WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX,
+  WEWORK_RELEASE_OUTPUT_DIR, WEWORK_UPDATER_KEY_PATH,
   WEWORK_BRAND_CONFIG, VITE_API_BASE_URL, VITE_WEGENT_BACKEND_URL,
   VITE_WEGENT_SOCKET_URL
 
@@ -104,6 +106,42 @@ normalize_prefix() {
   printf '%s\n' "$value"
 }
 
+default_s3_prefix() {
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin)
+      printf '%s\n' "${WEWORK_MAC_ARM64_RELEASE_S3_PREFIX:-wework/macos}"
+      ;;
+    x86_64-apple-darwin)
+      printf '%s\n' "${WEWORK_MAC_X64_RELEASE_S3_PREFIX:-wework/mac-x64}"
+      ;;
+    universal-apple-darwin)
+      printf '%s\n' "${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}"
+      ;;
+    *)
+      echo "Unsupported macOS build target: $MACOS_BUILD_TARGET" >&2
+      exit 1
+      ;;
+  esac
+}
+
+updater_platforms_for_target() {
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin)
+      printf 'darwin-aarch64\n'
+      ;;
+    x86_64-apple-darwin)
+      printf 'darwin-x86_64\n'
+      ;;
+    universal-apple-darwin)
+      printf 'darwin-aarch64,darwin-x86_64\n'
+      ;;
+    *)
+      echo "Unsupported macOS build target: $MACOS_BUILD_TARGET" >&2
+      exit 1
+      ;;
+  esac
+}
+
 configure_release_credentials() {
   if [ -z "${MACOS_APP_SIGN_IDENTITY:-}" ]; then
     MACOS_APP_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
@@ -120,12 +158,24 @@ configure_release_credentials() {
 }
 
 upload_artifacts() {
+  local arm64_prefix="${WEWORK_MAC_ARM64_RELEASE_S3_PREFIX:-wework/macos}"
+  local x64_prefix="${WEWORK_MAC_X64_RELEASE_S3_PREFIX:-wework/mac-x64}"
+
   require_env ATTACHMENT_S3_ACCESS_KEY
   require_env ATTACHMENT_S3_SECRET_KEY
+
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin) arm64_prefix="$S3_PREFIX" ;;
+    x86_64-apple-darwin) x64_prefix="$S3_PREFIX" ;;
+  esac
 
   ATTACHMENT_S3_ENDPOINT="$S3_ENDPOINT" \
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
+  WEWORK_MAC_ARM64_RELEASE_S3_PREFIX="$arm64_prefix" \
+  WEWORK_MAC_X64_RELEASE_S3_PREFIX="$x64_prefix" \
+  WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
+  UPDATER_PLATFORMS="$(updater_platforms_for_target)" \
   RELEASE_VERSION="$VERSION" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
   uv run --project "$PROJECT_DIR/backend" \
@@ -294,6 +344,9 @@ if [[ "$S3_ENDPOINT" != http://* ]] && [[ "$S3_ENDPOINT" != https://* ]]; then
   esac
 fi
 S3_ENDPOINT="${S3_ENDPOINT%/}"
+if [ -z "$S3_PREFIX" ]; then
+  S3_PREFIX="$(default_s3_prefix)"
+fi
 S3_PREFIX="$(normalize_prefix "$S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET"
 if [ -n "$S3_PREFIX" ]; then
