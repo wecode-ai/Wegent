@@ -17,6 +17,7 @@ import {
   matchesModelSearch,
   type GroupableModel,
 } from './model-grouping'
+import { ModelCapabilityIcons } from './ModelCapabilityIcons'
 
 export interface ModelCascadeLabels {
   ungrouped: string
@@ -49,6 +50,7 @@ interface ModelCascadeContentProps<T extends GroupableModel> {
   getModelKey?: (model: T) => string
   renderModelBadges?: (model: T) => React.ReactNode
   renderModelMeta?: (model: T) => React.ReactNode
+  renderModelActions?: (model: T) => React.ReactNode
   footer?: React.ReactNode
   className?: string
   variant?: 'desktop' | 'mobile'
@@ -114,6 +116,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
   getModelKey = defaultModelKey,
   renderModelBadges,
   renderModelMeta,
+  renderModelActions,
   footer,
   className,
   variant = 'desktop',
@@ -189,14 +192,16 @@ export function ModelCascadeContent<T extends GroupableModel>({
         key={option.key}
         type="button"
         data-testid={`model-special-option-${sanitizeTestId(option.key)}`}
+        aria-pressed={isSelected}
         onClick={() => onSelectSpecialOption?.(option.key)}
         className={cn(
-          'flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left',
-          'hover:bg-hover focus:bg-hover focus:outline-none',
-          isSelected && 'bg-primary/10 text-primary'
+          'flex w-full items-center px-3 py-2.5 text-left transition-colors focus:outline-none',
+          isSelected
+            ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
+            : 'hover:bg-primary/10 focus:bg-primary/10'
         )}
       >
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-text-primary">
             {option.label}
           </span>
@@ -204,7 +209,6 @@ export function ModelCascadeContent<T extends GroupableModel>({
             <span className="block truncate text-xs text-text-muted">{option.description}</span>
           )}
         </span>
-        <Check className={cn('h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')} />
       </button>
     )
   }
@@ -213,38 +217,49 @@ export function ModelCascadeContent<T extends GroupableModel>({
     const modelKey = getModelKey(model)
     const isSelected = selectedModelKey === modelKey
     const groupPath = `${getModelGroupName(model, labels)} / ${getModelSubGroupName(model, labels)}`
+    const modelActions = renderModelActions?.(model)
 
     return (
-      <button
-        ref={isSelected ? selectedModelOptionRef : undefined}
+      <div
         key={modelKey}
-        type="button"
-        data-model-key={modelKey}
-        data-testid={`model-option-${sanitizeTestId(model.name)}`}
-        onClick={() => onSelectModel(model)}
         className={cn(
-          'flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left',
-          'hover:bg-hover focus:bg-hover focus:outline-none',
-          isSelected && 'bg-primary/10 text-primary'
+          'w-full items-stretch overflow-hidden transition-colors',
+          modelActions
+            ? 'grid grid-cols-[minmax(0,1fr)_auto_32px]'
+            : 'grid grid-cols-[minmax(0,1fr)_auto]',
+          isSelected
+            ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/40'
+            : 'hover:bg-primary/10 focus-within:bg-primary/10'
         )}
       >
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
+        <button
+          ref={isSelected ? selectedModelOptionRef : undefined}
+          type="button"
+          data-model-key={modelKey}
+          data-testid={`model-option-${sanitizeTestId(model.name)}`}
+          aria-pressed={isSelected}
+          onClick={() => onSelectModel(model)}
+          className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left focus:outline-none"
+        >
+          <span className="min-w-0 flex-1">
             <span
-              className="truncate text-sm font-medium text-text-primary"
+              className="block truncate text-sm font-medium text-text-primary"
               title={getModelDisplayName(model)}
             >
               {getModelDisplayName(model)}
             </span>
-            {renderModelBadges?.(model)}
+            {showPath && (
+              <span className="block truncate text-xs text-text-muted">{groupPath}</span>
+            )}
+            {renderModelMeta?.(model)}
           </span>
-          {showPath && <span className="block truncate text-xs text-text-muted">{groupPath}</span>}
-          {renderModelMeta?.(model)}
+        </button>
+        <span className="flex shrink-0 items-center gap-1.5 empty:hidden">
+          <ModelCapabilityIcons model={model} showTooltips />
+          {renderModelBadges?.(model)}
         </span>
-        <Check
-          className={cn('mt-0.5 h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
-        />
-      </button>
+        {modelActions}
+      </div>
     )
   }
 
@@ -256,6 +271,7 @@ export function ModelCascadeContent<T extends GroupableModel>({
         key={option.key}
         type="button"
         data-testid={`model-mobile-special-option-${sanitizeTestId(option.key)}`}
+        aria-pressed={isSelected}
         onClick={() => onSelectSpecialOption?.(option.key)}
         className={cn(
           'flex min-h-[44px] w-full items-center justify-between gap-3 px-3 py-2.5 text-left',
@@ -281,38 +297,49 @@ export function ModelCascadeContent<T extends GroupableModel>({
     const modelKey = getModelKey(model)
     const isSelected = selectedModelKey === modelKey
     const groupPath = `${getModelGroupName(model, labels)} / ${getModelSubGroupName(model, labels)}`
+    const modelActions = renderModelActions?.(model)
 
     return (
-      <button
+      <div
         key={modelKey}
-        type="button"
-        data-model-key={modelKey}
-        data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
-        onClick={() => onSelectModel(model)}
         className={cn(
-          'flex min-h-[44px] w-full items-start justify-between gap-3 px-3 py-2.5 text-left',
-          'active:bg-hover focus:bg-hover focus:outline-none',
+          'w-full items-stretch overflow-hidden',
+          modelActions ? 'grid grid-cols-[minmax(0,1fr)_44px]' : 'flex',
           isSelected && 'bg-primary/10 text-primary',
           withBorder && 'border-b border-border'
         )}
       >
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span
-              className="truncate text-sm font-medium text-text-primary"
-              title={getModelDisplayName(model)}
-            >
-              {getModelDisplayName(model)}
+        <button
+          type="button"
+          data-model-key={modelKey}
+          data-testid={`model-mobile-option-${sanitizeTestId(model.name)}`}
+          aria-pressed={isSelected}
+          onClick={() => onSelectModel(model)}
+          className={cn(
+            'flex min-h-[44px] min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 text-left',
+            'active:bg-hover focus:bg-hover focus:outline-none'
+          )}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="min-w-0 truncate text-sm font-medium text-text-primary"
+                title={getModelDisplayName(model)}
+              >
+                {getModelDisplayName(model)}
+              </span>
+              <ModelCapabilityIcons model={model} />
+              {renderModelBadges?.(model)}
             </span>
-            {renderModelBadges?.(model)}
+            {showPath && (
+              <span className="block truncate text-xs text-text-muted">{groupPath}</span>
+            )}
+            {renderModelMeta?.(model)}
           </span>
-          {showPath && <span className="block truncate text-xs text-text-muted">{groupPath}</span>}
-          {renderModelMeta?.(model)}
-        </span>
-        <Check
-          className={cn('mt-0.5 h-4 w-4 shrink-0', isSelected ? 'opacity-100' : 'opacity-0')}
-        />
-      </button>
+          {isSelected && <Check className="h-4 w-4 shrink-0 text-primary" />}
+        </button>
+        {modelActions}
+      </div>
     )
   }
 
@@ -608,6 +635,7 @@ export function GroupedModelSelect<T extends GroupableModel>({
   getModelKey = defaultModelKey,
   renderModelBadges,
   renderModelMeta,
+  renderModelActions,
   footer,
   placeholder,
   disabled,
@@ -636,8 +664,11 @@ export function GroupedModelSelect<T extends GroupableModel>({
           data-testid={dataTestId}
           className={cn('h-10 w-full justify-between bg-base px-3 font-normal', triggerClassName)}
         >
-          <span className="min-w-0 truncate">
-            {selectedModel ? getModelDisplayName(selectedModel) : placeholder}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate">
+              {selectedModel ? getModelDisplayName(selectedModel) : placeholder}
+            </span>
+            {selectedModel && <ModelCapabilityIcons model={selectedModel} />}
           </span>
           <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-60" />
         </Button>
@@ -674,6 +705,7 @@ export function GroupedModelSelect<T extends GroupableModel>({
           getModelKey={getModelKey}
           renderModelBadges={renderModelBadges}
           renderModelMeta={renderModelMeta}
+          renderModelActions={renderModelActions}
           footer={footer}
           variant={variant}
         />

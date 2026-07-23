@@ -10,10 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.kind import Model, Shell
+from app.schemas.kind import Model, ModelSpec, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.base import BaseService
+from app.services.model_capabilities import normalize_model_capabilities
 
 
 class ModelAdapter:
@@ -33,12 +34,23 @@ class ModelAdapter:
         model_category_type = "llm"
         model_group = None
         model_sub_group = None
+        context_window = None
+        max_output_tokens = None
+        cost_index = None
+        model_capabilities = None
         if isinstance(kind.json, dict):
             # Check if json has proper CRD structure (metadata and spec)
             if "metadata" in kind.json and "spec" in kind.json:
                 try:
                     model_crd = Model.model_validate(kind.json)
-                    config = model_crd.spec.modelConfig
+                    legacy_model_capabilities = model_crd.spec.modelConfig.get(
+                        "modelCapabilities"
+                    )
+                    config = {
+                        key: value
+                        for key, value in model_crd.spec.modelConfig.items()
+                        if key != "modelCapabilities"
+                    }
                     display_name = model_crd.metadata.displayName
                     is_advanced = (
                         bool(model_crd.spec.isAdvanced)
@@ -49,6 +61,9 @@ class ModelAdapter:
                         model_category_type = model_crd.spec.modelType.value
                     model_group = model_crd.spec.modelGroup
                     model_sub_group = model_crd.spec.modelSubGroup
+                    context_window = model_crd.spec.context_window
+                    max_output_tokens = model_crd.spec.max_output_tokens
+                    cost_index = model_crd.spec.costIndex
                     if model_crd.spec.protocol:
                         config = {**config, "protocol": model_crd.spec.protocol}
                     if model_crd.spec.apiFormat:
@@ -56,6 +71,16 @@ class ModelAdapter:
                             **config,
                             "apiFormat": model_crd.spec.apiFormat.value,
                         }
+                    if model_crd.spec.modelCapabilities:
+                        model_capabilities = (
+                            model_crd.spec.modelCapabilities.model_dump(
+                                exclude_none=True
+                            )
+                        )
+                    elif legacy_model_capabilities is not None:
+                        model_capabilities = normalize_model_capabilities(
+                            legacy_model_capabilities
+                        )
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -75,6 +100,25 @@ class ModelAdapter:
                 if isinstance(spec, dict):
                     model_group = spec.get("modelGroup")
                     model_sub_group = spec.get("modelSubGroup")
+                    cost_index = spec.get("costIndex")
+                    model_config = spec.get("modelConfig")
+                    if isinstance(model_config, dict):
+                        context_window = ModelSpec._model_config_token_limit(
+                            model_config.get("context_window")
+                        )
+                        max_output_tokens = ModelSpec._model_config_token_limit(
+                            model_config.get("max_output_tokens")
+                        )
+                    capabilities = normalize_model_capabilities(
+                        spec.get("modelCapabilities")
+                    )
+                    if capabilities:
+                        model_capabilities = capabilities
+
+        if model_capabilities is None and isinstance(config, dict):
+            model_capabilities = normalize_model_capabilities(
+                config.get("modelCapabilities")
+            )
 
         # Extract provider and model_id from env before stripping
         env = config.get("env", {}) if isinstance(config, dict) else {}
@@ -84,6 +128,10 @@ class ModelAdapter:
         # Strip sensitive env from public model config
         if isinstance(config, dict) and "env" in config:
             config = {**config, "env": {}}
+        if isinstance(config, dict) and "modelCapabilities" in config:
+            config = {k: v for k, v in config.items() if k != "modelCapabilities"}
+        if model_capabilities:
+            config = {**config, "modelCapabilities": model_capabilities}
 
         return {
             "id": kind.id,
@@ -96,6 +144,10 @@ class ModelAdapter:
             "is_advanced": is_advanced,
             "modelGroup": model_group,
             "modelSubGroup": model_sub_group,
+            "contextWindow": context_window,
+            "maxOutputTokens": max_output_tokens,
+            "costIndex": cost_index,
+            "modelCapabilities": model_capabilities,
             "model_category_type": model_category_type,
             "created_at": kind.created_at,
             "updated_at": kind.updated_at,
