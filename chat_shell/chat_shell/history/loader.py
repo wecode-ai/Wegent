@@ -240,6 +240,7 @@ async def get_chat_history(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = True,
 ) -> list[dict[str, Any]]:
     """Get chat history for a task.
 
@@ -278,11 +279,19 @@ async def get_chat_history(
 
     if is_http:
         history = await _load_history_from_remote(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            from_latest_compaction,
         )
     else:
         history = await _load_history_from_db(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id,
+            is_group_chat,
+            exclude_after_message_id,
+            limit,
+            from_latest_compaction,
         )
 
     logger.debug(
@@ -302,6 +311,7 @@ async def _load_history_from_remote(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from Backend via RemoteHistoryStore.
 
@@ -343,6 +353,7 @@ async def _load_history_from_remote(
             before_message_id=before_id,
             is_group_chat=is_group_chat,
             limit=limit,
+            from_latest_compaction=from_latest_compaction,
         )
 
         logger.debug(
@@ -386,6 +397,7 @@ async def _load_history_from_db(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
 
@@ -396,6 +408,7 @@ async def _load_history_from_db(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        from_latest_compaction: If True, load from the latest compaction checkpoint.
     """
     return await asyncio.to_thread(
         _load_history_from_db_sync,
@@ -403,6 +416,7 @@ async def _load_history_from_db(
         is_group_chat,
         exclude_after_message_id,
         limit,
+        from_latest_compaction,
     )
 
 
@@ -411,6 +425,7 @@ def _load_history_from_db_sync(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    from_latest_compaction: bool = False,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
 
@@ -421,6 +436,8 @@ def _load_history_from_db_sync(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        from_latest_compaction: If True, load from the latest compaction checkpoint
+            (wired to the shared backend pipeline in Task 10).
     """
     # Import backend's models and database session
     # This works in package mode since we're running within the backend process
