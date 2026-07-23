@@ -29,6 +29,15 @@ const UNSENT_SECOND_TASK_DRAFT = 'WEWORK_DESKTOP_E2E_UNSENT_SECOND_TASK_DRAFT'
 const WINDOW_LIFECYCLE_PROMPT =
   'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE: keep this response running until released.'
 const WINDOW_LIFECYCLE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_WINDOW_LIFECYCLE_COMPLETE'
+const WINDOW_LIFECYCLE_SCROLL_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_POSITION_MARKER'
+const WINDOW_LIFECYCLE_COMPLETION_RESPONSE = [
+  WINDOW_LIFECYCLE_COMPLETION_TEXT,
+  ...Array.from({ length: 24 }, (_, index) =>
+    index === 12
+      ? WINDOW_LIFECYCLE_SCROLL_MARKER
+      : `Persisted transcript verification paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable content '.repeat(8)}`
+  ),
+].join('\n\n')
 const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
 const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
@@ -965,6 +974,45 @@ async function verifyBackgroundTaskWindowLifecycle({
   await captureVerificationScreenshot(
     control,
     lifecycleScreenshotName('05-completed-task-reopened-idle.png')
+  )
+
+  setPhase('completed-task-scroll-position')
+  const middleParagraphSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]:nth-of-type(14)`
+  await control.command('scrollIntoView', middleParagraphSelector)
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('06-task-middle-position-before-switch.png')
+  )
+
+  control.setScenario('fresh_chat')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: FRESH_CHAT_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('07-switched-to-new-task.png')
+  )
+
+  await control.command('clickWhenEnabled', `[data-testid="${taskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', middleParagraphSelector, {
+    text: WINDOW_LIFECYCLE_SCROLL_MARKER,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
   )
 }
 
@@ -2421,7 +2469,7 @@ class DesktopE2EServer {
       await this.windowLifecycleRelease
       response.end(
         createSse([
-          assistantMessage(WINDOW_LIFECYCLE_COMPLETION_TEXT),
+          assistantMessage(WINDOW_LIFECYCLE_COMPLETION_RESPONSE),
           responseCompleted(responseId),
         ])
       )
